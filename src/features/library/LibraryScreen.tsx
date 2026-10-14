@@ -4,8 +4,7 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
-  SafeAreaView
+  TouchableOpacity
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
@@ -41,7 +40,7 @@ export const LibraryScreen: React.FC = () => {
   });
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
         <Text style={[styles.title, { color: colors.textPrimary }]}>
@@ -93,7 +92,7 @@ export const LibraryScreen: React.FC = () => {
               Noch keine Artikel gemerkt
             </Text>
             <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-              Tippen Sie in der Tagesausgabe auf das Lesezeichen-Symbol, um lesenswerte Gedanken dauerhaft in Ihrer Bibliothek zu sichern.
+              Tippe in der Tagesausgabe auf das Lesezeichen-Symbol, um lesenswerte Gedanken dauerhaft in deiner Bibliothek zu sichern.
             </Text>
             <TouchableOpacity
               onPress={() => setActiveTab('feed')}
@@ -168,12 +167,12 @@ export const LibraryScreen: React.FC = () => {
           })
         )}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
+  container: {
     flex: 1
   },
   header: {

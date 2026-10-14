@@ -55,7 +55,7 @@ export const WhyThisModal: React.FC = () => {
                   Relevanz-Score für diese Ausgabe
                 </Text>
                 <Text style={[styles.scoreSubtext, { color: colors.textSecondary }]}>
-                  Deterministisch errechnet aus Ihren Präferenzen
+                  Deterministisch errechnet aus deinen Präferenzen
                 </Text>
               </View>
             </View>
@@ -69,7 +69,7 @@ export const WhyThisModal: React.FC = () => {
                     Themen-Affinität: {affinityPercent}%
                   </Text>
                   <Text style={[styles.factorDesc, { color: colors.textSecondary }]}>
-                    Basiert auf Ihren Einstellungen für das Hauptthema sowie Sekundärthemen.
+                    Basiert auf deinen Einstellungen für das Hauptthema sowie Sekundärthemen.
                   </Text>
                 </View>
               </View>
@@ -81,7 +81,7 @@ export const WhyThisModal: React.FC = () => {
                     Lesezeit-Passung ({whyModalItem.estimatedReadingMinutes} Min.)
                   </Text>
                   <Text style={[styles.factorDesc, { color: colors.textSecondary }]}>
-                    Passt optimal zu Ihrem bevorzugten Leseformat.
+                    Passt optimal zu deinem bevorzugten Leseformat.
                   </Text>
                 </View>
               </View>
@@ -105,7 +105,7 @@ export const WhyThisModal: React.FC = () => {
             <View style={[styles.noticeBox, { backgroundColor: colors.surfaceSecondary }]}>
               <Ionicons name="shield-checkmark-outline" size={16} color={colors.accent} style={{ marginRight: 8, marginTop: 1 }} />
               <Text style={[styles.noticeText, { color: colors.textSecondary }]}>
-                Atem verwendet keine verdeckten Verhaltens-Tracker oder Klickoptimierungs-Algorithmen. Sie steuern Ihre Gewichtungen jederzeit transparent in den Einstellungen.
+                Atem verwendet keine verdeckten Verhaltens-Tracker oder Klickoptimierungs-Algorithmen. Du steuerst deine Gewichtungen jederzeit transparent in den Einstellungen.
               </Text>
             </View>
           </ScrollView>
@@ -158,9 +158,9 @@ const styles = StyleSheet.create({
     fontWeight: '700'
   },
   closeButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center'
   },
@@ -233,9 +233,11 @@ const styles = StyleSheet.create({
     lineHeight: 16
   },
   doneButton: {
+    minHeight: 48,
     paddingVertical: 12,
     borderRadius: radius.md,
-    alignItems: 'center'
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   doneButtonText: {
     color: '#FFFFFF',

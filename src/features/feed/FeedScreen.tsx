@@ -15,7 +15,7 @@ import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
 
 export const FeedScreen: React.FC = () => {
-  const { dailyEdition, discoveryItems, colors, refreshFeed, isLoading } = useApp();
+  const { dailyEdition, discoveryItems, colors, refreshFeed } = useApp();
   const [selectedFilter, setSelectedFilter] = useState<TopicTag | 'all'>('all');
   const [showDiscovery, setShowDiscovery] = useState<boolean>(false);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -116,7 +116,7 @@ export const FeedScreen: React.FC = () => {
               Keine Artikel in dieser Kategorie
             </Text>
             <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-              Wählen Sie „Alle Themen“ oder passen Sie Ihre Interessen in den Einstellungen an.
+              Wähle „Alle Themen“ oder passe deine Interessen in den Einstellungen an.
             </Text>
             <TouchableOpacity
               onPress={() => setSelectedFilter('all')}
@@ -143,11 +143,11 @@ export const FeedScreen: React.FC = () => {
               </View>
 
               <Text style={[styles.completionTitle, { color: colors.textPrimary }]}>
-                Tagesausgabe abgeschlossen
+                Ende dieser Ausgabe
               </Text>
 
               <Text style={[styles.completionText, { color: colors.textSecondary }]}>
-                Sie haben alle kuratierten Beiträge der heutigen Ausgabe erreicht. Gönnen Sie Ihrem Geist eine Atempause – oder erkunden Sie bewusst weitere Entdeckungen.
+                Du hast alle kuratierten Beiträge der heutigen Ausgabe erreicht. Gönne deinem Geist eine Atempause – oder erkunde bewusst weitere Entdeckungen.
               </Text>
 
               {!showDiscovery ? (

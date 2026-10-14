@@ -1,21 +1,16 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, TOPIC_METADATA, ReadingPreferenceDuration } from '../../core/domain/types';
 import { useApp } from '../../core/context/AppContext';
+import { DEFAULT_STARTER_INTERESTS } from '../../core/data/fixtures';
 import { typography, radius, spacing } from '../../ui/theme';
 
 export const OnboardingScreen: React.FC = () => {
   const { colors, completeOnboarding } = useApp();
 
-  const [interests, setInterests] = useState<Record<TopicTag, number>>({
-    philosophy_ethics: 0.95,
-    german_didactics: 0.90,
-    ai_apple: 0.85,
-    contemplation_mind: 0.80,
-    science_society: 0.70,
-    sound_synthesis: 0.65
-  });
+  const [interests, setInterests] = useState<Record<TopicTag, number>>(DEFAULT_STARTER_INTERESTS);
 
   const [duration, setDuration] = useState<ReadingPreferenceDuration>('balanced');
 
@@ -31,7 +26,7 @@ export const OnboardingScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right', 'bottom']}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         {/* Ethos Header */}
         <View style={styles.header}>
@@ -42,7 +37,7 @@ export const OnboardingScreen: React.FC = () => {
             ATEM
           </Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Ein persönlicher intellektueller Resonanzraum. Kein Algorithmus, der Sie fesselt – sondern eine kuratierte Tagesausgabe, die Sie bereichert.
+            Ein persönlicher intellektueller Resonanzraum. Kein Algorithmus, der dich fesselt – sondern eine kuratierte Tagesausgabe, die dich bereichert.
           </Text>
         </View>
 
@@ -63,7 +58,7 @@ export const OnboardingScreen: React.FC = () => {
           <View style={styles.principleRow}>
             <Ionicons name="shield-checkmark-outline" size={18} color={colors.accent} style={styles.principleIcon} />
             <Text style={[styles.principleText, { color: colors.textPrimary }]}>
-              <Text style={{ fontWeight: '700' }}>Volle Privatsphäre:</Text> Lokale Daten auf Ihrem iPhone, keine Tracker.
+              <Text style={{ fontWeight: '700' }}>Volle Privatsphäre:</Text> Lokale Daten auf deinem Gerät, keine Tracker.
             </Text>
           </View>
         </View>
@@ -71,10 +66,10 @@ export const OnboardingScreen: React.FC = () => {
         {/* Section: Your Focus Topics */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            Ihre Interessensschwerpunkte
+            Deine Interessensschwerpunkte
           </Text>
           <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Tippen Sie auf Themen, um die Priorität für Ihre Tagesausgabe anzupassen:
+            Tippe auf Themen, um die Priorität für deine Tagesausgabe anzupassen:
           </Text>
 
           <View style={styles.topicsGrid}>
@@ -171,7 +166,7 @@ export const OnboardingScreen: React.FC = () => {
         </TouchableOpacity>
 
         <Text style={[styles.disclaimer, { color: colors.textMuted }]}>
-          Kein Account erforderlich. Ihre Einstellungen bleiben lokal auf Ihrem iPhone gespeichert.
+          Kein Account erforderlich. Deine Einstellungen bleiben lokal auf deinem Gerät gespeichert.
         </Text>
       </ScrollView>
     </SafeAreaView>
@@ -285,10 +280,12 @@ const styles = StyleSheet.create({
   },
   durationPill: {
     flex: 1,
+    minHeight: 44,
     paddingVertical: 10,
     borderRadius: radius.md,
     borderWidth: 0.5,
-    alignItems: 'center'
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   durationText: {
     fontSize: typography.sizes.micro,

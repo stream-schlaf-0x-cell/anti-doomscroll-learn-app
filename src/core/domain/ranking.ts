@@ -74,8 +74,7 @@ export function scoreFeedItem(
 
   // Human-readable explanation in German
   const affinityPercent = Math.round(topicAffinity * 100);
-  const durationText = `${mins} Min.`;
-  let reason = `Affinität zu ${getTopicLabel(item.primaryTopic)}: ${affinityPercent}%`;
+  let reason = `Affinität zu ${getTopicLabel(item.primaryTopic)}: ${affinityPercent}% • Lesezeit: ${mins} Min.`;
   if (depthBonus > 0) {
     reason += ` • Hohe inhaltliche Tiefe (${formatContentType(item.type)})`;
   }

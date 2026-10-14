@@ -1,12 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  SafeAreaView,
-  Alert
+  Modal,
+  ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, TOPIC_METADATA, ReadingPreferenceDuration } from '../../core/domain/types';
@@ -20,10 +20,13 @@ export const SettingsScreen: React.FC = () => {
     updateDurationPreference,
     setFontSize,
     setThemePreference,
-    resetOnboarding,
-    colors,
-    isDark
+    repeatOnboarding,
+    clearAllLocalData,
+    colors
   } = useApp();
+
+  const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
+  const [isClearing, setIsClearing] = useState<boolean>(false);
 
   const handleAdjustWeight = (topic: TopicTag, delta: number) => {
     const current = profile.explicitInterests[topic] ?? 0.5;
@@ -31,20 +34,29 @@ export const SettingsScreen: React.FC = () => {
     updateTopicWeight(topic, next);
   };
 
-  const handleReset = () => {
-    // In React Native / Expo web, alert confirmation
-    resetOnboarding();
+  const handleRepeatOnboarding = async () => {
+    await repeatOnboarding();
+  };
+
+  const handleConfirmClearAll = async () => {
+    setIsClearing(true);
+    try {
+      await clearAllLocalData();
+    } finally {
+      setIsClearing(false);
+      setShowClearConfirm(false);
+    }
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
         <Text style={[styles.title, { color: colors.textPrimary }]}>
           Einstellungen
         </Text>
         <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-          Transparente Steuerung Ihrer intellektuellen Umgebung
+          Transparente Steuerung deiner intellektuellen Umgebung
         </Text>
       </View>
 
@@ -55,7 +67,7 @@ export const SettingsScreen: React.FC = () => {
             Themengewichtung für die Tagesausgabe
           </Text>
           <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Passen Sie die Relevanz an. Änderungen wirken sich sofort spürbar auf die Reihung Ihres Feeds aus.
+            Passe die Relevanz an. Änderungen wirken sich sofort spürbar auf die Reihung deines Feeds aus.
           </Text>
 
           <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
@@ -89,6 +101,8 @@ export const SettingsScreen: React.FC = () => {
                       onPress={() => handleAdjustWeight(tag, -0.1)}
                       style={[styles.stepperButton, { backgroundColor: colors.surfaceSecondary }]}
                       disabled={weight <= 0.05}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${meta.label} Priorität verringern`}
                     >
                       <Ionicons name="remove" size={16} color={weight <= 0.05 ? colors.border : colors.textPrimary} />
                     </TouchableOpacity>
@@ -107,6 +121,8 @@ export const SettingsScreen: React.FC = () => {
                       onPress={() => handleAdjustWeight(tag, 0.1)}
                       style={[styles.stepperButton, { backgroundColor: colors.surfaceSecondary }]}
                       disabled={weight >= 0.95}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${meta.label} Priorität erhöhen`}
                     >
                       <Ionicons name="add" size={16} color={weight >= 0.95 ? colors.border : colors.textPrimary} />
                     </TouchableOpacity>
@@ -138,6 +154,8 @@ export const SettingsScreen: React.FC = () => {
                     borderColor: colors.borderSubtle
                   }
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={`Lesezeit ${d.label} wählen`}
               >
                 <Text
                   style={[
@@ -178,6 +196,8 @@ export const SettingsScreen: React.FC = () => {
                         backgroundColor: profile.readingPreferences.theme === t.id ? colors.accent : colors.surfaceSecondary
                       }
                     ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Erscheinungsbild ${t.label} aktivieren`}
                   >
                     <Text
                       style={[
@@ -208,6 +228,8 @@ export const SettingsScreen: React.FC = () => {
                         backgroundColor: profile.readingPreferences.fontSize === size ? colors.accent : colors.surfaceSecondary
                       }
                     ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Schriftgröße ${size.toUpperCase()} wählen`}
                   >
                     <Text
                       style={[
@@ -235,7 +257,7 @@ export const SettingsScreen: React.FC = () => {
               <View style={{ flex: 1 }}>
                 <Text style={[styles.roadmapTitle, { color: colors.textPrimary }]}>Craft Notizen & Dokumente</Text>
                 <Text style={[styles.roadmapDesc, { color: colors.textMuted }]}>
-                  Verknüpfung von Lektüre mit Ihren eigenen Unterrichts- und Denkprojekten (Phase 5).
+                  Verknüpfung von Lektüre mit deinen eigenen Unterrichts- und Denkprojekten (Phase 5).
                 </Text>
               </View>
               <View style={[styles.badgePlanned, { backgroundColor: colors.surfaceSecondary }]}>
@@ -248,7 +270,7 @@ export const SettingsScreen: React.FC = () => {
               <View style={{ flex: 1 }}>
                 <Text style={[styles.roadmapTitle, { color: colors.textPrimary }]}>Raindrop.io Lesezeichen</Text>
                 <Text style={[styles.roadmapDesc, { color: colors.textMuted }]}>
-                  Intelligente Integration Ihrer gespeicherten Artikel (Phase 5).
+                  Intelligente Integration deiner gespeicherten Artikel (Phase 5).
                 </Text>
               </View>
               <View style={[styles.badgePlanned, { backgroundColor: colors.surfaceSecondary }]}>
@@ -274,7 +296,7 @@ export const SettingsScreen: React.FC = () => {
         {/* Section: Privacy & Reset */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            Datenschutz & Speicher
+            Datenschutz & Speicherverwaltung
           </Text>
           <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
             <View style={{ padding: spacing.md }}>
@@ -283,24 +305,122 @@ export const SettingsScreen: React.FC = () => {
               </Text>
             </View>
 
+            {/* Repeat Onboarding Option (Non-destructive) */}
             <TouchableOpacity
-              onPress={handleReset}
+              onPress={handleRepeatOnboarding}
               style={[styles.resetButton, { borderTopColor: colors.borderSubtle }]}
+              accessibilityRole="button"
+              accessibilityLabel="Onboarding wiederholen, Daten bleiben erhalten"
             >
-              <Ionicons name="refresh-outline" size={16} color={colors.danger} style={{ marginRight: 6 }} />
-              <Text style={[styles.resetButtonText, { color: colors.danger }]}>
-                App zurücksetzen & Onboarding neu starten
-              </Text>
+              <Ionicons name="sparkles-outline" size={16} color={colors.accent} style={{ marginRight: 8 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.actionRowTitle, { color: colors.textPrimary }]}>
+                  Onboarding wiederholen
+                </Text>
+                <Text style={[styles.actionRowSubtitle, { color: colors.textMuted }]}>
+                  Passe Themen und Lesezeit neu an. Deine Lesezeichen und Lesefortschritte bleiben erhalten.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+
+            {/* Destructive Clear All Data Option */}
+            <TouchableOpacity
+              onPress={() => setShowClearConfirm(true)}
+              style={[styles.resetButton, { borderTopColor: colors.borderSubtle }]}
+              accessibilityRole="button"
+              accessibilityLabel="Alle lokalen Daten löschen und App zurücksetzen"
+            >
+              <Ionicons name="trash-outline" size={16} color={colors.danger} style={{ marginRight: 8 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.actionRowTitle, { color: colors.danger }]}>
+                  Alle lokalen Daten löschen
+                </Text>
+                <Text style={[styles.actionRowSubtitle, { color: colors.textMuted }]}>
+                  Setzt die gesamte Datenbank zurück: Lesezeichen, Leseverlauf und Profile werden gelöscht.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.danger} />
             </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
-    </SafeAreaView>
+
+      {/* Confirmation Modal for Destructive Reset */}
+      <Modal
+        visible={showClearConfirm}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => !isClearing && setShowClearConfirm(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            <View style={styles.modalHeader}>
+              <View style={[styles.warningIconCircle, { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
+                <Ionicons name="warning" size={24} color={colors.danger} />
+              </View>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
+                Alle lokalen Daten löschen?
+              </Text>
+            </View>
+
+            <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>
+              Bist du sicher? Diese Aktion setzt Atem vollständig in den Auslieferungszustand zurück:
+            </Text>
+
+            <View style={[styles.deleteItemsBox, { backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.deleteItemText, { color: colors.textPrimary }]}>
+                • Alle gespeicherten Lesezeichen & die Bibliothek
+              </Text>
+              <Text style={[styles.deleteItemText, { color: colors.textPrimary }]}>
+                • Vollständiger Lesefortschritt aller Artikel
+              </Text>
+              <Text style={[styles.deleteItemText, { color: colors.textPrimary }]}>
+                • Alle Feedback-Bewertungen („Mehr davon / Weniger“)
+              </Text>
+              <Text style={[styles.deleteItemText, { color: colors.textPrimary }]}>
+                • Persönliche Themengewichtungen & Lesezeit-Präferenzen
+              </Text>
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                onPress={() => setShowClearConfirm(false)}
+                disabled={isClearing}
+                style={[styles.modalCancelBtn, { backgroundColor: colors.surfaceSecondary }]}
+                accessibilityRole="button"
+                accessibilityLabel="Abbrechen"
+              >
+                <Text style={[styles.modalCancelBtnText, { color: colors.textPrimary }]}>
+                  Abbrechen
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleConfirmClearAll}
+                disabled={isClearing}
+                style={[styles.modalConfirmBtn, { backgroundColor: colors.danger }]}
+                accessibilityRole="button"
+                accessibilityLabel="Unwiderruflich löschen"
+              >
+                {isClearing ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.modalConfirmBtnText}>
+                    Unwiderruflich löschen
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
+  container: {
     flex: 1
   },
   header: {
@@ -450,12 +570,101 @@ const styles = StyleSheet.create({
   },
   resetButton: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 12,
+    padding: spacing.md,
     borderTopWidth: 0.5
   },
   resetButtonText: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '600'
+  },
+  actionRowTitle: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '600',
+    marginBottom: 2
+  },
+  actionRowSubtitle: {
+    fontSize: typography.sizes.micro,
+    lineHeight: 16
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.pageHorizontal
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 460,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.xl,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 8
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md
+  },
+  warningIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: spacing.sm
+  },
+  modalTitle: {
+    flex: 1,
+    fontSize: typography.sizes.title2,
+    fontWeight: '700'
+  },
+  modalMessage: {
+    fontSize: typography.sizes.bodySmall,
+    lineHeight: 20,
+    marginBottom: spacing.md
+  },
+  deleteItemsBox: {
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+    gap: 6
+  },
+  deleteItemText: {
+    fontSize: typography.sizes.micro,
+    lineHeight: 18
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'flex-end'
+  },
+  modalCancelBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  modalCancelBtnText: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '600'
+  },
+  modalConfirmBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 140
+  },
+  modalConfirmBtnText: {
+    color: '#FFFFFF',
     fontSize: typography.sizes.bodySmall,
     fontWeight: '600'
   }

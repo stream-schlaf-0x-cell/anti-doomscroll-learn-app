@@ -31,17 +31,23 @@ Atem is a personalized, AI-powered reading and discovery feed designed to replac
 
 ## 3. Environment & Running Instructions
 Because the local machine is an Intel MacBook Pro on macOS Ventura without a modern local Xcode 15/16 toolchain:
-- **Web Preview**: `npx expo start --web` (open in browser at `http://localhost:8081` for instant verification).
-- **Physical iPhone Preview**: `npx expo start` -> Scan QR code with the Expo Go app on iPhone 15 Pro (same Wi-Fi or tunnel).
-- **Type Check**: `npm run typecheck`
-- **Lint & Test**: `npm test`
+- **SDK Target**: Expo SDK 54 (React Native 0.76.7, React 18.3.1), aligned specifically to enable no-paid-account preview on physical iPhone 15 Pro via the App Store Expo Go app (which supports up to SDK 54).
+- **Web Preview**: `npx expo start --web` (or `npm run web`, serving at `http://localhost:8081` with URL deep-linking `?article=<id>`).
+- **Physical iPhone Preview**: `npx expo start` -> Scan QR code with the Expo Go app on iPhone 15 Pro (same Wi-Fi or tunnel). Physical device testing is labeled as "unverified" until directly observed on the physical phone.
+- **Reproducible Installation**: `npm ci` (lockfile verified and synchronized).
+- **Type Check**: `npm run typecheck` (`tsc --noEmit`, 0 errors).
+- **Lint**: `npm run lint` (`expo lint`, 0 warnings/errors).
+- **Test Suite**: `npm test` (`tsx --test tests/**/*.test.ts`, 18 tests passing).
+- **Health Check**: `npx expo-doctor@latest` (18/18 checks pass).
 
 ---
 
 ## 4. Current Phase Roadmap
 - **Phase 0**: Reconnaissance & Architecture Decision Record (Completed).
-- **Phase 1**: Functional Vertical Slice (Feed, Reader, Library/Saved, Settings/Interests, Local Persistence, Zod models) (In Progress).
-- **Phase 2**: Live RSS / Content Ingestion Adapter pipeline.
+- **Phase 1.0**: Initial UI Mockup (Completed).
+- **Phase 1.1**: Expo SDK 54 Downgrade & Alignment (Completed).
+- **Phase 1.2**: Reliable Persistence, Deadlock Elimination & Demonstrated Reading Experience (Completed).
+- **Phase 2**: Live Ingestion Pipeline (RSS, ArXiv, Curated feeds) (Upcoming Next Slice).
 - **Phase 3**: Server-side AI enrichment & synthesis.
 - **Phase 4**: Feedback-driven personalization & explainability engine.
 - **Phase 5**: Craft & Raindrop.io connectors.

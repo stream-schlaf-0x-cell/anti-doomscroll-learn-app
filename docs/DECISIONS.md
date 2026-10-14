@@ -42,3 +42,35 @@
   4. Diversity penalty (preventing duplicate consecutive topics)
   5. Unread status boost
 - **Consequences**: Immediate, noticeable responsiveness when the user alters preferences in Settings, plus a human-readable "Warum sehe ich das?" explanation attached to every feed item.
+
+---
+
+## ADR 006: Expo SDK 54 Alignment for App Store Expo Go Preview
+- **Status**: Accepted (Phase 1.1)
+- **Context**: The Apple App Store Expo Go client version supports up to Expo SDK 54. Running SDK 57 on a physical iPhone 15 Pro without a paid Apple Developer membership or custom development build would fail.
+- **Decision**: Align the project to Expo SDK 54 with React Native 0.76.7 and React 18.3.1.
+- **Consequences**: Enables zero-cost, immediate physical device preview on iPhone 15 Pro via the App Store Expo Go app.
+
+---
+
+## ADR 007: Single-Lock Storage Mutex & TransactionScope Architecture
+- **Status**: Accepted (Phase 1.2)
+- **Context**: In Phase 1.1, `runTransaction(key, task)` acquired an exclusive lock, and inside `task`, calls to `setItem(key)` or `removeItem(key)` acquired the same lock again, resulting in an immediate and indefinite deadlock. Catching errors in storage drivers and returning in-memory fallbacks silently masked storage failures.
+- **Decision**:
+  1. Refactor `AtemStorage` to use an injectable `IStorageDriver` with a per-key mutex `KeyLockManager`.
+  2. Provide a single-lock `TransactionScope` (`tx.get`, `tx.set`, `tx.remove`) directly accessing the driver without re-locking.
+  3. Propagate typed storage errors (`StorageUnavailableError`, `StorageWriteError`, `CorruptedDataError`).
+  4. Isolate corrupt JSON into timestamped quarantine keys (`<key>.corrupt.<iso>`) rather than overwriting valid historical bytes.
+- **Consequences**: Complete elimination of persistence deadlocks, atomic concurrent operations across different or identical keys, and transparent data recovery.
+
+---
+
+## ADR 008: Non-Unmounting Overlay Reader & URL History Synchronization
+- **Status**: Accepted (Phase 1.2)
+- **Context**: Conditional rendering (`selectedArticleId ? <ReaderScreen /> : <Tabs />`) completely unmounts the tab tree, discarding feed scroll position, active topic filters, and discovery section expansions. Furthermore, browser back/forward buttons failed to reflect article states on web.
+- **Decision**:
+  1. Keep the tabs tree continuously mounted in the background.
+  2. Render `ReaderScreen` as an absolute overlay (`StyleSheet.absoluteFillObject`) when an article is open.
+  3. Synchronize `selectedArticleId` with `window.history` (`pushState`, `popstate`, and URL query parameter `?article=<id>`).
+  4. Flush throttled reading progress synchronously upon leaving the reader or on app state transitions.
+- **Consequences**: 100% preservation of feed scroll offset and filters upon exiting an article, combined with natural browser history navigation on web and hardware back handling.

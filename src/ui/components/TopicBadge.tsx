@@ -3,7 +3,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, TOPIC_METADATA } from '../../core/domain/types';
 import { useApp } from '../../core/context/AppContext';
-import { typography, radius, spacing } from '../theme';
+import { typography, radius } from '../theme';
 
 interface TopicBadgeProps {
   topic: TopicTag;

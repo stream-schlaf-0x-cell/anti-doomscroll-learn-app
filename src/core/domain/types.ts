@@ -61,7 +61,7 @@ export const SourceReferenceSchema = z.object({
   publicationTimestamp: z.string().optional(),
   retrievalTimestamp: z.string(),
   author: z.string().optional(),
-  isVerified: z.boolean().default(true)
+  isVerified: z.boolean().default(false)
 });
 export type SourceReference = z.infer<typeof SourceReferenceSchema>;
 
@@ -73,6 +73,26 @@ export const ContentStatusSchema = z.enum([
   'demonstration_fixture'
 ]);
 export type ContentStatus = z.infer<typeof ContentStatusSchema>;
+
+export const FactReviewStatusSchema = z.enum([
+  'curated_illustrative',     // Redaktionell kuratierte Beispieldaten
+  'historical_reference',     // Historisch belegte Quelle/Analyse
+  'pedagogical_concept',      // Fachdidaktisches Unterrichtskonzept
+  'philosophical_discourse',  // Philosophischer Diskurs/Primärtext
+  'scientific_paper'          // Wissenschaftliche Publikation
+]);
+export type FactReviewStatus = z.infer<typeof FactReviewStatusSchema>;
+
+export function formatFactReviewStatus(status?: FactReviewStatus): string {
+  switch (status) {
+    case 'philosophical_discourse': return 'Philosophischer Primärdiskurs';
+    case 'scientific_paper': return 'Fachwissenschaftliche Publikation';
+    case 'pedagogical_concept': return 'Fachdidaktisches Unterrichtskonzept';
+    case 'historical_reference': return 'Historische Quelle & Kontext';
+    case 'curated_illustrative': return 'Redaktionelles Anschauungsbeispiel';
+    default: return 'Redaktionell geprüft';
+  }
+}
 
 export const DeepeningOptionsSchema = z.object({
   didacticSeed: z.string().optional(),
@@ -101,7 +121,14 @@ export const FeedItemSchema = z.object({
   editionDate: z.string(),
   editorialNote: z.string().optional(),
   deepeningOptions: DeepeningOptionsSchema.optional(),
-  score: z.number().optional() // computed dynamically by ranking engine
+  score: z.number().optional(), // computed dynamically by ranking engine
+
+  // Honest Editorial Provenance Metadata (Phase 1.1)
+  isDemonstration: z.boolean().default(true),
+  aiAssisted: z.boolean().default(true),
+  factReviewStatus: FactReviewStatusSchema.default('curated_illustrative'),
+  provenanceSummary: z.string(),
+  wordCount: z.number().int().positive()
 });
 export type FeedItem = z.infer<typeof FeedItemSchema>;
 

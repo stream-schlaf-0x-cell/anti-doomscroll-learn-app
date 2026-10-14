@@ -1,26 +1,73 @@
 # Quality Assurance & Verification Runbook — Atem
 
 ## Automated Verification Gates
-1. **TypeScript Type Safety**:
+1. **Reproducible Installation**:
    ```bash
-   npx tsc --noEmit
+   npm ci
    ```
-   Must pass with 0 errors and 0 warnings under strict compiler options.
+   Ensures complete lockfile alignment and identical dependency trees.
 
-2. **Domain Logic Tests**:
+2. **TypeScript Type Safety**:
+   ```bash
+   npm run typecheck
+   ```
+   Executes `tsc --noEmit`. Must pass with 0 errors and 0 warnings under strict compiler options.
+
+3. **Linter**:
+   ```bash
+   npm run lint
+   ```
+   Executes `expo lint`. Must pass with 0 warnings and 0 errors.
+
+4. **Automated Test Suite (18 Tests Across 3 Suites)**:
    ```bash
    npm test
    ```
    Validates:
-   - Zod schema validation for all feed items and user profiles.
-   - Deterministic feed ranking algorithm: ensures higher affinity topics rank first, diversity penalty prevents consecutive duplicate topics, and unread boost functions correctly.
-   - Storage serialization and deserialization.
+   - **Domain Schemas & Invariant Validation** (4 tests):
+     * All fixtures satisfy `FeedItemSchema`.
+     * `DEFAULT_USER_PROFILE` satisfies `UserProfileSchema`.
+     * Schema rejection of invalid reading interactions.
+     * Demonstration collection reading lengths distribution (3 quick, 3 briefings, 2 deep dives, 1 discovery).
+   - **Deterministic Ranking Engine** (6 tests):
+     * Topic affinity scoring prioritizes top interests.
+     * Duration matching boosts items matching user reading duration preference.
+     * Observable ranking differences between quick vs. deep preferences on real fixtures.
+     * Explicit feedback adjustment (`more_like_this` / `less_like_this`).
+     * Topic interleaving prevents consecutive duplicate topics.
+     * Transparent German explanation breakdowns.
+   - **Storage Mutex & Persistence Architecture** (8 tests):
+     * Profile save settles and invokes persistent driver.
+     * Save, unsave, progress, feedback, and reset settle without deadlocking.
+     * Concurrent updates to different articles preserve both changes.
+     * Progress and bookmark updates on same article preserve both fields.
+     * Failed driver operation releases lock so subsequent operations succeed.
+     * New repository instances read committed data from disk.
+     * Anti-overwriting: older asynchronous work cannot overwrite newer user choices.
+     * Corrupted data handling: distinguishes missing vs corrupt bytes, quarantines corrupt payload, and throws `CorruptedDataError`.
 
-3. **Development Server & Web / Device Preview**:
+5. **Project Health & Expo Doctor**:
    ```bash
-   npx expo start --web
+   npx expo-doctor@latest
    ```
-   Verifies that the bundler (Metro) resolves all assets and components cleanly.
+   All 18 diagnostics checks must pass with 0 issues.
+
+6. **Web Export Build**:
+   ```bash
+   npx expo export -p web
+   ```
+   Generates a standalone, production-ready static bundle in `dist/`.
+
+7. **Interactive UI Verification**:
+   Visual validation using headless Chrome across 8 target screens in iPhone 15 Pro dimensions (393x852). Screenshots stored in `screenshots/`:
+   - `01-onboarding.png` (Initial launch)
+   - `02-feed-hero.png` (Finite feed top & dynamic hero)
+   - `03-feed-finite-edition.png` ("Ende dieser Ausgabe" anti-doomscroll banner)
+   - `04-reader-top.png` (Overlay reader with word counts & reading rates)
+   - `05-reader-provenance.png` (Editorial provenance, German fact-review, real URLs)
+   - `06-library.png` (Local-first library with sub-filters)
+   - `07-settings.png` (Transparent interest weighting steppers)
+   - `08-settings-reset-modal.png` (Confirmation modal for destructive reset)
 
 ---
 

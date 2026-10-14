@@ -12,7 +12,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   title = 'ATEM',
-  subtitle = 'Tagesausgabe • 13. Oktober 2026',
+  subtitle = 'Demo-Ausgabe • 13. Oktober 2026',
   showThemeToggle = true
 }) => {
   const { colors, isDark, setThemePreference } = useApp();
@@ -24,9 +24,14 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <View style={[styles.headerContainer, { borderBottomColor: colors.borderSubtle }]}>
       <View style={styles.titleColumn}>
-        <Text style={[styles.logoText, { color: colors.textPrimary }]}>
-          {title}
-        </Text>
+        <View style={styles.titleRow}>
+          <Text style={[styles.logoText, { color: colors.textPrimary }]}>
+            {title}
+          </Text>
+          <View style={[styles.demoTag, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}>
+            <Text style={[styles.demoTagText, { color: colors.accent }]}>DEMO-AUSGABE</Text>
+          </View>
+        </View>
         <Text style={[styles.subtitleText, { color: colors.textMuted }]}>
           {subtitle}
         </Text>
@@ -37,6 +42,8 @@ export const Header: React.FC<HeaderProps> = ({
           onPress={handleToggleTheme}
           style={[styles.themeToggle, { backgroundColor: colors.surfaceSecondary }]}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel={isDark ? "Helles Erscheinungsbild aktivieren" : "Dunkles Erscheinungsbild aktivieren"}
         >
           <Ionicons
             name={isDark ? 'sunny-outline' : 'moon-outline'}
@@ -62,6 +69,22 @@ const styles = StyleSheet.create({
   titleColumn: {
     flex: 1
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  demoTag: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 0.5
+  },
+  demoTagText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.6
+  },
   logoText: {
     fontFamily: typography.fontFamilies.serif,
     fontSize: 26,
@@ -75,9 +98,9 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
   themeToggle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center'
   }

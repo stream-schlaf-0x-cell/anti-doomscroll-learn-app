@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { useColorScheme } from 'react-native';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useColorScheme, Platform, AppState, AppStateStatus } from 'react-native';
 import {
   UserProfile,
   ReadingInteraction,
@@ -11,36 +11,48 @@ import { ScoredFeedItem } from '../domain/ranking';
 import { feedRepository } from '../data/feedRepository';
 import { libraryRepository } from '../data/libraryRepository';
 import { userProfileRepository } from '../data/userProfileRepository';
-import { DEFAULT_USER_PROFILE } from '../data/fixtures';
+import { DEFAULT_USER_PROFILE, DEFAULT_STARTER_INTERESTS } from '../data/fixtures';
+import { appStorage, CorruptedDataError, StorageUnavailableError } from '../data/storage';
 import { lightColors, darkColors, ThemeColors } from '../../ui/theme';
+
+export type StartupState =
+  | { status: 'loading' }
+  | { status: 'ready' }
+  | { status: 'error'; message: string; isCorrupt?: boolean; canReset?: boolean };
 
 interface AppContextValue {
   profile: UserProfile;
   interactions: Record<string, ReadingInteraction>;
   dailyEdition: ScoredFeedItem[];
   discoveryItems: ScoredFeedItem[];
-  isLoading: boolean;
+  startupState: StartupState;
+  errorMessage: string | null;
+  clearError: () => void;
   colors: ThemeColors;
   isDark: boolean;
   activeTab: 'feed' | 'library' | 'settings';
   setActiveTab: (tab: 'feed' | 'library' | 'settings') => void;
   selectedArticleId: string | null;
   selectedArticle: FeedItem | null;
-  openArticle: (id: string) => void;
+  openArticle: (id: string) => Promise<void>;
   closeArticle: () => void;
   whyModalItem: ScoredFeedItem | null;
   openWhyModal: (item: ScoredFeedItem) => void;
   closeWhyModal: () => void;
   toggleSaveItem: (id: string) => Promise<void>;
   updateReadingProgress: (id: string, percent: number) => Promise<void>;
+  flushReadingProgress: () => Promise<void>;
   setFeedback: (id: string, feedback: 'more_like_this' | 'less_like_this' | 'neutral') => Promise<void>;
   updateTopicWeight: (topic: TopicTag, weight: number) => Promise<void>;
   updateDurationPreference: (pref: ReadingPreferenceDuration) => Promise<void>;
   setFontSize: (size: 'sm' | 'md' | 'lg' | 'xl') => Promise<void>;
   setThemePreference: (theme: 'system' | 'light' | 'dark') => Promise<void>;
   completeOnboarding: (interests: Record<TopicTag, number>, duration: ReadingPreferenceDuration) => Promise<void>;
-  resetOnboarding: () => Promise<void>;
+  repeatOnboarding: () => Promise<void>;
+  clearAllLocalData: () => Promise<void>;
   refreshFeed: () => Promise<void>;
+  retryStartup: () => Promise<void>;
+  resetCorruptedData: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -51,11 +63,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [interactions, setInteractions] = useState<Record<string, ReadingInteraction>>({});
   const [dailyEdition, setDailyEdition] = useState<ScoredFeedItem[]>([]);
   const [discoveryItems, setDiscoveryItems] = useState<ScoredFeedItem[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [startupState, setStartupState] = useState<StartupState>({ status: 'loading' });
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'feed' | 'library' | 'settings'>('feed');
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<FeedItem | null>(null);
   const [whyModalItem, setWhyModalItem] = useState<ScoredFeedItem | null>(null);
+
+  // References to track latest committed state and prevent stale closures
+  const latestProfileRef = useRef<UserProfile>(profile);
+  const latestInteractionsRef = useRef<Record<string, ReadingInteraction>>(interactions);
+  latestProfileRef.current = profile;
+  latestInteractionsRef.current = interactions;
+
+  // Sequencing token to discard stale asynchronous feed recomputations
+  const feedRecomputeVersion = useRef<number>(0);
+
+  // Pending throttled reading progress buffer
+  const pendingProgressRef = useRef<{ id: string; percent: number } | null>(null);
+  const progressDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Compute active theme colors
   const isDark = useMemo(() => {
@@ -67,56 +93,206 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const colors = useMemo(() => (isDark ? darkColors : lightColors), [isDark]);
 
-  // Load initial data
-  const loadInitialData = useCallback(async () => {
-    setIsLoading(true);
+  // Sequenced feed recomputation: newest committed call always wins
+  const scheduleFeedRecompute = useCallback(async (prof: UserProfile, inter: Record<string, ReadingInteraction>) => {
+    const currentVersion = ++feedRecomputeVersion.current;
     try {
-      const [loadedProfile, loadedInteractions] = await Promise.all([
-        userProfileRepository.getProfile(),
-        libraryRepository.getInteractions()
-      ]);
-      setProfile(loadedProfile);
-      setInteractions(loadedInteractions);
-
       const [daily, disc] = await Promise.all([
-        feedRepository.getDailyEdition(loadedProfile, loadedInteractions),
-        feedRepository.getDiscoveryItems(loadedProfile, loadedInteractions)
+        feedRepository.getDailyEdition(prof, inter),
+        feedRepository.getDiscoveryItems(prof, inter)
       ]);
-      setDailyEdition(daily);
-      setDiscoveryItems(disc);
-    } finally {
-      setIsLoading(false);
+      if (currentVersion === feedRecomputeVersion.current) {
+        setDailyEdition(daily);
+        setDiscoveryItems(disc);
+      }
+    } catch (err) {
+      console.warn('Feed-Berechnung fehlgeschlagen:', err);
     }
   }, []);
+
+  // Flush pending reading progress immediately to persistent storage
+  const flushReadingProgress = useCallback(async () => {
+    if (progressDebounceTimerRef.current) {
+      clearTimeout(progressDebounceTimerRef.current);
+      progressDebounceTimerRef.current = null;
+    }
+    const pending = pendingProgressRef.current;
+    if (pending) {
+      pendingProgressRef.current = null;
+      try {
+        const updated = await libraryRepository.updateProgress(pending.id, pending.percent);
+        setInteractions(prev => {
+          const next = { ...prev, [pending.id]: updated };
+          latestInteractionsRef.current = next;
+          return next;
+        });
+      } catch (err) {
+        console.warn('Lesefortschritt konnte nicht persistiert werden:', err);
+      }
+    }
+  }, []);
+
+  // Flush progress when app moves to background
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        flushReadingProgress();
+      }
+    };
+    const sub = AppState.addEventListener('change', handleAppStateChange);
+    return () => sub.remove();
+  }, [flushReadingProgress]);
+
+  // Load initial data on startup with explicit typed error recovery
+  const loadInitialData = useCallback(async () => {
+    setStartupState({ status: 'loading' });
+    setErrorMessage(null);
+
+    try {
+      let loadedProfile: UserProfile;
+      try {
+        loadedProfile = await userProfileRepository.getProfile();
+      } catch (profileErr) {
+        if (profileErr instanceof CorruptedDataError) {
+          setStartupState({
+            status: 'error',
+            message: 'Beschädigte Profileinstellungen festgestellt. Deine bisherigen Daten konnten nicht gelesen werden.',
+            isCorrupt: true,
+            canReset: true
+          });
+          return;
+        }
+        if (profileErr instanceof StorageUnavailableError) {
+          setStartupState({
+            status: 'error',
+            message: 'Lokaler Speicher ist derzeit nicht erreichbar. Bitte starte die App neu.',
+            canReset: false
+          });
+          return;
+        }
+        throw profileErr;
+      }
+
+      let loadedInteractions: Record<string, ReadingInteraction> = {};
+      try {
+        loadedInteractions = await libraryRepository.getInteractions();
+      } catch (libErr) {
+        if (libErr instanceof CorruptedDataError) {
+          setStartupState({
+            status: 'error',
+            message: 'Beschädigte Bibliotheksdaten festgestellt. Deine Lesezeichen konnten nicht geladen werden.',
+            isCorrupt: true,
+            canReset: true
+          });
+          return;
+        }
+        throw libErr;
+      }
+
+      setProfile(loadedProfile);
+      setInteractions(loadedInteractions);
+      latestProfileRef.current = loadedProfile;
+      latestInteractionsRef.current = loadedInteractions;
+
+      await scheduleFeedRecompute(loadedProfile, loadedInteractions);
+      setStartupState({ status: 'ready' });
+
+      // On Web: check initial URL query for ?article=<id>
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const urlArticleId = params.get('article');
+          if (urlArticleId) {
+            const item = await feedRepository.getItemById(urlArticleId);
+            setSelectedArticleId(urlArticleId);
+            setSelectedArticle(item);
+          }
+        } catch {
+          // Ignore URL query parsing errors on web
+        }
+      }
+    } catch (err: any) {
+      setStartupState({
+        status: 'error',
+        message: err?.message || 'Die Tagesausgabe konnte nicht initialisiert werden. Bitte tippe auf Wiederholen.',
+        canReset: true
+      });
+    }
+  }, [scheduleFeedRecompute]);
 
   useEffect(() => {
     loadInitialData();
   }, [loadInitialData]);
 
-  // Re-rank feed whenever profile or interactions change
-  const recomputeFeed = useCallback(async (prof: UserProfile, inter: Record<string, ReadingInteraction>) => {
-    const [daily, disc] = await Promise.all([
-      feedRepository.getDailyEdition(prof, inter),
-      feedRepository.getDiscoveryItems(prof, inter)
-    ]);
-    setDailyEdition(daily);
-    setDiscoveryItems(disc);
-  }, []);
+  // Quarantines corrupt bytes and resets to fresh defaults
+  const resetCorruptedData = useCallback(async () => {
+    try {
+      await userProfileRepository.quarantineAndReset();
+      await libraryRepository.quarantineAndReset();
+      await loadInitialData();
+    } catch {
+      setErrorMessage('Zurücksetzen fehlgeschlagen. Bitte versuche es erneut.');
+    }
+  }, [loadInitialData]);
 
   const refreshFeed = useCallback(async () => {
-    await recomputeFeed(profile, interactions);
-  }, [recomputeFeed, profile, interactions]);
+    await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
+  }, [scheduleFeedRecompute]);
 
   const openArticle = useCallback(async (id: string) => {
-    setSelectedArticleId(id);
     const item = await feedRepository.getItemById(id);
-    setSelectedArticle(item);
+    setSelectedArticleId(id);
+    setSelectedArticle(item); // item can be null if missing; ReaderScreen gracefully displays fallback
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      try {
+        if (window.location.search !== `?article=${id}`) {
+          window.history.pushState({ articleId: id }, '', `?article=${id}`);
+        }
+      } catch {
+        // Ignored
+      }
+    }
   }, []);
 
   const closeArticle = useCallback(() => {
+    flushReadingProgress();
     setSelectedArticleId(null);
     setSelectedArticle(null);
-  }, []);
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      try {
+        if (window.location.search.includes('article=')) {
+          window.history.pushState({}, '', window.location.pathname);
+        }
+      } catch {
+        // Ignored
+      }
+    }
+  }, [flushReadingProgress]);
+
+  // Web Browser History Navigation (back / forward / direct URL)
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const onPopState = async (e: PopStateEvent) => {
+        const params = new URLSearchParams(window.location.search);
+        const articleIdFromUrl = params.get('article') || e.state?.articleId;
+
+        if (articleIdFromUrl) {
+          const item = await feedRepository.getItemById(articleIdFromUrl);
+          setSelectedArticleId(articleIdFromUrl);
+          setSelectedArticle(item);
+        } else {
+          flushReadingProgress();
+          setSelectedArticleId(null);
+          setSelectedArticle(null);
+        }
+      };
+
+      window.addEventListener('popstate', onPopState);
+      return () => window.removeEventListener('popstate', onPopState);
+    }
+  }, [flushReadingProgress]);
 
   const openWhyModal = useCallback((item: ScoredFeedItem) => {
     setWhyModalItem(item);
@@ -127,106 +303,199 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const toggleSaveItem = useCallback(async (id: string) => {
-    const isCurrentlySaved = interactions[id]?.saved ?? false;
-    const updated = isCurrentlySaved
-      ? await libraryRepository.unsaveItem(id)
-      : await libraryRepository.saveItem(id);
+    try {
+      const isCurrentlySaved = latestInteractionsRef.current[id]?.saved ?? false;
+      const updated = isCurrentlySaved
+        ? await libraryRepository.unsaveItem(id)
+        : await libraryRepository.saveItem(id);
 
+      setInteractions(prev => {
+        const next = { ...prev, [id]: updated };
+        latestInteractionsRef.current = next;
+        return next;
+      });
+    } catch {
+      setErrorMessage('Lesezeichen konnte nicht gespeichert werden.');
+    }
+  }, []);
+
+  // Throttled reading progress write (bounds write rate to max 1 write / 800ms while scrolling)
+  const updateReadingProgress = useCallback(async (id: string, percent: number) => {
+    // Keep in pending buffer
+    pendingProgressRef.current = { id, percent };
+
+    // Update React state optimistically so progress bar is instant
     setInteractions(prev => {
-      const next = { ...prev, [id]: updated };
+      const existing = prev[id] ?? { itemId: id, saved: false, progressPercent: 0 };
+      const next = {
+        ...prev,
+        [id]: {
+          ...existing,
+          progressPercent: Math.max(existing.progressPercent, percent)
+        }
+      };
+      latestInteractionsRef.current = next;
       return next;
     });
-  }, [interactions]);
 
-  const updateReadingProgress = useCallback(async (id: string, percent: number) => {
-    const updated = await libraryRepository.updateProgress(id, percent);
-    setInteractions(prev => ({ ...prev, [id]: updated }));
+    if (progressDebounceTimerRef.current) {
+      clearTimeout(progressDebounceTimerRef.current);
+    }
+
+    progressDebounceTimerRef.current = setTimeout(async () => {
+      progressDebounceTimerRef.current = null;
+      const pending = pendingProgressRef.current;
+      if (pending) {
+        pendingProgressRef.current = null;
+        try {
+          const updated = await libraryRepository.updateProgress(pending.id, pending.percent);
+          setInteractions(prev => {
+            const next = { ...prev, [pending.id]: updated };
+            latestInteractionsRef.current = next;
+            return next;
+          });
+        } catch {
+          // Non-fatal background write
+        }
+      }
+    }, 800);
   }, []);
 
   const setFeedback = useCallback(async (id: string, feedback: 'more_like_this' | 'less_like_this' | 'neutral') => {
-    const updated = await libraryRepository.setFeedback(id, feedback);
-    setInteractions(prev => {
-      const next = { ...prev, [id]: updated };
-      recomputeFeed(profile, next);
-      return next;
-    });
-  }, [profile, recomputeFeed]);
+    try {
+      const updated = await libraryRepository.setFeedback(id, feedback);
+      const nextInteractions = { ...latestInteractionsRef.current, [id]: updated };
+      latestInteractionsRef.current = nextInteractions;
+      setInteractions(nextInteractions);
+      await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
+    } catch {
+      setErrorMessage('Feedback konnte nicht gespeichert werden.');
+    }
+  }, [scheduleFeedRecompute]);
 
   const updateTopicWeight = useCallback(async (topic: TopicTag, weight: number) => {
-    const updatedProfile: UserProfile = {
-      ...profile,
-      explicitInterests: {
-        ...profile.explicitInterests,
-        [topic]: Math.max(0, Math.min(1, weight))
-      }
-    };
-    setProfile(updatedProfile);
-    await userProfileRepository.saveProfile(updatedProfile);
-    await recomputeFeed(updatedProfile, interactions);
-  }, [profile, interactions, recomputeFeed]);
+    try {
+      const committed = await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        explicitInterests: {
+          ...curr.explicitInterests,
+          [topic]: Math.max(0, Math.min(1, weight))
+        }
+      }));
+      latestProfileRef.current = committed;
+      setProfile(committed);
+      await scheduleFeedRecompute(committed, latestInteractionsRef.current);
+    } catch {
+      setErrorMessage('Themengewichtung konnte nicht gespeichert werden.');
+    }
+  }, [scheduleFeedRecompute]);
 
   const updateDurationPreference = useCallback(async (pref: ReadingPreferenceDuration) => {
-    const updatedProfile: UserProfile = {
-      ...profile,
-      readingPreferences: {
-        ...profile.readingPreferences,
-        preferredDuration: pref
-      }
-    };
-    setProfile(updatedProfile);
-    await userProfileRepository.saveProfile(updatedProfile);
-    await recomputeFeed(updatedProfile, interactions);
-  }, [profile, interactions, recomputeFeed]);
+    try {
+      const committed = await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        readingPreferences: {
+          ...curr.readingPreferences,
+          preferredDuration: pref
+        }
+      }));
+      latestProfileRef.current = committed;
+      setProfile(committed);
+      await scheduleFeedRecompute(committed, latestInteractionsRef.current);
+    } catch {
+      setErrorMessage('Lesezeit-Präferenz konnte nicht gespeichert werden.');
+    }
+  }, [scheduleFeedRecompute]);
 
   const setFontSize = useCallback(async (fontSize: 'sm' | 'md' | 'lg' | 'xl') => {
-    const updatedProfile: UserProfile = {
-      ...profile,
-      readingPreferences: {
-        ...profile.readingPreferences,
-        fontSize
-      }
-    };
-    setProfile(updatedProfile);
-    await userProfileRepository.saveProfile(updatedProfile);
-  }, [profile]);
+    try {
+      const committed = await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        readingPreferences: {
+          ...curr.readingPreferences,
+          fontSize
+        }
+      }));
+      latestProfileRef.current = committed;
+      setProfile(committed);
+    } catch {
+      setErrorMessage('Schriftgröße konnte nicht gespeichert werden.');
+    }
+  }, []);
 
   const setThemePreference = useCallback(async (theme: 'system' | 'light' | 'dark') => {
-    const updatedProfile: UserProfile = {
-      ...profile,
-      readingPreferences: {
-        ...profile.readingPreferences,
-        theme
-      }
-    };
-    setProfile(updatedProfile);
-    await userProfileRepository.saveProfile(updatedProfile);
-  }, [profile]);
+    try {
+      const committed = await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        readingPreferences: {
+          ...curr.readingPreferences,
+          theme
+        }
+      }));
+      latestProfileRef.current = committed;
+      setProfile(committed);
+    } catch {
+      setErrorMessage('Erscheinungsbild konnte nicht gespeichert werden.');
+    }
+  }, []);
 
   const completeOnboarding = useCallback(async (interests: Record<TopicTag, number>, duration: ReadingPreferenceDuration) => {
-    const updatedProfile: UserProfile = {
-      ...profile,
-      explicitInterests: interests,
-      readingPreferences: {
-        ...profile.readingPreferences,
-        preferredDuration: duration
-      },
-      isOnboarded: true
-    };
-    setProfile(updatedProfile);
-    await userProfileRepository.saveProfile(updatedProfile);
-    await recomputeFeed(updatedProfile, interactions);
-  }, [profile, interactions, recomputeFeed]);
+    try {
+      const committed = await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        explicitInterests: interests,
+        readingPreferences: {
+          ...curr.readingPreferences,
+          preferredDuration: duration
+        },
+        isOnboarded: true
+      }));
+      latestProfileRef.current = committed;
+      setProfile(committed);
+      await scheduleFeedRecompute(committed, latestInteractionsRef.current);
+    } catch {
+      setErrorMessage('Onboarding konnte nicht gespeichert werden.');
+    }
+  }, [scheduleFeedRecompute]);
 
-  const resetOnboarding = useCallback(async () => {
-    const reset = await userProfileRepository.resetProfile();
-    const cleanProfile: UserProfile = { ...reset, isOnboarded: false };
-    setProfile(cleanProfile);
-    await userProfileRepository.saveProfile(cleanProfile);
-    await libraryRepository.clearLibrary();
-    setInteractions({});
-    await recomputeFeed(cleanProfile, {});
-    setActiveTab('feed');
-  }, [recomputeFeed]);
+  // Re-runs onboarding flow without destroying saved articles
+  const repeatOnboarding = useCallback(async () => {
+    try {
+      const committed = await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        isOnboarded: false
+      }));
+      latestProfileRef.current = committed;
+      setProfile(committed);
+      setActiveTab('feed');
+    } catch {
+      setErrorMessage('Onboarding-Start fehlgeschlagen.');
+    }
+  }, []);
+
+  // Destructive reset: wipes only @atem: keys and restores clean state
+  const clearAllLocalData = useCallback(async () => {
+    try {
+      await appStorage.clearAtemKeys();
+      const cleanProfile: UserProfile = {
+        ...DEFAULT_USER_PROFILE,
+        explicitInterests: { ...DEFAULT_STARTER_INTERESTS },
+        isOnboarded: false
+      };
+      latestProfileRef.current = cleanProfile;
+      latestInteractionsRef.current = {};
+      setProfile(cleanProfile);
+      setInteractions({});
+      await scheduleFeedRecompute(cleanProfile, {});
+      setActiveTab('feed');
+    } catch {
+      setErrorMessage('Löschen der lokalen Daten fehlgeschlagen.');
+    }
+  }, [scheduleFeedRecompute]);
+
+  const clearError = useCallback(() => {
+    setErrorMessage(null);
+  }, []);
 
   return (
     <AppContext.Provider
@@ -235,7 +504,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         interactions,
         dailyEdition,
         discoveryItems,
-        isLoading,
+        startupState,
+        errorMessage,
+        clearError,
         colors,
         isDark,
         activeTab,
@@ -249,14 +520,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         closeWhyModal,
         toggleSaveItem,
         updateReadingProgress,
+        flushReadingProgress,
         setFeedback,
         updateTopicWeight,
         updateDurationPreference,
         setFontSize,
         setThemePreference,
         completeOnboarding,
-        resetOnboarding,
-        refreshFeed
+        repeatOnboarding,
+        clearAllLocalData,
+        refreshFeed,
+        retryStartup: loadInitialData,
+        resetCorruptedData
       }}
     >
       {children}
