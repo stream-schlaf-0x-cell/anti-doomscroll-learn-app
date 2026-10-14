@@ -204,5 +204,125 @@ export const VERIFIED_FEED_SOURCES: RawFeedSource[] = [
     defaultEvidenceTier: 'publisher_excerpt',
     defaultAuthor: 'Lines Community',
     language: 'en'
+  },
+
+  // 7. YouTube Masterpieces & Visual Essays (Native YouTube XML Feeds)
+  {
+    id: 'yt-3blue1brown',
+    name: '3Blue1Brown',
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCYO_jab_esuFRV4b17AJtAw',
+    primaryTopic: 'youtube_gems',
+    topics: ['youtube_gems', 'science_society', 'german_didactics'],
+    defaultEvidenceTier: 'permitted_full_text',
+    defaultAuthor: 'Grant Sanderson',
+    language: 'en'
+  },
+  {
+    id: 'yt-veritasium',
+    name: 'Veritasium',
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCHnyfMqiRRG1u-2MsSQLbXA',
+    primaryTopic: 'youtube_gems',
+    topics: ['youtube_gems', 'science_society', 'philosophy_ethics'],
+    defaultEvidenceTier: 'permitted_full_text',
+    defaultAuthor: 'Derek Muller',
+    language: 'en'
+  },
+  {
+    id: 'yt-kurzgesagt',
+    name: 'Kurzgesagt – In a Nutshell',
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCsXVk37bltHxD1rDPwtNM8Q',
+    primaryTopic: 'youtube_gems',
+    topics: ['youtube_gems', 'science_society', 'contemplation_mind'],
+    defaultEvidenceTier: 'permitted_full_text',
+    defaultAuthor: 'Kurzgesagt Redaktion',
+    language: 'en'
+  },
+  {
+    id: 'yt-huberman',
+    name: 'Huberman Lab',
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC2D2CMWXMOVWx7giW1n3LIg',
+    primaryTopic: 'health_biohacking',
+    topics: ['health_biohacking', 'youtube_gems', 'contemplation_mind'],
+    defaultEvidenceTier: 'permitted_full_text',
+    defaultAuthor: 'Dr. Andrew Huberman',
+    language: 'en'
+  },
+
+  // 8. Bücher, Literatur & Kulturkritik (Feuilleton & Reviews)
+  {
+    id: 'perlentaucher-magazin',
+    name: 'Perlentaucher Das Kulturmagazin',
+    url: 'https://www.perlentaucher.de/index.rss',
+    primaryTopic: 'book_mastery',
+    topics: ['book_mastery', 'philosophy_ethics', 'german_didactics'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'Perlentaucher Redaktion',
+    language: 'de'
+  },
+  {
+    id: 'dlf-buechermarkt',
+    name: 'Deutschlandfunk Büchermarkt',
+    url: 'https://www.deutschlandfunk.de/buechermarkt-100.rss',
+    primaryTopic: 'book_mastery',
+    topics: ['book_mastery', 'german_didactics', 'philosophy_ethics'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'Deutschlandfunk Redaktion',
+    language: 'de'
+  },
+  {
+    id: 'spektrum-wissenschaft',
+    name: 'Spektrum der Wissenschaft',
+    url: 'https://www.spektrum.de/alias/rss/spektrum-der-wissenschaft-rss-feed/982623',
+    primaryTopic: 'science_society',
+    topics: ['science_society', 'book_mastery', 'ai_apple'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'Spektrum Verlag',
+    language: 'de'
+  },
+  {
+    id: 'gehirn-und-geist',
+    name: 'Gehirn & Geist (Kognition & Psychologie)',
+    url: 'https://www.spektrum.de/alias/rss/gehirn-und-geist-rss-feed/982626',
+    primaryTopic: 'health_biohacking',
+    topics: ['health_biohacking', 'contemplation_mind', 'science_society'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'Spektrum Verlag',
+    language: 'de'
+  },
+
+  // 9. Schule, Fachdidaktik & Bildungsdiskurs
+  {
+    id: 'deutscher-bildungsserver',
+    name: 'Deutscher Bildungsserver',
+    url: 'https://www.bildungsserver.de/rss.xml',
+    primaryTopic: 'german_didactics',
+    topics: ['german_didactics', 'science_society'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'DBS Redaktion',
+    language: 'de',
+    isTeachingRelated: true
+  },
+  {
+    id: 'bpb-themen',
+    name: 'Bundeszentrale für politische Bildung (bpb)',
+    url: 'https://www.bpb.de/rss-feed/133223.rss',
+    primaryTopic: 'german_didactics',
+    topics: ['german_didactics', 'philosophy_ethics', 'science_society'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'BPB Redaktion',
+    language: 'de',
+    isTeachingRelated: true
+  },
+
+  // 10. High-IQ Satire & Memes
+  {
+    id: 'xkcd-comics',
+    name: 'xkcd Comics & Satire',
+    url: 'https://xkcd.com/rss.xml',
+    primaryTopic: 'memes_satire',
+    topics: ['memes_satire', 'science_society', 'ai_apple'],
+    defaultEvidenceTier: 'permitted_full_text',
+    defaultAuthor: 'Randall Munroe',
+    language: 'en'
   }
 ];

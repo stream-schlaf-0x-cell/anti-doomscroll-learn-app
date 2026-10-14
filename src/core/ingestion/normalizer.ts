@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { RawFeedEntry, RawFeedSource } from './types';
 import { FeedItem, FeedItemFormat, SourceReference, TOPIC_SPACE_MAP } from '../domain/types';
-import { calculateReadingStats } from '../data/fixtures';
+import { calculateReadingStats, getCuratedImageForTopic, getSimulatedCommentsForTopic } from '../data/fixtures';
 
 /**
  * Removes tracking parameters (utm_*, fbclid, etc.) and normalizes URLs.
@@ -45,7 +45,11 @@ export function generateContentHash(canonicalUrl: string, title: string, text: s
 /**
  * Determines appropriate editorial format based on content length and source characteristics.
  */
-function inferFormat(words: number, isChallenging?: boolean): FeedItemFormat {
+function inferFormat(source: RawFeedSource, words: number, isChallenging?: boolean): FeedItemFormat {
+  if (source.primaryTopic === 'youtube_gems' || source.id.startsWith('yt-')) return 'youtube_gem';
+  if (source.primaryTopic === 'book_mastery') return 'book_masterpiece';
+  if (source.primaryTopic === 'memes_satire') return 'meme';
+  if (source.primaryTopic === 'opportunities_growth') return 'opportunity_radar';
   if (isChallenging) return 'perspective_disagreement';
   if (words <= 220) return 'concise_insight';
   if (words >= 800) return 'long_invitation';
@@ -75,7 +79,7 @@ export function normalizeFeedEntry(entry: RawFeedEntry, source: RawFeedSource): 
 
   const author = entry.author || source.defaultAuthor || source.name;
   const isChallenging = source.isChallengingPerspective ?? false;
-  const format = inferFormat(wordCount, isChallenging);
+  const format = inferFormat(source, wordCount, isChallenging);
 
   const sourceRef: SourceReference = {
     publisher: source.name,
@@ -129,18 +133,18 @@ export function normalizeFeedEntry(entry: RawFeedEntry, source: RawFeedSource): 
       interpretation: entry.summary.slice(0, 200),
       humanSource: author
     } : undefined,
-    imageUrl: entry.imageUrl,
+    imageUrl: entry.imageUrl || getCuratedImageForTopic(source.primaryTopic, entry.title),
 
     // Atem Network & Social Discovery Additions
     space: TOPIC_SPACE_MAP[source.primaryTopic]?.space,
     flair: TOPIC_SPACE_MAP[source.primaryTopic]?.flair,
     upvotesCount: 42 + (contentHash.charCodeAt(0) % 50),
     awardsCount: { gold: 0, brain: 0, spark: 0 },
-    sourceTrustLevel: (source.id.includes('tagesschau') || source.id.includes('dlf') || source.id.includes('zdf'))
+    sourceTrustLevel: (source.id.includes('tagesschau') || source.id.includes('dlf') || source.id.includes('zdf') || source.id.includes('bpb'))
       ? 'public_broadcaster'
-      : (source.id.includes('sep') || source.id.includes('plato') ? 'peer_reviewed' : 'deep_essay'),
+      : (source.id.startsWith('yt-') ? 'verified_creator' : (source.id.includes('sep') || source.id.includes('plato') ? 'peer_reviewed' : 'deep_essay')),
     sourceBroadcasterName: source.name,
     sourceDomain: canonicalUrl ? canonicalUrl.replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '') : undefined,
-    comments: []
+    comments: getSimulatedCommentsForTopic(source.primaryTopic, entry.title, contentHash.slice(0, 8))
   };
 }

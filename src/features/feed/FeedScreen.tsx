@@ -151,6 +151,76 @@ export const FeedScreen: React.FC = () => {
     ? 'Alle Spaces'
     : (TOPIC_SPACE_MAP[selectedFilter]?.space || selectedFilter);
 
+  const renderSpacePills = () => (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.filterScroll}
+    >
+      {/* All Spaces Tab */}
+      <TouchableOpacity
+        onPress={() => handleFilterChange('all')}
+        style={[
+          styles.spacePill,
+          {
+            backgroundColor: selectedFilter === 'all' ? colors.accent : colors.surfaceSecondary,
+            borderColor: selectedFilter === 'all' ? colors.accent : colors.borderSubtle
+          }
+        ]}
+      >
+        <Ionicons
+          name="compass-outline"
+          size={13}
+          color={selectedFilter === 'all' ? '#FFFFFF' : colors.textSecondary}
+          style={{ marginRight: 5 }}
+        />
+        <Text
+          style={[
+            styles.spacePillText,
+            { color: selectedFilter === 'all' ? '#FFFFFF' : colors.textSecondary }
+          ]}
+        >
+          🌟 Alle Spaces
+        </Text>
+      </TouchableOpacity>
+
+      {/* Individual Spaces */}
+      {(Object.keys(TOPIC_SPACE_MAP) as TopicTag[]).map(tag => {
+        const isSelected = selectedFilter === tag;
+        const meta = TOPIC_SPACE_MAP[tag];
+
+        return (
+          <TouchableOpacity
+            key={tag}
+            onPress={() => handleFilterChange(tag)}
+            style={[
+              styles.spacePill,
+              {
+                backgroundColor: isSelected ? meta.color : colors.surfaceSecondary,
+                borderColor: isSelected ? meta.color : colors.borderSubtle
+              }
+            ]}
+          >
+            <Ionicons
+              name={(meta.icon as any) || 'planet-outline'}
+              size={13}
+              color={isSelected ? '#FFFFFF' : meta.color}
+              style={{ marginRight: 5 }}
+            />
+            <Text
+              style={[
+                styles.spacePillText,
+                { color: isSelected ? '#FFFFFF' : colors.textPrimary }
+              ]}
+            >
+              {meta.space}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Top Header: Reddit Desktop Header vs Mobile Header */}
@@ -166,78 +236,14 @@ export const FeedScreen: React.FC = () => {
         <Header />
       )}
 
-      {/* Community Space Selector Bar */}
-      <View style={[styles.filterBarContainer, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
-        <View style={[styles.filterBarInner, isDesktop && styles.desktopFilterBarInner]}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterScroll}
-          >
-            {/* All Spaces Tab */}
-            <TouchableOpacity
-              onPress={() => handleFilterChange('all')}
-              style={[
-                styles.spacePill,
-                {
-                  backgroundColor: selectedFilter === 'all' ? colors.accent : colors.surfaceSecondary,
-                  borderColor: selectedFilter === 'all' ? colors.accent : colors.borderSubtle
-                }
-              ]}
-            >
-              <Ionicons
-                name="compass-outline"
-                size={13}
-                color={selectedFilter === 'all' ? '#FFFFFF' : colors.textSecondary}
-                style={{ marginRight: 5 }}
-              />
-              <Text
-                style={[
-                  styles.spacePillText,
-                  { color: selectedFilter === 'all' ? '#FFFFFF' : colors.textSecondary }
-                ]}
-              >
-                🌟 Alle Spaces
-              </Text>
-            </TouchableOpacity>
-
-            {/* Individual Spaces */}
-            {(Object.keys(TOPIC_SPACE_MAP) as TopicTag[]).map(tag => {
-              const isSelected = selectedFilter === tag;
-              const meta = TOPIC_SPACE_MAP[tag];
-
-              return (
-                <TouchableOpacity
-                  key={tag}
-                  onPress={() => handleFilterChange(tag)}
-                  style={[
-                    styles.spacePill,
-                    {
-                      backgroundColor: isSelected ? meta.color : colors.surfaceSecondary,
-                      borderColor: isSelected ? meta.color : colors.borderSubtle
-                    }
-                  ]}
-                >
-                  <Ionicons
-                    name={(meta.icon as any) || 'planet-outline'}
-                    size={13}
-                    color={isSelected ? '#FFFFFF' : meta.color}
-                    style={{ marginRight: 5 }}
-                  />
-                  <Text
-                    style={[
-                      styles.spacePillText,
-                      { color: isSelected ? '#FFFFFF' : colors.textPrimary }
-                    ]}
-                  >
-                    {meta.space}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+      {/* Mobile Community Space Selector Bar (Only on mobile as global bar) */}
+      {!isDesktop && (
+        <View style={[styles.filterBarContainer, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
+          <View style={styles.filterBarInner}>
+            {renderSpacePills()}
+          </View>
         </View>
-      </View>
+      )}
 
       {/* Main Feed Scroll (Desktop Centered & Two-Column Layout) */}
       <ScrollView
@@ -256,6 +262,13 @@ export const FeedScreen: React.FC = () => {
         <View style={[styles.mainLayoutWrapper, isDesktop && styles.desktopLayoutWrapper]}>
           {/* Feed Column (Center) */}
           <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn]}>
+            {/* Desktop Spaces Selector Bar (Contained strictly within Feed Column, no stretching) */}
+            {isDesktop && (
+              <View style={[styles.desktopSpaceCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                {renderSpacePills()}
+              </View>
+            )}
+
             {searchQuery.trim().length > 0 && (
               <View style={[styles.searchNoticeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                 <Ionicons name="search" size={14} color={colors.accent} style={{ marginRight: 6 }} />
@@ -453,8 +466,12 @@ const styles = StyleSheet.create({
     maxWidth: 780,
     paddingHorizontal: spacing.pageHorizontal
   },
-  desktopFilterBarInner: {
-    maxWidth: 1140
+  desktopSpaceCard: {
+    borderRadius: radius.md,
+    borderWidth: 0.5,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    marginBottom: spacing.sm
   },
   filterScroll: {
     gap: 8,

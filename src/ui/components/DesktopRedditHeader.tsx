@@ -202,22 +202,24 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
             </View>
           </View>
 
-          {/* Right: Live-Refresh, Karma, Budget, Palette, Craft, Tabs & Theme */}
+          {/* Right: Live-Refresh, Karma, Budget, Tools Cluster & Nav Tabs */}
           <View style={styles.rightSection}>
-            {/* Live-Feed Refresh Button */}
+            {/* Live-Feed Status & Refresh Pill */}
             <TouchableOpacity
               onPress={handleRefresh}
               disabled={isRefreshing}
-              style={[styles.iconPillBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+              style={[styles.liveStatusPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
               accessibilityRole="button"
               accessibilityLabel="Live-Feeds synchronisieren"
             >
               {isRefreshing ? (
-                <ActivityIndicator size="small" color={colors.accent} />
+                <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 4 }} />
               ) : (
-                <Ionicons name="reload-outline" size={14} color={colors.accent} style={{ marginRight: 4 }} />
+                <View style={styles.liveGreenDot} />
               )}
-              <Text style={[styles.iconPillText, { color: colors.textPrimary }]}>Live-Feeds</Text>
+              <Text style={[styles.liveStatusText, { color: colors.textPrimary }]}>
+                {isRefreshing ? 'Lädt…' : '110 Live'}
+              </Text>
             </TouchableOpacity>
 
             {/* Karma Badge Button */}
@@ -228,9 +230,9 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               accessibilityRole="button"
               accessibilityLabel={`Erkenntnis-Karma: ${karmaScore} Punkte anzeigen`}
             >
-              <Ionicons name="flame" size={14} color="#FF4500" style={{ marginRight: 4 }} />
+              <Text style={styles.flameEmoji}>🔥</Text>
               <Text style={[styles.karmaText, { color: colors.textPrimary }]}>
-                {karmaScore} <Text style={{ fontSize: 10, color: colors.textMuted }}>Karma</Text>
+                {karmaScore}
               </Text>
             </TouchableOpacity>
 
@@ -243,40 +245,43 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               accessibilityLabel="KI-Orchestrierung & Budget öffnen"
             >
               <View style={styles.greenDot} />
-              <Text style={styles.budgetText}>KI aktiv • €0.14/€5</Text>
+              <Text style={styles.budgetText}>KI aktiv</Text>
             </TouchableOpacity>
 
-            {/* Design-Palette Switcher Button */}
-            <TouchableOpacity
-              onPress={() => setShowPaletteModal(true)}
-              style={[styles.iconBtn, { backgroundColor: colors.surfaceSecondary }]}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Design-Ästhetik & Farbpalette wählen"
-            >
-              <Ionicons name="color-palette-outline" size={16} color={colors.accent} />
-            </TouchableOpacity>
+            {/* Consolidated Tools Cluster: Palette, Craft & Theme */}
+            <View style={[styles.toolCluster, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+              {/* Design-Palette Switcher */}
+              <TouchableOpacity
+                onPress={() => setShowPaletteModal(true)}
+                style={styles.toolClusterBtn}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Design-Ästhetik & Farbpalette wählen"
+              >
+                <Ionicons name="color-palette-outline" size={15} color={colors.accent} />
+              </TouchableOpacity>
 
-            {/* 1-Click Craft Export Shortcut */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              {/* 1-Click Craft Export (Copy & Download) */}
               <TouchableOpacity
                 onPress={handleCopyCraft}
-                style={[styles.craftBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}
+                onLongPress={handleDownloadCraft}
+                style={styles.toolClusterBtn}
                 activeOpacity={0.8}
                 accessibilityRole="button"
-                accessibilityLabel="Craft Export in Zwischenablage kopieren"
+                accessibilityLabel="Craft Export in Zwischenablage kopieren (Halten für .md Datei)"
               >
-                <Ionicons name="copy-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
-                <Text style={[styles.craftBtnText, { color: colors.accent }]}>Craft</Text>
+                <Ionicons name="copy-outline" size={14} color={colors.textSecondary} />
               </TouchableOpacity>
+
+              {/* Theme Toggle (Light / Dark) */}
               <TouchableOpacity
-                onPress={handleDownloadCraft}
-                style={[styles.iconBtn, { backgroundColor: colors.surfaceSecondary, width: 32, height: 32 }]}
+                onPress={handleToggleTheme}
+                style={styles.toolClusterBtn}
                 activeOpacity={0.8}
                 accessibilityRole="button"
-                accessibilityLabel="Craft Markdown herunterladen"
+                accessibilityLabel={isDark ? 'Helles Design' : 'Dunkles Design'}
               >
-                <Ionicons name="download-outline" size={14} color={colors.textSecondary} />
+                <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={15} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
@@ -330,16 +335,6 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 />
               </TouchableOpacity>
             </View>
-
-            {/* Theme Toggle (Light / Dark) */}
-            <TouchableOpacity
-              onPress={handleToggleTheme}
-              style={[styles.iconBtn, { backgroundColor: colors.surfaceSecondary }]}
-              accessibilityRole="button"
-              accessibilityLabel={isDark ? 'Helles Design' : 'Dunkles Design'}
-            >
-              <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={16} color={colors.textSecondary} />
-            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -737,7 +732,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6
   },
-  iconPillBtn: {
+  liveStatusPill: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
@@ -745,9 +740,20 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     borderWidth: 0.5
   },
-  iconPillText: {
+  liveGreenDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+    marginRight: 5
+  },
+  liveStatusText: {
     fontSize: 11,
-    fontWeight: '600'
+    fontWeight: '700'
+  },
+  flameEmoji: {
+    fontSize: 12,
+    marginRight: 3
   },
   karmaBadge: {
     flexDirection: 'row',
@@ -781,17 +787,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#10B981'
   },
-  craftBtn: {
+  toolCluster: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 9,
-    paddingVertical: 5,
     borderRadius: radius.pill,
-    borderWidth: 0.5
+    borderWidth: 0.5,
+    padding: 2
   },
-  craftBtnText: {
-    fontSize: 11,
-    fontWeight: '700'
+  toolClusterBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center'
   },
   tabGroup: {
     flexDirection: 'row',

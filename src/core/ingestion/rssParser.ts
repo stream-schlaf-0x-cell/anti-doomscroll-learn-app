@@ -119,22 +119,29 @@ function parseDateToIso(dateStr: string): string {
  * Extracts a media/enclosure/inline image URL if present in the entry block.
  */
 function extractImageUrl(block: string): string | undefined {
-  // 1. Enclosure attribute url="..."
+  // 1. YouTube & Media RSS thumbnail (<media:thumbnail url="...">)
+  const thumbMatch = block.match(/<media:thumbnail\b[^>]*\burl=["']([^"']+)["']/i);
+  if (thumbMatch && thumbMatch[1]) {
+    return decodeXmlEntities(thumbMatch[1]);
+  }
+
+  // 2. Enclosure attribute url="..." (filter out non-images like audio/video)
   const enclosureMatch = block.match(/<enclosure\b[^>]*\burl=["']([^"']+)["']/i);
-  if (enclosureMatch && enclosureMatch[1] && !enclosureMatch[1].endsWith('.mp3')) {
+  if (enclosureMatch && enclosureMatch[1] && !/\.(mp3|wav|ogg|mp4|m4a|flv)/i.test(enclosureMatch[1])) {
     return decodeXmlEntities(enclosureMatch[1]);
   }
 
-  // 2. Media RSS (media:content or media:thumbnail)
-  const mediaMatch = block.match(/<media:(?:content|thumbnail)\b[^>]*\burl=["']([^"']+)["']/i);
-  if (mediaMatch && mediaMatch[1]) {
-    return decodeXmlEntities(mediaMatch[1]);
+  // 3. Media:content if it's an image (skip YouTube player URLs like youtube.com/v/ and media files)
+  const mediaContentMatch = block.match(/<media:content\b[^>]*\burl=["']([^"']+)["']/i);
+  if (mediaContentMatch && mediaContentMatch[1] && !/\.(mp3|wav|ogg|mp4|m4a|flv)/i.test(mediaContentMatch[1]) && !mediaContentMatch[1].includes('youtube.com/v/')) {
+    return decodeXmlEntities(mediaContentMatch[1]);
   }
 
-  // 3. <img> tag in HTML content/description
-  const imgMatch = block.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i);
+  // 4. <img> tag in HTML content/description (handle both raw and XML-escaped HTML e.g. xkcd)
+  const decodedBlock = decodeXmlEntities(block);
+  const imgMatch = decodedBlock.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i);
   if (imgMatch && imgMatch[1]) {
-    const src = decodeXmlEntities(imgMatch[1]);
+    const src = imgMatch[1].trim();
     if (src.startsWith('http://') || src.startsWith('https://')) {
       return src;
     }
