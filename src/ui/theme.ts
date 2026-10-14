@@ -312,5 +312,6 @@ export const radius = {
   md: 10,
   lg: 16,
   xl: 22,
-  pill: 999
+  pill: 999,
+  full: 9999
 };

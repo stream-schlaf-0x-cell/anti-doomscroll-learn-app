@@ -13,6 +13,9 @@ import {
 import { useApp } from '../../core/context/AppContext';
 import { ReadingTimeBadge } from './ReadingTimeBadge';
 import { typography, radius, spacing } from '../theme';
+import { LinkPreviewModal } from './LinkPreviewModal';
+import { MusicTrackCard } from './MusicTrackCard';
+import { CURATED_SOUND_MASTERS, MusicTrackItem } from '../../core/music/musicRecommendationService';
 
 interface FeedCardProps {
   item: ScoredFeedItem;
@@ -47,8 +50,14 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
   const [awards, setAwards] = useState(item.awardsCount || { gold: 0, brain: 0, spark: 0 });
   const [showAwardModal, setShowAwardModal] = useState(false);
   const [awardToast, setAwardToast] = useState<string | null>(null);
+  const [showLinkPreview, setShowLinkPreview] = useState(false);
 
   const originalUrl = item.canonicalUrl || item.sourceReferences[0]?.originalUrl;
+
+  // Music Recommendation from iTunes & Spotify for Sound Synthesis (c/klang)
+  const matchedMusicTrack: MusicTrackItem | undefined = item.primaryTopic === 'sound_synthesis'
+    ? CURATED_SOUND_MASTERS[Math.abs(item.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) % CURATED_SOUND_MASTERS.length]
+    : undefined;
 
   const handleOpenOriginalSource = () => {
     if (!originalUrl) return;
@@ -228,17 +237,32 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
         </View>
 
         {originalUrl && (
-          <TouchableOpacity
-            onPress={handleOpenOriginalSource}
-            style={styles.openSourceBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityRole="link"
-            accessibilityLabel="Originalquelle im neuen Tab öffnen"
-          >
-            <Text style={[styles.openSourceBtnText, { color: colors.accent }]}>
-              {item.sourceDomain || 'Quelle'} ↗
-            </Text>
-          </TouchableOpacity>
+          <View style={styles.sourceClearActions}>
+            <TouchableOpacity
+              onPress={() => setShowLinkPreview(true)}
+              style={[styles.sourcePreviewChip, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+              accessibilityLabel="Schnell-Vorschau öffnen"
+            >
+              <Ionicons name="eye-outline" size={11} color={colors.accent} style={{ marginRight: 3 }} />
+              <Text style={[styles.sourcePreviewChipText, { color: colors.textPrimary }]}>
+                Vorschau
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleOpenOriginalSource}
+              style={[styles.openSourceBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+              accessibilityRole="link"
+              accessibilityLabel="Originalquelle im neuen Tab öffnen"
+            >
+              <Ionicons name="open-outline" size={10} color={colors.accent} style={{ marginRight: 3 }} />
+              <Text style={[styles.openSourceBtnText, { color: colors.accent }]}>
+                {item.sourceDomain || 'Quelle'} ↗
+              </Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -462,6 +486,71 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
             <Text style={[styles.oppActionText, { color: colors.textPrimary }]}>
               {item.opportunityMeta.actionStep}
             </Text>
+          </View>
+        </View>
+      )}
+
+      {/* 8.5 Music & Synthesis Gem from iTunes & Spotify (c/klang) */}
+      {matchedMusicTrack && (
+        <MusicTrackCard track={matchedMusicTrack} />
+      )}
+
+      {/* 8.6 Prominent Rich Link Preview Card */}
+      {originalUrl && (
+        <View style={[styles.richLinkCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <View style={styles.richLinkHeader}>
+            <View style={styles.richLinkHeaderLeft}>
+              <View style={[styles.richLinkFavicon, { backgroundColor: colors.accentSubtle }]}>
+                <Ionicons
+                  name={
+                    item.format === 'youtube_gem' ? 'logo-youtube' :
+                    item.primaryTopic === 'sound_synthesis' ? 'musical-notes' :
+                    item.sourceTrustLevel === 'public_broadcaster' ? 'shield-checkmark' :
+                    'globe-outline'
+                  }
+                  size={15}
+                  color={item.format === 'youtube_gem' ? '#EF4444' : colors.accent}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={styles.richLinkDomainRow}>
+                  <Text style={[styles.richLinkDomain, { color: colors.accent }]}>
+                    {item.sourceDomain || 'fachquelle'}
+                  </Text>
+                  <Text style={[styles.richLinkDot, { color: colors.textMuted }]}>•</Text>
+                  <Text style={[styles.richLinkPublisher, { color: colors.textSecondary }]} numberOfLines={1}>
+                    {item.sourceBroadcasterName || item.sourceReferences[0]?.publisher || 'Verifizierte Quelle'}
+                  </Text>
+                </View>
+                <Text style={[styles.richLinkUrl, { color: colors.textMuted }]} numberOfLines={1}>
+                  {originalUrl}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Action Row */}
+          <View style={[styles.richLinkActions, { borderTopColor: colors.borderSubtle }]}>
+            <TouchableOpacity
+              onPress={() => setShowLinkPreview(true)}
+              style={[styles.richLinkPreviewBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="eye-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
+              <Text style={[styles.richLinkPreviewBtnText, { color: colors.textPrimary }]}>
+                Schnell-Vorschau
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleOpenOriginalSource}
+              style={[styles.richLinkOpenBtn, { backgroundColor: colors.accent }]}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.richLinkOpenBtnText}>
+                Originalartikel lesen ↗
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -906,6 +995,20 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
         <View style={[styles.awardToastBanner, { backgroundColor: colors.accent }]}>
           <Text style={styles.awardToastText}>{awardToast}</Text>
         </View>
+      )}
+
+      {/* 16. In-App Quick Link Preview Modal */}
+      {originalUrl && (
+        <LinkPreviewModal
+          visible={showLinkPreview}
+          onClose={() => setShowLinkPreview(false)}
+          url={originalUrl}
+          title={item.sourceReferences[0]?.title || item.title}
+          publisher={item.sourceBroadcasterName || item.sourceReferences[0]?.publisher}
+          domain={item.sourceDomain}
+          snippet={item.feedText || item.subtitle || item.body?.slice(0, 200)}
+          estimatedMinutes={item.estimatedReadingMinutes}
+        />
       )}
     </View>
   );
@@ -1450,11 +1553,110 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '600'
   },
+  sourceClearActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  sourcePreviewChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+    borderWidth: 0.5
+  },
+  sourcePreviewChipText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
   openSourceBtn: {
-    paddingHorizontal: 6,
-    paddingVertical: 2
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+    borderWidth: 0.5
   },
   openSourceBtnText: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+
+  // Prominent Rich Link Preview Card (OpenGraph / Provenance style)
+  richLinkCard: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginVertical: spacing.sm
+  },
+  richLinkHeader: {
+    padding: 10,
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  richLinkHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 10
+  },
+  richLinkFavicon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  richLinkDomainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 2
+  },
+  richLinkDomain: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.2
+  },
+  richLinkDot: {
+    fontSize: 10
+  },
+  richLinkPublisher: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  richLinkUrl: {
+    fontSize: 10
+  },
+  richLinkActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderTopWidth: 0.5,
+    gap: 8
+  },
+  richLinkPreviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+    borderWidth: 0.5
+  },
+  richLinkPreviewBtnText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  richLinkOpenBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: radius.sm
+  },
+  richLinkOpenBtnText: {
+    color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '700'
   },

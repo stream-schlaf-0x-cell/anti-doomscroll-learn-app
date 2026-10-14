@@ -17,6 +17,7 @@ import { formatFactReviewStatus } from '../../core/domain/types';
 import { ReadingTimeBadge } from '../../ui/components/ReadingTimeBadge';
 import { DeepeningCard } from '../../ui/components/DeepeningCard';
 import { typography, radius, spacing } from '../../ui/theme';
+import { LinkPreviewModal } from '../../ui/components/LinkPreviewModal';
 
 export const ReaderScreen: React.FC = () => {
   const {
@@ -37,6 +38,7 @@ export const ReaderScreen: React.FC = () => {
   const [scrollPercent, setScrollPercent] = useState<number>(0);
   const [contentHeight, setContentHeight] = useState<number>(0);
   const [layoutHeight, setLayoutHeight] = useState<number>(0);
+  const [previewTarget, setPreviewTarget] = useState<{ visible: boolean; url: string; title: string; publisher: string } | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
 
   // Flush throttled progress on unmount
@@ -398,32 +400,57 @@ export const ReaderScreen: React.FC = () => {
             </Text>
 
             {selectedArticle.sourceReferences.map((ref, idx) => (
-              <TouchableOpacity
+              <View
                 key={idx}
-                onPress={() => handleOpenSource(ref.originalUrl)}
-                activeOpacity={0.7}
-                style={[styles.sourceItem, { borderTopColor: colors.borderSubtle }]}
-                accessibilityRole="link"
-                accessibilityLabel={`Quelle ${ref.publisher} im Browser öffnen`}
+                style={[styles.sourceCardBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
               >
-                <View style={styles.sourceItemTop}>
-                  <Text style={[styles.sourcePublisher, { color: colors.accent }]}>
-                    {ref.publisher} {ref.author ? `• ${ref.author}` : ''}
-                  </Text>
-                  <Ionicons name="open-outline" size={14} color={colors.accent} />
+                <View style={styles.sourceCardTop}>
+                  <View style={[styles.sourcePublisherBadge, { backgroundColor: colors.accentSubtle }]}>
+                    <Ionicons name="newspaper-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
+                    <Text style={[styles.sourcePublisher, { color: colors.accent }]}>
+                      {ref.publisher} {ref.author ? `• ${ref.author}` : ''}
+                    </Text>
+                  </View>
+                  {ref.publicationTimestamp && (
+                    <Text style={[styles.sourcePublishedDate, { color: colors.textMuted }]}>
+                      {ref.publicationTimestamp}
+                    </Text>
+                  )}
                 </View>
+
                 <Text style={[styles.sourceArticleTitle, { color: colors.textPrimary }]}>
                   {ref.title}
                 </Text>
-                {ref.publicationTimestamp && (
-                  <Text style={[styles.sourcePublishedDate, { color: colors.textMuted }]}>
-                    Original-Publikation: {ref.publicationTimestamp}
-                  </Text>
-                )}
+
                 <Text style={[styles.sourceUrl, { color: colors.textMuted }]} numberOfLines={1}>
                   {ref.originalUrl}
                 </Text>
-              </TouchableOpacity>
+
+                <View style={[styles.sourceCardActions, { borderTopColor: colors.borderSubtle }]}>
+                  <TouchableOpacity
+                    onPress={() => setPreviewTarget({
+                      visible: true,
+                      url: ref.originalUrl,
+                      title: ref.title,
+                      publisher: ref.publisher
+                    })}
+                    style={[styles.sourcePreviewActionBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="eye-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
+                    <Text style={[styles.sourcePreviewActionBtnText, { color: colors.textPrimary }]}>Schnell-Vorschau</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => handleOpenSource(ref.originalUrl)}
+                    style={[styles.sourceOpenActionBtn, { backgroundColor: colors.accent }]}
+                    activeOpacity={0.85}
+                    accessibilityRole="link"
+                  >
+                    <Text style={styles.sourceOpenActionBtnText}>Original lesen ↗</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             ))}
 
             <View style={[styles.provenanceFooter, { borderTopColor: colors.borderSubtle }]}>
@@ -495,6 +522,19 @@ export const ReaderScreen: React.FC = () => {
           </View>
         </View>
       </ScrollView>
+
+      {/* In-App Quick Source Preview Modal */}
+      {previewTarget && (
+        <LinkPreviewModal
+          visible={previewTarget.visible}
+          onClose={() => setPreviewTarget(null)}
+          url={previewTarget.url}
+          title={previewTarget.title}
+          publisher={previewTarget.publisher}
+          snippet={selectedArticle?.feedText || selectedArticle?.subtitle}
+          estimatedMinutes={selectedArticle?.estimatedReadingMinutes}
+        />
+      )}
     </SafeAreaView>
   );
 };
@@ -810,31 +850,71 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginBottom: spacing.sm
   },
-  sourceItem: {
-    paddingVertical: spacing.sm,
-    borderTopWidth: 0.5
+  sourceCardBox: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.sm
   },
-  sourceItemTop: {
+  sourceCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 2
+    marginBottom: 6
+  },
+  sourcePublisherBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.full
   },
   sourcePublisher: {
-    fontSize: typography.sizes.caption,
+    fontSize: 11,
     fontWeight: '700'
   },
   sourceArticleTitle: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '600',
-    marginBottom: 2
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+    marginBottom: 4
   },
   sourcePublishedDate: {
-    fontSize: typography.sizes.micro,
-    marginBottom: 2
+    fontSize: 11
   },
   sourceUrl: {
-    fontSize: 10
+    fontSize: 10,
+    marginBottom: 8
+  },
+  sourceCardActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingTop: 8,
+    borderTopWidth: 0.5,
+    gap: 8
+  },
+  sourcePreviewActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+    borderWidth: 0.5
+  },
+  sourcePreviewActionBtnText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  sourceOpenActionBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: radius.sm
+  },
+  sourceOpenActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700'
   },
   provenanceFooter: {
     marginTop: spacing.md,

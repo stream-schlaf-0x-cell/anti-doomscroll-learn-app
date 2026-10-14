@@ -21,18 +21,27 @@ import {
 import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
 import { typography, radius, spacing } from '../theme';
 import { copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
+import { MusicTrackCard } from './MusicTrackCard';
+import {
+  MusicRecommendationService,
+  MusicTrackItem,
+  CURATED_SOUND_MASTERS
+} from '../../core/music/musicRecommendationService';
 
 interface NewsHubModalProps {
   visible: boolean;
   onClose: () => void;
 }
 
-type HubTab = 'sources' | 'import' | 'sync';
+type HubTab = 'sources' | 'import' | 'music' | 'sync';
 
 export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) => {
   const { colors, refreshFeed } = useApp();
 
   const [activeTab, setActiveTab] = useState<HubTab>('sources');
+  const [musicQuery, setMusicQuery] = useState<string>('');
+  const [musicResults, setMusicResults] = useState<MusicTrackItem[]>(CURATED_SOUND_MASTERS);
+  const [isSearchingMusic, setIsSearchingMusic] = useState<boolean>(false);
   const [sources, setSources] = useState<FeedSourceItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -166,6 +175,23 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
     if (preset === 'science_culture') showToast('✓ Fokus auf Wissenschaft & Kultur');
   };
 
+  const handleMusicSearch = async (query: string) => {
+    setMusicQuery(query);
+    if (!query.trim()) {
+      setMusicResults(CURATED_SOUND_MASTERS);
+      return;
+    }
+    setIsSearchingMusic(true);
+    try {
+      const results = await MusicRecommendationService.searchITunesTracks(query.trim(), 8);
+      setMusicResults(results.length > 0 ? results : CURATED_SOUND_MASTERS);
+    } catch {
+      setMusicResults(CURATED_SOUND_MASTERS);
+    } finally {
+      setIsSearchingMusic(false);
+    }
+  };
+
   const handleSyncNow = async () => {
     setIsSubmitting(true);
     try {
@@ -277,6 +303,29 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                 ]}
               >
                 Import & OPML
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setActiveTab('music')}
+              style={[
+                styles.tabItem,
+                activeTab === 'music' && { borderBottomColor: '#EF4444', backgroundColor: colors.surface }
+              ]}
+            >
+              <Ionicons
+                name="musical-notes-outline"
+                size={14}
+                color={activeTab === 'music' ? '#EF4444' : colors.textMuted}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.tabItemText,
+                  { color: activeTab === 'music' ? '#EF4444' : colors.textSecondary }
+                ]}
+              >
+                Musik & Audio
               </Text>
             </TouchableOpacity>
 
@@ -628,6 +677,77 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                       <Text style={[styles.secondaryActionBtnText, { color: colors.textPrimary }]}>In Zwischenablage</Text>
                     </TouchableOpacity>
                   </View>
+                </View>
+              </ScrollView>
+            )}
+
+            {/* TAB: Music & Audio Grounding (iTunes & Spotify) */}
+            {activeTab === 'music' && (
+              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+                {/* Intro / Explanation Box */}
+                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                  <View style={styles.sectionHeaderRow}>
+                    <Ionicons name="musical-notes" size={20} color="#EF4444" style={{ marginRight: 8 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                        iTunes Search API & Spotify als Empfehlungs-Datenbasis
+                      </Text>
+                      <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
+                        Nutzt die offene Apple iTunes Datenbank (kostenlos, 30s Audio-Vorschau) und Spotify, um fokussierende Akustik, Ambient und Sound-Synthese in atmen zu erden.
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Search Bar */}
+                  <View style={[styles.searchBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                    <Ionicons name="search" size={14} color={colors.textMuted} style={{ marginRight: 6 }} />
+                    <TextInput
+                      value={musicQuery}
+                      onChangeText={handleMusicSearch}
+                      placeholder="Künstler oder Track suchen (z.B. Brian Eno, Nils Frahm, Aphex Twin)…"
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.searchInput, { color: colors.textPrimary }]}
+                    />
+                    {isSearchingMusic && <ActivityIndicator size="small" color={colors.accent} />}
+                  </View>
+
+                  {/* Preset Pioneer Pills */}
+                  <View style={[styles.presetRow, { marginTop: 10 }]}>
+                    {[
+                      'Brian Eno',
+                      'Nils Frahm',
+                      'Jon Hopkins',
+                      'Suzanne Ciani',
+                      'Aphex Twin',
+                      'Max Richter'
+                    ].map(artist => (
+                      <TouchableOpacity
+                        key={artist}
+                        onPress={() => void handleMusicSearch(artist)}
+                        style={[
+                          styles.presetPill,
+                          {
+                            backgroundColor: musicQuery === artist ? '#EF4444' : colors.surface,
+                            borderColor: musicQuery === artist ? '#EF4444' : colors.borderSubtle
+                          }
+                        ]}
+                      >
+                        <Text style={[styles.presetPillText, { color: musicQuery === artist ? '#FFFFFF' : colors.textPrimary }]}>
+                          {artist}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Track Results List */}
+                <View style={{ marginTop: spacing.md }}>
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
+                    Empfohlene Klang-Referenzen ({musicResults.length})
+                  </Text>
+                  {musicResults.map(track => (
+                    <MusicTrackCard key={track.id} track={track} />
+                  ))}
                 </View>
               </ScrollView>
             )}
