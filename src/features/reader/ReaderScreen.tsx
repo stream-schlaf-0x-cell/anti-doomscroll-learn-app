@@ -7,7 +7,8 @@ import {
   TouchableOpacity,
   Linking,
   NativeSyntheticEvent,
-  NativeScrollEvent
+  NativeScrollEvent,
+  Image
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -142,55 +143,57 @@ export const ReaderScreen: React.FC = () => {
 
       {/* Reader Top Action Bar */}
       <View style={[styles.navBar, { borderBottomColor: colors.borderSubtle }]}>
-        <TouchableOpacity
-          onPress={handleClose}
-          style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityRole="button"
-          accessibilityLabel="Zurück zur vorherigen Ansicht"
-        >
-          <Ionicons name="arrow-back" size={20} color={colors.textPrimary} />
-        </TouchableOpacity>
-
-        <View style={styles.navRight}>
-          {/* Font Size Adjuster */}
+        <View style={styles.navBarInner}>
           <TouchableOpacity
-            onPress={cycleFontSize}
-            style={[styles.navButton, { backgroundColor: colors.surfaceSecondary, marginRight: 8 }]}
+            onPress={handleClose}
+            style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             accessibilityRole="button"
-            accessibilityLabel={`Schriftgröße ändern, aktuell: ${fontPref}`}
+            accessibilityLabel="Zurück zur vorherigen Ansicht"
           >
-            <Text style={[styles.fontBtnText, { color: colors.textPrimary }]}>
-              {fontPref.toUpperCase()}
-            </Text>
+            <Ionicons name="arrow-back" size={20} color={colors.textPrimary} />
           </TouchableOpacity>
 
-          {/* Theme Toggle */}
-          <TouchableOpacity
-            onPress={() => setThemePreference(isDark ? 'light' : 'dark')}
-            style={[styles.navButton, { backgroundColor: colors.surfaceSecondary, marginRight: 8 }]}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            accessibilityRole="button"
-            accessibilityLabel={isDark ? 'Helles Erscheinungsbild aktivieren' : 'Dunkles Erscheinungsbild aktivieren'}
-          >
-            <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={18} color={colors.textPrimary} />
-          </TouchableOpacity>
+          <View style={styles.navRight}>
+            {/* Font Size Adjuster */}
+            <TouchableOpacity
+              onPress={cycleFontSize}
+              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary, marginRight: 8 }]}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel={`Schriftgröße ändern, aktuell: ${fontPref}`}
+            >
+              <Text style={[styles.fontBtnText, { color: colors.textPrimary }]}>
+                {fontPref.toUpperCase()}
+              </Text>
+            </TouchableOpacity>
 
-          {/* Save / Bookmark Button */}
-          <TouchableOpacity
-            onPress={() => toggleSaveItem(selectedArticle.id)}
-            style={[styles.navButton, { backgroundColor: isSaved ? colors.accentSubtle : colors.surfaceSecondary }]}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            accessibilityRole="button"
-            accessibilityLabel={isSaved ? 'Aus Bibliothek entfernen' : 'In Bibliothek speichern'}
-          >
-            <Ionicons
-              name={isSaved ? 'bookmark' : 'bookmark-outline'}
-              size={18}
-              color={isSaved ? colors.accent : colors.textPrimary}
-            />
-          </TouchableOpacity>
+            {/* Theme Toggle */}
+            <TouchableOpacity
+              onPress={() => setThemePreference(isDark ? 'light' : 'dark')}
+              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary, marginRight: 8 }]}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel={isDark ? 'Helles Erscheinungsbild aktivieren' : 'Dunkles Erscheinungsbild aktivieren'}
+            >
+              <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={18} color={colors.textPrimary} />
+            </TouchableOpacity>
+
+            {/* Save / Bookmark Button */}
+            <TouchableOpacity
+              onPress={() => toggleSaveItem(selectedArticle.id)}
+              style={[styles.navButton, { backgroundColor: isSaved ? colors.accentSubtle : colors.surfaceSecondary }]}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel={isSaved ? 'Aus Bibliothek entfernen' : 'In Bibliothek speichern'}
+            >
+              <Ionicons
+                name={isSaved ? 'bookmark' : 'bookmark-outline'}
+                size={18}
+                color={isSaved ? colors.accent : colors.textPrimary}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -204,54 +207,66 @@ export const ReaderScreen: React.FC = () => {
         onContentSizeChange={(_w, h) => setContentHeight(h)}
         onLayout={(e) => setLayoutHeight(e.nativeEvent.layout.height)}
       >
-        {/* Meta Header */}
-        <View style={styles.metaRow}>
-          <TopicBadge topic={selectedArticle.primaryTopic} size="md" />
-          <View style={{ width: 8 }} />
-          <ReadingTimeBadge minutes={selectedArticle.estimatedReadingMinutes} />
-          <View style={{ width: 8 }} />
-          <View style={[styles.demoPill, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}>
-            <Text style={[styles.demoPillText, { color: colors.accent }]}>DEMO-AUSGABE</Text>
+        <View style={styles.scrollInner}>
+          {/* Meta Header */}
+          <View style={styles.metaRow}>
+            <TopicBadge topic={selectedArticle.primaryTopic} size="md" />
+            <View style={{ width: 8 }} />
+            <ReadingTimeBadge minutes={selectedArticle.estimatedReadingMinutes} />
+            <View style={{ width: 8 }} />
+            <View style={[styles.demoPill, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}>
+              <Text style={[styles.demoPillText, { color: colors.accent }]}>COMMUNITY</Text>
+            </View>
           </View>
-        </View>
 
-        {/* Reopen Bookmark / Resume Banner */}
-        {savedProgress > 5 && savedProgress < 95 && (
-          <TouchableOpacity
-            style={[styles.resumeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.accent }]}
-            onPress={handleResumeReading}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel={`An gespeicherte Leseposition bei ${savedProgress} Prozent springen`}
-          >
-            <Ionicons name="bookmark" size={16} color={colors.accent} style={{ marginRight: 8 }} />
-            <Text style={[styles.resumeCardText, { color: colors.textPrimary }]}>
-              Zuletzt bei <Text style={{ fontWeight: '700', color: colors.accent }}>{savedProgress}%</Text> gelesen
-            </Text>
-            <View style={{ flex: 1 }} />
-            <Text style={[styles.resumeActionText, { color: colors.accent }]}>Fortsetzen →</Text>
-          </TouchableOpacity>
-        )}
+          {/* Reopen Bookmark / Resume Banner */}
+          {savedProgress > 5 && savedProgress < 95 && (
+            <TouchableOpacity
+              style={[styles.resumeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.accent }]}
+              onPress={handleResumeReading}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={`An gespeicherte Leseposition bei ${savedProgress} Prozent springen`}
+            >
+              <Ionicons name="bookmark" size={16} color={colors.accent} style={{ marginRight: 8 }} />
+              <Text style={[styles.resumeCardText, { color: colors.textPrimary }]}>
+                Zuletzt bei <Text style={{ fontWeight: '700', color: colors.accent }}>{savedProgress}%</Text> gelesen
+              </Text>
+              <View style={{ flex: 1 }} />
+              <Text style={[styles.resumeActionText, { color: colors.accent }]}>Fortsetzen →</Text>
+            </TouchableOpacity>
+          )}
 
-        {/* Headline */}
-        <Text style={[styles.headline, { color: colors.textPrimary }]}>
-          {selectedArticle.title}
-        </Text>
-
-        {/* Subtitle / Dek */}
-        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          {selectedArticle.subtitle}
-        </Text>
-
-        {/* Word count & Reading rate honest indicator */}
-        <View style={styles.editorialMetricsRow}>
-          <Text style={[styles.editorialMetricsText, { color: colors.textMuted }]}>
-            {selectedArticle.wordCount ?? Math.round(selectedArticle.body.split(/\s+/).length)} Wörter • ca. {selectedArticle.estimatedReadingMinutes} Min. Lesezeit (220 W/Min.)
+          {/* Headline */}
+          <Text style={[styles.headline, { color: colors.textPrimary }]}>
+            {selectedArticle.title}
           </Text>
-        </View>
 
-        {/* Editorial Divider */}
-        <View style={[styles.divider, { backgroundColor: colors.borderSubtle }]} />
+          {/* Subtitle / Dek */}
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+            {selectedArticle.subtitle}
+          </Text>
+
+          {/* Hero Visual Image */}
+          {selectedArticle.imageUrl && (
+            <View style={styles.readerImageContainer}>
+              <Image
+                source={{ uri: selectedArticle.imageUrl }}
+                style={styles.readerHeroImage}
+                resizeMode="cover"
+              />
+            </View>
+          )}
+
+          {/* Word count & Reading rate honest indicator */}
+          <View style={styles.editorialMetricsRow}>
+            <Text style={[styles.editorialMetricsText, { color: colors.textMuted }]}>
+              {selectedArticle.wordCount ?? Math.round(selectedArticle.body.split(/\s+/).length)} Wörter • ca. {selectedArticle.estimatedReadingMinutes} Min. Lesezeit (220 W/Min.)
+            </Text>
+          </View>
+
+          {/* Editorial Divider */}
+          <View style={[styles.divider, { backgroundColor: colors.borderSubtle }]} />
 
         {/* Article Body Paragraphs */}
         <View style={styles.bodyContainer}>
@@ -409,6 +424,7 @@ export const ReaderScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
         </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -426,12 +442,17 @@ const styles = StyleSheet.create({
     height: '100%'
   },
   navBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     paddingHorizontal: spacing.pageHorizontal,
     paddingVertical: spacing.sm,
     borderBottomWidth: 0.5
+  },
+  navBarInner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    maxWidth: 740,
+    width: '100%',
+    alignSelf: 'center'
   },
   navButton: {
     width: 40,
@@ -452,6 +473,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.pageHorizontal,
     paddingTop: spacing.lg,
     paddingBottom: spacing.xxl * 2
+  },
+  scrollInner: {
+    maxWidth: 740,
+    width: '100%',
+    alignSelf: 'center'
+  },
+  readerImageContainer: {
+    width: '100%',
+    height: 240,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    marginVertical: spacing.md
+  },
+  readerHeroImage: {
+    width: '100%',
+    height: '100%'
   },
   metaRow: {
     flexDirection: 'row',

@@ -44,6 +44,8 @@ interface AppContextValue {
   updateReadingProgress: (id: string, percent: number) => Promise<void>;
   flushReadingProgress: () => Promise<void>;
   setFeedback: (id: string, feedback: 'more_like_this' | 'less_like_this' | 'neutral') => Promise<void>;
+  addNote: (id: string, text: string, tag?: 'einwand' | 'unterricht' | 'these' | 'notiz') => Promise<void>;
+  voteItem: (id: string, direction: 'up' | 'down' | 'clear') => Promise<void>;
   updateTopicWeight: (topic: TopicTag, weight: number) => Promise<void>;
   updateDurationPreference: (pref: ReadingPreferenceDuration) => Promise<void>;
   setFontSize: (size: 'sm' | 'md' | 'lg' | 'xl') => Promise<void>;
@@ -436,6 +438,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [scheduleFeedRecompute]);
 
+  const addNote = useCallback(async (id: string, text: string, tag?: 'einwand' | 'unterricht' | 'these' | 'notiz') => {
+    try {
+      const updated = await libraryRepository.addNote(id, text, tag);
+      const nextInteractions = { ...latestInteractionsRef.current, [id]: updated };
+      latestInteractionsRef.current = nextInteractions;
+      setInteractions(nextInteractions);
+    } catch {
+      setErrorMessage('Notiz konnte nicht gespeichert werden.');
+    }
+  }, []);
+
+  const voteItem = useCallback(async (id: string, direction: 'up' | 'down' | 'clear') => {
+    try {
+      const updated = await libraryRepository.voteItem(id, direction);
+      const nextInteractions = { ...latestInteractionsRef.current, [id]: updated };
+      latestInteractionsRef.current = nextInteractions;
+      setInteractions(nextInteractions);
+      await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
+    } catch {
+      setErrorMessage('Bewertung konnte nicht gespeichert werden.');
+    }
+  }, [scheduleFeedRecompute]);
+
   const updateTopicWeight = useCallback(async (topic: TopicTag, weight: number) => {
     try {
       const committed = await userProfileRepository.updateProfile(curr => ({
@@ -594,6 +619,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateReadingProgress,
         flushReadingProgress,
         setFeedback,
+        addNote,
+        voteItem,
         updateTopicWeight,
         updateDurationPreference,
         setFontSize,

@@ -15,6 +15,8 @@ export interface ILibraryRepository {
   getSavedArticle(itemId: string): Promise<FeedItem | null>;
   updateProgress(itemId: string, progressPercent: number): Promise<ReadingInteraction>;
   setFeedback(itemId: string, feedback: 'more_like_this' | 'less_like_this' | 'neutral'): Promise<ReadingInteraction>;
+  addNote(itemId: string, text: string, tag?: 'einwand' | 'unterricht' | 'these' | 'notiz'): Promise<ReadingInteraction>;
+  voteItem(itemId: string, direction: 'up' | 'down' | 'clear'): Promise<ReadingInteraction>;
   clearLibrary(): Promise<void>;
   quarantineAndReset(): Promise<Record<string, ReadingInteraction>>;
 }
@@ -108,7 +110,9 @@ export class LocalLibraryRepository implements ILibraryRepository {
         itemId,
         saved: false,
         progressPercent: 0,
-        furthestPositionPercent: 0
+        furthestPositionPercent: 0,
+        userNotes: [],
+        voteScore: 0
       };
 
       const updated = mutator(existing);
@@ -250,6 +254,38 @@ export class LocalLibraryRepository implements ILibraryRepository {
     return this.mutateInteraction(itemId, current => ({
       ...current,
       feedback
+    }));
+  }
+
+  async addNote(
+    itemId: string,
+    text: string,
+    tag: 'einwand' | 'unterricht' | 'these' | 'notiz' = 'notiz'
+  ): Promise<ReadingInteraction> {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      const existing = await this.getInteraction(itemId);
+      if (existing) return existing;
+      return this.mutateInteraction(itemId, c => c);
+    }
+    const note = {
+      id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      text: trimmed,
+      createdAt: new Date().toISOString(),
+      tag
+    };
+    return this.mutateInteraction(itemId, current => ({
+      ...current,
+      userNotes: [...(current.userNotes ?? []), note]
+    }));
+  }
+
+  async voteItem(itemId: string, direction: 'up' | 'down' | 'clear'): Promise<ReadingInteraction> {
+    const score = direction === 'up' ? 1 : direction === 'down' ? -1 : 0;
+    return this.mutateInteraction(itemId, current => ({
+      ...current,
+      voteScore: score,
+      feedback: direction === 'up' ? 'more_like_this' : direction === 'down' ? 'less_like_this' : current.feedback
     }));
   }
 

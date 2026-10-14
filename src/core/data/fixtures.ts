@@ -1,4 +1,53 @@
-import { FeedItem, TopicTag, UserProfile } from '../domain/types';
+import { FeedItem, TopicTag, UserProfile, TOPIC_SPACE_MAP } from '../domain/types';
+
+/**
+ * High-quality, fast-loading curated aesthetic imagery matched to user's intellectual domains.
+ */
+export const TOPIC_CURATED_IMAGES: Record<TopicTag, string[]> = {
+  ai_apple: [
+    'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=1200&q=80'
+  ],
+  german_didactics: [
+    'https://images.unsplash.com/photo-1503676260728-1c00da094a0b?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1200&q=80'
+  ],
+  philosophy_ethics: [
+    'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1507499739999-097706ad8914?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1461360370896-922624d12aa1?auto=format&fit=crop&w=1200&q=80'
+  ],
+  sound_synthesis: [
+    'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1539375665275-f9de415ef9ac?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=1200&q=80'
+  ],
+  contemplation_mind: [
+    'https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1518241353330-0f7941c2d9b5?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80'
+  ],
+  science_society: [
+    'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1532094349884-543bc11b234d?auto=format&fit=crop&w=1200&q=80'
+  ]
+};
+
+export function getCuratedImageForTopic(topic: TopicTag, seed: string = ''): string {
+  const images = TOPIC_CURATED_IMAGES[topic] || TOPIC_CURATED_IMAGES.philosophy_ethics;
+  let code = 0;
+  for (let i = 0; i < seed.length; i++) code += seed.charCodeAt(i);
+  return images[code % images.length];
+}
 
 /**
  * Shared calculation function for word count and reading time.
@@ -20,6 +69,11 @@ export function calculateReadingStats(bodyText: string): { wordCount: number; es
 function createFixture(item: any): FeedItem {
   const stats = calculateReadingStats(item.body);
   const feedText = item.feedText ?? (item.body.split('\n\n').slice(0, 2).join('\n\n'));
+  const topic = (item.primaryTopic as TopicTag) || 'philosophy_ethics';
+  const topicMeta = TOPIC_SPACE_MAP[topic];
+  const imageUrl = item.imageUrl ?? getCuratedImageForTopic(topic, item.id);
+  const baseUpvotes = 45 + ((item.id.charCodeAt(item.id.length - 1) * 7) % 65);
+
   return {
     format: item.format ?? (item.type === 'quick_insight' ? 'concise_insight' : item.type === 'perspective' ? 'perspective_disagreement' : item.type === 'deep_dive' ? 'long_invitation' : 'sourced_update'),
     feedText,
@@ -33,6 +87,13 @@ function createFixture(item: any): FeedItem {
     contentHash: item.contentHash ?? `hash-${item.id}`,
     isTeachingRelated: item.isTeachingRelated ?? (item.primaryTopic === 'german_didactics'),
     isChallengingPerspective: item.isChallengingPerspective ?? (item.type === 'perspective' || item.format === 'perspective_disagreement'),
+    space: item.space ?? topicMeta?.space,
+    flair: item.flair ?? topicMeta?.flair,
+    imageUrl,
+    keyInsight: item.keyInsight ?? (item.deepeningOptions?.philosophicalContext || item.subtitle),
+    challengePrompt: item.challengePrompt ?? (item.deepeningOptions?.reflectionPrompt || 'Welcher Einwand oder Praxistransfer fällt dir spontan ein?'),
+    didacticSeed: item.didacticSeed ?? item.deepeningOptions?.didacticSeed,
+    upvotesCount: item.upvotesCount ?? baseUpvotes,
     ...item,
     wordCount: item.wordCount ?? stats.wordCount,
     estimatedReadingMinutes: item.estimatedReadingMinutes ?? stats.estimatedReadingMinutes

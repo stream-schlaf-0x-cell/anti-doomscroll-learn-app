@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,22 @@ import { TopicBadge } from '../../ui/components/TopicBadge';
 import { ReadingTimeBadge } from '../../ui/components/ReadingTimeBadge';
 import { typography, radius, spacing } from '../../ui/theme';
 
+function formatRelativeTime(isoString?: string): string {
+  if (!isoString) return 'Heute';
+  try {
+    const diffMs = Date.now() - new Date(isoString).getTime();
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    if (diffHours < 1) return 'vor kurzem';
+    if (diffHours < 24) return `vor ${diffHours} Std.`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays === 1) return 'gestern';
+    if (diffDays < 7) return `vor ${diffDays} Tagen`;
+    return new Date(isoString).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+  } catch {
+    return 'Heute';
+  }
+}
+
 export const LibraryScreen: React.FC = () => {
   const {
     savedArticles,
@@ -24,10 +40,25 @@ export const LibraryScreen: React.FC = () => {
     setActiveTab
   } = useApp();
 
+  const [activeSection, setActiveSection] = useState<'saved' | 'notes'>('saved');
   const [filter, setFilter] = useState<'all' | 'unread' | 'completed'>('all');
 
-  // Decoupled library: persistent saved articles remain permanently available offline
-  const savedItems = React.useMemo(() => {
+  // Map of all known articles
+  const allArticlesMap = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const art of savedArticles) {
+      map.set(art.id, art);
+    }
+    for (const item of [...dailyEdition, ...discoveryItems]) {
+      if (!map.has(item.id)) {
+        map.set(item.id, item);
+      }
+    }
+    return map;
+  }, [savedArticles, dailyEdition, discoveryItems]);
+
+  // Decoupled library: persistent saved articles
+  const savedItems = useMemo(() => {
     const map = new Map<string, any>();
     for (const art of savedArticles) {
       if (interactions[art.id]?.saved !== false) {
@@ -42,7 +73,21 @@ export const LibraryScreen: React.FC = () => {
     return Array.from(map.values());
   }, [savedArticles, dailyEdition, discoveryItems, interactions]);
 
-  // Apply sub-filter
+  // Items with user notes
+  const itemsWithNotes = useMemo(() => {
+    const list: { article: any; notes: any[] }[] = [];
+    for (const [id, interaction] of Object.entries(interactions)) {
+      if (interaction.userNotes && interaction.userNotes.length > 0) {
+        const article = allArticlesMap.get(id);
+        if (article) {
+          list.push({ article, notes: interaction.userNotes });
+        }
+      }
+    }
+    return list;
+  }, [interactions, allArticlesMap]);
+
+  // Apply sub-filter to saved articles
   const filteredSaved = savedItems.filter(item => {
     const isCompleted = (interactions[item.id]?.completedAt !== undefined) ||
       (interactions[item.id]?.progressPercent ?? 0) >= 95;
@@ -52,133 +97,257 @@ export const LibraryScreen: React.FC = () => {
     return true;
   });
 
+  const totalNotesCount = itemsWithNotes.reduce((sum, item) => sum + item.notes.length, 0);
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
-        <Text style={[styles.title, { color: colors.textPrimary }]}>
-          Bibliothek
-        </Text>
-        <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-          {savedItems.length} {savedItems.length === 1 ? 'Artikel' : 'Artikel'} gemerkt
-        </Text>
+        <View style={styles.headerInner}>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>
+            Bibliothek & Notizbuch
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.textMuted }]}>
+            {savedItems.length} gemerkt • {totalNotesCount} eigene Reflexionen
+          </Text>
+        </View>
       </View>
 
-      {/* Filter Tabs */}
-      {savedItems.length > 0 && (
-        <View style={styles.filterRow}>
-          {[
-            { id: 'all', label: 'Alle' },
-            { id: 'unread', label: 'Ungelesen' },
-            { id: 'completed', label: 'Gelesen' }
-          ].map(f => (
-            <TouchableOpacity
-              key={f.id}
-              onPress={() => setFilter(f.id as any)}
+      {/* Main Section Switcher: Gemerkt vs Meine Gedanken */}
+      <View style={[styles.sectionRow, { borderBottomColor: colors.borderSubtle }]}>
+        <View style={styles.sectionRowInner}>
+          <TouchableOpacity
+            onPress={() => setActiveSection('saved')}
+            style={[
+              styles.sectionTab,
+              activeSection === 'saved' && { borderBottomColor: colors.accent, borderBottomWidth: 2 }
+            ]}
+          >
+            <Ionicons
+              name={activeSection === 'saved' ? 'bookmark' : 'bookmark-outline'}
+              size={16}
+              color={activeSection === 'saved' ? colors.accent : colors.textMuted}
+              style={{ marginRight: 6 }}
+            />
+            <Text
               style={[
-                styles.filterPill,
-                {
-                  backgroundColor: filter === f.id ? colors.accent : colors.surface,
-                  borderColor: filter === f.id ? colors.accent : colors.borderSubtle
-                }
+                styles.sectionTabText,
+                { color: activeSection === 'saved' ? colors.accent : colors.textMuted }
               ]}
             >
-              <Text
+              Gemerkt ({savedItems.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setActiveSection('notes')}
+            style={[
+              styles.sectionTab,
+              activeSection === 'notes' && { borderBottomColor: colors.accent, borderBottomWidth: 2 }
+            ]}
+          >
+            <Ionicons
+              name={activeSection === 'notes' ? 'create' : 'create-outline'}
+              size={16}
+              color={activeSection === 'notes' ? colors.accent : colors.textMuted}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[
+                styles.sectionTabText,
+                { color: activeSection === 'notes' ? colors.accent : colors.textMuted }
+              ]}
+            >
+              Meine Gedanken ({totalNotesCount})
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Filter Tabs for Saved Articles */}
+      {activeSection === 'saved' && savedItems.length > 0 && (
+        <View style={styles.filterRow}>
+          <View style={styles.filterRowInner}>
+            {[
+              { id: 'all', label: 'Alle' },
+              { id: 'unread', label: 'Ungelesen' },
+              { id: 'completed', label: 'Gelesen' }
+            ].map(f => (
+              <TouchableOpacity
+                key={f.id}
+                onPress={() => setFilter(f.id as any)}
                 style={[
-                  styles.filterText,
-                  { color: filter === f.id ? '#FFFFFF' : colors.textSecondary }
+                  styles.filterPill,
+                  {
+                    backgroundColor: filter === f.id ? colors.accent : colors.surface,
+                    borderColor: filter === f.id ? colors.accent : colors.borderSubtle
+                  }
                 ]}
               >
-                {f.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                <Text
+                  style={[
+                    styles.filterText,
+                    { color: filter === f.id ? '#FFFFFF' : colors.textSecondary }
+                  ]}
+                >
+                  {f.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
       )}
 
-      {/* List */}
+      {/* Scrollable Content */}
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {savedItems.length === 0 ? (
-          <View style={[styles.emptyContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-            <Ionicons name="bookmark-outline" size={38} color={colors.textMuted} style={{ marginBottom: spacing.md }} />
-            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-              Noch keine Artikel gemerkt
-            </Text>
-            <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-              Tippe in der Tagesausgabe auf das Lesezeichen-Symbol, um lesenswerte Gedanken dauerhaft in deiner Bibliothek zu sichern.
-            </Text>
-            <TouchableOpacity
-              onPress={() => setActiveTab('feed')}
-              style={[styles.feedButton, { backgroundColor: colors.accent }]}
-            >
-              <Text style={styles.feedButtonText}>Zur Tagesausgabe</Text>
-            </TouchableOpacity>
-          </View>
-        ) : filteredSaved.length === 0 ? (
-          <View style={[styles.emptyContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-              Keine Treffer im Filter
-            </Text>
-            <TouchableOpacity onPress={() => setFilter('all')}>
-              <Text style={[styles.resetFilterText, { color: colors.accent }]}>Filter zurücksetzen</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          filteredSaved.map(item => {
-            const progress = interactions[item.id]?.progressPercent ?? 0;
-            const isCompleted = (interactions[item.id]?.completedAt !== undefined) || progress >= 95;
+        <View style={styles.contentInner}>
+          {activeSection === 'saved' ? (
+            savedItems.length === 0 ? (
+              <View style={[styles.emptyContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <Ionicons name="bookmark-outline" size={38} color={colors.textMuted} style={{ marginBottom: spacing.md }} />
+                <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                  Noch keine Artikel gemerkt
+                </Text>
+                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                  Tippe im Atem-Feed auf das Lesezeichen-Symbol, um lesenswerte Gedanken dauerhaft in deiner Offline-Bibliothek zu sichern.
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setActiveTab('feed')}
+                  style={[styles.feedButton, { backgroundColor: colors.accent }]}
+                >
+                  <Text style={styles.feedButtonText}>Zum Entdecken-Feed</Text>
+                </TouchableOpacity>
+              </View>
+            ) : filteredSaved.length === 0 ? (
+              <View style={[styles.emptyContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                  Keine Treffer im Filter
+                </Text>
+                <TouchableOpacity onPress={() => setFilter('all')}>
+                  <Text style={[styles.resetFilterText, { color: colors.accent }]}>Filter zurücksetzen</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              filteredSaved.map(item => {
+                const progress = interactions[item.id]?.progressPercent ?? 0;
+                const isCompleted = (interactions[item.id]?.completedAt !== undefined) || progress >= 95;
 
-            return (
-              <TouchableOpacity
-                key={item.id}
-                activeOpacity={0.85}
-                onPress={() => openArticle(item.id)}
-                style={[styles.itemCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-              >
-                <View style={styles.cardHeader}>
-                  <TopicBadge topic={item.primaryTopic} size="sm" />
-                  <View style={{ width: 6 }} />
-                  <ReadingTimeBadge minutes={item.estimatedReadingMinutes} />
-                  <View style={{ flex: 1 }} />
+                return (
                   <TouchableOpacity
-                    onPress={() => toggleSaveItem(item.id)}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    key={item.id}
+                    activeOpacity={0.85}
+                    onPress={() => openArticle(item.id)}
+                    style={[styles.itemCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
                   >
-                    <Ionicons name="bookmark" size={17} color={colors.accent} />
+                    <View style={styles.cardHeader}>
+                      <TopicBadge topic={item.primaryTopic} size="sm" />
+                      <View style={{ width: 6 }} />
+                      <ReadingTimeBadge minutes={item.estimatedReadingMinutes} />
+                      <View style={{ flex: 1 }} />
+                      <TouchableOpacity
+                        onPress={() => toggleSaveItem(item.id)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      >
+                        <Ionicons name="bookmark" size={17} color={colors.accent} />
+                      </TouchableOpacity>
+                    </View>
+
+                    <Text style={[styles.itemTitle, { color: colors.textPrimary }]}>
+                      {item.title}
+                    </Text>
+
+                    <Text style={[styles.itemSubtitle, { color: colors.textSecondary }]} numberOfLines={2}>
+                      {item.subtitle}
+                    </Text>
+
+                    <View style={[styles.cardFooter, { borderTopColor: colors.borderSubtle }]}>
+                      {isCompleted ? (
+                        <View style={styles.statusRow}>
+                          <Ionicons name="checkmark-circle" size={13} color={colors.success} style={{ marginRight: 4 }} />
+                          <Text style={[styles.statusText, { color: colors.success }]}>Vollständig gelesen</Text>
+                        </View>
+                      ) : progress > 0 ? (
+                        <View style={styles.statusRow}>
+                          <Ionicons name="time-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                          <Text style={[styles.statusText, { color: colors.accent }]}>{progress}% gelesen</Text>
+                        </View>
+                      ) : (
+                        <Text style={[styles.statusText, { color: colors.textMuted }]}>Noch nicht gelesen</Text>
+                      )}
+
+                      <Text style={[styles.publisherText, { color: colors.textMuted }]}>
+                        {item.sourceReferences[0]?.publisher ?? ''}
+                      </Text>
+                    </View>
                   </TouchableOpacity>
-                </View>
-
-                <Text style={[styles.itemTitle, { color: colors.textPrimary }]}>
-                  {item.title}
+                );
+              })
+            )
+          ) : (
+            /* Notes Section */
+            itemsWithNotes.length === 0 ? (
+              <View style={[styles.emptyContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <Ionicons name="create-outline" size={38} color={colors.textMuted} style={{ marginBottom: spacing.md }} />
+                <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                  Noch keine Gedanken festgehalten
                 </Text>
-
-                <Text style={[styles.itemSubtitle, { color: colors.textSecondary }]} numberOfLines={2}>
-                  {item.subtitle}
+                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                  Nutze das „✍️ Replik schreiben“-Feld auf den Feed-Karten, um Einwände, Unterrichtsideen oder eigene Thesen direkt beim Lesen zu notieren.
                 </Text>
-
-                <View style={[styles.cardFooter, { borderTopColor: colors.borderSubtle }]}>
-                  {isCompleted ? (
-                    <View style={styles.statusRow}>
-                      <Ionicons name="checkmark-circle" size={13} color={colors.success} style={{ marginRight: 4 }} />
-                      <Text style={[styles.statusText, { color: colors.success }]}>Vollständig gelesen</Text>
+                <TouchableOpacity
+                  onPress={() => setActiveTab('feed')}
+                  style={[styles.feedButton, { backgroundColor: colors.accent }]}
+                >
+                  <Text style={styles.feedButtonText}>Zum Entdecken-Feed</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              itemsWithNotes.map(({ article, notes }) => (
+                <View
+                  key={article.id}
+                  style={[styles.itemCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+                >
+                  <TouchableOpacity activeOpacity={0.85} onPress={() => openArticle(article.id)}>
+                    <View style={styles.cardHeader}>
+                      <TopicBadge topic={article.primaryTopic} size="sm" />
+                      <View style={{ flex: 1 }} />
+                      <Text style={[styles.publisherText, { color: colors.accent }]}>
+                        Artikel öffnen →
+                      </Text>
                     </View>
-                  ) : progress > 0 ? (
-                    <View style={styles.statusRow}>
-                      <Ionicons name="time-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-                      <Text style={[styles.statusText, { color: colors.accent }]}>{progress}% gelesen</Text>
-                    </View>
-                  ) : (
-                    <Text style={[styles.statusText, { color: colors.textMuted }]}>Noch nicht gelesen</Text>
-                  )}
+                    <Text style={[styles.itemTitle, { color: colors.textPrimary }]}>
+                      {article.title}
+                    </Text>
+                  </TouchableOpacity>
 
-                  <Text style={[styles.publisherText, { color: colors.textMuted }]}>
-                    {item.sourceReferences[0]?.publisher ?? ''}
-                  </Text>
+                  {/* Render Notes */}
+                  <View style={styles.notesGroup}>
+                    {notes.map(n => (
+                      <View
+                        key={n.id}
+                        style={[styles.noteBubble, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                      >
+                        <View style={styles.noteBubbleHeader}>
+                          <View style={[styles.noteTagBadge, { backgroundColor: colors.accentSubtle }]}>
+                            <Text style={[styles.noteTagText, { color: colors.accent }]}>
+                              {n.tag === 'einwand' ? '⚡️ Einwand' : n.tag === 'unterricht' ? '🏫 Unterricht' : n.tag === 'these' ? '💡 Eigene These' : '📝 Notiz'}
+                            </Text>
+                          </View>
+                          <Text style={[styles.noteTime, { color: colors.textMuted }]}>
+                            {formatRelativeTime(n.createdAt)}
+                          </Text>
+                        </View>
+                        <Text style={[styles.noteBody, { color: colors.textPrimary }]}>
+                          {n.text}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
                 </View>
-              </TouchableOpacity>
-            );
-          })
-        )}
+              ))
+            )
+          )}
+        </View>
       </ScrollView>
     </View>
   );
@@ -194,6 +363,11 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
     borderBottomWidth: 0.5
   },
+  headerInner: {
+    maxWidth: 780,
+    width: '100%',
+    alignSelf: 'center'
+  },
   title: {
     fontSize: typography.sizes.title1,
     fontWeight: '800'
@@ -202,10 +376,37 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.micro,
     marginTop: 2
   },
-  filterRow: {
+  sectionRow: {
+    borderBottomWidth: 0.5
+  },
+  sectionRowInner: {
     flexDirection: 'row',
+    maxWidth: 780,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: spacing.pageHorizontal
+  },
+  sectionTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginRight: 24,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent'
+  },
+  sectionTabText: {
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  filterRow: {
+    paddingVertical: spacing.sm
+  },
+  filterRowInner: {
+    flexDirection: 'row',
+    maxWidth: 780,
+    width: '100%',
+    alignSelf: 'center',
     paddingHorizontal: spacing.pageHorizontal,
-    paddingVertical: spacing.sm,
     gap: 8
   },
   filterPill: {
@@ -222,6 +423,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.pageHorizontal,
     paddingTop: spacing.md,
     paddingBottom: spacing.xxl
+  },
+  contentInner: {
+    maxWidth: 780,
+    width: '100%',
+    alignSelf: 'center'
   },
   emptyContainer: {
     borderRadius: radius.lg,
@@ -270,9 +476,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs
   },
   itemTitle: {
-    fontSize: typography.sizes.title2,
+    fontSize: 18,
     fontWeight: '700',
-    lineHeight: typography.lineHeights.title2,
+    lineHeight: 24,
     marginBottom: 4
   },
   itemSubtitle: {
@@ -296,6 +502,38 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
   publisherText: {
-    fontSize: typography.sizes.micro
+    fontSize: typography.sizes.micro,
+    fontWeight: '600'
+  },
+  notesGroup: {
+    marginTop: spacing.sm,
+    gap: 8
+  },
+  noteBubble: {
+    padding: 10,
+    borderRadius: radius.md,
+    borderWidth: 0.5
+  },
+  noteBubbleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4
+  },
+  noteTagBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4
+  },
+  noteTagText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  noteTime: {
+    fontSize: 10
+  },
+  noteBody: {
+    fontSize: 13,
+    lineHeight: 18
   }
 });

@@ -355,4 +355,42 @@ describe('Storage Mutex & Persistence Architecture', () => {
     const emptyInteractions = await repo.getInteractions();
     assert.deepStrictEqual(emptyInteractions, {});
   });
+
+  it('13. addNote appends intellectual reflection notes with tags and timestamp', async () => {
+    const driver = new MemoryStorageDriver();
+    const storage = new AtemStorage(driver);
+    const repo = new LocalLibraryRepository(storage);
+
+    const note1 = await repo.addNote('art-didaktik-1', 'Gegenargument für die Seminardiskussion: Technologie determiniert nicht Pädagogik.', 'einwand');
+    assert.strictEqual(note1.userNotes.length, 1);
+    assert.strictEqual(note1.userNotes[0].tag, 'einwand');
+    assert.ok(note1.userNotes[0].text.includes('Gegenargument'));
+
+    const note2 = await repo.addNote('art-didaktik-1', 'Unterrichts-Idee: Schüler analysieren Primärquellen statt Zusammenfassungen.', 'unterricht');
+    assert.strictEqual(note2.userNotes.length, 2);
+    assert.strictEqual(note2.userNotes[1].tag, 'unterricht');
+
+    // Reload from new repo instance to verify committed persistence
+    const reloadedRepo = new LocalLibraryRepository(storage);
+    const reloaded = await reloadedRepo.getInteraction('art-didaktik-1');
+    assert.ok(reloaded !== null);
+    assert.strictEqual(reloaded!.userNotes.length, 2);
+  });
+
+  it('14. voteItem updates voteScore and feedback (+1/-1/0) without losing existing data', async () => {
+    const driver = new MemoryStorageDriver();
+    const storage = new AtemStorage(driver);
+    const repo = new LocalLibraryRepository(storage);
+
+    const upvoted = await repo.voteItem('art-accel-1', 'up');
+    assert.strictEqual(upvoted.voteScore, 1);
+    assert.strictEqual(upvoted.feedback, 'more_like_this');
+
+    const downvoted = await repo.voteItem('art-accel-1', 'down');
+    assert.strictEqual(downvoted.voteScore, -1);
+    assert.strictEqual(downvoted.feedback, 'less_like_this');
+
+    const cleared = await repo.voteItem('art-accel-1', 'clear');
+    assert.strictEqual(cleared.voteScore, 0);
+  });
 });

@@ -191,10 +191,10 @@ describe('Deterministic Ranking Engine', () => {
     const item = INITIAL_FIXTURES[0];
     const normal = scoreFeedItem(item, DEFAULT_USER_PROFILE, {});
     const positive = scoreFeedItem(item, DEFAULT_USER_PROFILE, {
-      [item.id]: { itemId: item.id, saved: false, progressPercent: 0, furthestPositionPercent: 0, feedback: 'more_like_this' }
+      [item.id]: { itemId: item.id, saved: false, progressPercent: 0, furthestPositionPercent: 0, feedback: 'more_like_this', userNotes: [], voteScore: 1 }
     });
     const negative = scoreFeedItem(item, DEFAULT_USER_PROFILE, {
-      [item.id]: { itemId: item.id, saved: false, progressPercent: 0, furthestPositionPercent: 0, feedback: 'less_like_this' }
+      [item.id]: { itemId: item.id, saved: false, progressPercent: 0, furthestPositionPercent: 0, feedback: 'less_like_this', userNotes: [], voteScore: -1 }
     });
 
     assert.ok(positive.score > normal.score, 'Positive feedback should increase score');

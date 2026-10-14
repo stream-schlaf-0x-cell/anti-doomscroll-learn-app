@@ -1,14 +1,16 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   RefreshControl,
-  TouchableOpacity
+  TouchableOpacity,
+  NativeSyntheticEvent,
+  NativeScrollEvent
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { TopicTag, TOPIC_METADATA } from '../../core/domain/types';
+import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
 import { FeedCard } from '../../ui/components/FeedCard';
@@ -17,37 +19,36 @@ import { typography, radius, spacing } from '../../ui/theme';
 export const FeedScreen: React.FC = () => {
   const { dailyEdition, discoveryItems, colors, refreshFeed } = useApp();
   const [selectedFilter, setSelectedFilter] = useState<TopicTag | 'all'>('all');
-  const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(0);
+  const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
   const onRefresh = async () => {
     setRefreshing(true);
     await refreshFeed();
-    setVisibleDiscoveryCount(0);
+    setVisibleDiscoveryCount(10);
     setRefreshing(false);
   };
 
   const handleFilterChange = (tag: TopicTag | 'all') => {
     setSelectedFilter(tag);
-    // Keep discovery count bounded to available items in new category
-    setVisibleDiscoveryCount(0);
+    setVisibleDiscoveryCount(10);
   };
 
   // Filter daily edition items
   const filteredDaily = useMemo(() => {
     return selectedFilter === 'all'
       ? dailyEdition
-      : dailyEdition.filter(item => item.topics.includes(selectedFilter));
+      : dailyEdition.filter(item => item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter));
   }, [dailyEdition, selectedFilter]);
 
   // Filter discovery pool items
   const filteredDiscovery = useMemo(() => {
     return selectedFilter === 'all'
       ? discoveryItems
-      : discoveryItems.filter(item => item.topics.includes(selectedFilter));
+      : discoveryItems.filter(item => item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter));
   }, [discoveryItems, selectedFilter]);
 
-  // Appended discovery items
+  // Appended discovery items for smooth infinite mind-scroll
   const renderedDiscovery = useMemo(() => {
     return filteredDiscovery.slice(0, visibleDiscoveryCount);
   }, [filteredDiscovery, visibleDiscoveryCount]);
@@ -55,75 +56,109 @@ export const FeedScreen: React.FC = () => {
   const remainingDiscoveryCount = Math.max(0, filteredDiscovery.length - visibleDiscoveryCount);
   const nextBatchSize = Math.min(10, remainingDiscoveryCount);
 
+  // Seamless infinite mind-scroll listener
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const paddingToBottom = 700;
+    if (layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom) {
+      if (visibleDiscoveryCount < filteredDiscovery.length) {
+        setVisibleDiscoveryCount(prev => Math.min(filteredDiscovery.length, prev + 8));
+      }
+    }
+  }, [visibleDiscoveryCount, filteredDiscovery.length]);
+
   const handleLoadMoreDiscovery = () => {
     setVisibleDiscoveryCount(prev => Math.min(filteredDiscovery.length, prev + 10));
   };
+
+  // Combine items into a seamless stream with mindfulness milestones
+  const allStreamItems = useMemo(() => {
+    return [...filteredDaily, ...renderedDiscovery];
+  }, [filteredDaily, renderedDiscovery]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Header />
 
-      {/* Filter Category Bar */}
+      {/* Community Space Selector Bar (Desktop & Mobile Friendly) */}
       <View style={[styles.filterBarContainer, { borderBottomColor: colors.borderSubtle }]}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterScroll}
-        >
-          <TouchableOpacity
-            onPress={() => handleFilterChange('all')}
-            style={[
-              styles.filterPill,
-              {
-                backgroundColor: selectedFilter === 'all' ? colors.accent : colors.surface,
-                borderColor: selectedFilter === 'all' ? colors.accent : colors.borderSubtle
-              }
-            ]}
+        <View style={styles.filterBarInner}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterScroll}
           >
-            <Text
+            {/* All Spaces Tab */}
+            <TouchableOpacity
+              onPress={() => handleFilterChange('all')}
               style={[
-                styles.filterText,
-                { color: selectedFilter === 'all' ? '#FFFFFF' : colors.textSecondary }
+                styles.spacePill,
+                {
+                  backgroundColor: selectedFilter === 'all' ? colors.accent : colors.surface,
+                  borderColor: selectedFilter === 'all' ? colors.accent : colors.borderSubtle
+                }
               ]}
             >
-              Alle Themen
-            </Text>
-          </TouchableOpacity>
-
-          {(Object.keys(TOPIC_METADATA) as TopicTag[]).map(tag => {
-            const isSelected = selectedFilter === tag;
-            const meta = TOPIC_METADATA[tag];
-
-            return (
-              <TouchableOpacity
-                key={tag}
-                onPress={() => handleFilterChange(tag)}
+              <Ionicons
+                name="compass-outline"
+                size={13}
+                color={selectedFilter === 'all' ? '#FFFFFF' : colors.textSecondary}
+                style={{ marginRight: 5 }}
+              />
+              <Text
                 style={[
-                  styles.filterPill,
-                  {
-                    backgroundColor: isSelected ? colors.accent : colors.surface,
-                    borderColor: isSelected ? colors.accent : colors.borderSubtle
-                  }
+                  styles.spacePillText,
+                  { color: selectedFilter === 'all' ? '#FFFFFF' : colors.textSecondary }
                 ]}
               >
-                <Text
+                🌟 Alle Spaces
+              </Text>
+            </TouchableOpacity>
+
+            {/* Individual Spaces */}
+            {(Object.keys(TOPIC_SPACE_MAP) as TopicTag[]).map(tag => {
+              const isSelected = selectedFilter === tag;
+              const meta = TOPIC_SPACE_MAP[tag];
+
+              return (
+                <TouchableOpacity
+                  key={tag}
+                  onPress={() => handleFilterChange(tag)}
                   style={[
-                    styles.filterText,
-                    { color: isSelected ? '#FFFFFF' : colors.textSecondary }
+                    styles.spacePill,
+                    {
+                      backgroundColor: isSelected ? meta.color : colors.surface,
+                      borderColor: isSelected ? meta.color : colors.borderSubtle
+                    }
                   ]}
                 >
-                  {meta.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+                  <Ionicons
+                    name={(meta.icon as any) || 'planet-outline'}
+                    size={13}
+                    color={isSelected ? '#FFFFFF' : meta.color}
+                    style={{ marginRight: 5 }}
+                  />
+                  <Text
+                    style={[
+                      styles.spacePillText,
+                      { color: isSelected ? '#FFFFFF' : colors.textPrimary }
+                    ]}
+                  >
+                    {meta.space}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
       </View>
 
-      {/* Main Feed Scroll */}
+      {/* Main Feed Scroll (Desktop Centered & Infinite Scrolling) */}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -132,101 +167,112 @@ export const FeedScreen: React.FC = () => {
           />
         }
       >
-        {filteredDaily.length === 0 && renderedDiscovery.length === 0 ? (
-          <View style={[styles.emptyBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-            <Ionicons name="filter-outline" size={32} color={colors.textMuted} style={{ marginBottom: spacing.sm }} />
-            <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-              Keine Beiträge in dieser Kategorie
-            </Text>
-            <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-              Wähle „Alle Themen“ oder passe deine Interessen in den Einstellungen an.
-            </Text>
-            <TouchableOpacity
-              onPress={() => handleFilterChange('all')}
-              style={[styles.emptyButton, { backgroundColor: colors.accent }]}
-            >
-              <Text style={styles.emptyButtonText}>Filter zurücksetzen</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <>
-            {/* Finite Daily Edition Cards */}
-            {filteredDaily.map((item, index) => (
-              <FeedCard
-                key={item.id}
-                item={item}
-                isHero={index === 0 && selectedFilter === 'all'}
-              />
-            ))}
-
-            {/* Finite Edition Completion Banner (Anti-Doomscroll deliberate pause) */}
-            <View style={[styles.completionBanner, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-              <View style={[styles.iconCircle, { backgroundColor: colors.accentSubtle }]}>
-                <Ionicons name="sparkles" size={24} color={colors.accent} />
-              </View>
-
-              <Text style={[styles.completionTitle, { color: colors.textPrimary }]}>
-                Ende dieser Ausgabe
+        <View style={styles.feedInnerColumn}>
+          {allStreamItems.length === 0 ? (
+            <View style={[styles.emptyBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+              <Ionicons name="filter-outline" size={32} color={colors.textMuted} style={{ marginBottom: spacing.sm }} />
+              <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                Keine Beiträge in diesem Space
               </Text>
-
-              <Text style={[styles.completionText, { color: colors.textSecondary }]}>
-                Du hast alle kuratierten Beiträge der heutigen Ausgabe erreicht. Gönne deinem Geist eine Atempause – oder erkunde bewusst weitere Entdeckungen.
+              <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+                Wähle „Alle Spaces“ oder wechsle den Themenfilter.
               </Text>
+              <TouchableOpacity
+                onPress={() => handleFilterChange('all')}
+                style={[styles.emptyButton, { backgroundColor: colors.accent }]}
+              >
+                <Text style={styles.emptyButtonText}>Alle Spaces anzeigen</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              {/* Daily Edition Primary Items */}
+              {filteredDaily.map((item, index) => (
+                <React.Fragment key={item.id}>
+                  <FeedCard
+                    item={item}
+                    isHero={index === 0 && selectedFilter === 'all'}
+                  />
 
-              {remainingDiscoveryCount > 0 && visibleDiscoveryCount === 0 && (
-                <TouchableOpacity
-                  onPress={handleLoadMoreDiscovery}
-                  style={[styles.discoveryToggle, { borderColor: colors.accent, backgroundColor: colors.surfaceSecondary }]}
-                >
-                  <Ionicons name="compass-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
-                  <Text style={[styles.discoveryToggleText, { color: colors.accent }]}>
-                    Weiter entdecken (+{nextBatchSize} von {remainingDiscoveryCount} Beiträgen)
+                  {/* Mindfulness Milestone after item 5 in daily edition */}
+                  {index === 4 && (
+                    <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                      <Ionicons name="leaf-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
+                          Innehalten & Nachdenken
+                        </Text>
+                        <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
+                          5 Gedanken aufgenommen. Nimm dir einen Moment, bevor du weiter scrollst.
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </React.Fragment>
+              ))}
+
+              {/* Transition Milestone between Daily Edition and Discovery Pool */}
+              {filteredDaily.length > 0 && renderedDiscovery.length > 0 && (
+                <View style={[styles.streamDividerCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                  <View style={[styles.sparkleIconBox, { backgroundColor: colors.accentSubtle }]}>
+                    <Ionicons name="sparkles" size={20} color={colors.accent} />
+                  </View>
+                  <Text style={[styles.streamDividerTitle, { color: colors.textPrimary }]}>
+                    Tagesausgabe abgeschlossen
                   </Text>
-                </TouchableOpacity>
-              )}
-
-              {visibleDiscoveryCount > 0 && (
-                <View style={[styles.dividerPill, { backgroundColor: colors.surfaceSecondary }]}>
-                  <Text style={[styles.dividerText, { color: colors.textMuted }]}>
-                    — WEITERE ENTDECKUNGEN ({renderedDiscovery.length} GELADEN) —
+                  <Text style={[styles.streamDividerText, { color: colors.textSecondary }]}>
+                    Hier beginnt der endlose Mind-Scroll. Entdecke tiefer gehende Recherchen und Gedanken aus dem gesamten Atem-Netzwerk.
                   </Text>
                 </View>
               )}
-            </View>
 
-            {/* Appended Discovery Items (Appended without shifting previous cards) */}
-            {renderedDiscovery.length > 0 && (
-              <View style={styles.discoverySection}>
-                {renderedDiscovery.map(item => (
-                  <FeedCard key={item.id} item={item} isHero={false} />
-                ))}
+              {/* Appended Discovery Items */}
+              {renderedDiscovery.map((item, index) => (
+                <React.Fragment key={item.id}>
+                  <FeedCard item={item} isHero={false} />
 
-                {/* Next Batch Button if more discovery items remain */}
-                {remainingDiscoveryCount > 0 ? (
-                  <TouchableOpacity
-                    onPress={handleLoadMoreDiscovery}
-                    style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
-                  >
-                    <Ionicons name="add-circle-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
-                    <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
-                      Weitere Entdeckungen laden (+{nextBatchSize} von {remainingDiscoveryCount})
-                    </Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={[styles.allReadBanner, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Ionicons name="checkmark-circle-outline" size={20} color={colors.accent} style={{ marginBottom: 4 }} />
-                    <Text style={[styles.allReadTitle, { color: colors.textPrimary }]}>
-                      Alle Entdeckungen durchstöbert
-                    </Text>
-                    <Text style={[styles.allReadSubtitle, { color: colors.textMuted }]}>
-                      Du hast alle verfügbaren Beiträge gesehen. Ein guter Moment für eine echte Pause.
-                    </Text>
-                  </View>
-                )}
-              </View>
-            )}
-          </>
-        )}
+                  {/* Periodic Mindfulness Milestone every 8 discovery cards */}
+                  {(index + 1) % 8 === 0 && (
+                    <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                      <Ionicons name="water-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
+                          Bewusstes Weiterlernen
+                        </Text>
+                        <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
+                          {index + 1 + filteredDaily.length} Erkenntnisse gesammelt. Dein Geist wächst mit jedem bewussten Gedanken.
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </React.Fragment>
+              ))}
+
+              {/* End of Stream / Manual Load More Trigger */}
+              {remainingDiscoveryCount > 0 ? (
+                <TouchableOpacity
+                  onPress={handleLoadMoreDiscovery}
+                  style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
+                >
+                  <Ionicons name="compass-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
+                  <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
+                    Weitere Entdeckungen laden (+{nextBatchSize} von {remainingDiscoveryCount})
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={[styles.allReadBanner, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                  <Ionicons name="checkmark-done-circle" size={24} color={colors.accent} style={{ marginBottom: 6 }} />
+                  <Text style={[styles.allReadTitle, { color: colors.textPrimary }]}>
+                    Du bist auf dem neuesten Stand
+                  </Text>
+                  <Text style={[styles.allReadSubtitle, { color: colors.textMuted }]}>
+                    Alle 45+ Beiträge durchstöbert. Ein wunderbarer Moment für die Praxis außerhalb des Bildschirms.
+                  </Text>
+                </View>
+              )}
+            </>
+          )}
+        </View>
       </ScrollView>
     </View>
   );
@@ -240,139 +286,136 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderBottomWidth: 0.5
   },
+  filterBarInner: {
+    maxWidth: 780,
+    width: '100%',
+    alignSelf: 'center'
+  },
   filterScroll: {
     paddingHorizontal: spacing.pageHorizontal,
-    gap: 8
+    gap: 8,
+    alignItems: 'center'
   },
-  filterPill: {
+  spacePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: radius.pill,
     borderWidth: 0.5
   },
-  filterText: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '600'
+  spacePillText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '700'
   },
   scrollContent: {
     paddingHorizontal: spacing.pageHorizontal,
     paddingTop: spacing.md,
     paddingBottom: spacing.xxl
   },
-  completionBanner: {
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    padding: spacing.xl,
-    alignItems: 'center',
-    textAlign: 'center',
-    marginTop: spacing.md,
-    marginBottom: spacing.lg
-  },
-  iconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: spacing.sm
-  },
-  completionTitle: {
-    fontSize: typography.sizes.title2,
-    fontWeight: '700',
-    marginBottom: 6
-  },
-  completionText: {
-    fontSize: typography.sizes.bodySmall,
-    lineHeight: 20,
-    textAlign: 'center',
-    marginBottom: spacing.md,
-    maxWidth: 320
-  },
-  discoveryToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: radius.md,
-    borderWidth: 1
-  },
-  discoveryToggleText: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '600'
-  },
-  dividerPill: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    marginTop: spacing.xs
-  },
-  dividerText: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '700',
-    letterSpacing: 0.8
-  },
-  discoverySection: {
-    marginTop: spacing.xs
-  },
-  loadMoreButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.sm,
-    marginBottom: spacing.lg
-  },
-  loadMoreButtonText: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '600'
-  },
-  allReadBanner: {
-    borderRadius: radius.md,
-    borderWidth: 0.5,
-    padding: spacing.lg,
-    alignItems: 'center',
-    marginTop: spacing.sm,
-    marginBottom: spacing.lg
-  },
-  allReadTitle: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '700',
-    marginBottom: 2
-  },
-  allReadSubtitle: {
-    fontSize: typography.sizes.caption,
-    textAlign: 'center'
+  feedInnerColumn: {
+    maxWidth: 780,
+    width: '100%',
+    alignSelf: 'center'
   },
   emptyBox: {
+    padding: spacing.xl,
     borderRadius: radius.lg,
     borderWidth: 1,
-    padding: spacing.xxl,
     alignItems: 'center',
-    marginTop: spacing.xl
+    marginVertical: spacing.xl
   },
   emptyTitle: {
     fontSize: typography.sizes.title2,
     fontWeight: '700',
-    marginBottom: 6,
-    textAlign: 'center'
+    marginBottom: 6
   },
   emptySubtitle: {
     fontSize: typography.sizes.bodySmall,
     textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: spacing.lg
+    marginBottom: spacing.md
   },
   emptyButton: {
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: radius.md
+    paddingVertical: 8,
+    borderRadius: radius.pill
   },
   emptyButtonText: {
     color: '#FFFFFF',
-    fontSize: typography.sizes.bodySmall,
+    fontSize: typography.sizes.caption,
     fontWeight: '600'
+  },
+  milestoneCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 0.5,
+    marginVertical: spacing.md
+  },
+  milestoneTitle: {
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  milestoneSubtitle: {
+    fontSize: 11,
+    marginTop: 2
+  },
+  streamDividerCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.lg,
+    alignItems: 'center',
+    textAlign: 'center',
+    marginVertical: spacing.lg
+  },
+  sparkleIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8
+  },
+  streamDividerTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 4
+  },
+  streamDividerText: {
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+    maxWidth: 480
+  },
+  loadMoreButton: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginVertical: spacing.md
+  },
+  loadMoreButtonText: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '700'
+  },
+  allReadBanner: {
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 0.5,
+    alignItems: 'center',
+    marginVertical: spacing.lg
+  },
+  allReadTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 4
+  },
+  allReadSubtitle: {
+    fontSize: 12,
+    textAlign: 'center',
+    maxWidth: 420
   }
 });

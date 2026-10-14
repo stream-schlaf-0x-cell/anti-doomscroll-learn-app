@@ -1,5 +1,5 @@
-import { FeedItem, UserProfile, ReadingInteraction } from '../domain/types';
-import { INITIAL_FIXTURES } from './fixtures';
+import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP } from '../domain/types';
+import { INITIAL_FIXTURES, getCuratedImageForTopic } from './fixtures';
 import { rankAndInterleaveFeed, ScoredFeedItem } from '../domain/ranking';
 
 // Safely load pipeline output if present
@@ -11,6 +11,33 @@ try {
   }
 } catch {
   pipelineItems = [];
+}
+
+function enrichSocialFeedItem(item: FeedItem): FeedItem {
+  const topic = item.primaryTopic || 'philosophy_ethics';
+  const topicMeta = TOPIC_SPACE_MAP[topic];
+  const space = item.space || topicMeta?.space || `c/${topic}`;
+  const flair = item.flair || topicMeta?.flair || '◈ Recherche';
+  const imageUrl = item.imageUrl || getCuratedImageForTopic(topic, item.id);
+  const keyInsight = item.keyInsight || (item.subtitle && item.subtitle.length > 20 ? item.subtitle : undefined);
+  const challengePrompt = item.challengePrompt || (
+    item.isTeachingRelated
+      ? 'Wie würdest du dieses Phänomen im Unterricht didaktisch aufbereiten?'
+      : item.isChallengingPerspective
+      ? 'Welches stärkste Argument spricht gegen diese Position?'
+      : 'Welcher Gedanke oder Einwand fällt dir spontan dazu ein?'
+  );
+  const upvotesCount = item.upvotesCount || (40 + ((item.id.charCodeAt(item.id.length - 1) * 3) % 75));
+
+  return {
+    ...item,
+    space,
+    flair,
+    imageUrl,
+    keyInsight,
+    challengePrompt,
+    upvotesCount
+  };
 }
 
 export interface IFeedRepository {
@@ -26,15 +53,15 @@ export class LocalFeedRepository implements IFeedRepository {
 
   constructor(customItems?: FeedItem[]) {
     if (customItems) {
-      this.items = customItems;
+      this.items = customItems.map(enrichSocialFeedItem);
     } else {
       const map = new Map<string, FeedItem>();
       for (const item of pipelineItems) {
-        map.set(item.id, item);
+        map.set(item.id, enrichSocialFeedItem(item));
       }
       for (const item of INITIAL_FIXTURES) {
         if (!map.has(item.id)) {
-          map.set(item.id, item);
+          map.set(item.id, enrichSocialFeedItem(item));
         }
       }
       this.items = Array.from(map.values());
@@ -42,7 +69,7 @@ export class LocalFeedRepository implements IFeedRepository {
   }
 
   setItems(items: FeedItem[]): void {
-    this.items = items;
+    this.items = items.map(enrichSocialFeedItem);
   }
 
   async getDailyEdition(

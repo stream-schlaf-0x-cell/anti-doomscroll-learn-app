@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { RawFeedEntry, RawFeedSource } from './types';
-import { FeedItem, FeedItemFormat, SourceReference } from '../domain/types';
+import { FeedItem, FeedItemFormat, SourceReference, TOPIC_SPACE_MAP } from '../domain/types';
 import { calculateReadingStats } from '../data/fixtures';
 
 /**
@@ -128,6 +128,11 @@ export function normalizeFeedEntry(entry: RawFeedEntry, source: RawFeedSource): 
       claim: entry.title,
       interpretation: entry.summary.slice(0, 200),
       humanSource: author
-    } : undefined
+    } : undefined,
+
+    // Atem Network & Social Discovery Additions
+    space: TOPIC_SPACE_MAP[source.primaryTopic]?.space,
+    flair: TOPIC_SPACE_MAP[source.primaryTopic]?.flair,
+    upvotesCount: 42 + (contentHash.charCodeAt(0) % 50)
   };
 }

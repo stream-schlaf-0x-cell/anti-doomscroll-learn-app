@@ -136,84 +136,86 @@ const MainNavigator: React.FC = () => {
           }
         ]}
       >
-        {/* Tab 1: Feed */}
-        <TouchableOpacity
-          accessibilityRole="tab"
-          accessibilityLabel="Tagesausgabe"
-          accessibilityState={{ selected: activeTab === 'feed' }}
-          onPress={() => setActiveTab('feed')}
-          style={styles.tabItem}
-          activeOpacity={0.7}
-        >
-          <Ionicons
-            name={activeTab === 'feed' ? 'book' : 'book-outline'}
-            size={22}
-            color={activeTab === 'feed' ? colors.accent : colors.textMuted}
-          />
-          <Text
-            style={[
-              styles.tabLabel,
-              { color: activeTab === 'feed' ? colors.accent : colors.textMuted }
-            ]}
+        <View style={styles.tabBarInner}>
+          {/* Tab 1: Feed / Network */}
+          <TouchableOpacity
+            accessibilityRole="tab"
+            accessibilityLabel="Entdecken"
+            accessibilityState={{ selected: activeTab === 'feed' }}
+            onPress={() => setActiveTab('feed')}
+            style={styles.tabItem}
+            activeOpacity={0.7}
           >
-            Ausgabe
-          </Text>
-        </TouchableOpacity>
-
-        {/* Tab 2: Library */}
-        <TouchableOpacity
-          accessibilityRole="tab"
-          accessibilityLabel="Bibliothek"
-          accessibilityState={{ selected: activeTab === 'library' }}
-          onPress={() => setActiveTab('library')}
-          style={styles.tabItem}
-          activeOpacity={0.7}
-        >
-          <View style={styles.iconBadgeWrapper}>
             <Ionicons
-              name={activeTab === 'library' ? 'bookmarks' : 'bookmarks-outline'}
+              name={activeTab === 'feed' ? 'compass' : 'compass-outline'}
               size={22}
-              color={activeTab === 'library' ? colors.accent : colors.textMuted}
+              color={activeTab === 'feed' ? colors.accent : colors.textMuted}
             />
-            {savedCount > 0 && (
-              <View style={[styles.badge, { backgroundColor: colors.accent }]}>
-                <Text style={styles.badgeText}>{savedCount}</Text>
-              </View>
-            )}
-          </View>
-          <Text
-            style={[
-              styles.tabLabel,
-              { color: activeTab === 'library' ? colors.accent : colors.textMuted }
-            ]}
-          >
-            Bibliothek
-          </Text>
-        </TouchableOpacity>
+            <Text
+              style={[
+                styles.tabLabel,
+                { color: activeTab === 'feed' ? colors.accent : colors.textMuted }
+              ]}
+            >
+              Entdecken
+            </Text>
+          </TouchableOpacity>
 
-        {/* Tab 3: Settings */}
-        <TouchableOpacity
-          accessibilityRole="tab"
-          accessibilityLabel="Einstellungen"
-          accessibilityState={{ selected: activeTab === 'settings' }}
-          onPress={() => setActiveTab('settings')}
-          style={styles.tabItem}
-          activeOpacity={0.7}
-        >
-          <Ionicons
-            name={activeTab === 'settings' ? 'options' : 'options-outline'}
-            size={22}
-            color={activeTab === 'settings' ? colors.accent : colors.textMuted}
-          />
-          <Text
-            style={[
-              styles.tabLabel,
-              { color: activeTab === 'settings' ? colors.accent : colors.textMuted }
-            ]}
+          {/* Tab 2: Library & Notebook */}
+          <TouchableOpacity
+            accessibilityRole="tab"
+            accessibilityLabel="Bibliothek"
+            accessibilityState={{ selected: activeTab === 'library' }}
+            onPress={() => setActiveTab('library')}
+            style={styles.tabItem}
+            activeOpacity={0.7}
           >
-            Steuerung
-          </Text>
-        </TouchableOpacity>
+            <View style={styles.iconBadgeWrapper}>
+              <Ionicons
+                name={activeTab === 'library' ? 'bookmarks' : 'bookmarks-outline'}
+                size={22}
+                color={activeTab === 'library' ? colors.accent : colors.textMuted}
+              />
+              {savedCount > 0 && (
+                <View style={[styles.badge, { backgroundColor: colors.accent }]}>
+                  <Text style={styles.badgeText}>{savedCount}</Text>
+                </View>
+              )}
+            </View>
+            <Text
+              style={[
+                styles.tabLabel,
+                { color: activeTab === 'library' ? colors.accent : colors.textMuted }
+              ]}
+            >
+              Bibliothek
+            </Text>
+          </TouchableOpacity>
+
+          {/* Tab 3: Settings */}
+          <TouchableOpacity
+            accessibilityRole="tab"
+            accessibilityLabel="Einstellungen"
+            accessibilityState={{ selected: activeTab === 'settings' }}
+            onPress={() => setActiveTab('settings')}
+            style={styles.tabItem}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={activeTab === 'settings' ? 'options' : 'options-outline'}
+              size={22}
+              color={activeTab === 'settings' ? colors.accent : colors.textMuted}
+            />
+            <Text
+              style={[
+                styles.tabLabel,
+                { color: activeTab === 'settings' ? colors.accent : colors.textMuted }
+              ]}
+            >
+              Steuerung
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -308,7 +310,6 @@ const styles = StyleSheet.create({
     zIndex: 999
   },
   tabBar: {
-    flexDirection: 'row',
     borderTopWidth: 0.5,
     paddingTop: 8,
     elevation: 8,
@@ -316,6 +317,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.05,
     shadowRadius: 4
+  },
+  tabBarInner: {
+    flexDirection: 'row',
+    maxWidth: 780,
+    width: '100%',
+    alignSelf: 'center'
   },
   tabItem: {
     flex: 1,

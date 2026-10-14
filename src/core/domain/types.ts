@@ -204,9 +204,75 @@ export const FeedItemSchema = z.object({
   isTeachingRelated: z.boolean().default(false),
   isChallengingPerspective: z.boolean().default(false),
   perspectiveDetails: PerspectiveDetailsSchema.optional(),
-  imageUrl: z.string().url().optional()
+  imageUrl: z.string().url().optional(),
+
+  // Atem Network & Social Discovery Additions
+  space: z.string().optional(),
+  flair: z.string().optional(),
+  keyInsight: z.string().optional(),
+  challengePrompt: z.string().optional(),
+  didacticSeed: z.string().optional(),
+  upvotesCount: z.number().int().default(42)
 });
 export type FeedItem = z.infer<typeof FeedItemSchema>;
+
+export const TOPIC_SPACE_MAP: Record<TopicTag, {
+  space: string;
+  name: string;
+  flair: string;
+  icon: string;
+  color: string;
+  bgTint: string;
+}> = {
+  ai_apple: {
+    space: 'c/acceleration',
+    name: 'Frontier AI & Apple',
+    flair: '⚡️ Frontier AI',
+    icon: 'hardware-chip-outline',
+    color: '#3B82F6',
+    bgTint: 'rgba(59, 130, 246, 0.12)'
+  },
+  german_didactics: {
+    space: 'c/didaktik_labor',
+    name: 'Deutsch & Didaktik-Labor',
+    flair: '🔬 Unterrichts-Labor',
+    icon: 'school-outline',
+    color: '#10B981',
+    bgTint: 'rgba(16, 185, 129, 0.12)'
+  },
+  philosophy_ethics: {
+    space: 'c/dialektik',
+    name: 'Philosophie & Streitfragen',
+    flair: '✦ Streitfrage',
+    icon: 'compass-outline',
+    color: '#8B5CF6',
+    bgTint: 'rgba(139, 92, 246, 0.12)'
+  },
+  sound_synthesis: {
+    space: 'c/synth_alchemie',
+    name: 'Klangforschung & Modular',
+    flair: '🎛 Klangforschung',
+    icon: 'musical-notes-outline',
+    color: '#F59E0B',
+    bgTint: 'rgba(245, 158, 11, 0.12)'
+  },
+  contemplation_mind: {
+    space: 'c/kontemplation',
+    name: 'Geist & Kontemplation',
+    flair: '🌿 Geist & Fokus',
+    icon: 'leaf-outline',
+    color: '#06B6D4',
+    bgTint: 'rgba(6, 182, 212, 0.12)'
+  },
+  science_society: {
+    space: 'c/serendipity',
+    name: 'Filterblasen-Brecher',
+    flair: '🔭 Serendipity',
+    icon: 'planet-outline',
+    color: '#EC4899',
+    bgTint: 'rgba(236, 72, 153, 0.12)'
+  }
+};
 
 export const ReadingPreferenceDurationSchema = z.enum(['all', 'quick', 'balanced', 'deep']);
 export type ReadingPreferenceDuration = z.infer<typeof ReadingPreferenceDurationSchema>;
@@ -296,6 +362,14 @@ export const UserProfileSchema = z.object({
 });
 export type UserProfile = z.infer<typeof UserProfileSchema>;
 
+export const UserNoteSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  createdAt: z.string(),
+  tag: z.enum(['einwand', 'unterricht', 'these', 'notiz']).default('notiz')
+});
+export type UserNote = z.infer<typeof UserNoteSchema>;
+
 export const ReadingInteractionSchema = z.object({
   itemId: z.string(),
   saved: z.boolean().default(false),
@@ -303,7 +377,9 @@ export const ReadingInteractionSchema = z.object({
   progressPercent: z.number().min(0).max(100).default(0), // resume position
   furthestPositionPercent: z.number().min(0).max(100).default(0), // furthest position reached
   completedAt: z.string().optional(),
-  feedback: z.enum(['more_like_this', 'less_like_this', 'neutral']).optional()
+  feedback: z.enum(['more_like_this', 'less_like_this', 'neutral']).optional(),
+  userNotes: z.array(UserNoteSchema).default([]),
+  voteScore: z.number().default(0) // +1 for upvote, -1 for downvote
 });
 export type ReadingInteraction = z.infer<typeof ReadingInteractionSchema>;
 
