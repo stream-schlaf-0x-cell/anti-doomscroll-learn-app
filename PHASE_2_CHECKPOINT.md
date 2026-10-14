@@ -23,7 +23,7 @@
 - [x] **Stage 1**: Domain Schemas & Invariant Hardening (`feedText`, `format`, `evidenceTier`, `PersonalGoal`, founder starter profile).
 - [x] **Stage 2**: Storage Safeguards & Decoupled Library Persistence (bug fixes for data protection, offline library retention).
 - [x] **Stage 3**: Live Endpoint Discovery & Ingestion Pipeline (verified RSS/Atom feeds, normalization, deduplication, CLI runner).
-- [ ] **Stage 4**: Provider-Independent Enrichment & €5 Budget Ledger (usage tracker, caching, Gemini pricing model grounding).
+- [x] **Stage 4**: Provider-Independent Enrichment & €5 Budget Ledger (usage tracker, caching, Gemini pricing model grounding).
 - [ ] **Stage 5**: Explainable Multi-Dimensional Personalization Engine (goals, feedback memory, 10% targets, explanation generation).
 - [ ] **Stage 6**: Rich Standalone Feed UI & "Weiter entdecken" Batching (interactive cards, progressive disclosure, virtualization).
 - [ ] **Stage 7**: Full Test Suite, Clean Verification, Screenshots & Review Archive.
@@ -31,12 +31,16 @@
 ---
 
 ## 3. Current Stage
-**Stage 4: Provider-Independent Enrichment & €5 Budget Ledger**
+**Stage 5: Explainable Multi-Dimensional Personalization Engine**
 - *Goal*:
-  1. Define `IContentEnricher` interface: takes raw `FeedItem`, produces structured German enrichment (`feedText`, `relevanceExplanation`, perspective breakdown, didactic seed).
-  2. Implement `EnrichmentUsageLedger`: tracks model calls, token count, estimated EUR cost; enforces hard monthly budget ceiling (€5.00/month). Storage in `src/core/data/usage-ledger.json`.
-  3. Ground pricing model with Gemini docs (Flash tier: $0.10/1M input, $0.40/1M output, meaning ~30 items/day costs ~$0.20/month; hard cap stops calls if ledger exceeds €5.00).
-  4. Cache enriched outputs by `contentHash + promptVersion`.
-  5. Source-only zero-cost fallback mode (pure heuristic synthesis without API key or external network dependency).
-  6. Mock enricher for deterministic unit tests.
-- *Validation*: Unit tests in `tests/enrichment.test.ts` verifying ledger accumulation, hard-cap ceiling enforcement, hash caching, and source-only fallback.
+  1. Upgrade `src/core/domain/ranking.ts` to compute multidimensional affinity:
+     - Topic affinity from `explicitInterests` (weights 0.0 - 1.0)
+     - Personal goal affinity from `explicitGoals` (aligned goals)
+     - Duration preference match (`all`, `quick`, `balanced`, `deep`)
+     - Feedback memory boosts/penalties: `feedbackMemory.boostedTopics`, `penalizedTopics`, `boostedAuthors`, `penalizedAuthors`
+     - Behavioral signal decay: slight penalty for already-opened unread items to encourage fresh discoveries
+  2. Soft editorial quota enforcement during batch selection:
+     - Guarantee ~10% teaching-related items (`isTeachingRelated` or `german_didactics`)
+     - Guarantee ~10% challenging perspectives (`isChallengingPerspective` or `perspective_disagreement`)
+  3. Transparent German explanation generation (`relevanceExplanation` and detailed breakdown) so every card tells the user exactly why it appears.
+- *Validation*: Extend `tests/domain.test.ts` with ranking regression tests for goal alignment, feedback memory, editorial quota guarantees, and explanation transparency.
