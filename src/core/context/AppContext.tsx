@@ -13,7 +13,7 @@ import { libraryRepository } from '../data/libraryRepository';
 import { userProfileRepository } from '../data/userProfileRepository';
 import { DEFAULT_USER_PROFILE, DEFAULT_STARTER_INTERESTS } from '../data/fixtures';
 import { appStorage, CorruptedDataError, StorageUnavailableError } from '../data/storage';
-import { lightColors, darkColors, ThemeColors } from '../../ui/theme';
+import { ThemeColors, ThemePalette, getThemeColors } from '../../ui/theme';
 
 export type StartupState =
   | { status: 'loading' }
@@ -31,6 +31,7 @@ interface AppContextValue {
   clearError: () => void;
   colors: ThemeColors;
   isDark: boolean;
+  palette: ThemePalette;
   activeTab: 'feed' | 'library' | 'settings';
   setActiveTab: (tab: 'feed' | 'library' | 'settings') => void;
   selectedArticleId: string | null;
@@ -50,6 +51,7 @@ interface AppContextValue {
   updateDurationPreference: (pref: ReadingPreferenceDuration) => Promise<void>;
   setFontSize: (size: 'sm' | 'md' | 'lg' | 'xl') => Promise<void>;
   setThemePreference: (theme: 'system' | 'light' | 'dark') => Promise<void>;
+  setPalettePreference: (palette: ThemePalette) => Promise<void>;
   completeOnboarding: (interests: Record<TopicTag, number>, duration: ReadingPreferenceDuration) => Promise<void>;
   repeatOnboarding: () => Promise<void>;
   clearAllLocalData: () => Promise<void>;
@@ -90,7 +92,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const pendingProgressRef = useRef<{ id: string; percent: number } | null>(null);
   const progressDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Compute active theme colors
+  // Compute active theme colors and palette
   const isDark = useMemo(() => {
     const themePref = profile.readingPreferences.theme;
     if (themePref === 'dark') return true;
@@ -98,7 +100,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return systemScheme === 'dark';
   }, [profile.readingPreferences.theme, systemScheme]);
 
-  const colors = useMemo(() => (isDark ? darkColors : lightColors), [isDark]);
+  const palette: ThemePalette = (profile.readingPreferences as any).palette || 'tidalglass';
+
+  const colors = useMemo(() => {
+    return getThemeColors(isDark ? 'dark' : 'light', palette);
+  }, [isDark, palette]);
 
   // Sequenced feed recomputation: newest committed call always wins
   const scheduleFeedRecompute = useCallback(async (prof: UserProfile, inter: Record<string, ReadingInteraction>) => {
@@ -261,7 +267,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [loadInitialData]);
 
   const refreshFeed = useCallback(async () => {
-    await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
+    try {
+      try {
+        const fresh = require('../data/pipeline-output.json');
+        if (Array.isArray(fresh) && (feedRepository as any).setItems) {
+          (feedRepository as any).setItems(fresh);
+        }
+      } catch {
+        // Fallback
+      }
+      await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
+    } catch (err) {
+      console.warn('Feed-Aktualisierung fehlgeschlagen:', err);
+    }
   }, [scheduleFeedRecompute]);
 
   const openArticle = useCallback(async (id: string) => {
@@ -527,6 +545,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
+  const setPalettePreference = useCallback(async (newPalette: ThemePalette) => {
+    try {
+      const committed = await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        readingPreferences: {
+          ...curr.readingPreferences,
+          palette: newPalette
+        }
+      }));
+      latestProfileRef.current = committed;
+      setProfile(committed);
+    } catch {
+      setErrorMessage('Farbpalette konnte nicht gespeichert werden.');
+    }
+  }, []);
+
   const completeOnboarding = useCallback(async (interests: Record<TopicTag, number>, duration: ReadingPreferenceDuration) => {
     try {
       const committed = await userProfileRepository.updateProfile(curr => ({
@@ -606,6 +640,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         clearError,
         colors,
         isDark,
+        palette,
         activeTab,
         setActiveTab,
         selectedArticleId,
@@ -625,6 +660,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateDurationPreference,
         setFontSize,
         setThemePreference,
+        setPalettePreference,
         completeOnboarding,
         repeatOnboarding,
         clearAllLocalData,

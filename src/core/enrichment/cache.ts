@@ -2,12 +2,23 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { EnrichmentResult } from './types';
 
+const isBrowserEnv = typeof window !== 'undefined' || typeof document !== 'undefined';
+
+function getSafeCacheFilePath(): string {
+  if (isBrowserEnv) return '';
+  try {
+    return typeof __dirname !== 'undefined' ? path.resolve(__dirname, '../data/enrichment-cache.json') : '';
+  } catch {
+    return '';
+  }
+}
+
 export class EnrichmentCache {
   private cache: Record<string, EnrichmentResult> = {};
 
   constructor(
-    private readonly filePath: string = path.resolve(__dirname, '../data/enrichment-cache.json'),
-    private readonly useFilePersistence: boolean = true
+    private readonly filePath: string = getSafeCacheFilePath(),
+    private readonly useFilePersistence: boolean = !isBrowserEnv && Boolean(getSafeCacheFilePath())
   ) {}
 
   private async load(): Promise<Record<string, EnrichmentResult>> {

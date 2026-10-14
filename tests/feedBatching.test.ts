@@ -79,7 +79,11 @@ describe('Feed Batching & Discovery Partitioning Invariants', () => {
       intriguing_question: '❓ Denkfrage',
       surprising_connection: '☍ Interdisziplinäre Brücke',
       perspective_disagreement: '✦ Philosophische Gegenposition',
-      long_invitation: '📖 Vertiefender Essay'
+      long_invitation: '📖 Vertiefender Essay',
+      meme: '🎭 High-IQ Satire & Meme',
+      youtube_gem: '📺 YouTube Gem & Video-Essay',
+      book_masterpiece: '📚 Meisterwerk-Empfehlung',
+      opportunity_radar: '🚀 Chancen- & Hebel-Radar'
     };
 
     for (const [format, expectedLabel] of Object.entries(formats)) {

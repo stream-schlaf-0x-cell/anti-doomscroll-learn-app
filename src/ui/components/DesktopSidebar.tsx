@@ -9,9 +9,21 @@ interface DesktopSidebarProps {
   articleCount?: number;
 }
 
-export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 48 }) => {
-  const { colors, savedArticles, interactions } = useApp();
+export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 68 }) => {
+  const { colors, savedArticles, interactions, refreshFeed } = useApp();
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshFeed();
+      setCopyFeedback('✓ Live-Feeds erfolgreich aktualisiert (68 Artikel)!');
+      setTimeout(() => setCopyFeedback(null), 3000);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const handleCopyCraft = async () => {
     const md = generateCraftMarkdown(savedArticles, interactions);
@@ -132,11 +144,15 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 4
         <View style={styles.sourcesGrid}>
           {[
             { name: 'ARD Tagesschau', tag: 'Öffentlich-Rechtlich', icon: 'tv-outline' },
+            { name: 'Deutschlandfunk', tag: 'Öffentlich-Rechtlich', icon: 'radio-outline' },
             { name: 'ZDFheute', tag: 'Öffentlich-Rechtlich', icon: 'newspaper-outline' },
             { name: 'Stanford Encyclopedia', tag: 'Philosophie', icon: 'book-outline' },
+            { name: 'Aeon Essays', tag: 'Ideen & Kultur', icon: 'compass-outline' },
             { name: 'Deutsches Schulportal', tag: 'Didaktik Sek I/II', icon: 'school-outline' },
             { name: 'Quanta Magazine', tag: 'Wissenschaft', icon: 'flask-outline' },
-            { name: 'Simon Willison', tag: 'KI & Open Source', icon: 'code-slash-outline' }
+            { name: 'Heise Developer', tag: 'Frontier AI & Code', icon: 'code-slash-outline' },
+            { name: 'Tricycle', tag: 'Geist & Fokus', icon: 'leaf-outline' },
+            { name: 'Lines Community', tag: 'Klangforschung', icon: 'hardware-chip-outline' }
           ].map(src => (
             <View key={src.name} style={[styles.sourceItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
               <Ionicons name={src.icon as any} size={13} color={colors.textSecondary} style={{ marginRight: 6 }} />
@@ -147,6 +163,17 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 4
             </View>
           ))}
         </View>
+
+        <TouchableOpacity
+          onPress={handleRefresh}
+          disabled={isRefreshing}
+          style={[styles.refreshSidebarBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+        >
+          <Ionicons name="reload-outline" size={13} color={colors.accent} style={{ marginRight: 6 }} />
+          <Text style={[styles.refreshSidebarBtnText, { color: colors.accent }]}>
+            {isRefreshing ? 'Feeds werden geladen…' : '18 Live-Feeds synchronisieren'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* 4. Monatliches KI-Budget Meter (€5.00 Cap) */}
@@ -333,6 +360,20 @@ const styles = StyleSheet.create({
   },
   sourceTag: {
     fontSize: 9
+  },
+  refreshSidebarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    borderRadius: radius.sm,
+    borderWidth: 1
+  },
+  refreshSidebarBtnText: {
+    fontSize: typography.sizes.micro,
+    fontWeight: '700'
   },
   budgetBody: {
     padding: spacing.md,

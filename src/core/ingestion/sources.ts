@@ -153,5 +153,56 @@ export const VERIFIED_FEED_SOURCES: RawFeedSource[] = [
     defaultEvidenceTier: 'publisher_excerpt',
     defaultAuthor: 'ZDFheute Redaktion',
     language: 'de'
+  },
+  {
+    id: 'deutschlandfunk-nachrichten',
+    name: 'Deutschlandfunk Aktuell',
+    url: 'https://www.deutschlandfunk.de/nachrichten-100.rss',
+    primaryTopic: 'science_society',
+    topics: ['science_society', 'german_didactics', 'philosophy_ethics'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'Deutschlandfunk Redaktion',
+    language: 'de'
+  },
+  {
+    id: 'aeon-essays',
+    name: 'Aeon Essays & Ideas',
+    url: 'https://aeon.co/feed.rss',
+    primaryTopic: 'philosophy_ethics',
+    topics: ['philosophy_ethics', 'contemplation_mind', 'science_society'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'Aeon Editorial',
+    language: 'en',
+    isChallengingPerspective: true
+  },
+  {
+    id: 'heise-developer',
+    name: 'Heise Developer & AI',
+    url: 'https://www.heise.de/developer/rss/news-atom.xml',
+    primaryTopic: 'ai_apple',
+    topics: ['ai_apple', 'science_society'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'Heise Medien',
+    language: 'de'
+  },
+  {
+    id: 'tricycle',
+    name: 'Tricycle: Contemplation & Mind',
+    url: 'https://tricycle.org/feed/',
+    primaryTopic: 'contemplation_mind',
+    topics: ['contemplation_mind', 'philosophy_ethics'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'Tricycle Editorial',
+    language: 'en'
+  },
+  {
+    id: 'lines-modular',
+    name: 'Lines Modular & Sound Experiments',
+    url: 'https://llllllll.co/latest.rss',
+    primaryTopic: 'sound_synthesis',
+    topics: ['sound_synthesis', 'science_society'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'Lines Community',
+    language: 'en'
   }
 ];

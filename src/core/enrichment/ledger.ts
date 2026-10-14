@@ -22,12 +22,23 @@ export function getCurrentMonthKey(): string {
   return `${year}-${month}`;
 }
 
+const isBrowserEnv = typeof window !== 'undefined' || typeof document !== 'undefined';
+
+function getSafeLedgerFilePath(): string {
+  if (isBrowserEnv) return '';
+  try {
+    return typeof __dirname !== 'undefined' ? path.resolve(__dirname, '../data/usage-ledger.json') : '';
+  } catch {
+    return '';
+  }
+}
+
 export class EnrichmentUsageLedger {
   private inMemorySummary: Record<string, EnrichmentLedgerSummary> = {};
 
   constructor(
-    private readonly filePath: string = path.resolve(__dirname, '../data/usage-ledger.json'),
-    private readonly useFilePersistence: boolean = true
+    private readonly filePath: string = getSafeLedgerFilePath(),
+    private readonly useFilePersistence: boolean = !isBrowserEnv && Boolean(getSafeLedgerFilePath())
   ) {}
 
   private async loadLedger(): Promise<Record<string, EnrichmentLedgerSummary>> {

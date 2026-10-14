@@ -39,6 +39,36 @@ export const TOPIC_CURATED_IMAGES: Record<TopicTag, string[]> = {
     'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1200&q=80',
     'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=1200&q=80',
     'https://images.unsplash.com/photo-1532094349884-543bc11b234d?auto=format&fit=crop&w=1200&q=80'
+  ],
+  memes_satire: [
+    'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1541701494587-cb58502866ab?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80'
+  ],
+  youtube_gems: [
+    'https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1536240478700-b869070f9279?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?auto=format&fit=crop&w=1200&q=80'
+  ],
+  book_mastery: [
+    'https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1495446815901-a7297e633e8d?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1491841550275-ad7854e35ca6?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1506880018603-83d5b814b5a6?auto=format&fit=crop&w=1200&q=80'
+  ],
+  health_biohacking: [
+    'https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1498837167922-ddd27525d352?auto=format&fit=crop&w=1200&q=80'
+  ],
+  opportunities_growth: [
+    'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=1200&q=80'
   ]
 };
 
@@ -213,6 +243,161 @@ export function getSimulatedCommentsForTopic(
           score: 26 + (numSeed % 13),
           commentType: 'creative_synthesis',
           text: 'Institutionelles Vertrauen wächst nur dort, wo Menschen als mündige, denkende Wesen angesprochen werden – nicht als Klick-Vieh für Werbealgorithmen.'
+        }
+      ];
+
+    case 'memes_satire':
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/meme_sokrates',
+          authorBadge: 'Satirischer Philosoph',
+          timeAgo: 'vor 3 Std.',
+          score: 84 + (numSeed % 40),
+          commentType: 'dialectic_critique',
+          text: 'Der kategorische Imperativ greift hier nicht: Handle nur nach der Maxime, durch die du zugleich wollen kannst, dass dein Meme zum universellen Gesetz wird!'
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/syntax_schmerz',
+          authorBadge: 'Senior Dev & Zyniker',
+          timeAgo: 'vor 1 Std.',
+          score: 59 + (numSeed % 25),
+          commentType: 'creative_synthesis',
+          text: 'Zu real. Musste im Meeting kurz mein Mikrofon muten, weil ich laut aufgelacht habe. Treffender kann man den Tech-Wahnsinn nicht kondensieren.'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/postironie_dresden',
+          authorBadge: 'Kulturkritik',
+          timeAgo: 'vor 45 Min.',
+          score: 31 + (numSeed % 15),
+          commentType: 'didactic_transfer',
+          text: 'Memes sind die Hieroglyphen des 21. Jahrhunderts: Hochkomprimierte semantische Sinnkerne, die ganze philosophische Abhandlungen in einem einzigen Bildframe transportieren.'
+        }
+      ];
+
+    case 'youtube_gems':
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/video_essay_junkie',
+          authorBadge: 'Deep Learner',
+          timeAgo: 'vor 4 Std.',
+          score: 72 + (numSeed % 30),
+          commentType: 'creative_synthesis',
+          text: 'Dieses Video ist pure Magie. Ab Minute 12:45 fällt der Vorhang – die Visualisierung hat bei mir ein monatelanges theoretisches Missverständnis in 2 Minuten gelöst.'
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/didaktik_labor',
+          authorBadge: 'Fachdidaktik Sek II',
+          timeAgo: 'vor 2 Std.',
+          score: 48 + (numSeed % 19),
+          commentType: 'didactic_transfer',
+          text: 'Exakt solche 3-Minuten-Sequenzen eignen sich meisterhaft als stummer Impuls für eine gymnasiale Oberstufe. Erst staunen lassen, dann formalisieren.'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/curator_gems',
+          authorBadge: 'Wissens-Schatzsucher',
+          timeAgo: 'vor 50 Min.',
+          score: 29 + (numSeed % 14),
+          commentType: 'dialectic_critique',
+          text: 'Der Algorithmus empfiehlt einem sonst nur Trash – umso wertvoller, dass dieses Juwel hier im privaten Social Network geborgen wird.'
+        }
+      ];
+
+    case 'book_mastery':
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/bibliophil_berlin',
+          authorBadge: 'Viel-Leser & Notizen-Sammler',
+          timeAgo: 'vor 5 Std.',
+          score: 91 + (numSeed % 35),
+          commentType: 'creative_synthesis',
+          text: 'Kapitel 4 hat mein Entscheidungsverhalten dauerhaft verändert. Der Unterschied zwischen oberflächlicher Lektüre und dem Exzerpieren der Kern-These in Craft Docs ist gewaltig.'
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/kant_dresden',
+          authorBadge: 'Epistemologe',
+          timeAgo: 'vor 3 Std.',
+          score: 55 + (numSeed % 22),
+          commentType: 'dialectic_critique',
+          text: 'Der Autor argumentiert erstaunlich scharf. Kritikpunkt: Die historische Kontextualisierung kommt etwas zu kurz, aber als intellektueller Hebel unbezahlbar.'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/lese_praxis',
+          authorBadge: 'Mentales Modell-Labor',
+          timeAgo: 'vor 1 Std.',
+          score: 33 + (numSeed % 16),
+          commentType: 'didactic_transfer',
+          text: 'Mein Tipp: Unbedingt physisch lesen, Randnotizen anlegen und die Kern-Lektion in den eigenen Alltag übersetzen. 10/10 Empfehlung!'
+        }
+      ];
+
+    case 'health_biohacking':
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/neuro_fokus',
+          authorBadge: 'Kognition & Chronobiologie',
+          timeAgo: 'vor 4 Std.',
+          score: 88 + (numSeed % 32),
+          commentType: 'didactic_transfer',
+          text: 'Der physiologische Seufzer (doppeltes Einatmen durch die Nase, langes Ausatmen durch den Mund) senkt die autonome Erregung in unter 60 Sekunden. Biochemisch unbestechlich.'
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/schlaf_architekt',
+          authorBadge: 'Biohacking Dresden',
+          timeAgo: 'vor 2 Std.',
+          score: 62 + (numSeed % 21),
+          commentType: 'creative_synthesis',
+          text: 'Morgenlicht innerhalb der ersten 30 Minuten nach dem Aufwachen setzt den Cortisol-Pulse und triggert den Melatonin-Timer für den Abend. Einfachster Hebel überhaupt.'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/longevity_lab',
+          authorBadge: 'Präventivmedizin',
+          timeAgo: 'vor 40 Min.',
+          score: 37 + (numSeed % 15),
+          commentType: 'dialectic_critique',
+          text: 'Keine Nahrungsergänzungsmittel können fehlenden Schlaf und chronische sensorische Überreizung kompensieren. Erst die Fundamente richten, dann optimieren.'
+        }
+      ];
+
+    case 'opportunities_growth':
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/builder_leverage',
+          authorBadge: 'Tech-Souveränität',
+          timeAgo: 'vor 3 Std.',
+          score: 79 + (numSeed % 30),
+          commentType: 'creative_synthesis',
+          text: 'Genau nach solchen Hebeln suche ich: Wer offene APIs, lokale Modelle und blitzschnelle SQLite-Architekturen kombiniert, hat einen unfairen Vorteil gegenüber trägen Großkorporationen.'
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/grant_finder_eu',
+          authorBadge: 'Forschungsförderung & Open Source',
+          timeAgo: 'vor 2 Std.',
+          score: 44 + (numSeed % 18),
+          commentType: 'didactic_transfer',
+          text: 'Sehr starker Impuls. Für ähnliche Open-Source-Initiativen gibt es derzeit auch Sovereign Tech Fund Mittel. Frist läuft noch!'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/digital_minimalist',
+          authorBadge: 'Fokus & Hebelwirkung',
+          timeAgo: 'vor 1 Std.',
+          score: 30 + (numSeed % 12),
+          commentType: 'dialectic_critique',
+          text: 'Nicht mehr Informationen anhäufen, sondern die richtigen Informationen in messbare Handlungen und persönliche Meisterschaft ummünzen.'
         }
       ];
 
@@ -900,7 +1085,12 @@ export const DEFAULT_STARTER_INTERESTS: Record<TopicTag, number> = {
   ai_apple: 0.80,
   contemplation_mind: 0.75,
   science_society: 0.70,
-  sound_synthesis: 0.60
+  sound_synthesis: 0.60,
+  memes_satire: 0.75,
+  youtube_gems: 0.85,
+  book_mastery: 0.90,
+  health_biohacking: 0.85,
+  opportunities_growth: 0.80
 };
 
 /**
@@ -936,7 +1126,8 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
   },
   readingPreferences: {
     preferredDuration: 'balanced',
-    theme: 'system',
+    theme: 'dark',
+    palette: 'tidalglass',
     fontSize: 'md'
   },
   isOnboarded: false,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, TextInput, Linking, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ScoredFeedItem } from '../../core/domain/ranking';
 import {
@@ -44,6 +44,31 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
   const [selectedTag, setSelectedTag] = useState<'einwand' | 'unterricht' | 'these' | 'notiz'>('einwand');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [awards, setAwards] = useState(item.awardsCount || { gold: 0, brain: 0, spark: 0 });
+  const [showAwardModal, setShowAwardModal] = useState(false);
+  const [awardToast, setAwardToast] = useState<string | null>(null);
+
+  const originalUrl = item.canonicalUrl || item.sourceReferences[0]?.originalUrl;
+
+  const handleOpenOriginalSource = () => {
+    if (!originalUrl) return;
+    if (typeof window !== 'undefined' && window.open) {
+      window.open(originalUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      Linking.openURL(originalUrl);
+    }
+  };
+
+  const handleGiveAward = (type: 'gold' | 'brain' | 'spark') => {
+    setAwards(prev => ({
+      ...prev,
+      [type]: (prev[type] || 0) + 1
+    }));
+    setShowAwardModal(false);
+    const label = type === 'gold' ? '🥇 Goldener Gedanke' : type === 'brain' ? '🧠 Tiefgang-Award' : '💎 Geistesblitz';
+    setAwardToast(`✓ Auszeichnung verliehen: ${label}`);
+    setTimeout(() => setAwardToast(null), 3000);
+  };
 
   const interaction = interactions[item.id];
   const isSaved = interaction?.saved ?? false;
@@ -169,6 +194,54 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
         </TouchableOpacity>
       </View>
 
+      {/* 1.1 Crystal-Clear Source & Trust Banner */}
+      <View style={[styles.sourceClearBanner, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+        <View style={styles.sourceClearLeft}>
+          <Ionicons
+            name={
+              item.sourceTrustLevel === 'public_broadcaster' ? 'shield-checkmark' :
+              item.format === 'youtube_gem' ? 'logo-youtube' :
+              item.format === 'book_masterpiece' ? 'book' :
+              item.sourceTrustLevel === 'peer_reviewed' ? 'school' : 'newspaper-outline'
+            }
+            size={13}
+            color={
+              item.sourceTrustLevel === 'public_broadcaster' ? '#10B981' :
+              item.format === 'youtube_gem' ? '#EF4444' :
+              item.format === 'book_masterpiece' ? '#A855F7' :
+              colors.accent
+            }
+            style={{ marginRight: 5 }}
+          />
+          <Text style={[styles.sourceClearName, { color: colors.textPrimary }]} numberOfLines={1}>
+            {item.sourceBroadcasterName || item.sourceReferences[0]?.publisher || 'Geprüfte Quelle'}
+          </Text>
+          <View style={[styles.trustLevelBadge, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.trustLevelText, { color: colors.textSecondary }]}>
+              {item.sourceTrustLevel === 'public_broadcaster' ? 'Öffentlich-Rechtlich' :
+               item.sourceTrustLevel === 'peer_reviewed' ? 'Peer-Reviewed' :
+               item.format === 'youtube_gem' ? 'Video-Essay' :
+               item.format === 'book_masterpiece' ? 'Buch-Klassiker' :
+               item.format === 'meme' ? 'Satire-Labor' : 'Verifiziert'}
+            </Text>
+          </View>
+        </View>
+
+        {originalUrl && (
+          <TouchableOpacity
+            onPress={handleOpenOriginalSource}
+            style={styles.openSourceBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="link"
+            accessibilityLabel="Originalquelle im neuen Tab öffnen"
+          >
+            <Text style={[styles.openSourceBtnText, { color: colors.accent }]}>
+              {item.sourceDomain || 'Quelle'} ↗
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
       {/* 2. Flairs & Evidence Row */}
       <View style={styles.flairsRow}>
         {formatText && (
@@ -258,6 +331,138 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
           <Text style={[styles.didacticText, { color: colors.textSecondary }]}>
             {didacticTransfer}
           </Text>
+        </View>
+      )}
+
+      {/* 8.1 YouTube Video Essay Gem */}
+      {item.youtubeMeta && (
+        <View style={[styles.youtubeContainer, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={handleOpenOriginalSource}
+            style={styles.youtubeVideoBanner}
+          >
+            <Image
+              source={{ uri: item.imageUrl || 'https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?auto=format&fit=crop&w=1200&q=80' }}
+              style={styles.youtubeThumbnail}
+              resizeMode="cover"
+            />
+            <View style={styles.youtubePlayOverlay}>
+              <View style={styles.youtubePlayBtn}>
+                <Ionicons name="play" size={24} color="#FFFFFF" style={{ marginLeft: 3 }} />
+              </View>
+              <View style={styles.youtubeDurationBadge}>
+                <Text style={styles.youtubeDurationText}>{item.youtubeMeta.duration}</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+
+          <View style={styles.youtubeMetaBar}>
+            <View style={styles.youtubeChannelRow}>
+              <Ionicons name="logo-youtube" size={16} color="#EF4444" style={{ marginRight: 6 }} />
+              <Text style={[styles.youtubeChannelTitle, { color: colors.textPrimary }]}>{item.youtubeMeta.channelTitle}</Text>
+              {item.youtubeMeta.viewCount && (
+                <Text style={[styles.youtubeViewsText, { color: colors.textMuted }]}> • {item.youtubeMeta.viewCount}</Text>
+              )}
+            </View>
+            <TouchableOpacity onPress={handleOpenOriginalSource} style={[styles.watchOnYtBtn, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.watchOnYtText, { color: colors.accent }]}>Auf YouTube ansehen ↗</Text>
+            </TouchableOpacity>
+          </View>
+
+          {item.youtubeMeta.keyTakeaways && item.youtubeMeta.keyTakeaways.length > 0 && (
+            <View style={styles.takeawaysContainer}>
+              <Text style={[styles.takeawaysHeader, { color: colors.textPrimary }]}>3 Schlüssel-Erkenntnisse:</Text>
+              {item.youtubeMeta.keyTakeaways.map((point, idx) => (
+                <View key={idx} style={styles.takeawayRow}>
+                  <Ionicons name="checkmark-circle" size={14} color="#38BDF8" style={{ marginRight: 6, marginTop: 2 }} />
+                  <Text style={[styles.takeawayText, { color: colors.textSecondary }]}>{point}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* 8.2 High-IQ Meme & Satire */}
+      {item.memeMeta && (
+        <View style={[styles.memeContainer, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <View style={[styles.punchlineBar, { backgroundColor: colors.accentSubtle, borderLeftColor: colors.accent }]}>
+            <Ionicons name="chatbubbles" size={16} color={colors.accent} style={{ marginRight: 8, marginTop: 2 }} />
+            <Text style={[styles.punchlineText, { color: colors.textPrimary }]}>
+              {item.memeMeta.punchline}
+            </Text>
+          </View>
+
+          {item.memeMeta.satireContext && (
+            <View style={styles.satireContextRow}>
+              <Ionicons name="information-circle-outline" size={13} color={colors.textMuted} style={{ marginRight: 5 }} />
+              <Text style={[styles.satireContextText, { color: colors.textSecondary }]}>
+                {item.memeMeta.satireContext}
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* 8.3 Book Masterpiece Recommendation */}
+      {item.bookMeta && (
+        <View style={[styles.bookContainer, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <View style={styles.bookHeaderRow}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.bookRatingRow}>
+                <Text style={styles.bookStars}>★★★★★</Text>
+                <Text style={[styles.bookRatingNumber, { color: colors.accent }]}> {item.bookMeta.rating} / 5</Text>
+                {item.bookMeta.pages && (
+                  <Text style={[styles.bookPages, { color: colors.textMuted }]}> • {item.bookMeta.pages} Seiten</Text>
+                )}
+              </View>
+              <Text style={[styles.bookAuthor, { color: colors.textSecondary }]}>
+                Autor: <Text style={{ fontWeight: '700', color: colors.textPrimary }}>{item.bookMeta.author}</Text>
+              </Text>
+            </View>
+          </View>
+
+          <View style={[styles.bookThesisBox, { backgroundColor: colors.surface, borderLeftColor: '#A855F7' }]}>
+            <Text style={[styles.bookThesisLabel, { color: '#A855F7' }]}>Kern-These in einem Satz:</Text>
+            <Text style={[styles.bookThesisText, { color: colors.textPrimary }]}>
+              „{item.bookMeta.oneSentenceThesis}“
+            </Text>
+          </View>
+
+          <View style={styles.bookWhyBox}>
+            <Ionicons name="sparkles" size={13} color="#F59E0B" style={{ marginRight: 6, marginTop: 2 }} />
+            <Text style={[styles.bookWhyText, { color: colors.textSecondary }]}>
+              <Text style={{ fontWeight: '700', color: colors.textPrimary }}>Warum lesen? </Text>
+              {item.bookMeta.whyRead}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* 8.4 Opportunity & Health Radar */}
+      {item.opportunityMeta && (
+        <View style={[styles.oppContainer, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <View style={styles.oppHeaderRow}>
+            <View style={[styles.oppCategoryPill, { backgroundColor: colors.accentSubtle }]}>
+              <Ionicons name="flash" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+              <Text style={[styles.oppCategoryText, { color: colors.accent }]}>
+                {item.opportunityMeta.category}
+              </Text>
+            </View>
+            <View style={[styles.oppScoreBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)', borderColor: '#10B981' }]}>
+              <Text style={[styles.oppScoreText, { color: '#10B981' }]}>
+                Hebelwirkung: {item.opportunityMeta.impactScore}/10
+              </Text>
+            </View>
+          </View>
+
+          <View style={[styles.oppActionBox, { backgroundColor: colors.surface, borderLeftColor: '#10B981' }]}>
+            <Text style={[styles.oppActionLabel, { color: '#10B981' }]}>Konkrete Umsetzung & Hebel:</Text>
+            <Text style={[styles.oppActionText, { color: colors.textPrimary }]}>
+              {item.opportunityMeta.actionStep}
+            </Text>
+          </View>
         </View>
       )}
 
@@ -504,6 +709,19 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
           />
         </TouchableOpacity>
 
+        {/* Reddit-style Awards Button */}
+        <TouchableOpacity
+          onPress={() => setShowAwardModal(true)}
+          style={[styles.awardsBtn, { backgroundColor: colors.surfaceSecondary }]}
+          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          accessibilityLabel="Auszeichnung verleihen"
+        >
+          <Text style={styles.awardsBtnIcon}>🏆</Text>
+          <Text style={[styles.awardsBtnText, { color: (awards.gold + awards.brain + awards.spark) > 0 ? '#F59E0B' : colors.textMuted }]}>
+            {(awards.gold + awards.brain + awards.spark) > 0 ? `${awards.gold + awards.brain + awards.spark}` : 'Award'}
+          </Text>
+        </TouchableOpacity>
+
         {/* Why this post pill */}
         <TouchableOpacity
           onPress={handleWhyPress}
@@ -515,6 +733,21 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
             Warum?
           </Text>
         </TouchableOpacity>
+
+        {/* External Quelle Direct Pill if available */}
+        {originalUrl && (
+          <TouchableOpacity
+            onPress={handleOpenOriginalSource}
+            style={[styles.sourceLinkPill, { backgroundColor: colors.surfaceSecondary }]}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            accessibilityLabel="Originalquelle öffnen"
+          >
+            <Ionicons name="open-outline" size={11} color={colors.accent} style={{ marginRight: 3 }} />
+            <Text style={[styles.sourceLinkPillText, { color: colors.accent }]} numberOfLines={1}>
+              {item.sourceDomain || 'Quelle'}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* Completed status or publisher */}
         {isCompleted ? (
@@ -582,6 +815,96 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
               </View>
             ))}
           </View>
+        </View>
+      )}
+
+      {/* 14. Reddit Awards Interactive Modal */}
+      <Modal
+        visible={showAwardModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAwardModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={() => setShowAwardModal(false)}
+        >
+          <View
+            style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
+                  Beitrag auszeichnen
+                </Text>
+                <Text style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+                  Würdige exzellente Recherche, Tiefe oder Inspiration
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowAwardModal(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={20} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.awardsGrid}>
+              <TouchableOpacity
+                style={[styles.awardOptionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                onPress={() => handleGiveAward('gold')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.awardOptionIcon}>🥇</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.awardOptionTitle, { color: colors.textPrimary }]}>Goldener Gedanke</Text>
+                  <Text style={[styles.awardOptionDesc, { color: colors.textSecondary }]}>Für fundamentale Klarheit und intellektuellen Wert</Text>
+                </View>
+                <View style={[styles.awardBadge, { backgroundColor: 'rgba(245, 158, 11, 0.15)' }]}>
+                  <Text style={[styles.awardBadgeText, { color: '#F59E0B' }]}>+{awards.gold || 0}</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.awardOptionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                onPress={() => handleGiveAward('brain')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.awardOptionIcon}>🧠</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.awardOptionTitle, { color: colors.textPrimary }]}>Tiefgang-Award</Text>
+                  <Text style={[styles.awardOptionDesc, { color: colors.textSecondary }]}>Für tiefgründige Argumentation und Dialektik</Text>
+                </View>
+                <View style={[styles.awardBadge, { backgroundColor: 'rgba(139, 92, 246, 0.15)' }]}>
+                  <Text style={[styles.awardBadgeText, { color: '#8B5CF6' }]}>+{awards.brain || 0}</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.awardOptionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                onPress={() => handleGiveAward('spark')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.awardOptionIcon}>💎</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.awardOptionTitle, { color: colors.textPrimary }]}>Geistesblitz</Text>
+                  <Text style={[styles.awardOptionDesc, { color: colors.textSecondary }]}>Für überraschende Ideen und Praxis-Transfer</Text>
+                </View>
+                <View style={[styles.awardBadge, { backgroundColor: 'rgba(56, 189, 248, 0.15)' }]}>
+                  <Text style={[styles.awardBadgeText, { color: '#38BDF8' }]}>+{awards.spark || 0}</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* 15. Award Toast Banner */}
+      {awardToast && (
+        <View style={[styles.awardToastBanner, { backgroundColor: colors.accent }]}>
+          <Text style={styles.awardToastText}>{awardToast}</Text>
         </View>
       )}
     </View>
@@ -1094,5 +1417,402 @@ const styles = StyleSheet.create({
   commentBody: {
     fontSize: 12,
     lineHeight: 17
+  },
+
+  // Crystal-Clear Source & Trust Banner
+  sourceClearBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+    borderWidth: 0.5,
+    marginBottom: spacing.xs
+  },
+  sourceClearLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 6
+  },
+  sourceClearName: {
+    fontSize: 11,
+    fontWeight: '700',
+    maxWidth: 150
+  },
+  trustLevelBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4
+  },
+  trustLevelText: {
+    fontSize: 9,
+    fontWeight: '600'
+  },
+  openSourceBtn: {
+    paddingHorizontal: 6,
+    paddingVertical: 2
+  },
+  openSourceBtnText: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+
+  // YouTube Video Essay Gem
+  youtubeContainer: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginVertical: spacing.sm
+  },
+  youtubeVideoBanner: {
+    position: 'relative',
+    width: '100%',
+    height: 180,
+    backgroundColor: '#000000'
+  },
+  youtubeThumbnail: {
+    width: '100%',
+    height: '100%'
+  },
+  youtubePlayOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  youtubePlayBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  youtubeDurationBadge: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4
+  },
+  youtubeDurationText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  youtubeMetaBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 10,
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(0, 0, 0, 0.05)'
+  },
+  youtubeChannelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1
+  },
+  youtubeChannelTitle: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  youtubeViewsText: {
+    fontSize: 11
+  },
+  watchOnYtBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.sm
+  },
+  watchOnYtText: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  takeawaysContainer: {
+    padding: 10,
+    gap: 6
+  },
+  takeawaysHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 2
+  },
+  takeawayRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start'
+  },
+  takeawayText: {
+    fontSize: 12,
+    lineHeight: 17,
+    flex: 1
+  },
+
+  // High-IQ Meme & Satire
+  memeContainer: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginVertical: spacing.sm,
+    padding: 10
+  },
+  punchlineBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 10,
+    borderRadius: radius.sm,
+    borderLeftWidth: 3,
+    marginBottom: 6
+  },
+  punchlineText: {
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 19,
+    flex: 1
+  },
+  satireContextRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: 4
+  },
+  satireContextText: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontStyle: 'italic',
+    flex: 1
+  },
+
+  // Book Masterpiece Recommendation
+  bookContainer: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: 12,
+    marginVertical: spacing.sm,
+    gap: 8
+  },
+  bookHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start'
+  },
+  bookRatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 3
+  },
+  bookStars: {
+    color: '#F59E0B',
+    fontSize: 13
+  },
+  bookRatingNumber: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  bookPages: {
+    fontSize: 11
+  },
+  bookAuthor: {
+    fontSize: 12
+  },
+  bookThesisBox: {
+    borderLeftWidth: 3,
+    padding: 8,
+    borderRadius: radius.sm
+  },
+  bookThesisLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 2
+  },
+  bookThesisText: {
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 17,
+    fontStyle: 'italic'
+  },
+  bookWhyBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start'
+  },
+  bookWhyText: {
+    fontSize: 11,
+    lineHeight: 16,
+    flex: 1
+  },
+
+  // Opportunity & Growth Radar
+  oppContainer: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: 12,
+    marginVertical: spacing.sm,
+    gap: 8
+  },
+  oppHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  oppCategoryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill
+  },
+  oppCategoryText: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  oppScoreBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  oppScoreText: {
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  oppActionBox: {
+    borderLeftWidth: 3,
+    padding: 8,
+    borderRadius: radius.sm
+  },
+  oppActionLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 2
+  },
+  oppActionText: {
+    fontSize: 12,
+    lineHeight: 17
+  },
+
+  // Social Footer Extra Buttons
+  awardsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    gap: 4
+  },
+  awardsBtnIcon: {
+    fontSize: 12
+  },
+  awardsBtnText: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  sourceLinkPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    maxWidth: 95
+  },
+  sourceLinkPillText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+
+  // Award Toast
+  awardToastBanner: {
+    position: 'absolute',
+    top: 12,
+    left: 16,
+    right: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    zIndex: 100,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6
+  },
+  awardToastText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center'
+  },
+
+  // Reddit Awards Modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.md
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 440,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 10
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: spacing.md
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '800'
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    marginTop: 2
+  },
+  awardsGrid: {
+    gap: 10
+  },
+  awardOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: 12
+  },
+  awardOptionIcon: {
+    fontSize: 26
+  },
+  awardOptionTitle: {
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  awardOptionDesc: {
+    fontSize: 11,
+    marginTop: 2,
+    lineHeight: 15
+  },
+  awardBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill
+  },
+  awardBadgeText: {
+    fontSize: 11,
+    fontWeight: '800'
   }
 });

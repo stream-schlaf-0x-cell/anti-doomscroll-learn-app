@@ -19,7 +19,12 @@ const TOPIC_GOAL_MAP: Record<TopicTag, PersonalGoal> = {
   contemplation_mind: 'deepen_attention',
   philosophy_ethics: 'philosophical_clarity',
   science_society: 'society_and_ethics',
-  german_didactics: 'deepen_attention'
+  german_didactics: 'deepen_attention',
+  memes_satire: 'philosophical_clarity',
+  youtube_gems: 'society_and_ethics',
+  book_mastery: 'philosophical_clarity',
+  health_biohacking: 'deepen_attention',
+  opportunities_growth: 'understand_tech'
 };
 
 /**
@@ -237,6 +242,11 @@ function getTopicLabel(topic: TopicTag): string {
     case 'contemplation_mind': return 'Geist & Kontemplation';
     case 'science_society': return 'Wissenschaft & Ideen';
     case 'sound_synthesis': return 'Klang & Synthese';
+    case 'memes_satire': return 'High-IQ Memes & Satire';
+    case 'youtube_gems': return 'YouTube Gems';
+    case 'book_mastery': return 'Buch-Meisterwerke';
+    case 'health_biohacking': return 'Gesundheit & Biohacking';
+    case 'opportunities_growth': return 'Chancen & Hebel';
   }
 }
 

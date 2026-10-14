@@ -8,7 +8,7 @@ import {
   PersonalGoalSchema,
   PERSONAL_GOALS_METADATA
 } from '../src/core/domain/types';
-import { INITIAL_FIXTURES, DEFAULT_USER_PROFILE } from '../src/core/data/fixtures';
+import { INITIAL_FIXTURES, DEFAULT_USER_PROFILE, DEFAULT_STARTER_INTERESTS } from '../src/core/data/fixtures';
 import { scoreFeedItem, rankAndInterleaveFeed } from '../src/core/domain/ranking';
 
 describe('Domain Schemas & Invariant Validation', () => {
@@ -85,6 +85,7 @@ describe('Deterministic Ranking Engine', () => {
     const profile = {
       ...DEFAULT_USER_PROFILE,
       explicitInterests: {
+        ...DEFAULT_STARTER_INTERESTS,
         philosophy_ethics: 1.0,
         german_didactics: 0.1,
         ai_apple: 0.1,
@@ -287,6 +288,7 @@ describe('Deterministic Ranking Engine', () => {
     const extremeProfile = {
       ...DEFAULT_USER_PROFILE,
       explicitInterests: {
+        ...DEFAULT_STARTER_INTERESTS,
         ai_apple: 1.0,
         sound_synthesis: 1.0,
         science_society: 0.9,

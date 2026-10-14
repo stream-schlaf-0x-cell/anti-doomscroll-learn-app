@@ -17,7 +17,12 @@ export const TopicTagSchema = z.enum([
   'ai_apple',            // KI-Systeme & Apple-Technologie
   'contemplation_mind',  // Buddhismus, Meditation & Kognition
   'science_society',     // Wissenschaft, Gesellschaft & Politik
-  'sound_synthesis'      // Elektronische Musik & kreative Synthese
+  'sound_synthesis',     // Elektronische Musik & kreative Synthese
+  'memes_satire',        // High-IQ Memes, Tech- & Philosophie-Satire
+  'youtube_gems',        // Kuratierte Video-Essays & Deep Dives
+  'book_mastery',        // Buch-Empfehlungen & Erkenntnis-Kompression
+  'health_biohacking',   // Schlaf, Neuroplastizität, Fokus & Longevity
+  'opportunities_growth' // Karriere-Hebel, Open-Source & Stipendien
 ]);
 export type TopicTag = z.infer<typeof TopicTagSchema>;
 
@@ -51,6 +56,31 @@ export const TOPIC_METADATA: Record<TopicTag, { label: string; icon: string; des
     label: 'Klang & Synthese',
     icon: 'musical-notes-outline',
     description: 'Modulare Synthese, Sounddesign, Ambient, Ableton & algorithmische Komposition'
+  },
+  memes_satire: {
+    label: 'Memes & Satire',
+    icon: 'happy-outline',
+    description: 'High-IQ Tech- & Philosophie-Memes, Internetkultur & sokratische Satire'
+  },
+  youtube_gems: {
+    label: 'YouTube Gems',
+    icon: 'play-circle-outline',
+    description: 'Kuratierte Video-Essays (Veritasium, 3Blue1Brown, Kurzgesagt, Huberman)'
+  },
+  book_mastery: {
+    label: 'Buch-Empfehlungen',
+    icon: 'book-outline',
+    description: 'Geistig transformative Sachbücher mit Kern-Thesen und Praxis-Lektionen'
+  },
+  health_biohacking: {
+    label: 'Gesundheit & Fokus',
+    icon: 'fitness-outline',
+    description: 'Evidenzbasierter Schlaf, Neurokognition, Atemprotokolle & Biohacking'
+  },
+  opportunities_growth: {
+    label: 'Chancen & Hebel',
+    icon: 'trending-up-outline',
+    description: 'Stipendien, AI Builder Grants, Open Source Projekte & Hebelpotenziale'
   }
 };
 
@@ -104,13 +134,17 @@ export type DeepeningOptions = z.infer<typeof DeepeningOptionsSchema>;
 
 // Phase 2 Editorial Formats for rich in-feed reading
 export const FeedItemFormatSchema = z.enum([
-  'concise_insight',         // Kurzimpuls, in sich abgeschlossen
-  'sourced_update',          // Aktuelle Entwicklung mit Quellenbeleg
-  'creative_idea',           // Praktischer schöpferischer Impuls / Musik
-  'intriguing_question',     // Denkfrage mit Erläuterung
-  'surprising_connection',   // Unerwartete interdisziplinäre Brücke
-  'perspective_disagreement',// Kontroverse, dialektischer Einwand
-  'long_invitation'          // Einladung in vertiefende Langform
+  'concise_insight',          // Kurzimpuls, in sich abgeschlossen
+  'sourced_update',           // Aktuelle Entwicklung mit Quellenbeleg
+  'creative_idea',            // Praktischer schöpferischer Impuls / Musik
+  'intriguing_question',      // Denkfrage mit Erläuterung
+  'surprising_connection',    // Unerwartete interdisziplinäre Brücke
+  'perspective_disagreement', // Kontroverse, dialektischer Einwand
+  'long_invitation',          // Einladung in vertiefende Langform
+  'meme',                     // High-IQ Meme & Satire
+  'youtube_gem',              // Kuratierter YouTube Video-Essay
+  'book_masterpiece',         // Buch-Empfehlung & Kern-These
+  'opportunity_radar'         // Chancen-, Gesundheits- & Hebel-Radar
 ]);
 export type FeedItemFormat = z.infer<typeof FeedItemFormatSchema>;
 
@@ -123,6 +157,10 @@ export function formatFeedItemFormat(format?: FeedItemFormat): string {
     case 'surprising_connection': return '☍ Interdisziplinäre Brücke';
     case 'perspective_disagreement': return '✦ Philosophische Gegenposition';
     case 'long_invitation': return '📖 Vertiefender Essay';
+    case 'meme': return '🎭 High-IQ Satire & Meme';
+    case 'youtube_gem': return '📺 YouTube Gem & Video-Essay';
+    case 'book_masterpiece': return '📚 Meisterwerk-Empfehlung';
+    case 'opportunity_radar': return '🚀 Chancen- & Hebel-Radar';
     default: return '✦ Lese-Entdeckung';
   }
 }
@@ -225,7 +263,54 @@ export const FeedItemSchema = z.object({
   challengePrompt: z.string().optional(),
   didacticSeed: z.string().optional(),
   upvotesCount: z.number().int().default(42),
-  comments: z.array(CommunityCommentSchema).default([])
+  comments: z.array(CommunityCommentSchema).default([]),
+
+  // Specialized Content Metadata
+  youtubeMeta: z.object({
+    videoId: z.string(),
+    channelTitle: z.string(),
+    duration: z.string(),
+    viewCount: z.string().optional(),
+    keyTakeaways: z.array(z.string()).default([])
+  }).optional(),
+
+  bookMeta: z.object({
+    author: z.string(),
+    pages: z.number().int().optional(),
+    rating: z.number().min(1).max(5).default(4.9),
+    coverUrl: z.string().url().optional(),
+    oneSentenceThesis: z.string(),
+    whyRead: z.string()
+  }).optional(),
+
+  memeMeta: z.object({
+    templateName: z.string(),
+    punchline: z.string(),
+    satireContext: z.string().optional()
+  }).optional(),
+
+  opportunityMeta: z.object({
+    category: z.string(),
+    deadline: z.string().optional(),
+    impactScore: z.number().min(1).max(10).default(9),
+    actionStep: z.string()
+  }).optional(),
+
+  awardsCount: z.object({
+    gold: z.number().int().default(0),
+    brain: z.number().int().default(0),
+    spark: z.number().int().default(0)
+  }).default({ gold: 0, brain: 0, spark: 0 }),
+
+  sourceTrustLevel: z.enum([
+    'public_broadcaster',
+    'peer_reviewed',
+    'verified_creator',
+    'deep_essay',
+    'community_curated'
+  ]).default('verified_creator'),
+  sourceDomain: z.string().optional(),
+  sourceBroadcasterName: z.string().optional()
 });
 export type FeedItem = z.infer<typeof FeedItemSchema>;
 
@@ -284,6 +369,46 @@ export const TOPIC_SPACE_MAP: Record<TopicTag, {
     icon: 'planet-outline',
     color: '#EC4899',
     bgTint: 'rgba(236, 72, 153, 0.12)'
+  },
+  memes_satire: {
+    space: 'c/memes',
+    name: 'High-IQ Memes & Satire',
+    flair: '🎭 Satire & Memes',
+    icon: 'happy-outline',
+    color: '#F97316',
+    bgTint: 'rgba(249, 115, 22, 0.12)'
+  },
+  youtube_gems: {
+    space: 'c/youtube',
+    name: 'Deep YouTube Gems',
+    flair: '📺 Video-Essay',
+    icon: 'play-circle-outline',
+    color: '#EF4444',
+    bgTint: 'rgba(239, 68, 68, 0.12)'
+  },
+  book_mastery: {
+    space: 'c/books',
+    name: 'Buch-Meisterwerke',
+    flair: '📚 Buch-Perle',
+    icon: 'book-outline',
+    color: '#A855F7',
+    bgTint: 'rgba(168, 85, 247, 0.12)'
+  },
+  health_biohacking: {
+    space: 'c/health_longevity',
+    name: 'Gesundheit & Biohacking',
+    flair: '🧘 Schlaf & Fokus',
+    icon: 'fitness-outline',
+    color: '#10B981',
+    bgTint: 'rgba(16, 185, 129, 0.12)'
+  },
+  opportunities_growth: {
+    space: 'c/chancen',
+    name: 'Chancen- & Hebel-Radar',
+    flair: '🚀 Hebel & Grants',
+    icon: 'trending-up-outline',
+    color: '#06B6D4',
+    bgTint: 'rgba(6, 182, 212, 0.12)'
   }
 };
 
@@ -322,6 +447,15 @@ export const PERSONAL_GOALS_METADATA: Record<PersonalGoal, { label: string; desc
     description: 'Demokratie, Bildungspolitik, Medienökologie und zeitgenössische Kultur'
   }
 };
+
+export const ThemePaletteSchema = z.enum([
+  'tidalglass',
+  'mosspulse',
+  'oxford',
+  'cyberpunk',
+  'monochrome'
+]).default('tidalglass');
+export type ThemePalette = z.infer<typeof ThemePaletteSchema>;
 
 export const UserProfileSchema = z.object({
   language: z.enum(['de', 'en']).default('de'),
@@ -367,7 +501,8 @@ export const UserProfileSchema = z.object({
   }),
   readingPreferences: z.object({
     preferredDuration: ReadingPreferenceDurationSchema.default('balanced'),
-    theme: z.enum(['system', 'light', 'dark']).default('system'),
+    theme: z.enum(['system', 'light', 'dark']).default('dark'),
+    palette: ThemePaletteSchema.default('tidalglass'),
     fontSize: z.enum(['sm', 'md', 'lg', 'xl']).default('md')
   }),
   isOnboarded: z.boolean().default(false),

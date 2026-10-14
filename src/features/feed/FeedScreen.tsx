@@ -25,7 +25,9 @@ export const FeedScreen: React.FC = () => {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
 
+  type SortMode = 'hot' | 'new' | 'top' | 'gems';
   const [selectedFilter, setSelectedFilter] = useState<TopicTag | 'all'>('all');
+  const [sortMode, setSortMode] = useState<SortMode>('hot');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -72,33 +74,78 @@ export const FeedScreen: React.FC = () => {
     return filterByQuery(spaceFiltered);
   }, [discoveryItems, selectedFilter, filterByQuery]);
 
-  // Appended discovery items for smooth infinite mind-scroll
+  // Reddit sorting algorithms
+  const applySort = useCallback((items: ScoredFeedItem[], mode: SortMode) => {
+    const list = [...items];
+    switch (mode) {
+      case 'new':
+        return list.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+      case 'top':
+        return list.sort((a, b) => {
+          const scoreA = (a.upvotesCount || 42) + ((a.awardsCount?.gold || 0) * 5) + ((a.awardsCount?.brain || 0) * 3);
+          const scoreB = (b.upvotesCount || 42) + ((b.awardsCount?.gold || 0) * 5) + ((b.awardsCount?.brain || 0) * 3);
+          return scoreB - scoreA;
+        });
+      case 'gems':
+        return list.sort((a, b) => {
+          const isGemA = a.format === 'youtube_gem' || a.format === 'book_masterpiece' || a.format === 'meme' || a.format === 'opportunity_radar';
+          const isGemB = b.format === 'youtube_gem' || b.format === 'book_masterpiece' || b.format === 'meme' || b.format === 'opportunity_radar';
+          if (isGemA && !isGemB) return -1;
+          if (!isGemA && isGemB) return 1;
+          return (b.score || 0) - (a.score || 0);
+        });
+      case 'hot':
+      default:
+        return list.sort((a, b) => {
+          const hotA = (a.score || 0) * 10 + (a.upvotesCount || 42) + (a.comments?.length || 0) * 4;
+          const hotB = (b.score || 0) * 10 + (b.upvotesCount || 42) + (b.comments?.length || 0) * 4;
+          return hotB - hotA;
+        });
+    }
+  }, []);
+
+  const sortedDaily = useMemo(() => applySort(filteredDaily, sortMode), [filteredDaily, sortMode, applySort]);
+  const sortedDiscovery = useMemo(() => applySort(filteredDiscovery, sortMode), [filteredDiscovery, sortMode, applySort]);
+
+  // Appended discovery items for smooth infinite mind-scroll (cycles infinitely)
   const renderedDiscovery = useMemo(() => {
-    return filteredDiscovery.slice(0, visibleDiscoveryCount);
-  }, [filteredDiscovery, visibleDiscoveryCount]);
+    if (sortedDiscovery.length === 0) return [];
+    if (visibleDiscoveryCount <= sortedDiscovery.length) {
+      return sortedDiscovery.slice(0, visibleDiscoveryCount);
+    }
+    // Infinite loop mode: cycle through items with cloned IDs so React keys remain unique
+    const result: ScoredFeedItem[] = [...sortedDiscovery];
+    let cycle = 1;
+    while (result.length < visibleDiscoveryCount && cycle < 15) {
+      for (const item of sortedDiscovery) {
+        if (result.length >= visibleDiscoveryCount) break;
+        result.push({
+          ...item,
+          id: `${item.id}-cycle-${cycle}`
+        });
+      }
+      cycle++;
+    }
+    return result;
+  }, [sortedDiscovery, visibleDiscoveryCount]);
 
-  const remainingDiscoveryCount = Math.max(0, filteredDiscovery.length - visibleDiscoveryCount);
-  const nextBatchSize = Math.min(10, remainingDiscoveryCount);
-
-  // Seamless infinite mind-scroll listener
+  // Seamless infinite mind-scroll listener (triggers next items as user scrolls down)
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
-    const paddingToBottom = 700;
+    const paddingToBottom = 800;
     if (layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom) {
-      if (visibleDiscoveryCount < filteredDiscovery.length) {
-        setVisibleDiscoveryCount(prev => Math.min(filteredDiscovery.length, prev + 8));
-      }
+      setVisibleDiscoveryCount(prev => prev + 6);
     }
-  }, [visibleDiscoveryCount, filteredDiscovery.length]);
+  }, []);
 
   const handleLoadMoreDiscovery = () => {
-    setVisibleDiscoveryCount(prev => Math.min(filteredDiscovery.length, prev + 10));
+    setVisibleDiscoveryCount(prev => prev + 10);
   };
 
   // Combine items into a seamless stream
   const allStreamItems = useMemo(() => {
-    return [...filteredDaily, ...renderedDiscovery];
-  }, [filteredDaily, renderedDiscovery]);
+    return [...sortedDaily, ...renderedDiscovery];
+  }, [sortedDaily, renderedDiscovery]);
 
   const activeSpaceName = selectedFilter === 'all'
     ? 'Alle Spaces'
@@ -112,7 +159,8 @@ export const FeedScreen: React.FC = () => {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           activeSpaceName={activeSpaceName}
-          onSelectSpacePress={() => handleFilterChange('all')}
+          selectedFilter={selectedFilter}
+          onSelectSpace={handleFilterChange}
         />
       ) : (
         <Header />
@@ -220,6 +268,68 @@ export const FeedScreen: React.FC = () => {
               </View>
             )}
 
+            {/* Reddit Sort Filter Bar: Hot, New, Top, Gems */}
+            <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+              <TouchableOpacity
+                onPress={() => setSortMode('hot')}
+                style={[
+                  styles.sortTab,
+                  sortMode === 'hot' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                ]}
+              >
+                <Text style={styles.sortEmoji}>🔥</Text>
+                <Text style={[styles.sortTabText, { color: sortMode === 'hot' ? colors.accent : colors.textSecondary }]}>
+                  Heiß
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setSortMode('new')}
+                style={[
+                  styles.sortTab,
+                  sortMode === 'new' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                ]}
+              >
+                <Text style={styles.sortEmoji}>⚡</Text>
+                <Text style={[styles.sortTabText, { color: sortMode === 'new' ? colors.accent : colors.textSecondary }]}>
+                  Neu
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setSortMode('top')}
+                style={[
+                  styles.sortTab,
+                  sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                ]}
+              >
+                <Text style={styles.sortEmoji}>🏆</Text>
+                <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
+                  Top
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setSortMode('gems')}
+                style={[
+                  styles.sortTab,
+                  sortMode === 'gems' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                ]}
+              >
+                <Text style={styles.sortEmoji}>💎</Text>
+                <Text style={[styles.sortTabText, { color: sortMode === 'gems' ? colors.accent : colors.textSecondary }]}>
+                  Perlen & Memes
+                </Text>
+              </TouchableOpacity>
+
+              <View style={styles.sortRightInfo}>
+                <Ionicons name="infinite-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                <Text style={[styles.sortInfoText, { color: colors.textMuted }]}>
+                  Endlos-Stream
+                </Text>
+              </View>
+            </View>
+
             {allStreamItems.length === 0 ? (
               <View style={[styles.emptyBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                 <Ionicons name="filter-outline" size={32} color={colors.textMuted} style={{ marginBottom: spacing.sm }} />
@@ -242,7 +352,7 @@ export const FeedScreen: React.FC = () => {
             ) : (
               <>
                 {/* Daily Edition Primary Items */}
-                {filteredDaily.map((item, index) => (
+                {sortedDaily.map((item, index) => (
                   <React.Fragment key={item.id}>
                     <FeedCard
                       item={item}
@@ -267,7 +377,7 @@ export const FeedScreen: React.FC = () => {
                 ))}
 
                 {/* Transition Milestone between Daily Edition and Discovery Pool */}
-                {filteredDaily.length > 0 && renderedDiscovery.length > 0 && (
+                {sortedDaily.length > 0 && renderedDiscovery.length > 0 && (
                   <View style={[styles.streamDividerCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                     <View style={[styles.sparkleIconBox, { backgroundColor: colors.accentSubtle }]}>
                       <Ionicons name="sparkles" size={20} color={colors.accent} />
@@ -295,7 +405,7 @@ export const FeedScreen: React.FC = () => {
                             Bewusstes Weiterlernen
                           </Text>
                           <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
-                            {index + 1 + filteredDaily.length} Erkenntnisse gesammelt. Dein Geist wächst mit jedem bewussten Gedanken.
+                            {index + 1 + sortedDaily.length} Erkenntnisse gesammelt. Dein Geist wächst mit jedem bewussten Gedanken.
                           </Text>
                         </View>
                       </View>
@@ -304,27 +414,15 @@ export const FeedScreen: React.FC = () => {
                 ))}
 
                 {/* End of Stream / Manual Load More Trigger */}
-                {remainingDiscoveryCount > 0 ? (
-                  <TouchableOpacity
-                    onPress={handleLoadMoreDiscovery}
-                    style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
-                  >
-                    <Ionicons name="compass-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
-                    <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
-                      Weitere Entdeckungen laden (+{nextBatchSize} von {remainingDiscoveryCount})
-                    </Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={[styles.allReadBanner, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Ionicons name="checkmark-circle-outline" size={22} color={colors.accent} style={{ marginBottom: 6 }} />
-                    <Text style={[styles.allReadTitle, { color: colors.textPrimary }]}>
-                      Du bist auf dem neuesten Stand
-                    </Text>
-                    <Text style={[styles.allReadSubtitle, { color: colors.textMuted }]}>
-                      Alle verfügbaren Beiträge aus deinen abonnierten Spaces wurden gelesen. Zeit für eine Pause.
-                    </Text>
-                  </View>
-                )}
+                <TouchableOpacity
+                  onPress={handleLoadMoreDiscovery}
+                  style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
+                >
+                  <Ionicons name="infinite-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
+                  <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
+                    Endlos weiter scrollen (+10 Gedanken & Gems)
+                  </Text>
+                </TouchableOpacity>
               </>
             )}
           </View>
@@ -517,5 +615,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     maxWidth: 420
+  },
+  sortBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 6,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: spacing.md,
+    gap: 6,
+    flexWrap: 'wrap'
+  },
+  sortTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    gap: 5
+  },
+  sortEmoji: {
+    fontSize: 13
+  },
+  sortTabText: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  sortRightInfo: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 6
+  },
+  sortInfoText: {
+    fontSize: 11,
+    fontWeight: '500'
   }
 });

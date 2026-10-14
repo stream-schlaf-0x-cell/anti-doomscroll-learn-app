@@ -4,34 +4,75 @@ import { CURRENT_PROMPT_VERSION, SourceOnlyEnricher } from './enricher';
 import { SparringReply } from '../domain/types';
 import { generateSparringReply } from '../data/fixtures';
 
+export type AIProvider = 'gemini' | 'ollama' | 'openai';
+
 export interface GeminiConfig {
+  provider?: AIProvider;
   apiKey?: string;
   model?: string;
+  endpoint?: string;
 }
 
 /**
- * Real Gemini API Content Enricher.
- * - Utilizes Gemini Flash with grounded official pricing ($0.10/M In, $0.40/M Out)
- * - Adheres strictly to the €5.00 monthly cost cap
- * - Gracefully falls back to SourceOnlyEnricher if no key, offline, or budget exceeded
+ * Universal AI Content Enricher & Intellectual Sparring Engine.
+ * - Supports Google Gemini (Flash / Pro) with €5.00/month cost ceiling
+ * - Supports Local LLMs (Ollama / LM Studio) via OpenAI-compatible endpoint (100% offline & private)
+ * - Supports OpenAI / ChatGPT / OpenRouter via standard API endpoint
+ * - Gracefully falls back to heuristic SourceOnlyEnricher if no key, offline, or budget exceeded
  */
 export class GeminiEnricher implements IContentEnricher {
+  private provider: AIProvider;
   private apiKey: string;
   private model: string;
+  private endpoint: string;
   private fallbackEnricher = new SourceOnlyEnricher();
 
   constructor(config: GeminiConfig = {}) {
+    this.provider = config.provider || 'gemini';
     this.apiKey =
       config.apiKey ||
       (typeof process !== 'undefined' ? (process.env.EXPO_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '') : '');
-    this.model = config.model || 'gemini-2.5-flash';
+    this.model = config.model || (this.provider === 'ollama' ? 'llama3.2' : this.provider === 'openai' ? 'gpt-4o-mini' : 'gemini-2.5-flash');
+    this.endpoint = config.endpoint || (this.provider === 'ollama' ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1');
+  }
+
+  setProvider(provider: AIProvider): void {
+    this.provider = provider;
+    if (provider === 'ollama' && !this.model.includes('llama')) {
+      this.model = 'llama3.2';
+    } else if (provider === 'openai' && !this.model.includes('gpt')) {
+      this.model = 'gpt-4o-mini';
+    } else if (provider === 'gemini' && !this.model.includes('gemini')) {
+      this.model = 'gemini-2.5-flash';
+    }
+  }
+
+  getProvider(): AIProvider {
+    return this.provider;
   }
 
   setApiKey(key: string): void {
     this.apiKey = key.trim();
   }
 
+  setModel(model: string): void {
+    this.model = model.trim();
+  }
+
+  getModel(): string {
+    return this.model;
+  }
+
+  setEndpoint(endpoint: string): void {
+    this.endpoint = endpoint.trim();
+  }
+
+  getEndpoint(): string {
+    return this.endpoint;
+  }
+
   hasApiKey(): boolean {
+    if (this.provider === 'ollama') return true; // Local LLMs don't need an API key
     return Boolean(this.apiKey && this.apiKey.length > 5);
   }
 
@@ -60,32 +101,56 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
 }`;
 
     try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 600,
-            responseMimeType: 'application/json'
-          }
-        })
-      });
+      let rawText = '';
+      let inTokens = 450;
+      let outTokens = 220;
 
-      if (!res.ok) {
-        throw new Error(`Gemini API returned status ${res.status}`);
+      if (this.provider === 'gemini') {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.3,
+              maxOutputTokens: 600,
+              responseMimeType: 'application/json'
+            }
+          })
+        });
+
+        if (!res.ok) throw new Error(`Gemini API returned status ${res.status}`);
+        const data = await res.json();
+        rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        inTokens = data?.usageMetadata?.promptTokenCount || 450;
+        outTokens = data?.usageMetadata?.candidatesTokenCount || 220;
+      } else {
+        // OpenAI-compatible endpoint (Ollama or OpenAI)
+        const chatUrl = `${this.endpoint.replace(/\/+$/, '')}/chat/completions`;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`;
+
+        const res = await fetch(chatUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model: this.model,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.3,
+            max_tokens: 600
+          })
+        });
+
+        if (!res.ok) throw new Error(`AI API returned status ${res.status}`);
+        const data = await res.json();
+        rawText = data?.choices?.[0]?.message?.content;
       }
 
-      const data = await res.json();
-      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) throw new Error('No candidate response from Gemini API');
+      if (!rawText) throw new Error('No candidate response from AI API');
 
       const parsed = JSON.parse(rawText.trim());
-      const inTokens = data?.usageMetadata?.promptTokenCount || 450;
-      const outTokens = data?.usageMetadata?.candidatesTokenCount || 220;
-      const costEur = calculateCostEur(inTokens, outTokens);
+      const costEur = this.provider === 'ollama' ? 0 : calculateCostEur(inTokens, outTokens);
 
       return {
         feedText: parsed.feedText || item.feedText || item.body.slice(0, 300),
@@ -99,7 +164,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
           : undefined,
         didacticSeed: parsed.didacticSeed,
         counterArgument: parsed.counterArgument,
-        modelUsed: this.model,
+        modelUsed: `${this.provider}:${this.model}`,
         promptVersion: CURRENT_PROMPT_VERSION,
         inputTokens: inTokens,
         outputTokens: outTokens,
@@ -107,13 +172,12 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         isFallback: false
       };
     } catch {
-      // Graceful fallback to SourceOnlyEnricher on API failure
       return this.fallbackEnricher.enrich(request);
     }
   }
 
   /**
-   * Generates a live sparring reply via Gemini API if key is present,
+   * Generates a live sparring reply via AI API if key/provider is configured,
    * or falls back to deterministic heuristic sparring.
    */
   async generateLiveSparring(
@@ -142,22 +206,45 @@ Rolle: ${persona.role}
 Antworte in genau 2-3 prägnanten, tiefsinnigen Sätzen auf Deutsch. Fordere den Nutzer intellektuell heraus, ohne belehrend zu wirken. Kein Markdown.`;
 
     try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.5,
-            maxOutputTokens: 180
-          }
-        })
-      });
+      let replyText = '';
 
-      if (!res.ok) throw new Error('API request failed');
-      const data = await res.json();
-      const replyText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (this.provider === 'gemini') {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.5,
+              maxOutputTokens: 180
+            }
+          })
+        });
+
+        if (!res.ok) throw new Error('API request failed');
+        const data = await res.json();
+        replyText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+      } else {
+        const chatUrl = `${this.endpoint.replace(/\/+$/, '')}/chat/completions`;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`;
+
+        const res = await fetch(chatUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model: this.model,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.5,
+            max_tokens: 180
+          })
+        });
+
+        if (!res.ok) throw new Error('API request failed');
+        const data = await res.json();
+        replyText = data?.choices?.[0]?.message?.content?.trim() || '';
+      }
 
       if (replyText) {
         return {
@@ -171,6 +258,36 @@ Antworte in genau 2-3 prägnanten, tiefsinnigen Sätzen auf Deutsch. Fordere den
       return generateSparringReply(noteText, tag, itemTitle);
     } catch {
       return generateSparringReply(noteText, tag, itemTitle);
+    }
+  }
+
+  /**
+   * Tests the connection with a live interactive philosophical prompt.
+   */
+  async testConnection(testPrompt: string = 'Was ist der Wert von Aufmerksamkeit?'): Promise<{
+    success: boolean;
+    message: string;
+    reply?: string;
+  }> {
+    if (!this.hasApiKey()) {
+      return {
+        success: false,
+        message: 'Kein API-Key oder unvollständige Konfiguration hinterlegt.'
+      };
+    }
+
+    try {
+      const sparring = await this.generateLiveSparring(testPrompt, 'these', 'Test-Verbindung');
+      return {
+        success: true,
+        message: `Erfolgreich verbunden mit ${this.provider.toUpperCase()} (${this.model})!`,
+        reply: sparring.text
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `Verbindung fehlgeschlagen: ${err?.message || 'Unbekannter Fehler'}`
+      };
     }
   }
 }

@@ -135,6 +135,12 @@ export function normalizeFeedEntry(entry: RawFeedEntry, source: RawFeedSource): 
     space: TOPIC_SPACE_MAP[source.primaryTopic]?.space,
     flair: TOPIC_SPACE_MAP[source.primaryTopic]?.flair,
     upvotesCount: 42 + (contentHash.charCodeAt(0) % 50),
+    awardsCount: { gold: 0, brain: 0, spark: 0 },
+    sourceTrustLevel: (source.id.includes('tagesschau') || source.id.includes('dlf') || source.id.includes('zdf'))
+      ? 'public_broadcaster'
+      : (source.id.includes('sep') || source.id.includes('plato') ? 'peer_reviewed' : 'deep_essay'),
+    sourceBroadcasterName: source.name,
+    sourceDomain: canonicalUrl ? canonicalUrl.replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '') : undefined,
     comments: []
   };
 }
