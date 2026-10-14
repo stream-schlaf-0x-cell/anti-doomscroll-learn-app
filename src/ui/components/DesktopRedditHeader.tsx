@@ -14,6 +14,7 @@ import { typography, radius, spacing, PALETTE_METADATA, ThemePalette } from '../
 import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
 import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
 import { defaultGeminiEnricher, AIProvider } from '../../core/enrichment/geminiEnricher';
+import { NewsHubModal } from './NewsHubModal';
 
 interface DesktopRedditHeaderProps {
   searchQuery: string;
@@ -48,6 +49,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
   const [showAIModal, setShowAIModal] = useState<boolean>(false);
   const [showPaletteModal, setShowPaletteModal] = useState<boolean>(false);
   const [showSpaceModal, setShowSpaceModal] = useState<boolean>(false);
+  const [showNewsHubModal, setShowNewsHubModal] = useState<boolean>(false);
   const [bannerNotice, setBannerNotice] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
@@ -157,12 +159,12 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               accessibilityRole="button"
               accessibilityLabel="Atem Startseite"
             >
-              {/* Reddit-like Circular Emblem */}
+              {/* atmen Circular Aperture Emblem */}
               <View style={[styles.logoEmblem, { backgroundColor: colors.accent }]}>
-                <Text style={styles.logoSymbol}>Ψ</Text>
+                <Text style={styles.logoSymbol}>◎</Text>
               </View>
               <Text style={[styles.brandText, { color: colors.textPrimary }]}>
-                atem
+                atmen
               </Text>
             </TouchableOpacity>
 
@@ -189,7 +191,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               <TextInput
                 value={searchQuery}
                 onChangeText={onSearchChange}
-                placeholder="Atem Network durchsuchen (Thesen, Didaktik, Quellen)…"
+                placeholder="atmen durchsuchen (Thesen, Didaktik, Quellen)…"
                 placeholderTextColor={colors.textMuted}
                 style={[styles.searchInput, { color: colors.textPrimary }]}
                 autoCapitalize="none"
@@ -202,7 +204,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
             </View>
           </View>
 
-          {/* Right: Live-Refresh, Karma, Budget, Tools Cluster & Nav Tabs */}
+          {/* Right: Live-Refresh, News-Hub, Karma, Budget, Tools Cluster & Nav Tabs */}
           <View style={styles.rightSection}>
             {/* Live-Feed Status & Refresh Pill */}
             <TouchableOpacity
@@ -219,6 +221,20 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               )}
               <Text style={[styles.liveStatusText, { color: colors.textPrimary }]}>
                 {isRefreshing ? 'Lädt…' : '110 Live'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* News-Hub & Quellen-Zentrale Pill Button */}
+            <TouchableOpacity
+              onPress={() => setShowNewsHubModal(true)}
+              style={[styles.newsHubBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="News-Hub & Quellen-Zentrale öffnen"
+            >
+              <Ionicons name="radio-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+              <Text style={[styles.newsHubText, { color: colors.textPrimary }]}>
+                News-Hub (29)
               </Text>
             </TouchableOpacity>
 
@@ -647,6 +663,12 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* News-Hub & Quellen-Zentrale Modal */}
+      <NewsHubModal
+        visible={showNewsHubModal}
+        onClose={() => setShowNewsHubModal(false)}
+      />
     </>
   );
 };
@@ -786,6 +808,18 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: '#10B981'
+  },
+  newsHubBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  newsHubText: {
+    fontSize: 11,
+    fontWeight: '700'
   },
   toolCluster: {
     flexDirection: 'row',

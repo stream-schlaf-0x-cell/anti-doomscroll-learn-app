@@ -13,6 +13,7 @@ import { TopicTag, TOPIC_METADATA, ReadingPreferenceDuration } from '../../core/
 import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing } from '../../ui/theme';
 import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
+import { NewsHubModal } from '../../ui/components/NewsHubModal';
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -25,10 +26,12 @@ export const SettingsScreen: React.FC = () => {
     setThemePreference,
     repeatOnboarding,
     clearAllLocalData,
-    colors
+    colors,
+    setActiveTab
   } = useApp();
 
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
+  const [showNewsHub, setShowNewsHub] = useState<boolean>(false);
   const [isClearing, setIsClearing] = useState<boolean>(false);
   const [craftNotice, setCraftNotice] = useState<string | null>(null);
 
@@ -75,17 +78,76 @@ export const SettingsScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Header */}
-      <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
-        <Text style={[styles.title, { color: colors.textPrimary }]}>
-          Einstellungen
-        </Text>
-        <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-          Transparente Steuerung deiner intellektuellen Umgebung
-        </Text>
+      {/* Header with 1-Click Back to Feed & Close Button */}
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
+        <View style={styles.headerInner}>
+          <View style={styles.headerTopRow}>
+            <TouchableOpacity
+              onPress={() => setActiveTab('feed')}
+              style={[styles.backBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+              accessibilityRole="button"
+              accessibilityLabel="Zurück zum Feed"
+            >
+              <Ionicons name="arrow-back" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+              <Text style={[styles.backBtnText, { color: colors.accent }]}>Zurück zum Feed</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setActiveTab('feed')}
+              style={[styles.closeIconBtn, { backgroundColor: colors.surfaceSecondary }]}
+              accessibilityRole="button"
+              accessibilityLabel="Einstellungen schließen"
+            >
+              <Ionicons name="close" size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={[styles.title, { color: colors.textPrimary }]}>
+            Einstellungen & Feed-Kontrolle
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.textMuted }]}>
+            Transparente Steuerung deiner intellektuellen Umgebung & Themen-Gewichtung
+          </Text>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Section: News-Hub & Quellen-Zentrale */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            News-Hub & Quellen-Zentrale
+          </Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Verwalte 29 verifizierte RSS-Feeds (ÖRR, Spektrum, Quanta, YouTube) und importiere eigene Feeds oder OPML-Dateien.
+          </Text>
+
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+              <View style={{ flex: 1, minWidth: 200 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                  <Ionicons name="radio-outline" size={16} color={colors.accent} />
+                  <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 14 }}>
+                    29 Aktive Primärquellen & Import-Center
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 12, color: colors.textMuted, lineHeight: 16 }}>
+                  Öffentlich-Rechtliche (Tagesschau, ZDF, DLF), Wissenschaft, Kultur & OPML-Export für maximale Datensouveränität.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => setShowNewsHub(true)}
+                style={[styles.manageSourcesBtn, { backgroundColor: colors.accent }]}
+                accessibilityRole="button"
+                accessibilityLabel="News-Hub öffnen"
+              >
+                <Ionicons name="options-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 12 }}>News-Hub öffnen</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
         {/* Section: Topic Weights */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
@@ -543,6 +605,12 @@ export const SettingsScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* News-Hub Modal */}
+      <NewsHubModal
+        visible={showNewsHub}
+        onClose={() => setShowNewsHub(false)}
+      />
     </View>
   );
 };
@@ -551,11 +619,48 @@ const styles = StyleSheet.create({
   container: {
     flex: 1
   },
+  manageSourcesBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: radius.pill
+  },
   header: {
     paddingHorizontal: spacing.pageHorizontal,
-    paddingTop: spacing.lg,
+    paddingTop: spacing.md,
     paddingBottom: spacing.md,
     borderBottomWidth: 0.5
+  },
+  headerInner: {
+    maxWidth: 860,
+    width: '100%',
+    alignSelf: 'center'
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm
+  },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  backBtnText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '700'
+  },
+  closeIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center'
   },
   title: {
     fontSize: typography.sizes.title1,
@@ -566,6 +671,9 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
   scrollContent: {
+    maxWidth: 860,
+    width: '100%',
+    alignSelf: 'center',
     paddingHorizontal: spacing.pageHorizontal,
     paddingTop: spacing.md,
     paddingBottom: spacing.xxl * 2

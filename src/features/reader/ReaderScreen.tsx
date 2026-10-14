@@ -14,7 +14,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import { formatFactReviewStatus } from '../../core/domain/types';
-import { TopicBadge } from '../../ui/components/TopicBadge';
 import { ReadingTimeBadge } from '../../ui/components/ReadingTimeBadge';
 import { DeepeningCard } from '../../ui/components/DeepeningCard';
 import { typography, radius, spacing } from '../../ui/theme';
@@ -80,20 +79,20 @@ export const ReaderScreen: React.FC = () => {
   const currentFeedback = interactions[selectedArticle.id]?.feedback;
   const savedProgress = interactions[selectedArticle.id]?.progressPercent ?? 0;
 
-  // Font sizing calculations
+  // Magazine Font sizing calculations: generous leading & golden measure
   const fontPref = profile.readingPreferences.fontSize;
-  let bodyFontSize = 17;
-  let bodyLineHeight = 27;
+  let bodyFontSize = 18;
+  let bodyLineHeight = 32;
 
   if (fontPref === 'sm') {
-    bodyFontSize = 15;
-    bodyLineHeight = 24;
+    bodyFontSize = 16;
+    bodyLineHeight = 28;
   } else if (fontPref === 'lg') {
-    bodyFontSize = 19;
-    bodyLineHeight = 30;
+    bodyFontSize = 20;
+    bodyLineHeight = 35;
   } else if (fontPref === 'xl') {
-    bodyFontSize = 21;
-    bodyLineHeight = 33;
+    bodyFontSize = 22;
+    bodyLineHeight = 38;
   }
 
   const cycleFontSize = () => {
@@ -105,7 +104,7 @@ export const ReaderScreen: React.FC = () => {
 
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
-    const paddingToBottom = 20;
+    const paddingToBottom = 30;
     const totalScrollable = contentSize.height - layoutMeasurement.height - paddingToBottom;
     if (totalScrollable > 0) {
       const pct = Math.min(100, Math.max(0, Math.round((contentOffset.y / totalScrollable) * 100)));
@@ -134,6 +133,16 @@ export const ReaderScreen: React.FC = () => {
     }
   };
 
+  const authorDisplay = selectedArticle.sourceReferences[0]?.author
+    || selectedArticle.sourceBroadcasterName
+    || 'Redaktion atmen';
+
+  const publisherDisplay = selectedArticle.sourceReferences[0]?.publisher
+    || selectedArticle.sourceBroadcasterName
+    || 'Fachpublikation';
+
+  const remainingMinutes = Math.max(1, Math.round((1 - scrollPercent / 100) * selectedArticle.estimatedReadingMinutes));
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
       {/* Pinned Reading Progress Bar */}
@@ -141,55 +150,77 @@ export const ReaderScreen: React.FC = () => {
         <View style={[styles.progressBar, { width: `${scrollPercent}%`, backgroundColor: colors.accent }]} />
       </View>
 
-      {/* Reader Top Action Bar */}
-      <View style={[styles.navBar, { borderBottomColor: colors.borderSubtle }]}>
+      {/* Magazine Editorial Top Action Bar */}
+      <View style={[styles.navBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
         <View style={styles.navBarInner}>
+          {/* Back Pill with originating Space */}
           <TouchableOpacity
             onPress={handleClose}
-            style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={[styles.backPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             accessibilityRole="button"
-            accessibilityLabel="Zurück zur vorherigen Ansicht"
+            accessibilityLabel="Zurück zur Übersicht"
           >
-            <Ionicons name="arrow-back" size={20} color={colors.textPrimary} />
+            <Ionicons name="arrow-back" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+            <Text style={[styles.backPillText, { color: colors.textPrimary }]} numberOfLines={1}>
+              {selectedArticle.space || 'Zurück'}
+            </Text>
           </TouchableOpacity>
 
+          {/* Center Magazine Brand */}
+          <View style={styles.centerBrand}>
+            <View style={[styles.brandEmblem, { backgroundColor: colors.accent }]}>
+              <Text style={styles.brandEmblemGlyph}>◎</Text>
+            </View>
+            <Text style={[styles.brandTitle, { color: colors.textPrimary }]}>
+              atmen <Text style={{ fontWeight: '400', fontStyle: 'italic', color: colors.textMuted }}>magazin</Text>
+            </Text>
+          </View>
+
+          {/* Right Tools: Progress, Font Size, Theme & Save */}
           <View style={styles.navRight}>
+            {/* Reading Progress Pill */}
+            <View style={[styles.readingProgressPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+              <Text style={[styles.readingProgressText, { color: colors.textSecondary }]}>
+                {scrollPercent}% • noch {remainingMinutes}m
+              </Text>
+            </View>
+
             {/* Font Size Adjuster */}
             <TouchableOpacity
               onPress={cycleFontSize}
-              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary, marginRight: 8 }]}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               accessibilityRole="button"
               accessibilityLabel={`Schriftgröße ändern, aktuell: ${fontPref}`}
             >
               <Text style={[styles.fontBtnText, { color: colors.textPrimary }]}>
-                {fontPref.toUpperCase()}
+                A{fontPref === 'sm' ? '-' : fontPref === 'xl' ? '++' : '+'}
               </Text>
             </TouchableOpacity>
 
             {/* Theme Toggle */}
             <TouchableOpacity
               onPress={() => setThemePreference(isDark ? 'light' : 'dark')}
-              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary, marginRight: 8 }]}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               accessibilityRole="button"
               accessibilityLabel={isDark ? 'Helles Erscheinungsbild aktivieren' : 'Dunkles Erscheinungsbild aktivieren'}
             >
-              <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={18} color={colors.textPrimary} />
+              <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={16} color={colors.textSecondary} />
             </TouchableOpacity>
 
             {/* Save / Bookmark Button */}
             <TouchableOpacity
               onPress={() => toggleSaveItem(selectedArticle.id)}
               style={[styles.navButton, { backgroundColor: isSaved ? colors.accentSubtle : colors.surfaceSecondary }]}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               accessibilityRole="button"
               accessibilityLabel={isSaved ? 'Aus Bibliothek entfernen' : 'In Bibliothek speichern'}
             >
               <Ionicons
                 name={isSaved ? 'bookmark' : 'bookmark-outline'}
-                size={18}
+                size={16}
                 color={isSaved ? colors.accent : colors.textPrimary}
               />
             </TouchableOpacity>
@@ -208,14 +239,15 @@ export const ReaderScreen: React.FC = () => {
         onLayout={(e) => setLayoutHeight(e.nativeEvent.layout.height)}
       >
         <View style={styles.scrollInner}>
-          {/* Meta Header */}
-          <View style={styles.metaRow}>
-            <TopicBadge topic={selectedArticle.primaryTopic} size="md" />
-            <View style={{ width: 8 }} />
-            <ReadingTimeBadge minutes={selectedArticle.estimatedReadingMinutes} />
-            <View style={{ width: 8 }} />
-            <View style={[styles.demoPill, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}>
-              <Text style={[styles.demoPillText, { color: colors.accent }]}>COMMUNITY</Text>
+          {/* Magazine Kicker Header */}
+          <View style={styles.kickerRow}>
+            <Text style={[styles.kickerText, { color: colors.accent }]}>
+              {(selectedArticle.space || 'C/RECHERCHE').toUpperCase()} • ESSAY & ANALYSE
+            </Text>
+
+            <View style={[styles.trustBadge, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}>
+              <Ionicons name="shield-checkmark" size={11} color={colors.accent} style={{ marginRight: 4 }} />
+              <Text style={[styles.trustBadgeText, { color: colors.accent }]}>Verifizierte Fachquelle</Text>
             </View>
           </View>
 
@@ -228,7 +260,7 @@ export const ReaderScreen: React.FC = () => {
               accessibilityRole="button"
               accessibilityLabel={`An gespeicherte Leseposition bei ${savedProgress} Prozent springen`}
             >
-              <Ionicons name="bookmark" size={16} color={colors.accent} style={{ marginRight: 8 }} />
+              <Ionicons name="bookmark" size={15} color={colors.accent} style={{ marginRight: 8 }} />
               <Text style={[styles.resumeCardText, { color: colors.textPrimary }]}>
                 Zuletzt bei <Text style={{ fontWeight: '700', color: colors.accent }}>{savedProgress}%</Text> gelesen
               </Text>
@@ -237,193 +269,230 @@ export const ReaderScreen: React.FC = () => {
             </TouchableOpacity>
           )}
 
-          {/* Headline */}
+          {/* Magazine Editorial Headline */}
           <Text style={[styles.headline, { color: colors.textPrimary }]}>
             {selectedArticle.title}
           </Text>
 
-          {/* Subtitle / Dek */}
+          {/* Magazine Subtitle / Deck */}
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             {selectedArticle.subtitle}
           </Text>
 
+          {/* Editorial Byline & Provenance Strip */}
+          <View style={[styles.bylineCard, { borderTopColor: colors.borderSubtle, borderBottomColor: colors.borderSubtle }]}>
+            <View style={styles.bylineLeft}>
+              <Text style={[styles.bylineAuthor, { color: colors.textPrimary }]}>
+                Von <Text style={{ fontWeight: '700' }}>{authorDisplay}</Text>
+              </Text>
+              <Text style={[styles.bylinePublisher, { color: colors.textMuted }]}>
+                Publiziert in {publisherDisplay} {selectedArticle.sourceReferences[0]?.publicationTimestamp ? `• ${selectedArticle.sourceReferences[0].publicationTimestamp}` : ''}
+              </Text>
+            </View>
+
+            <View style={styles.bylineRight}>
+              <ReadingTimeBadge minutes={selectedArticle.estimatedReadingMinutes} />
+              <Text style={[styles.bylineMetrics, { color: colors.textMuted }]}>
+                ca. {selectedArticle.wordCount ?? Math.round(selectedArticle.body.split(/\s+/).length)} Wörter
+              </Text>
+            </View>
+          </View>
+
           {/* Hero Visual Image */}
           {selectedArticle.imageUrl && (
-            <View style={styles.readerImageContainer}>
+            <View style={[styles.readerImageContainer, { borderColor: colors.borderSubtle }]}>
               <Image
                 source={{ uri: selectedArticle.imageUrl }}
                 style={styles.readerHeroImage}
                 resizeMode="cover"
               />
+              <View style={[styles.imageCaptionBar, { backgroundColor: colors.surfaceSecondary }]}>
+                <Ionicons name="camera-outline" size={12} color={colors.textMuted} style={{ marginRight: 6 }} />
+                <Text style={[styles.imageCaptionText, { color: colors.textMuted }]} numberOfLines={1}>
+                  Titel-Illustration • Quelle: {publisherDisplay}
+                </Text>
+              </View>
             </View>
           )}
 
-          {/* Word count & Reading rate honest indicator */}
-          <View style={styles.editorialMetricsRow}>
-            <Text style={[styles.editorialMetricsText, { color: colors.textMuted }]}>
-              {selectedArticle.wordCount ?? Math.round(selectedArticle.body.split(/\s+/).length)} Wörter • ca. {selectedArticle.estimatedReadingMinutes} Min. Lesezeit (220 W/Min.)
-            </Text>
-          </View>
-
-          {/* Editorial Divider */}
-          <View style={[styles.divider, { backgroundColor: colors.borderSubtle }]} />
-
-        {/* Article Body Paragraphs */}
-        <View style={styles.bodyContainer}>
-          {selectedArticle.body.split('\n\n').map((paragraph, index) => {
-            const isFirst = index === 0;
-
-            return (
-              <Text
-                key={index}
-                style={[
-                  styles.paragraph,
-                  {
-                    color: colors.textPrimary,
-                    fontSize: bodyFontSize,
-                    lineHeight: bodyLineHeight,
-                    fontWeight: isFirst ? '500' : '400'
-                  }
-                ]}
-              >
-                {paragraph}
+          {/* Key Insight Pull Quote (Aeon style) */}
+          {selectedArticle.keyInsight && (
+            <View style={[styles.pullQuoteBox, { borderLeftColor: colors.accent, backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.pullQuoteText, { color: colors.textPrimary }]}>
+                „{selectedArticle.keyInsight}“
               </Text>
-            );
-          })}
-        </View>
-
-        {/* Interactive Reflection / Deepening */}
-        <DeepeningCard options={selectedArticle.deepeningOptions} />
-
-        {/* Honest Source Provenance Box */}
-        <View style={[styles.provenanceBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-          <View style={styles.provenanceHeader}>
-            <Ionicons name="shield-checkmark" size={18} color={colors.accent} style={{ marginRight: 8 }} />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.provenanceTitle, { color: colors.textPrimary }]}>
-                Redaktionelle Herkunft & Transparenz
-              </Text>
-              <Text style={[styles.provenanceSubtitle, { color: colors.textMuted }]}>
-                {selectedArticle.provenanceSummary ?? 'Kuratierter Fachbeitrag für deine persönliche Ausgabe'}
+              <Text style={[styles.pullQuoteAttribution, { color: colors.accent }]}>
+                — Leitgedanke der Publikation
               </Text>
             </View>
-          </View>
+          )}
 
-          {/* Editorial / Fact Review Badge */}
-          <View style={styles.provenanceBadgeRow}>
-            <View style={[styles.reviewBadge, { backgroundColor: colors.surfaceSecondary }]}>
-              <Text style={[styles.reviewBadgeText, { color: colors.textSecondary }]}>
-                Status: {formatFactReviewStatus(selectedArticle.factReviewStatus)}
-              </Text>
-            </View>
-            <View style={[styles.reviewBadge, { backgroundColor: colors.surfaceSecondary }]}>
-              <Text style={[styles.reviewBadgeText, { color: colors.textSecondary }]}>
-                {selectedArticle.aiAssisted ? 'KI-gestützt & didaktisch kuratiert' : 'Didaktische Kuration'}
-              </Text>
-            </View>
-          </View>
+          {/* Article Body Paragraphs with Lede Styling */}
+          <View style={styles.bodyContainer}>
+            {selectedArticle.body.split('\n\n').map((paragraph, index) => {
+              const isFirst = index === 0;
 
-          {/* Sources List with active Links */}
-          <Text style={[styles.sourceListHeader, { color: colors.textPrimary }]}>
-            Referenzierte Fachquellen:
-          </Text>
-
-          {selectedArticle.sourceReferences.map((ref, idx) => (
-            <TouchableOpacity
-              key={idx}
-              onPress={() => handleOpenSource(ref.originalUrl)}
-              activeOpacity={0.7}
-              style={[styles.sourceItem, { borderTopColor: colors.borderSubtle }]}
-              accessibilityRole="link"
-              accessibilityLabel={`Quelle ${ref.publisher} im Browser öffnen`}
-            >
-              <View style={styles.sourceItemTop}>
-                <Text style={[styles.sourcePublisher, { color: colors.accent }]}>
-                  {ref.publisher} {ref.author ? `• ${ref.author}` : ''}
+              return (
+                <Text
+                  key={index}
+                  style={[
+                    styles.paragraph,
+                    {
+                      color: colors.textPrimary,
+                      fontSize: isFirst ? bodyFontSize + 2 : bodyFontSize,
+                      lineHeight: isFirst ? bodyLineHeight + 5 : bodyLineHeight,
+                      fontWeight: isFirst ? '500' : '400',
+                      letterSpacing: -0.15
+                    }
+                  ]}
+                >
+                  {paragraph}
                 </Text>
-                <Ionicons name="open-outline" size={14} color={colors.accent} />
+              );
+            })}
+          </View>
+
+          {/* Breath Rhythm & Intellectual Pause Ornament */}
+          <View style={styles.breathOrnament}>
+            <View style={[styles.ornamentLine, { backgroundColor: colors.borderSubtle }]} />
+            <View style={[styles.ornamentCenter, { borderColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary }]}>
+              <Text style={[styles.ornamentGlyph, { color: colors.accent }]}>◎</Text>
+            </View>
+            <View style={[styles.ornamentLine, { backgroundColor: colors.borderSubtle }]} />
+          </View>
+
+          {/* Interactive Socratic Sparring Salon (Vertiefung & Didaktik) */}
+          <DeepeningCard options={selectedArticle.deepeningOptions} />
+
+          {/* Honest Source Provenance Box */}
+          <View style={[styles.provenanceBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            <View style={styles.provenanceHeader}>
+              <Ionicons name="shield-checkmark" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.provenanceTitle, { color: colors.textPrimary }]}>
+                  Redaktionelle Herkunft & Transparenz
+                </Text>
+                <Text style={[styles.provenanceSubtitle, { color: colors.textMuted }]}>
+                  {selectedArticle.provenanceSummary ?? 'Kuratierter Fachbeitrag für deine persönliche Ausgabe'}
+                </Text>
               </View>
-              <Text style={[styles.sourceArticleTitle, { color: colors.textPrimary }]}>
-                {ref.title}
-              </Text>
-              {ref.publicationTimestamp && (
-                <Text style={[styles.sourcePublishedDate, { color: colors.textMuted }]}>
-                  Original-Publikation: {ref.publicationTimestamp}
+            </View>
+
+            {/* Editorial / Fact Review Badge */}
+            <View style={styles.provenanceBadgeRow}>
+              <View style={[styles.reviewBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.reviewBadgeText, { color: colors.textSecondary }]}>
+                  Status: {formatFactReviewStatus(selectedArticle.factReviewStatus)}
                 </Text>
-              )}
-              <Text style={[styles.sourceUrl, { color: colors.textMuted }]} numberOfLines={1}>
-                {ref.originalUrl}
-              </Text>
-            </TouchableOpacity>
-          ))}
+              </View>
+              <View style={[styles.reviewBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.reviewBadgeText, { color: colors.textSecondary }]}>
+                  {selectedArticle.aiAssisted ? 'KI-gestützt & didaktisch kuratiert' : 'Didaktische Kuration'}
+                </Text>
+              </View>
+            </View>
 
-          <View style={[styles.provenanceFooter, { borderTopColor: colors.borderSubtle }]}>
-            <Text style={[styles.retrievalText, { color: colors.textMuted }]}>
-              Erfasst in Atem (Demo-Abruf): {new Date(selectedArticle.generatedAt).toLocaleDateString('de-DE', { dateStyle: 'medium' })}
+            {/* Sources List with active Links */}
+            <Text style={[styles.sourceListHeader, { color: colors.textPrimary }]}>
+              Referenzierte Fachquellen:
             </Text>
-            <Text style={[styles.retrievalDisclaimer, { color: colors.textMuted }]}>
-              Hinweis: Dies ist ein redaktionelles Demonstrations-Exemplar für Phase 1.2. Alle Quellverweise sind reale Fachbeiträge, die Kuration und didaktischen Vertiefungen dienen der Erprobung.
+
+            {selectedArticle.sourceReferences.map((ref, idx) => (
+              <TouchableOpacity
+                key={idx}
+                onPress={() => handleOpenSource(ref.originalUrl)}
+                activeOpacity={0.7}
+                style={[styles.sourceItem, { borderTopColor: colors.borderSubtle }]}
+                accessibilityRole="link"
+                accessibilityLabel={`Quelle ${ref.publisher} im Browser öffnen`}
+              >
+                <View style={styles.sourceItemTop}>
+                  <Text style={[styles.sourcePublisher, { color: colors.accent }]}>
+                    {ref.publisher} {ref.author ? `• ${ref.author}` : ''}
+                  </Text>
+                  <Ionicons name="open-outline" size={14} color={colors.accent} />
+                </View>
+                <Text style={[styles.sourceArticleTitle, { color: colors.textPrimary }]}>
+                  {ref.title}
+                </Text>
+                {ref.publicationTimestamp && (
+                  <Text style={[styles.sourcePublishedDate, { color: colors.textMuted }]}>
+                    Original-Publikation: {ref.publicationTimestamp}
+                  </Text>
+                )}
+                <Text style={[styles.sourceUrl, { color: colors.textMuted }]} numberOfLines={1}>
+                  {ref.originalUrl}
+                </Text>
+              </TouchableOpacity>
+            ))}
+
+            <View style={[styles.provenanceFooter, { borderTopColor: colors.borderSubtle }]}>
+              <Text style={[styles.retrievalText, { color: colors.textMuted }]}>
+                Erfasst in atmen: {new Date(selectedArticle.generatedAt).toLocaleDateString('de-DE', { dateStyle: 'medium' })}
+              </Text>
+              <Text style={[styles.retrievalDisclaimer, { color: colors.textMuted }]}>
+                Hinweis: Alle Quellverweise sind echte Fachbeiträge aus dem atmen News-Hub (Öffentlich-Rechtliche, Universitäten, Fachverlage).
+              </Text>
+            </View>
+          </View>
+
+          {/* Feedback Section */}
+          <View style={[styles.feedbackBox, { backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.feedbackPrompt, { color: colors.textPrimary }]}>
+              War dieser Beitrag für deine intellektuellen Interessen relevant?
             </Text>
-          </View>
-        </View>
-
-        {/* Feedback Section */}
-        <View style={[styles.feedbackBox, { backgroundColor: colors.surfaceSecondary }]}>
-          <Text style={[styles.feedbackPrompt, { color: colors.textPrimary }]}>
-            War dieser Beitrag für deine Interessen relevant?
-          </Text>
-          <View style={styles.feedbackButtonsRow}>
-            <TouchableOpacity
-              onPress={() => setFeedback(selectedArticle.id, 'more_like_this')}
-              style={[
-                styles.feedbackPill,
-                currentFeedback === 'more_like_this' && { backgroundColor: colors.accent }
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Mehr Beiträge wie diesen anzeigen"
-            >
-              <Ionicons
-                name="thumbs-up-outline"
-                size={14}
-                color={currentFeedback === 'more_like_this' ? '#FFFFFF' : colors.textSecondary}
-                style={{ marginRight: 6 }}
-              />
-              <Text
+            <View style={styles.feedbackButtonsRow}>
+              <TouchableOpacity
+                onPress={() => setFeedback(selectedArticle.id, 'more_like_this')}
                 style={[
-                  styles.feedbackPillText,
-                  { color: currentFeedback === 'more_like_this' ? '#FFFFFF' : colors.textPrimary }
+                  styles.feedbackPill,
+                  currentFeedback === 'more_like_this' && { backgroundColor: colors.accent }
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel="Mehr Beiträge wie diesen anzeigen"
               >
-                Mehr davon
-              </Text>
-            </TouchableOpacity>
+                <Ionicons
+                  name="thumbs-up-outline"
+                  size={14}
+                  color={currentFeedback === 'more_like_this' ? '#FFFFFF' : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.feedbackPillText,
+                    { color: currentFeedback === 'more_like_this' ? '#FFFFFF' : colors.textPrimary }
+                  ]}
+                >
+                  Mehr davon
+                </Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => setFeedback(selectedArticle.id, 'less_like_this')}
-              style={[
-                styles.feedbackPill,
-                currentFeedback === 'less_like_this' && { backgroundColor: colors.danger }
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Weniger Beiträge wie diesen anzeigen"
-            >
-              <Ionicons
-                name="thumbs-down-outline"
-                size={14}
-                color={currentFeedback === 'less_like_this' ? '#FFFFFF' : colors.textSecondary}
-                style={{ marginRight: 6 }}
-              />
-              <Text
+              <TouchableOpacity
+                onPress={() => setFeedback(selectedArticle.id, 'less_like_this')}
                 style={[
-                  styles.feedbackPillText,
-                  { color: currentFeedback === 'less_like_this' ? '#FFFFFF' : colors.textPrimary }
+                  styles.feedbackPill,
+                  currentFeedback === 'less_like_this' && { backgroundColor: colors.danger }
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel="Weniger Beiträge wie diesen anzeigen"
               >
-                Weniger
-              </Text>
-            </TouchableOpacity>
+                <Ionicons
+                  name="thumbs-down-outline"
+                  size={14}
+                  color={currentFeedback === 'less_like_this' ? '#FFFFFF' : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.feedbackPillText,
+                    { color: currentFeedback === 'less_like_this' ? '#FFFFFF' : colors.textPrimary }
+                  ]}
+                >
+                  Weniger
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -434,6 +503,31 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1
   },
+  notFoundContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl
+  },
+  notFoundTitle: {
+    fontSize: typography.sizes.title1,
+    fontWeight: '800',
+    marginBottom: spacing.xs
+  },
+  notFoundSubtitle: {
+    fontSize: typography.sizes.body,
+    textAlign: 'center',
+    marginBottom: spacing.lg
+  },
+  notFoundButton: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.pill
+  },
+  notFoundButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700'
+  },
   progressTrack: {
     height: 3,
     width: '100%'
@@ -443,30 +537,79 @@ const styles = StyleSheet.create({
   },
   navBar: {
     paddingHorizontal: spacing.pageHorizontal,
-    paddingVertical: spacing.sm,
+    paddingVertical: 8,
     borderBottomWidth: 0.5
   },
   navBarInner: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    maxWidth: 740,
+    maxWidth: 760,
     width: '100%',
-    alignSelf: 'center'
+    alignSelf: 'center',
+    gap: spacing.sm
   },
-  navButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  backPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 0.5,
+    maxWidth: 150
+  },
+  backPillText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '700'
+  },
+  centerBrand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  brandEmblem: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center'
   },
+  brandEmblemGlyph: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 13,
+    lineHeight: 14
+  },
+  brandTitle: {
+    fontFamily: typography.fontFamilies.serif,
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.5
+  },
   navRight: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  readingProgressPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  readingProgressText: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  navButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
     alignItems: 'center'
   },
   fontBtnText: {
-    fontSize: typography.sizes.micro,
+    fontSize: 11,
     fontWeight: '800'
   },
   scrollContent: {
@@ -475,38 +618,32 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl * 2
   },
   scrollInner: {
-    maxWidth: 740,
+    maxWidth: 720,
     width: '100%',
     alignSelf: 'center'
   },
-  readerImageContainer: {
-    width: '100%',
-    height: 240,
-    borderRadius: radius.md,
-    overflow: 'hidden',
-    marginVertical: spacing.md
-  },
-  readerHeroImage: {
-    width: '100%',
-    height: '100%'
-  },
-  metaRow: {
+  kickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: spacing.md
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm
   },
-  demoPill: {
+  kickerText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.2
+  },
+  trustBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 7,
     paddingVertical: 3,
-    borderRadius: 4,
+    borderRadius: radius.pill,
     borderWidth: 0.5
   },
-  demoPillText: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5
+  trustBadgeText: {
+    fontSize: 10,
+    fontWeight: '700'
   },
   resumeCard: {
     flexDirection: 'row',
@@ -526,56 +663,132 @@ const styles = StyleSheet.create({
   },
   headline: {
     fontFamily: typography.fontFamilies.serif,
-    fontSize: typography.sizes.hero,
-    lineHeight: typography.lineHeights.hero,
+    fontSize: 34,
+    lineHeight: 44,
     fontWeight: '800',
-    letterSpacing: -0.4,
+    letterSpacing: -0.6,
     marginBottom: spacing.sm
   },
   subtitle: {
-    fontSize: typography.sizes.title2,
-    lineHeight: typography.lineHeights.title2,
+    fontFamily: typography.fontFamilies.serif,
+    fontSize: 20,
+    lineHeight: 30,
+    fontStyle: 'italic',
     fontWeight: '400',
-    marginBottom: spacing.sm
-  },
-  editorialMetricsRow: {
     marginBottom: spacing.md
   },
-  editorialMetricsText: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '500'
-  },
-  divider: {
-    height: 1,
-    width: '100%',
+  bylineCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.md,
+    borderTopWidth: 0.5,
+    borderBottomWidth: 0.5,
     marginBottom: spacing.lg
+  },
+  bylineLeft: {
+    flex: 1
+  },
+  bylineAuthor: {
+    fontSize: typography.sizes.bodySmall,
+    marginBottom: 2
+  },
+  bylinePublisher: {
+    fontSize: typography.sizes.micro
+  },
+  bylineRight: {
+    alignItems: 'flex-end',
+    gap: 4
+  },
+  bylineMetrics: {
+    fontSize: typography.sizes.micro
+  },
+  readerImageContainer: {
+    width: '100%',
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    borderWidth: 0.5,
+    marginBottom: spacing.lg
+  },
+  readerHeroImage: {
+    width: '100%',
+    height: 380
+  },
+  imageCaptionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs
+  },
+  imageCaptionText: {
+    fontSize: 11
+  },
+  pullQuoteBox: {
+    borderLeftWidth: 3,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.sm,
+    marginVertical: spacing.lg
+  },
+  pullQuoteText: {
+    fontFamily: typography.fontFamilies.serif,
+    fontSize: 20,
+    lineHeight: 32,
+    fontStyle: 'italic'
+  },
+  pullQuoteAttribution: {
+    fontSize: typography.sizes.micro,
+    fontWeight: '700',
+    marginTop: 6
   },
   bodyContainer: {
     marginBottom: spacing.lg
   },
   paragraph: {
-    marginBottom: spacing.lg,
-    letterSpacing: -0.1
+    fontFamily: typography.fontFamilies.serif,
+    marginBottom: 24
+  },
+  breathOrnament: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: spacing.xl,
+    gap: spacing.md
+  },
+  ornamentLine: {
+    flex: 1,
+    height: 0.5
+  },
+  ornamentCenter: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 0.5,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  ornamentGlyph: {
+    fontSize: 14,
+    fontWeight: '900'
   },
   provenanceBox: {
-    borderRadius: radius.lg,
-    borderWidth: 1,
     padding: spacing.lg,
-    marginTop: spacing.md,
-    marginBottom: spacing.xl
+    borderRadius: radius.md,
+    borderWidth: 0.5,
+    marginTop: spacing.xl
   },
   provenanceHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: spacing.sm
+    alignItems: 'flex-start',
+    marginBottom: spacing.md
   },
   provenanceTitle: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '700'
+    fontSize: typography.sizes.body,
+    fontWeight: '800',
+    marginBottom: 2
   },
   provenanceSubtitle: {
-    fontSize: typography.sizes.micro,
-    marginTop: 2
+    fontSize: typography.sizes.caption
   },
   provenanceBadgeRow: {
     flexDirection: 'row',
@@ -590,43 +803,38 @@ const styles = StyleSheet.create({
   },
   reviewBadgeText: {
     fontSize: typography.sizes.micro,
-    fontWeight: '600'
+    fontWeight: '700'
   },
   sourceListHeader: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '700',
-    marginTop: spacing.xs,
-    marginBottom: spacing.xs
+    fontSize: typography.sizes.caption,
+    fontWeight: '800',
+    marginBottom: spacing.sm
   },
   sourceItem: {
     paddingVertical: spacing.sm,
-    marginTop: spacing.xs,
     borderTopWidth: 0.5
   },
   sourceItemTop: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    marginBottom: 2
   },
   sourcePublisher: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5
+    fontSize: typography.sizes.caption,
+    fontWeight: '700'
   },
   sourceArticleTitle: {
     fontSize: typography.sizes.bodySmall,
     fontWeight: '600',
-    marginTop: 2
+    marginBottom: 2
   },
   sourcePublishedDate: {
     fontSize: typography.sizes.micro,
-    marginTop: 2
+    marginBottom: 2
   },
   sourceUrl: {
-    fontSize: typography.sizes.micro,
-    marginTop: 2,
-    textDecorationLine: 'underline'
+    fontSize: 10
   },
   provenanceFooter: {
     marginTop: spacing.md,
@@ -635,69 +843,38 @@ const styles = StyleSheet.create({
   },
   retrievalText: {
     fontSize: typography.sizes.micro,
-    fontWeight: '600',
-    marginBottom: 4
+    marginBottom: 2
   },
   retrievalDisclaimer: {
-    fontSize: typography.sizes.micro,
-    lineHeight: 15
+    fontSize: 10,
+    lineHeight: 14
   },
   feedbackBox: {
+    marginTop: spacing.lg,
+    padding: spacing.lg,
     borderRadius: radius.md,
-    padding: spacing.md,
     alignItems: 'center'
   },
   feedbackPrompt: {
     fontSize: typography.sizes.bodySmall,
-    fontWeight: '600',
-    marginBottom: spacing.sm
+    fontWeight: '700',
+    marginBottom: spacing.md,
+    textAlign: 'center'
   },
   feedbackButtonsRow: {
     flexDirection: 'row',
-    gap: 12
+    gap: spacing.md
   },
   feedbackPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    minHeight: 44,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 8,
     borderRadius: radius.pill,
     backgroundColor: 'rgba(0,0,0,0.06)'
   },
   feedbackPillText: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '600'
-  },
-  notFoundContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: spacing.pageHorizontal * 2
-  },
-  notFoundTitle: {
-    fontSize: typography.sizes.title1,
-    fontWeight: '700',
-    marginBottom: spacing.xs,
-    textAlign: 'center'
-  },
-  notFoundSubtitle: {
-    fontSize: typography.sizes.body,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: spacing.lg
-  },
-  notFoundButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    minHeight: 48,
-    borderRadius: radius.md,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  notFoundButtonText: {
-    color: '#FFFFFF',
-    fontSize: typography.sizes.body,
-    fontWeight: '600'
+    fontSize: typography.sizes.caption,
+    fontWeight: '700'
   }
 });

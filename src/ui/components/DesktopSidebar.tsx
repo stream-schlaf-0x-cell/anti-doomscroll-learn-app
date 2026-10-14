@@ -49,13 +49,13 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 6
       {/* 1. Community Card */}
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
         <View style={[styles.communityBanner, { backgroundColor: colors.accent }]}>
-          <Text style={styles.bannerEmoji}>🌿</Text>
+          <Text style={styles.bannerEmoji}>◎</Text>
         </View>
 
         <View style={styles.communityBody}>
           <View style={styles.communityTitleRow}>
             <Text style={[styles.communityHandle, { color: colors.textPrimary }]}>
-              c/atem
+              c/atmen
             </Text>
             <View style={[styles.badgePill, { backgroundColor: colors.accentSubtle }]}>
               <Text style={[styles.badgeText, { color: colors.accent }]}>SOUVERÄN</Text>
@@ -171,7 +171,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 6
         >
           <Ionicons name="reload-outline" size={13} color={colors.accent} style={{ marginRight: 6 }} />
           <Text style={[styles.refreshSidebarBtnText, { color: colors.accent }]}>
-            {isRefreshing ? 'Feeds werden geladen…' : '18 Live-Feeds synchronisieren'}
+            {isRefreshing ? 'Feeds werden synchronisiert…' : '29 Live-Feeds synchronisieren'}
           </Text>
         </TouchableOpacity>
       </View>

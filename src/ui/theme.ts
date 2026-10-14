@@ -264,10 +264,15 @@ export const darkColors = getThemeColors('dark', 'mosspulse');
 
 export const typography = {
   fontFamilies: {
-    serif: 'Georgia',
-    sans: 'System'
+    serif: 'Charter, Newsreader, "Iowan Old Style", Georgia, Cambria, "Times New Roman", serif',
+    editorialSerif: 'Charter, Newsreader, "Iowan Old Style", Georgia, Cambria, serif',
+    sans: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
   },
   sizes: {
+    magazineHero: 36,
+    magazineDeck: 20,
+    magazineLede: 21,
     hero: 28,
     title1: 23,
     title2: 19,
@@ -278,6 +283,9 @@ export const typography = {
     micro: 11
   },
   lineHeights: {
+    magazineHero: 46,
+    magazineDeck: 30,
+    magazineLede: 34,
     hero: 36,
     title1: 30,
     title2: 26,

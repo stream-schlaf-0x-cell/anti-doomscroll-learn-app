@@ -113,28 +113,38 @@ export const LibraryScreen: React.FC = () => {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
         <View style={styles.headerInner}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.title, { color: colors.textPrimary }]}>
-              Bibliothek & Notizbuch
-            </Text>
-            <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-              {savedItems.length} gemerkt • {totalNotesCount} eigene Reflexionen
-            </Text>
+          <View style={styles.headerTopRow}>
+            <TouchableOpacity
+              onPress={() => setActiveTab('feed')}
+              style={[styles.backBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+              accessibilityRole="button"
+              accessibilityLabel="Zurück zum Feed"
+            >
+              <Ionicons name="arrow-back" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+              <Text style={[styles.backBtnText, { color: colors.accent }]}>Zurück zum Feed</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleExportCraft}
+              style={[styles.exportCraftBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}
+              activeOpacity={0.8}
+              accessibilityLabel="Gedanken für Craft Docs exportieren"
+            >
+              <Ionicons name={copied ? 'checkmark-circle' : 'copy-outline'} size={14} color={colors.accent} style={{ marginRight: 5 }} />
+              <Text style={[styles.exportCraftBtnText, { color: colors.accent }]}>
+                {copied ? 'Kopiert!' : 'Craft Export'}
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          <TouchableOpacity
-            onPress={handleExportCraft}
-            style={[styles.exportCraftBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}
-            activeOpacity={0.8}
-            accessibilityLabel="Gedanken für Craft Docs exportieren"
-          >
-            <Ionicons name={copied ? 'checkmark-circle' : 'copy-outline'} size={14} color={colors.accent} style={{ marginRight: 5 }} />
-            <Text style={[styles.exportCraftBtnText, { color: colors.accent }]}>
-              {copied ? 'Kopiert!' : 'Craft Export'}
-            </Text>
-          </TouchableOpacity>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>
+            Bibliothek & Notizbuch
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.textMuted }]}>
+            {savedItems.length} gemerkt • {totalNotesCount} eigene Reflexionen
+          </Text>
         </View>
       </View>
 
@@ -407,6 +417,24 @@ const styles = StyleSheet.create({
     maxWidth: 780,
     width: '100%',
     alignSelf: 'center'
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm
+  },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  backBtnText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '700'
   },
   title: {
     fontSize: typography.sizes.title1,

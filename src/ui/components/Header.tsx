@@ -11,8 +11,8 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  title = 'ATEM',
-  subtitle = 'Atem Network • Raum für Erkenntnis',
+  title = '◎ atmen',
+  subtitle = 'atmen network • Raum für Erkenntnis & Souveränität',
   showThemeToggle = true
 }) => {
   const { colors, isDark, setThemePreference } = useApp();

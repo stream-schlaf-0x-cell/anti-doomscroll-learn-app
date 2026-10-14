@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Atem",
-    "slug": "atem-antidote-feed",
+    "name": "atmen",
+    "slug": "atmen-antidote-feed",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
