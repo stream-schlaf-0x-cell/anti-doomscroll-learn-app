@@ -14,6 +14,7 @@ import { typography, radius, spacing } from '../../ui/theme';
 
 export const LibraryScreen: React.FC = () => {
   const {
+    savedArticles,
     dailyEdition,
     discoveryItems,
     interactions,
@@ -25,9 +26,21 @@ export const LibraryScreen: React.FC = () => {
 
   const [filter, setFilter] = useState<'all' | 'unread' | 'completed'>('all');
 
-  // Find all items that are saved
-  const allItems = [...dailyEdition, ...discoveryItems];
-  const savedItems = allItems.filter(item => interactions[item.id]?.saved);
+  // Decoupled library: persistent saved articles remain permanently available offline
+  const savedItems = React.useMemo(() => {
+    const map = new Map<string, any>();
+    for (const art of savedArticles) {
+      if (interactions[art.id]?.saved !== false) {
+        map.set(art.id, art);
+      }
+    }
+    for (const item of [...dailyEdition, ...discoveryItems]) {
+      if (interactions[item.id]?.saved) {
+        map.set(item.id, item);
+      }
+    }
+    return Array.from(map.values());
+  }, [savedArticles, dailyEdition, discoveryItems, interactions]);
 
   // Apply sub-filter
   const filteredSaved = savedItems.filter(item => {

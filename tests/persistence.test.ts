@@ -12,9 +12,10 @@ import {
 } from '../src/core/data/userProfileRepository';
 import {
   LocalLibraryRepository,
-  INTERACTIONS_STORAGE_KEY
+  INTERACTIONS_STORAGE_KEY,
+  SAVED_ARTICLES_STORAGE_KEY
 } from '../src/core/data/libraryRepository';
-import { DEFAULT_USER_PROFILE } from '../src/core/data/fixtures';
+import { DEFAULT_USER_PROFILE, INITIAL_FIXTURES } from '../src/core/data/fixtures';
 import { UserProfile } from '../src/core/domain/types';
 
 // Helper to assert an async task completes within maxMs (deadlock detector)
@@ -248,5 +249,110 @@ describe('Storage Mutex & Persistence Architecture', () => {
     assert.ok(quarantineKey !== undefined, 'Quarantine backup key must exist');
     const quarantinedRaw = await driver.getItem(quarantineKey!);
     assert.ok(quarantinedRaw!.includes('invalid json'));
+  });
+
+  it('9. updateProfile and mutateInteraction reject with CorruptedDataError on corrupt stored bytes', async () => {
+    const driver = new MemoryStorageDriver();
+    const storage = new AtemStorage(driver);
+    const userRepo = new LocalUserProfileRepository(storage);
+    const libRepo = new LocalLibraryRepository(storage);
+
+    // Corrupt profile key
+    await driver.setItem(USER_PROFILE_STORAGE_KEY, 'corrupted_bytes_here');
+    await assert.rejects(
+      () => userRepo.updateProfile(c => ({ ...c, isOnboarded: true })),
+      (err: any) => {
+        assert.ok(err instanceof CorruptedDataError, 'Must throw CorruptedDataError on updateProfile');
+        return true;
+      }
+    );
+    // Verify raw bytes were preserved and not clobbered
+    const stillCorrupt = await driver.getItem(USER_PROFILE_STORAGE_KEY);
+    assert.strictEqual(stillCorrupt, 'corrupted_bytes_here', 'Raw corrupted bytes must be preserved');
+
+    // Corrupt interaction key
+    await driver.setItem(INTERACTIONS_STORAGE_KEY, 'corrupted_interactions_here');
+    await assert.rejects(
+      () => libRepo.saveItem('art-test'),
+      (err: any) => {
+        assert.ok(err instanceof CorruptedDataError, 'Must throw CorruptedDataError on mutateInteraction');
+        return true;
+      }
+    );
+    const stillCorruptInteractions = await driver.getItem(INTERACTIONS_STORAGE_KEY);
+    assert.strictEqual(stillCorruptInteractions, 'corrupted_interactions_here', 'Raw corrupted interactions must be preserved');
+  });
+
+  it('10. saveArticle persists full article entity offline decoupled from feed rotation', async () => {
+    const driver = new MemoryStorageDriver();
+    const storage = new AtemStorage(driver);
+    const repo = new LocalLibraryRepository(storage);
+
+    const fixture = INITIAL_FIXTURES[0];
+    const interaction = await repo.saveArticle(fixture);
+
+    assert.strictEqual(interaction.saved, true);
+    assert.ok(interaction.savedAt);
+
+    // Verify interaction in interactions storage
+    const allInteractions = await repo.getInteractions();
+    assert.strictEqual(allInteractions[fixture.id]?.saved, true);
+
+    // Verify article in saved articles storage
+    const savedArticles = await repo.getSavedArticles();
+    assert.strictEqual(savedArticles.length, 1);
+    assert.strictEqual(savedArticles[0].id, fixture.id);
+    assert.strictEqual(savedArticles[0].title, fixture.title);
+    assert.strictEqual(savedArticles[0].feedText, fixture.feedText);
+    assert.strictEqual(savedArticles[0].articleBody, fixture.articleBody);
+
+    // Verify getSavedArticle by id
+    const single = await repo.getSavedArticle(fixture.id);
+    assert.ok(single !== null);
+    assert.strictEqual(single!.title, fixture.title);
+
+    // Raw driver inspection
+    const rawArticles = await driver.getItem(SAVED_ARTICLES_STORAGE_KEY);
+    assert.ok(rawArticles !== null);
+    const parsed = JSON.parse(rawArticles!);
+    assert.strictEqual(parsed[fixture.id].title, fixture.title);
+  });
+
+  it('11. unsaveArticle unmarks bookmark and removes full article from saved articles storage', async () => {
+    const driver = new MemoryStorageDriver();
+    const storage = new AtemStorage(driver);
+    const repo = new LocalLibraryRepository(storage);
+
+    const fixture = INITIAL_FIXTURES[0];
+    await repo.saveArticle(fixture);
+    assert.strictEqual((await repo.getSavedArticles()).length, 1);
+
+    const unsavedInteraction = await repo.unsaveArticle(fixture.id);
+    assert.strictEqual(unsavedInteraction.saved, false);
+
+    const savedArticles = await repo.getSavedArticles();
+    assert.strictEqual(savedArticles.length, 0);
+
+    const single = await repo.getSavedArticle(fixture.id);
+    assert.strictEqual(single, null);
+  });
+
+  it('12. clearLibrary wipes both interaction state and saved full articles', async () => {
+    const driver = new MemoryStorageDriver();
+    const storage = new AtemStorage(driver);
+    const repo = new LocalLibraryRepository(storage);
+
+    await repo.saveArticle(INITIAL_FIXTURES[0]);
+    await repo.saveArticle(INITIAL_FIXTURES[1]);
+
+    assert.strictEqual((await repo.getSavedArticles()).length, 2);
+
+    await repo.clearLibrary();
+
+    const emptyArticles = await repo.getSavedArticles();
+    assert.deepStrictEqual(emptyArticles, []);
+
+    const emptyInteractions = await repo.getInteractions();
+    assert.deepStrictEqual(emptyInteractions, {});
   });
 });

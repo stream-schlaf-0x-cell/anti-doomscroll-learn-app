@@ -25,6 +25,7 @@ interface AppContextValue {
   interactions: Record<string, ReadingInteraction>;
   dailyEdition: ScoredFeedItem[];
   discoveryItems: ScoredFeedItem[];
+  savedArticles: FeedItem[];
   startupState: StartupState;
   errorMessage: string | null;
   clearError: () => void;
@@ -63,6 +64,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [interactions, setInteractions] = useState<Record<string, ReadingInteraction>>({});
   const [dailyEdition, setDailyEdition] = useState<ScoredFeedItem[]>([]);
   const [discoveryItems, setDiscoveryItems] = useState<ScoredFeedItem[]>([]);
+  const [savedArticles, setSavedArticles] = useState<FeedItem[]>([]);
   const [startupState, setStartupState] = useState<StartupState>({ status: 'loading' });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'feed' | 'library' | 'settings'>('feed');
@@ -78,6 +80,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Sequencing token to discard stale asynchronous feed recomputations
   const feedRecomputeVersion = useRef<number>(0);
+
+  // Generation counter to invalidate pending background writes on reset
+  const storageGenerationRef = useRef<number>(0);
 
   // Pending throttled reading progress buffer
   const pendingProgressRef = useRef<{ id: string; percent: number } | null>(null);
@@ -194,6 +199,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       latestProfileRef.current = loadedProfile;
       latestInteractionsRef.current = loadedInteractions;
 
+      let loadedSavedArticles: FeedItem[] = [];
+      try {
+        loadedSavedArticles = await libraryRepository.getSavedArticles();
+      } catch {
+        loadedSavedArticles = [];
+      }
+      setSavedArticles(loadedSavedArticles);
+
       await scheduleFeedRecompute(loadedProfile, loadedInteractions);
       setStartupState({ status: 'ready' });
 
@@ -203,7 +216,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const params = new URLSearchParams(window.location.search);
           const urlArticleId = params.get('article');
           if (urlArticleId) {
-            const item = await feedRepository.getItemById(urlArticleId);
+            let item = await feedRepository.getItemById(urlArticleId);
+            if (!item) {
+              item = await libraryRepository.getSavedArticle(urlArticleId);
+            }
             setSelectedArticleId(urlArticleId);
             setSelectedArticle(item);
           }
@@ -227,6 +243,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Quarantines corrupt bytes and resets to fresh defaults
   const resetCorruptedData = useCallback(async () => {
     try {
+      storageGenerationRef.current++;
+      if (progressDebounceTimerRef.current) {
+        clearTimeout(progressDebounceTimerRef.current);
+        progressDebounceTimerRef.current = null;
+      }
+      pendingProgressRef.current = null;
+      setSavedArticles([]);
       await userProfileRepository.quarantineAndReset();
       await libraryRepository.quarantineAndReset();
       await loadInitialData();
@@ -240,7 +263,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [scheduleFeedRecompute]);
 
   const openArticle = useCallback(async (id: string) => {
-    const item = await feedRepository.getItemById(id);
+    let item = await feedRepository.getItemById(id);
+    if (!item) {
+      item = await libraryRepository.getSavedArticle(id);
+    }
+    if (!item) {
+      item = savedArticles.find(a => a.id === id) ?? null;
+    }
     setSelectedArticleId(id);
     setSelectedArticle(item); // item can be null if missing; ReaderScreen gracefully displays fallback
 
@@ -253,7 +282,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Ignored
       }
     }
-  }, []);
+  }, [savedArticles]);
 
   const closeArticle = useCallback(() => {
     flushReadingProgress();
@@ -279,7 +308,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const articleIdFromUrl = params.get('article') || e.state?.articleId;
 
         if (articleIdFromUrl) {
-          const item = await feedRepository.getItemById(articleIdFromUrl);
+          let item = await feedRepository.getItemById(articleIdFromUrl);
+          if (!item) {
+            item = await libraryRepository.getSavedArticle(articleIdFromUrl);
+          }
           setSelectedArticleId(articleIdFromUrl);
           setSelectedArticle(item);
         } else {
@@ -305,33 +337,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const toggleSaveItem = useCallback(async (id: string) => {
     try {
       const isCurrentlySaved = latestInteractionsRef.current[id]?.saved ?? false;
-      const updated = isCurrentlySaved
-        ? await libraryRepository.unsaveItem(id)
-        : await libraryRepository.saveItem(id);
+      if (isCurrentlySaved) {
+        const updated = await libraryRepository.unsaveArticle(id);
+        setInteractions(prev => {
+          const next = { ...prev, [id]: updated };
+          latestInteractionsRef.current = next;
+          return next;
+        });
+        setSavedArticles(prev => prev.filter(a => a.id !== id));
+      } else {
+        let articleToSave: FeedItem | null =
+          dailyEdition.find(i => i.id === id) ??
+          discoveryItems.find(i => i.id === id) ??
+          (selectedArticle?.id === id ? selectedArticle : null) ??
+          (await feedRepository.getItemById(id));
 
-      setInteractions(prev => {
-        const next = { ...prev, [id]: updated };
-        latestInteractionsRef.current = next;
-        return next;
-      });
+        if (articleToSave) {
+          const updated = await libraryRepository.saveArticle(articleToSave);
+          setInteractions(prev => {
+            const next = { ...prev, [id]: updated };
+            latestInteractionsRef.current = next;
+            return next;
+          });
+          setSavedArticles(prev => {
+            const exists = prev.some(a => a.id === id);
+            return exists ? prev : [articleToSave!, ...prev];
+          });
+        } else {
+          const updated = await libraryRepository.saveItem(id);
+          setInteractions(prev => {
+            const next = { ...prev, [id]: updated };
+            latestInteractionsRef.current = next;
+            return next;
+          });
+        }
+      }
     } catch {
       setErrorMessage('Lesezeichen konnte nicht gespeichert werden.');
     }
-  }, []);
+  }, [dailyEdition, discoveryItems, selectedArticle]);
 
   // Throttled reading progress write (bounds write rate to max 1 write / 800ms while scrolling)
   const updateReadingProgress = useCallback(async (id: string, percent: number) => {
     // Keep in pending buffer
     pendingProgressRef.current = { id, percent };
+    const currentGen = storageGenerationRef.current;
 
     // Update React state optimistically so progress bar is instant
     setInteractions(prev => {
-      const existing = prev[id] ?? { itemId: id, saved: false, progressPercent: 0 };
+      const existing = prev[id] ?? { itemId: id, saved: false, progressPercent: 0, furthestPositionPercent: 0 };
       const next = {
         ...prev,
         [id]: {
           ...existing,
-          progressPercent: Math.max(existing.progressPercent, percent)
+          progressPercent: Math.max(existing.progressPercent, percent),
+          furthestPositionPercent: Math.max(existing.furthestPositionPercent ?? 0, percent)
         }
       };
       latestInteractionsRef.current = next;
@@ -344,16 +404,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     progressDebounceTimerRef.current = setTimeout(async () => {
       progressDebounceTimerRef.current = null;
+      if (currentGen !== storageGenerationRef.current) return;
       const pending = pendingProgressRef.current;
       if (pending) {
         pendingProgressRef.current = null;
         try {
           const updated = await libraryRepository.updateProgress(pending.id, pending.percent);
-          setInteractions(prev => {
-            const next = { ...prev, [pending.id]: updated };
-            latestInteractionsRef.current = next;
-            return next;
-          });
+          if (currentGen === storageGenerationRef.current) {
+            setInteractions(prev => {
+              const next = { ...prev, [pending.id]: updated };
+              latestInteractionsRef.current = next;
+              return next;
+            });
+          }
         } catch {
           // Non-fatal background write
         }
@@ -476,6 +539,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Destructive reset: wipes only @atem: keys and restores clean state
   const clearAllLocalData = useCallback(async () => {
     try {
+      storageGenerationRef.current++;
+      if (progressDebounceTimerRef.current) {
+        clearTimeout(progressDebounceTimerRef.current);
+        progressDebounceTimerRef.current = null;
+      }
+      pendingProgressRef.current = null;
+      setSavedArticles([]);
+
       await appStorage.clearAtemKeys();
       const cleanProfile: UserProfile = {
         ...DEFAULT_USER_PROFILE,
@@ -504,6 +575,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         interactions,
         dailyEdition,
         discoveryItems,
+        savedArticles,
         startupState,
         errorMessage,
         clearError,

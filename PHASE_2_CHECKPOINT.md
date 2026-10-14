@@ -21,7 +21,7 @@
 ## 2. Stage Breakdown & Execution Status
 
 - [x] **Stage 1**: Domain Schemas & Invariant Hardening (`feedText`, `format`, `evidenceTier`, `PersonalGoal`, founder starter profile).
-- [ ] **Stage 2**: Storage Safeguards & Decoupled Library Persistence (bug fixes for data protection, offline library retention).
+- [x] **Stage 2**: Storage Safeguards & Decoupled Library Persistence (bug fixes for data protection, offline library retention).
 - [ ] **Stage 3**: Live Endpoint Discovery & Ingestion Pipeline (verified RSS/Atom feeds, normalization, deduplication, CLI runner).
 - [ ] **Stage 4**: Provider-Independent Enrichment & €5 Budget Ledger (usage tracker, caching, Gemini pricing model grounding).
 - [ ] **Stage 5**: Explainable Multi-Dimensional Personalization Engine (goals, feedback memory, 10% targets, explanation generation).
@@ -31,10 +31,14 @@
 ---
 
 ## 3. Current Stage
-**Stage 2: Storage Safeguards & Decoupled Library Persistence**
+**Stage 3: Live Endpoint Discovery & Ingestion Pipeline**
 - *Goal*:
-  1. Fix `userProfileRepository.updateProfile` and `libraryRepository.mutateInteraction` to throw `CorruptedDataError` (and not silently overwrite raw data on unreadable/corrupt records).
-  2. Implement decoupled library persistence in `ILibraryRepository`: full-article storage (`saveArticle(item: FeedItem)`, `unsaveArticle(itemId: string)`, `getSavedArticles(): Promise<FeedItem[]>`) persisted under `atem:saved_articles`.
-  3. Wire in `AppContext.tsx` and `LibraryScreen.tsx` so saved reading is permanently decoupled from feed rotation.
-  4. Ensure reset generation token prevents stale pending writes from re-populating cleared storage.
-- *Validation*: Regression tests in `tests/persistence.test.ts` verifying corrupted data safeguards, offline saved article persistence, and reset isolation.
+  1. Verify 6–10 live public RSS/Atom endpoints covering founder interests (AI/Frontier Tech, Philosophy/Ethics, Didactics, Sound/Music, Science/Mind) with `curl -sI` checks.
+  2. Implement pure-TypeScript robust ingestion modules under `src/core/ingestion/`:
+     - `feedFetcher.ts`: bounded fetch (5s timeout, 1MB limit, conditional headers, retry with backoff).
+     - `rssParser.ts`: pure TS XML parser for RSS 2.0 and Atom feeds.
+     - `normalizer.ts`: maps raw entries to `FeedItem` schema with canonical URLs, SHA-256 content hashes, evidence tiers.
+     - `deduplicator.ts`: URL canonicalization and hash deduplication.
+  3. CLI runner `scripts/run-pipeline.ts` outputting validated JSON to `src/core/data/pipeline-output.json`.
+  4. Add `npm run ingest` to `package.json`.
+- *Validation*: Ingestion unit tests in `tests/pipeline.test.ts` verifying parser, normalizer, deduplication, and network timeout handling.

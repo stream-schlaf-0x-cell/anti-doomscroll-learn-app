@@ -76,13 +76,31 @@ export class LocalUserProfileRepository implements IUserProfileRepository {
           isOnboarded: false
         };
       } else {
+        let parsed: unknown;
         try {
-          const parsed = JSON.parse(raw);
-          const safe = UserProfileSchema.safeParse(parsed);
-          current = safe.success ? safe.data : { ...DEFAULT_USER_PROFILE, isOnboarded: false };
-        } catch {
-          current = { ...DEFAULT_USER_PROFILE, isOnboarded: false };
+          parsed = JSON.parse(raw);
+        } catch (parseErr) {
+          throw new CorruptedDataError(
+            'Die gespeicherten Profileinstellungen sind syntaktisch ungültig.',
+            raw,
+            parseErr
+          );
         }
+        if (!parsed || typeof parsed !== 'object') {
+          throw new CorruptedDataError(
+            'Die gespeicherten Profileinstellungen haben ein ungültiges Format.',
+            raw
+          );
+        }
+        const safe = UserProfileSchema.safeParse(parsed);
+        if (!safe.success) {
+          throw new CorruptedDataError(
+            'Die gespeicherten Profileinstellungen entsprechen nicht dem aktuellen Daten-Schema.',
+            raw,
+            safe.error
+          );
+        }
+        current = safe.data;
       }
 
       const modified = mutator(current);
