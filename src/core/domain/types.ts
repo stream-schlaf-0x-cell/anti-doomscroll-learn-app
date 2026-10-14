@@ -102,12 +102,68 @@ export const DeepeningOptionsSchema = z.object({
 });
 export type DeepeningOptions = z.infer<typeof DeepeningOptionsSchema>;
 
+// Phase 2 Editorial Formats for rich in-feed reading
+export const FeedItemFormatSchema = z.enum([
+  'concise_insight',         // Kurzimpuls, in sich abgeschlossen
+  'sourced_update',          // Aktuelle Entwicklung mit Quellenbeleg
+  'creative_idea',           // Praktischer schöpferischer Impuls / Musik
+  'intriguing_question',     // Denkfrage mit Erläuterung
+  'surprising_connection',   // Unerwartete interdisziplinäre Brücke
+  'perspective_disagreement',// Kontroverse, dialektischer Einwand
+  'long_invitation'          // Einladung in vertiefende Langform
+]);
+export type FeedItemFormat = z.infer<typeof FeedItemFormatSchema>;
+
+export function formatFeedItemFormat(format?: FeedItemFormat): string {
+  switch (format) {
+    case 'concise_insight': return '⚡︎ Kompaktimpuls';
+    case 'sourced_update': return '◈ Recherche & Update';
+    case 'creative_idea': return '💡 Kreativer Impuls';
+    case 'intriguing_question': return '❓ Denkfrage';
+    case 'surprising_connection': return '☍ Interdisziplinäre Brücke';
+    case 'perspective_disagreement': return '✦ Philosophische Gegenposition';
+    case 'long_invitation': return '📖 Vertiefender Essay';
+    default: return '✦ Lese-Entdeckung';
+  }
+}
+
+// Phase 2 Evidence Tiers
+export const EvidenceTierSchema = z.enum([
+  'metadata_only',        // Nur Titel/Link/Metadaten verfügbar
+  'publisher_excerpt',    // Auszug / Abstract des Herausgebers
+  'permitted_full_text',  // Genehmigter/öffentlicher Volltext
+  'multiple_sources'      // Synthese aus mehreren belegten Quellen
+]);
+export type EvidenceTier = z.infer<typeof EvidenceTierSchema>;
+
+// Phase 2 Content Origin
+export const ContentOriginSchema = z.enum([
+  'live_ingested',    // Frisch aus verifizierten RSS/Atom-Quellen bezogen
+  'enriched_ai',      // Quellgebunden mit KI didaktisch aufbereitet
+  'demo_fixture'      // Kuratierte lokale Demonstrationsausgabe
+]);
+export type ContentOrigin = z.infer<typeof ContentOriginSchema>;
+
+// Phase 2 Human Perspective Details
+export const PerspectiveDetailsSchema = z.object({
+  claim: z.string(),
+  interpretation: z.string().optional(),
+  prediction: z.string().optional(),
+  counterPerspective: z.string().optional(),
+  humanSource: z.string(), // Echter Autor, Experte oder Quelltext
+  uncertaintyNote: z.string().optional()
+});
+export type PerspectiveDetails = z.infer<typeof PerspectiveDetailsSchema>;
+
 export const FeedItemSchema = z.object({
   id: z.string(),
   type: ContentTypeSchema,
+  format: FeedItemFormatSchema.default('concise_insight'),
   title: z.string(),
   subtitle: z.string(),
-  body: z.string(),
+  feedText: z.string().default(''), // Standalone-Leseinhalt direkt auf der Feed-Karte
+  articleBody: z.string().optional(), // Optionaler Langform-Text für den Reader
+  body: z.string(), // Volltext / Reader-Inhalt (Abwärtskompatibilität)
   topics: z.array(TopicTagSchema).min(1),
   primaryTopic: TopicTagSchema,
   sourceReferences: z.array(SourceReferenceSchema),
@@ -123,22 +179,103 @@ export const FeedItemSchema = z.object({
   deepeningOptions: DeepeningOptionsSchema.optional(),
   score: z.number().optional(), // computed dynamically by ranking engine
 
-  // Honest Editorial Provenance Metadata (Phase 1.1)
+  // Honest Editorial Provenance Metadata (Phase 1.1 / 1.2)
   isDemonstration: z.boolean().default(true),
   aiAssisted: z.boolean().default(true),
   factReviewStatus: FactReviewStatusSchema.default('curated_illustrative'),
   provenanceSummary: z.string(),
-  wordCount: z.number().int().positive()
+  wordCount: z.number().int().positive(),
+
+  // Phase 2 Pipeline & Personalization Attributes
+  evidenceTier: EvidenceTierSchema.default('publisher_excerpt'),
+  contentOrigin: ContentOriginSchema.default('demo_fixture'),
+  contentHash: z.string().default(''),
+  canonicalUrl: z.string().url().optional(),
+  isTeachingRelated: z.boolean().default(false),
+  isChallengingPerspective: z.boolean().default(false),
+  perspectiveDetails: PerspectiveDetailsSchema.optional(),
+  imageUrl: z.string().url().optional()
 });
 export type FeedItem = z.infer<typeof FeedItemSchema>;
 
 export const ReadingPreferenceDurationSchema = z.enum(['all', 'quick', 'balanced', 'deep']);
 export type ReadingPreferenceDuration = z.infer<typeof ReadingPreferenceDurationSchema>;
 
+// Phase 2 Founder Goals
+export const PersonalGoalSchema = z.enum([
+  'understand_tech',         // KI- & Tech-Fortschritt tief verstehen
+  'creative_music',          // Musikalische & schöpferische Projekte voranbringen
+  'deepen_attention',        // Aufmerksamkeitsspanne & Lernpraxis stärken
+  'philosophical_clarity',   // Philosophische Grundfragen durchdringen
+  'society_and_ethics'       // Gesellschaftliche & ethische Fragen verstehen
+]);
+export type PersonalGoal = z.infer<typeof PersonalGoalSchema>;
+
+export const PERSONAL_GOALS_METADATA: Record<PersonalGoal, { label: string; description: string }> = {
+  understand_tech: {
+    label: 'Technologie & KI verstehen',
+    description: 'Frontier AI, Beschleunigung, emergente Architekturen und Personal Computing'
+  },
+  creative_music: {
+    label: 'Kreativprojekte & Musik',
+    description: 'Modulare Synthese, Sounddesign, Ambient und kreatives Schaffen'
+  },
+  deepen_attention: {
+    label: 'Aufmerksamkeit & Lernpraxis',
+    description: 'Achtsamkeit, Kontemplation, Kognitionswissenschaft und Didaktik'
+  },
+  philosophical_clarity: {
+    label: 'Philosophische Tiefe',
+    description: 'Erkenntnistheorie, Phänomenologie, Ethik und dialektisches Denken'
+  },
+  society_and_ethics: {
+    label: 'Gesellschaft & Diskurs',
+    description: 'Demokratie, Bildungspolitik, Medienökologie und zeitgenössische Kultur'
+  }
+};
+
 export const UserProfileSchema = z.object({
   language: z.enum(['de', 'en']).default('de'),
   region: z.enum(['de', 'eu', 'global']).default('de'),
   explicitInterests: z.record(TopicTagSchema, z.number().min(0).max(1)),
+  explicitGoals: z.record(z.string(), z.number().min(0).max(1)).default({
+    understand_tech: 0.90,
+    creative_music: 0.85,
+    deepen_attention: 0.80,
+    philosophical_clarity: 0.95,
+    society_and_ethics: 0.75
+  }),
+  editorialTargets: z.object({
+    teachingTargetRatio: z.number().min(0).max(1).default(0.10),
+    challengingTargetRatio: z.number().min(0).max(1).default(0.10)
+  }).default({
+    teachingTargetRatio: 0.10,
+    challengingTargetRatio: 0.10
+  }),
+  feedbackMemory: z.object({
+    boostedTopics: z.record(z.string(), z.number()).default({}),
+    penalizedTopics: z.record(z.string(), z.number()).default({}),
+    boostedAuthors: z.record(z.string(), z.number()).default({}),
+    penalizedAuthors: z.record(z.string(), z.number()).default({}),
+    boostedKeywords: z.record(z.string(), z.number()).default({}),
+    penalizedKeywords: z.record(z.string(), z.number()).default({})
+  }).default({
+    boostedTopics: {},
+    penalizedTopics: {},
+    boostedAuthors: {},
+    penalizedAuthors: {},
+    boostedKeywords: {},
+    penalizedKeywords: {}
+  }),
+  behavioralSignals: z.object({
+    recentOpenedIds: z.array(z.string()).default([]),
+    recentSavedIds: z.array(z.string()).default([]),
+    completedReadIds: z.array(z.string()).default([])
+  }).default({
+    recentOpenedIds: [],
+    recentSavedIds: [],
+    completedReadIds: []
+  }),
   readingPreferences: z.object({
     preferredDuration: ReadingPreferenceDurationSchema.default('balanced'),
     theme: z.enum(['system', 'light', 'dark']).default('system'),
@@ -153,8 +290,10 @@ export const ReadingInteractionSchema = z.object({
   itemId: z.string(),
   saved: z.boolean().default(false),
   savedAt: z.string().optional(),
-  progressPercent: z.number().min(0).max(100).default(0),
+  progressPercent: z.number().min(0).max(100).default(0), // resume position
+  furthestPositionPercent: z.number().min(0).max(100).default(0), // furthest position reached
   completedAt: z.string().optional(),
   feedback: z.enum(['more_like_this', 'less_like_this', 'neutral']).optional()
 });
 export type ReadingInteraction = z.infer<typeof ReadingInteractionSchema>;
+

@@ -17,12 +17,25 @@ export function calculateReadingStats(bodyText: string): { wordCount: number; es
   };
 }
 
-function createFixture(item: Omit<FeedItem, 'wordCount' | 'estimatedReadingMinutes'>): FeedItem {
+function createFixture(item: any): FeedItem {
   const stats = calculateReadingStats(item.body);
+  const feedText = item.feedText ?? (item.body.split('\n\n').slice(0, 2).join('\n\n'));
   return {
+    format: item.format ?? (item.type === 'quick_insight' ? 'concise_insight' : item.type === 'perspective' ? 'perspective_disagreement' : item.type === 'deep_dive' ? 'long_invitation' : 'sourced_update'),
+    feedText,
+    articleBody: item.articleBody ?? item.body,
+    isDailyEdition: item.isDailyEdition ?? true,
+    isDemonstration: item.isDemonstration ?? true,
+    aiAssisted: item.aiAssisted ?? true,
+    factReviewStatus: item.factReviewStatus ?? 'curated_illustrative',
+    evidenceTier: item.evidenceTier ?? 'publisher_excerpt',
+    contentOrigin: item.contentOrigin ?? 'demo_fixture',
+    contentHash: item.contentHash ?? `hash-${item.id}`,
+    isTeachingRelated: item.isTeachingRelated ?? (item.primaryTopic === 'german_didactics'),
+    isChallengingPerspective: item.isChallengingPerspective ?? (item.type === 'perspective' || item.format === 'perspective_disagreement'),
     ...item,
-    wordCount: stats.wordCount,
-    estimatedReadingMinutes: stats.estimatedReadingMinutes
+    wordCount: item.wordCount ?? stats.wordCount,
+    estimatedReadingMinutes: item.estimatedReadingMinutes ?? stats.estimatedReadingMinutes
   };
 }
 
@@ -397,6 +410,13 @@ Für den Unterricht und das eigene Denken birgt diese Einsicht eine befreiende d
     aiAssisted: true,
     factReviewStatus: 'philosophical_discourse',
     provenanceSummary: 'Umfassender philosophischer Essay auf Grundlage von David Hume (*Treatise of Human Nature*), buddhistischer Phänomenologie (*Milindapañha*) und moderner Kognitionsforschung (Evan Thompson, Thomas Metzinger).',
+    perspectiveDetails: {
+      claim: 'Das menschliche Bewusstsein besitzt eine feste, einheitliche Ich-Instanz als Eigentümer aller Wahrnehmungen und Gedanken.',
+      interpretation: 'Westliche Alltagsintuition verwechselt das kohärente neuronale Selbstmodell des Gehirns mit einer realen metaphysischen Substanz.',
+      counterPerspective: 'Humes Bündeltheorie und buddhistisches Anattā zeigen: Wer nach innen blickt, findet nur flüchtige Wahrnehmungen, kein festes Ich.',
+      humanSource: 'David Hume (A Treatise of Human Nature) & Evan Thompson (Waking, Dreaming, Being)',
+      uncertaintyNote: 'Kantische Gegenpositionen betonen, dass ohne ein transzendentales Einheitszentrum kohärente Erfahrung unmöglich wäre.'
+    },
     deepeningOptions: {
       didacticSeed: 'Lass Lernende ein Selbstporträt ohne Personen-Substantive zeichnen oder schreiben: Nur Verben und Adjektive sind erlaubt.',
       counterArgument: 'Kantische Philosophen argumentieren: Das transzendentale Subjekt muss alle meine Vorstellungen begleiten können – ohne logischen Bezugspunkt zerfällt Erfahrung in Chaos.',
@@ -577,6 +597,30 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
   language: 'de',
   region: 'de',
   explicitInterests: { ...DEFAULT_STARTER_INTERESTS },
+  explicitGoals: {
+    understand_tech: 0.95,
+    creative_music: 0.85,
+    deepen_attention: 0.80,
+    philosophical_clarity: 0.95,
+    society_and_ethics: 0.75
+  },
+  editorialTargets: {
+    teachingTargetRatio: 0.10,
+    challengingTargetRatio: 0.10
+  },
+  feedbackMemory: {
+    boostedTopics: {},
+    penalizedTopics: {},
+    boostedAuthors: {},
+    penalizedAuthors: {},
+    boostedKeywords: {},
+    penalizedKeywords: {}
+  },
+  behavioralSignals: {
+    recentOpenedIds: [],
+    recentSavedIds: [],
+    completedReadIds: []
+  },
   readingPreferences: {
     preferredDuration: 'balanced',
     theme: 'system',

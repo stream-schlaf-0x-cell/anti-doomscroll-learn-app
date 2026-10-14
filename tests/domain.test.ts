@@ -1,6 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { FeedItemSchema, UserProfileSchema, ReadingInteractionSchema, FeedItem } from '../src/core/domain/types';
+import {
+  FeedItemSchema,
+  UserProfileSchema,
+  ReadingInteractionSchema,
+  FeedItem,
+  PersonalGoalSchema,
+  PERSONAL_GOALS_METADATA
+} from '../src/core/domain/types';
 import { INITIAL_FIXTURES, DEFAULT_USER_PROFILE } from '../src/core/data/fixtures';
 import { scoreFeedItem, rankAndInterleaveFeed } from '../src/core/domain/ranking';
 
@@ -46,6 +53,30 @@ describe('Domain Schemas & Invariant Validation', () => {
 
     assert.ok(oneMinItems.length >= 3, 'Must have at least 3 items with 1 min reading time');
     assert.ok(deepItems.length >= 2, 'Must have at least 2 items with >= 4 min reading time');
+  });
+
+  it('should verify all fixtures contain meaningful standalone feedText and valid Phase 2 metadata', () => {
+    for (const fixture of INITIAL_FIXTURES) {
+      assert.ok(fixture.feedText && fixture.feedText.length > 50, `Fixture ${fixture.id} must have standalone feedText (>50 chars)`);
+      assert.ok(fixture.format, `Fixture ${fixture.id} must have a valid editorial format`);
+      assert.ok(fixture.evidenceTier, `Fixture ${fixture.id} must have an evidenceTier`);
+      assert.ok(fixture.contentOrigin, `Fixture ${fixture.id} must have a contentOrigin`);
+      if (fixture.isChallengingPerspective) {
+        assert.ok(fixture.perspectiveDetails, `Challenging item ${fixture.id} must include perspectiveDetails`);
+      }
+    }
+  });
+
+  it('should validate Phase 2 PersonalGoal schema and German metadata mapping', () => {
+    const goals = ['understand_tech', 'creative_music', 'deepen_attention', 'philosophical_clarity', 'society_and_ethics'] as const;
+    for (const goal of goals) {
+      const parsed = PersonalGoalSchema.safeParse(goal);
+      assert.strictEqual(parsed.success, true, `Goal ${goal} should be valid`);
+      assert.ok(PERSONAL_GOALS_METADATA[goal].label.length > 0, `Goal ${goal} must have a non-empty label`);
+      assert.ok(PERSONAL_GOALS_METADATA[goal].description.length > 0, `Goal ${goal} must have a non-empty description`);
+    }
+    const invalidGoal = PersonalGoalSchema.safeParse('unlimited_entertainment');
+    assert.strictEqual(invalidGoal.success, false, 'Invalid goal should fail parsing');
   });
 });
 
@@ -160,10 +191,10 @@ describe('Deterministic Ranking Engine', () => {
     const item = INITIAL_FIXTURES[0];
     const normal = scoreFeedItem(item, DEFAULT_USER_PROFILE, {});
     const positive = scoreFeedItem(item, DEFAULT_USER_PROFILE, {
-      [item.id]: { itemId: item.id, saved: false, progressPercent: 0, feedback: 'more_like_this' }
+      [item.id]: { itemId: item.id, saved: false, progressPercent: 0, furthestPositionPercent: 0, feedback: 'more_like_this' }
     });
     const negative = scoreFeedItem(item, DEFAULT_USER_PROFILE, {
-      [item.id]: { itemId: item.id, saved: false, progressPercent: 0, feedback: 'less_like_this' }
+      [item.id]: { itemId: item.id, saved: false, progressPercent: 0, furthestPositionPercent: 0, feedback: 'less_like_this' }
     });
 
     assert.ok(positive.score > normal.score, 'Positive feedback should increase score');
