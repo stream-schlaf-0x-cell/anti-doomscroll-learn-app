@@ -22,7 +22,7 @@
 
 - [x] **Stage 1**: Domain Schemas & Invariant Hardening (`feedText`, `format`, `evidenceTier`, `PersonalGoal`, founder starter profile).
 - [x] **Stage 2**: Storage Safeguards & Decoupled Library Persistence (bug fixes for data protection, offline library retention).
-- [ ] **Stage 3**: Live Endpoint Discovery & Ingestion Pipeline (verified RSS/Atom feeds, normalization, deduplication, CLI runner).
+- [x] **Stage 3**: Live Endpoint Discovery & Ingestion Pipeline (verified RSS/Atom feeds, normalization, deduplication, CLI runner).
 - [ ] **Stage 4**: Provider-Independent Enrichment & €5 Budget Ledger (usage tracker, caching, Gemini pricing model grounding).
 - [ ] **Stage 5**: Explainable Multi-Dimensional Personalization Engine (goals, feedback memory, 10% targets, explanation generation).
 - [ ] **Stage 6**: Rich Standalone Feed UI & "Weiter entdecken" Batching (interactive cards, progressive disclosure, virtualization).
@@ -31,14 +31,12 @@
 ---
 
 ## 3. Current Stage
-**Stage 3: Live Endpoint Discovery & Ingestion Pipeline**
+**Stage 4: Provider-Independent Enrichment & €5 Budget Ledger**
 - *Goal*:
-  1. Verify 6–10 live public RSS/Atom endpoints covering founder interests (AI/Frontier Tech, Philosophy/Ethics, Didactics, Sound/Music, Science/Mind) with `curl -sI` checks.
-  2. Implement pure-TypeScript robust ingestion modules under `src/core/ingestion/`:
-     - `feedFetcher.ts`: bounded fetch (5s timeout, 1MB limit, conditional headers, retry with backoff).
-     - `rssParser.ts`: pure TS XML parser for RSS 2.0 and Atom feeds.
-     - `normalizer.ts`: maps raw entries to `FeedItem` schema with canonical URLs, SHA-256 content hashes, evidence tiers.
-     - `deduplicator.ts`: URL canonicalization and hash deduplication.
-  3. CLI runner `scripts/run-pipeline.ts` outputting validated JSON to `src/core/data/pipeline-output.json`.
-  4. Add `npm run ingest` to `package.json`.
-- *Validation*: Ingestion unit tests in `tests/pipeline.test.ts` verifying parser, normalizer, deduplication, and network timeout handling.
+  1. Define `IContentEnricher` interface: takes raw `FeedItem`, produces structured German enrichment (`feedText`, `relevanceExplanation`, perspective breakdown, didactic seed).
+  2. Implement `EnrichmentUsageLedger`: tracks model calls, token count, estimated EUR cost; enforces hard monthly budget ceiling (€5.00/month). Storage in `src/core/data/usage-ledger.json`.
+  3. Ground pricing model with Gemini docs (Flash tier: $0.10/1M input, $0.40/1M output, meaning ~30 items/day costs ~$0.20/month; hard cap stops calls if ledger exceeds €5.00).
+  4. Cache enriched outputs by `contentHash + promptVersion`.
+  5. Source-only zero-cost fallback mode (pure heuristic synthesis without API key or external network dependency).
+  6. Mock enricher for deterministic unit tests.
+- *Validation*: Unit tests in `tests/enrichment.test.ts` verifying ledger accumulation, hard-cap ceiling enforcement, hash caching, and source-only fallback.

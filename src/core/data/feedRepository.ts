@@ -2,15 +2,48 @@ import { FeedItem, UserProfile, ReadingInteraction } from '../domain/types';
 import { INITIAL_FIXTURES } from './fixtures';
 import { rankAndInterleaveFeed, ScoredFeedItem } from '../domain/ranking';
 
+// Safely load pipeline output if present
+let pipelineItems: FeedItem[] = [];
+try {
+  const loaded = require('./pipeline-output.json');
+  if (Array.isArray(loaded)) {
+    pipelineItems = loaded as FeedItem[];
+  }
+} catch {
+  pipelineItems = [];
+}
+
 export interface IFeedRepository {
   getDailyEdition(profile: UserProfile, interactions: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
   getDiscoveryItems(profile: UserProfile, interactions: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
   getItemById(id: string): Promise<FeedItem | null>;
   searchItems(query: string, profile: UserProfile, interactions: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
+  setItems?(items: FeedItem[]): void;
 }
 
 export class LocalFeedRepository implements IFeedRepository {
-  private items: FeedItem[] = INITIAL_FIXTURES;
+  private items: FeedItem[];
+
+  constructor(customItems?: FeedItem[]) {
+    if (customItems) {
+      this.items = customItems;
+    } else {
+      const map = new Map<string, FeedItem>();
+      for (const item of pipelineItems) {
+        map.set(item.id, item);
+      }
+      for (const item of INITIAL_FIXTURES) {
+        if (!map.has(item.id)) {
+          map.set(item.id, item);
+        }
+      }
+      this.items = Array.from(map.values());
+    }
+  }
+
+  setItems(items: FeedItem[]): void {
+    this.items = items;
+  }
 
   async getDailyEdition(
     profile: UserProfile,
