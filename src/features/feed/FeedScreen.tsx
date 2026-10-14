@@ -7,18 +7,26 @@ import {
   RefreshControl,
   TouchableOpacity,
   NativeSyntheticEvent,
-  NativeScrollEvent
+  NativeScrollEvent,
+  useWindowDimensions
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
+import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
+import { DesktopSidebar } from '../../ui/components/DesktopSidebar';
 import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
+import { ScoredFeedItem } from '../../core/domain/ranking';
 
 export const FeedScreen: React.FC = () => {
   const { dailyEdition, discoveryItems, colors, refreshFeed } = useApp();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 960;
+
   const [selectedFilter, setSelectedFilter] = useState<TopicTag | 'all'>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
@@ -34,19 +42,35 @@ export const FeedScreen: React.FC = () => {
     setVisibleDiscoveryCount(10);
   };
 
+  // Helper to filter items by search query
+  const filterByQuery = useCallback((items: ScoredFeedItem[]) => {
+    if (!searchQuery.trim()) return items;
+    const q = searchQuery.toLowerCase().trim();
+    return items.filter(item =>
+      item.title.toLowerCase().includes(q) ||
+      (item.subtitle && item.subtitle.toLowerCase().includes(q)) ||
+      (item.feedText && item.feedText.toLowerCase().includes(q)) ||
+      (item.sourceReferences[0]?.publisher && item.sourceReferences[0].publisher.toLowerCase().includes(q)) ||
+      (item.space && item.space.toLowerCase().includes(q)) ||
+      item.topics.some(t => t.toLowerCase().includes(q))
+    );
+  }, [searchQuery]);
+
   // Filter daily edition items
   const filteredDaily = useMemo(() => {
-    return selectedFilter === 'all'
+    const spaceFiltered = selectedFilter === 'all'
       ? dailyEdition
       : dailyEdition.filter(item => item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter));
-  }, [dailyEdition, selectedFilter]);
+    return filterByQuery(spaceFiltered);
+  }, [dailyEdition, selectedFilter, filterByQuery]);
 
   // Filter discovery pool items
   const filteredDiscovery = useMemo(() => {
-    return selectedFilter === 'all'
+    const spaceFiltered = selectedFilter === 'all'
       ? discoveryItems
       : discoveryItems.filter(item => item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter));
-  }, [discoveryItems, selectedFilter]);
+    return filterByQuery(spaceFiltered);
+  }, [discoveryItems, selectedFilter, filterByQuery]);
 
   // Appended discovery items for smooth infinite mind-scroll
   const renderedDiscovery = useMemo(() => {
@@ -71,18 +95,32 @@ export const FeedScreen: React.FC = () => {
     setVisibleDiscoveryCount(prev => Math.min(filteredDiscovery.length, prev + 10));
   };
 
-  // Combine items into a seamless stream with mindfulness milestones
+  // Combine items into a seamless stream
   const allStreamItems = useMemo(() => {
     return [...filteredDaily, ...renderedDiscovery];
   }, [filteredDaily, renderedDiscovery]);
 
+  const activeSpaceName = selectedFilter === 'all'
+    ? 'Alle Spaces'
+    : (TOPIC_SPACE_MAP[selectedFilter]?.space || selectedFilter);
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Header />
+      {/* Top Header: Reddit Desktop Header vs Mobile Header */}
+      {isDesktop ? (
+        <DesktopRedditHeader
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          activeSpaceName={activeSpaceName}
+          onSelectSpacePress={() => handleFilterChange('all')}
+        />
+      ) : (
+        <Header />
+      )}
 
-      {/* Community Space Selector Bar (Desktop & Mobile Friendly) */}
-      <View style={[styles.filterBarContainer, { borderBottomColor: colors.borderSubtle }]}>
-        <View style={styles.filterBarInner}>
+      {/* Community Space Selector Bar */}
+      <View style={[styles.filterBarContainer, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
+        <View style={[styles.filterBarInner, isDesktop && styles.desktopFilterBarInner]}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -94,7 +132,7 @@ export const FeedScreen: React.FC = () => {
               style={[
                 styles.spacePill,
                 {
-                  backgroundColor: selectedFilter === 'all' ? colors.accent : colors.surface,
+                  backgroundColor: selectedFilter === 'all' ? colors.accent : colors.surfaceSecondary,
                   borderColor: selectedFilter === 'all' ? colors.accent : colors.borderSubtle
                 }
               ]}
@@ -127,7 +165,7 @@ export const FeedScreen: React.FC = () => {
                   style={[
                     styles.spacePill,
                     {
-                      backgroundColor: isSelected ? meta.color : colors.surface,
+                      backgroundColor: isSelected ? meta.color : colors.surfaceSecondary,
                       borderColor: isSelected ? meta.color : colors.borderSubtle
                     }
                   ]}
@@ -153,7 +191,7 @@ export const FeedScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Main Feed Scroll (Desktop Centered & Infinite Scrolling) */}
+      {/* Main Feed Scroll (Desktop Centered & Two-Column Layout) */}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -167,110 +205,135 @@ export const FeedScreen: React.FC = () => {
           />
         }
       >
-        <View style={styles.feedInnerColumn}>
-          {allStreamItems.length === 0 ? (
-            <View style={[styles.emptyBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-              <Ionicons name="filter-outline" size={32} color={colors.textMuted} style={{ marginBottom: spacing.sm }} />
-              <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-                Keine Beiträge in diesem Space
-              </Text>
-              <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-                Wähle „Alle Spaces“ oder wechsle den Themenfilter.
-              </Text>
-              <TouchableOpacity
-                onPress={() => handleFilterChange('all')}
-                style={[styles.emptyButton, { backgroundColor: colors.accent }]}
-              >
-                <Text style={styles.emptyButtonText}>Alle Spaces anzeigen</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
-              {/* Daily Edition Primary Items */}
-              {filteredDaily.map((item, index) => (
-                <React.Fragment key={item.id}>
-                  <FeedCard
-                    item={item}
-                    isHero={index === 0 && selectedFilter === 'all'}
-                  />
-
-                  {/* Mindfulness Milestone after item 5 in daily edition */}
-                  {index === 4 && (
-                    <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                      <Ionicons name="leaf-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
-                          Innehalten & Nachdenken
-                        </Text>
-                        <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
-                          5 Gedanken aufgenommen. Nimm dir einen Moment, bevor du weiter scrollst.
-                        </Text>
-                      </View>
-                    </View>
-                  )}
-                </React.Fragment>
-              ))}
-
-              {/* Transition Milestone between Daily Edition and Discovery Pool */}
-              {filteredDaily.length > 0 && renderedDiscovery.length > 0 && (
-                <View style={[styles.streamDividerCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <View style={[styles.sparkleIconBox, { backgroundColor: colors.accentSubtle }]}>
-                    <Ionicons name="sparkles" size={20} color={colors.accent} />
-                  </View>
-                  <Text style={[styles.streamDividerTitle, { color: colors.textPrimary }]}>
-                    Tagesausgabe abgeschlossen
-                  </Text>
-                  <Text style={[styles.streamDividerText, { color: colors.textSecondary }]}>
-                    Hier beginnt der endlose Mind-Scroll. Entdecke tiefer gehende Recherchen und Gedanken aus dem gesamten Atem-Netzwerk.
-                  </Text>
-                </View>
-              )}
-
-              {/* Appended Discovery Items */}
-              {renderedDiscovery.map((item, index) => (
-                <React.Fragment key={item.id}>
-                  <FeedCard item={item} isHero={false} />
-
-                  {/* Periodic Mindfulness Milestone every 8 discovery cards */}
-                  {(index + 1) % 8 === 0 && (
-                    <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                      <Ionicons name="water-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
-                          Bewusstes Weiterlernen
-                        </Text>
-                        <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
-                          {index + 1 + filteredDaily.length} Erkenntnisse gesammelt. Dein Geist wächst mit jedem bewussten Gedanken.
-                        </Text>
-                      </View>
-                    </View>
-                  )}
-                </React.Fragment>
-              ))}
-
-              {/* End of Stream / Manual Load More Trigger */}
-              {remainingDiscoveryCount > 0 ? (
-                <TouchableOpacity
-                  onPress={handleLoadMoreDiscovery}
-                  style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
-                >
-                  <Ionicons name="compass-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
-                  <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
-                    Weitere Entdeckungen laden (+{nextBatchSize} von {remainingDiscoveryCount})
-                  </Text>
+        <View style={[styles.mainLayoutWrapper, isDesktop && styles.desktopLayoutWrapper]}>
+          {/* Feed Column (Center) */}
+          <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn]}>
+            {searchQuery.trim().length > 0 && (
+              <View style={[styles.searchNoticeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                <Ionicons name="search" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+                <Text style={[styles.searchNoticeText, { color: colors.textPrimary }]}>
+                  Ergebnisse für „{searchQuery}“ ({allStreamItems.length} Treffer)
+                </Text>
+                <TouchableOpacity onPress={() => setSearchQuery('')} style={{ marginLeft: 'auto' }}>
+                  <Text style={[styles.searchNoticeClear, { color: colors.accent }]}>Filter aufheben</Text>
                 </TouchableOpacity>
-              ) : (
-                <View style={[styles.allReadBanner, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <Ionicons name="checkmark-done-circle" size={24} color={colors.accent} style={{ marginBottom: 6 }} />
-                  <Text style={[styles.allReadTitle, { color: colors.textPrimary }]}>
-                    Du bist auf dem neuesten Stand
-                  </Text>
-                  <Text style={[styles.allReadSubtitle, { color: colors.textMuted }]}>
-                    Alle 45+ Beiträge durchstöbert. Ein wunderbarer Moment für die Praxis außerhalb des Bildschirms.
-                  </Text>
-                </View>
-              )}
-            </>
+              </View>
+            )}
+
+            {allStreamItems.length === 0 ? (
+              <View style={[styles.emptyBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <Ionicons name="filter-outline" size={32} color={colors.textMuted} style={{ marginBottom: spacing.sm }} />
+                <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                  Keine Beiträge gefunden
+                </Text>
+                <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+                  {searchQuery ? 'Versuche einen anderen Suchbegriff.' : 'Wähle „Alle Spaces“ oder wechsle den Themenfilter.'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setSelectedFilter('all');
+                    setSearchQuery('');
+                  }}
+                  style={[styles.emptyButton, { backgroundColor: colors.accent }]}
+                >
+                  <Text style={styles.emptyButtonText}>Filter zurücksetzen</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                {/* Daily Edition Primary Items */}
+                {filteredDaily.map((item, index) => (
+                  <React.Fragment key={item.id}>
+                    <FeedCard
+                      item={item}
+                      isHero={index === 0 && selectedFilter === 'all' && !searchQuery}
+                    />
+
+                    {/* Mindfulness Milestone after item 5 in daily edition */}
+                    {index === 4 && (
+                      <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                        <Ionicons name="leaf-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
+                            Innehalten & Nachdenken
+                          </Text>
+                          <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
+                            5 Gedanken aufgenommen. Nimm dir einen Moment, bevor du weiter scrollst.
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </React.Fragment>
+                ))}
+
+                {/* Transition Milestone between Daily Edition and Discovery Pool */}
+                {filteredDaily.length > 0 && renderedDiscovery.length > 0 && (
+                  <View style={[styles.streamDividerCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                    <View style={[styles.sparkleIconBox, { backgroundColor: colors.accentSubtle }]}>
+                      <Ionicons name="sparkles" size={20} color={colors.accent} />
+                    </View>
+                    <Text style={[styles.streamDividerTitle, { color: colors.textPrimary }]}>
+                      Tagesausgabe abgeschlossen
+                    </Text>
+                    <Text style={[styles.streamDividerText, { color: colors.textSecondary }]}>
+                      Hier beginnt der endlose Mind-Scroll. Entdecke tiefer gehende Recherchen, Gegenpositionen und Praxis-Impulse.
+                    </Text>
+                  </View>
+                )}
+
+                {/* Appended Discovery Items */}
+                {renderedDiscovery.map((item, index) => (
+                  <React.Fragment key={item.id}>
+                    <FeedCard item={item} isHero={false} />
+
+                    {/* Periodic Mindfulness Milestone every 8 discovery cards */}
+                    {(index + 1) % 8 === 0 && (
+                      <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                        <Ionicons name="water-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
+                            Bewusstes Weiterlernen
+                          </Text>
+                          <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
+                            {index + 1 + filteredDaily.length} Erkenntnisse gesammelt. Dein Geist wächst mit jedem bewussten Gedanken.
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </React.Fragment>
+                ))}
+
+                {/* End of Stream / Manual Load More Trigger */}
+                {remainingDiscoveryCount > 0 ? (
+                  <TouchableOpacity
+                    onPress={handleLoadMoreDiscovery}
+                    style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
+                  >
+                    <Ionicons name="compass-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
+                    <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
+                      Weitere Entdeckungen laden (+{nextBatchSize} von {remainingDiscoveryCount})
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={[styles.allReadBanner, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                    <Ionicons name="checkmark-circle-outline" size={22} color={colors.accent} style={{ marginBottom: 6 }} />
+                    <Text style={[styles.allReadTitle, { color: colors.textPrimary }]}>
+                      Du bist auf dem neuesten Stand
+                    </Text>
+                    <Text style={[styles.allReadSubtitle, { color: colors.textMuted }]}>
+                      Alle verfügbaren Beiträge aus deinen abonnierten Spaces wurden gelesen. Zeit für eine Pause.
+                    </Text>
+                  </View>
+                )}
+              </>
+            )}
+          </View>
+
+          {/* Right Column: Sticky Desktop Community Sidebar */}
+          {isDesktop && (
+            <View style={styles.desktopSidebarColumn}>
+              <DesktopSidebar articleCount={allStreamItems.length} />
+            </View>
           )}
         </View>
       </ScrollView>
@@ -283,18 +346,22 @@ const styles = StyleSheet.create({
     flex: 1
   },
   filterBarContainer: {
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 0.5
+    borderBottomWidth: 0.5,
+    paddingVertical: spacing.xs
   },
   filterBarInner: {
-    maxWidth: 780,
     width: '100%',
-    alignSelf: 'center'
+    alignSelf: 'center',
+    maxWidth: 780,
+    paddingHorizontal: spacing.pageHorizontal
+  },
+  desktopFilterBarInner: {
+    maxWidth: 1140
   },
   filterScroll: {
-    paddingHorizontal: spacing.pageHorizontal,
     gap: 8,
-    alignItems: 'center'
+    alignItems: 'center',
+    paddingVertical: 2
   },
   spacePill: {
     flexDirection: 'row',
@@ -313,10 +380,43 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.xxl
   },
-  feedInnerColumn: {
-    maxWidth: 780,
+  mainLayoutWrapper: {
     width: '100%',
-    alignSelf: 'center'
+    alignSelf: 'center',
+    maxWidth: 780
+  },
+  desktopLayoutWrapper: {
+    maxWidth: 1140,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 24
+  },
+  feedColumn: {
+    width: '100%'
+  },
+  desktopFeedColumn: {
+    flex: 1,
+    maxWidth: 760
+  },
+  desktopSidebarColumn: {
+    width: 310
+  },
+  searchNoticeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 0.5,
+    marginBottom: spacing.md
+  },
+  searchNoticeText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600'
+  },
+  searchNoticeClear: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '700'
   },
   emptyBox: {
     padding: spacing.xl,

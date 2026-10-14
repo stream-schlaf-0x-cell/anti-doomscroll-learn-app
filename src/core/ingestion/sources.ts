@@ -120,5 +120,38 @@ export const VERIFIED_FEED_SOURCES: RawFeedSource[] = [
     defaultEvidenceTier: 'permitted_full_text',
     defaultAuthor: 'Netzpolitik.org Redaktion',
     language: 'de'
+  },
+
+  // 6. Öffentlich-Rechtliche Berichterstattung (Vertrauenswürdige Nachrichten & Wissenschaft)
+  {
+    id: 'tagesschau-wissen',
+    name: 'Tagesschau Wissen & Forschung',
+    url: 'https://www.tagesschau.de/wissen/index~rss2.xml',
+    primaryTopic: 'science_society',
+    topics: ['science_society', 'philosophy_ethics'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'ARD / Tagesschau Wissen',
+    language: 'de'
+  },
+  {
+    id: 'tagesschau-inland',
+    name: 'Tagesschau Inland & Gesellschaft',
+    url: 'https://www.tagesschau.de/inland/index~rss2.xml',
+    primaryTopic: 'science_society',
+    topics: ['science_society', 'german_didactics'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'ARD-aktuell / Tagesschau',
+    language: 'de',
+    isTeachingRelated: true
+  },
+  {
+    id: 'zdf-heute',
+    name: 'ZDFheute Nachrichten',
+    url: 'https://www.zdfheute.de/rss/zdf/nachrichten',
+    primaryTopic: 'science_society',
+    topics: ['science_society', 'philosophy_ethics'],
+    defaultEvidenceTier: 'publisher_excerpt',
+    defaultAuthor: 'ZDFheute Redaktion',
+    language: 'de'
   }
 ];

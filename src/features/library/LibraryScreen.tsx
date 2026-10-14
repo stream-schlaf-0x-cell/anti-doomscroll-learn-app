@@ -11,6 +11,7 @@ import { useApp } from '../../core/context/AppContext';
 import { TopicBadge } from '../../ui/components/TopicBadge';
 import { ReadingTimeBadge } from '../../ui/components/ReadingTimeBadge';
 import { typography, radius, spacing } from '../../ui/theme';
+import { generateCraftMarkdown, copyToClipboard } from '../../core/export/craftExport';
 
 function formatRelativeTime(isoString?: string): string {
   if (!isoString) return 'Heute';
@@ -42,6 +43,16 @@ export const LibraryScreen: React.FC = () => {
 
   const [activeSection, setActiveSection] = useState<'saved' | 'notes'>('saved');
   const [filter, setFilter] = useState<'all' | 'unread' | 'completed'>('all');
+  const [copied, setCopied] = useState<boolean>(false);
+
+  const handleExportCraft = async () => {
+    const md = generateCraftMarkdown(savedItems, interactions);
+    const success = await copyToClipboard(md);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
 
   // Map of all known articles
   const allArticlesMap = useMemo(() => {
@@ -104,12 +115,26 @@ export const LibraryScreen: React.FC = () => {
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
         <View style={styles.headerInner}>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>
-            Bibliothek & Notizbuch
-          </Text>
-          <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-            {savedItems.length} gemerkt • {totalNotesCount} eigene Reflexionen
-          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.title, { color: colors.textPrimary }]}>
+              Bibliothek & Notizbuch
+            </Text>
+            <Text style={[styles.subtitle, { color: colors.textMuted }]}>
+              {savedItems.length} gemerkt • {totalNotesCount} eigene Reflexionen
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            onPress={handleExportCraft}
+            style={[styles.exportCraftBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}
+            activeOpacity={0.8}
+            accessibilityLabel="Gedanken für Craft Docs exportieren"
+          >
+            <Ionicons name={copied ? 'checkmark-circle' : 'copy-outline'} size={14} color={colors.accent} style={{ marginRight: 5 }} />
+            <Text style={[styles.exportCraftBtnText, { color: colors.accent }]}>
+              {copied ? 'Kopiert!' : 'Craft Export'}
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -340,6 +365,21 @@ export const LibraryScreen: React.FC = () => {
                         <Text style={[styles.noteBody, { color: colors.textPrimary }]}>
                           {n.text}
                         </Text>
+
+                        {/* Sparring Reply if present */}
+                        {n.sparringReply && (
+                          <View style={[styles.noteSparringBox, { backgroundColor: colors.surface, borderLeftColor: colors.accent }]}>
+                            <View style={styles.noteSparringHeader}>
+                              <Ionicons name="chatbubbles-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+                              <Text style={[styles.noteSparringHandle, { color: colors.accent }]}>
+                                {n.sparringReply.authorHandle} ({n.sparringReply.authorBadge || 'Sparring'})
+                              </Text>
+                            </View>
+                            <Text style={[styles.noteSparringText, { color: colors.textSecondary }]}>
+                              {n.sparringReply.text}
+                            </Text>
+                          </View>
+                        )}
                       </View>
                     ))}
                   </View>
@@ -535,5 +575,38 @@ const styles = StyleSheet.create({
   noteBody: {
     fontSize: 13,
     lineHeight: 18
+  },
+  exportCraftBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  exportCraftBtnText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '700'
+  },
+  noteSparringBox: {
+    marginTop: 8,
+    paddingLeft: 10,
+    borderLeftWidth: 2,
+    paddingVertical: 4,
+    borderRadius: 4
+  },
+  noteSparringHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2
+  },
+  noteSparringHandle: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  noteSparringText: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontStyle: 'italic'
   }
 });

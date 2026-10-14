@@ -116,6 +116,34 @@ function parseDateToIso(dateStr: string): string {
 }
 
 /**
+ * Extracts a media/enclosure/inline image URL if present in the entry block.
+ */
+function extractImageUrl(block: string): string | undefined {
+  // 1. Enclosure attribute url="..."
+  const enclosureMatch = block.match(/<enclosure\b[^>]*\burl=["']([^"']+)["']/i);
+  if (enclosureMatch && enclosureMatch[1] && !enclosureMatch[1].endsWith('.mp3')) {
+    return decodeXmlEntities(enclosureMatch[1]);
+  }
+
+  // 2. Media RSS (media:content or media:thumbnail)
+  const mediaMatch = block.match(/<media:(?:content|thumbnail)\b[^>]*\burl=["']([^"']+)["']/i);
+  if (mediaMatch && mediaMatch[1]) {
+    return decodeXmlEntities(mediaMatch[1]);
+  }
+
+  // 3. <img> tag in HTML content/description
+  const imgMatch = block.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i);
+  if (imgMatch && imgMatch[1]) {
+    const src = decodeXmlEntities(imgMatch[1]);
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      return src;
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Pure TypeScript parser for RSS 2.0, RSS 1.0 (RDF), and Atom feeds.
  * Does not depend on native C++ bindings or browser DOM.
  */
@@ -162,6 +190,8 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
         getTagContent(block, 'published') ||
         getTagContent(block, 'updated');
 
+      const imageUrl = extractImageUrl(block);
+
       if (title && link) {
         entries.push({
           id: cleanId || link,
@@ -171,7 +201,8 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
           fullContent,
           author: author ? stripHtml(author) : undefined,
           publishedAt: parseDateToIso(published),
-          sourceId
+          sourceId,
+          imageUrl
         });
       }
     }
@@ -201,6 +232,8 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
         getTagContent(block, 'pubDate') ||
         getTagContent(block, 'dc:date');
 
+      const imageUrl = extractImageUrl(block);
+
       if (title && link) {
         entries.push({
           id: cleanGuid || link,
@@ -210,7 +243,8 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
           fullContent,
           author: author ? stripHtml(author) : undefined,
           publishedAt: parseDateToIso(pubDate),
-          sourceId
+          sourceId,
+          imageUrl
         });
       }
     }

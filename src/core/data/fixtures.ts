@@ -1,4 +1,4 @@
-import { FeedItem, TopicTag, UserProfile, TOPIC_SPACE_MAP } from '../domain/types';
+import { FeedItem, TopicTag, UserProfile, TOPIC_SPACE_MAP, CommunityComment, SparringReply } from '../domain/types';
 
 /**
  * High-quality, fast-loading curated aesthetic imagery matched to user's intellectual domains.
@@ -50,6 +50,257 @@ export function getCuratedImageForTopic(topic: TopicTag, seed: string = ''): str
 }
 
 /**
+ * Generates 3 simulated Reddit community comments tailored to the topic and content.
+ */
+export function getSimulatedCommentsForTopic(
+  topic: TopicTag,
+  title: string,
+  seed: string = ''
+): CommunityComment[] {
+  let numSeed = 0;
+  for (let i = 0; i < seed.length; i++) numSeed += seed.charCodeAt(i);
+
+  switch (topic) {
+    case 'philosophy_ethics':
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/kant_dresden',
+          authorBadge: 'Philosophie Sek II',
+          timeAgo: 'vor 3 Std.',
+          score: 48 + (numSeed % 25),
+          commentType: 'dialectic_critique',
+          text: `Spannender Punkt bezüglich „${title.slice(0, 50)}…“. Aber setzt dieses Argument nicht stillschweigend voraus, dass Erkenntnis rein diskursiv verfasst ist? Was passiert, wenn wir die phänomenologische Leiblichkeit mitdenken?`
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/didaktik_labor',
+          authorBadge: 'Fachleiter Ethik',
+          timeAgo: 'vor 2 Std.',
+          score: 34 + (numSeed % 18),
+          commentType: 'didactic_transfer',
+          text: 'Hervorragend als Einstiegsdilemma für eine 11. Klasse. Erst intuitives Schüler-Votum einholen, danach im sokratischen Streitgespräch die stillen Prämissen dekonstruieren.'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/epistem_x',
+          authorBadge: 'Erkenntnistheorie',
+          timeAgo: 'vor 1 Std.',
+          score: 19 + (numSeed % 12),
+          commentType: 'creative_synthesis',
+          text: 'Erinnert stark an die Kohärenztheorie: Nicht der isolierte Satz entscheidet über Wahrheit, sondern wie widerspruchsfrei er sich in das bestehende Netz unserer Überzeugungen einfügt.'
+        }
+      ];
+
+    case 'german_didactics':
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/deutsch_sek_ii',
+          authorBadge: 'Gymnasiallehrer Dresden',
+          timeAgo: 'vor 4 Std.',
+          score: 52 + (numSeed % 20),
+          commentType: 'didactic_transfer',
+          text: `Die größte Hürde im Schulalltag ist oft die Begriffsabstraktion: Viele Schüler bleiben an Einzelfällen hängen. Bei „${title.slice(0, 45)}…“ lohnt sich ein Advance Organizer vor der Textlektüre.`
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/sokrates_didaktik',
+          authorBadge: 'Seminarleiter',
+          timeAgo: 'vor 2 Std.',
+          score: 39 + (numSeed % 15),
+          commentType: 'dialectic_critique',
+          text: 'Genau das Gegenteil von stumpfem Bulimielernen. Wenn man den Jugendlichen den geschützten Raum gibt, eigene Thesen und Gegenargumente zu wagen, entsteht echte Urteilskraft nach dem Beutelsbacher Konsens.'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/lit_und_code',
+          authorBadge: 'Medienpädagogik',
+          timeAgo: 'vor 45 Min.',
+          score: 22 + (numSeed % 10),
+          commentType: 'creative_synthesis',
+          text: 'Didaktische Idee: Die Schüler diesen Originaltext mit einer KI zusammenfassen lassen und anschließend systematisch die blinden Flecken der KI-Zusammenfassung analysieren.'
+        }
+      ];
+
+    case 'ai_apple':
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/open_weights_fan',
+          authorBadge: 'ML-Architekt',
+          timeAgo: 'vor 5 Std.',
+          score: 65 + (numSeed % 30),
+          commentType: 'dialectic_critique',
+          text: 'Die eigentliche Kernfrage hierbei ist Souveränität: Wenn wir proprietären Cloud-Modellen unser Denken anvertrauen, verlieren wir die Kontrolle über unsere epistemischen Werkzeuge. Lokale Inferenz ist der einzige Weg.'
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/didaktik_labor',
+          authorBadge: 'Ethik & Medien',
+          timeAgo: 'vor 3 Std.',
+          score: 42 + (numSeed % 16),
+          commentType: 'didactic_transfer',
+          text: 'In der Schule beobachten wir: Sobald der Denkprozess an LLMs delegiert wird, erodiert die kognitive Frustrationstoleranz. Wir brauchen Interfaces wie Atem, die zum eigenen Formulieren herausfordern!'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/silicon_monk',
+          authorBadge: 'Apple Systems',
+          timeAgo: 'vor 1 Std.',
+          score: 31 + (numSeed % 14),
+          commentType: 'creative_synthesis',
+          text: 'Unified Memory auf Apple Silicon zeigt, wie die Hardware-Architektur das Nutzungsmuster prägt: 16–32 GB geteilter Speicher machen lokale 8B-Modelle in Millisekunden privat nutzbar.'
+        }
+      ];
+
+    case 'sound_synthesis':
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/patch_cables_only',
+          authorBadge: 'Modular Alchemist',
+          timeAgo: 'vor 4 Std.',
+          score: 46 + (numSeed % 22),
+          commentType: 'creative_synthesis',
+          text: 'Das erinnert mich an Serge-Wavefolder: Nicht die vorgegebene Tonleiter erzeugt musikalische Tiefe, sondern die feinstufige analoge Phasenverschiebung im Frequenzspektrum.'
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/deep_listening',
+          authorBadge: 'Klangökologie',
+          timeAgo: 'vor 2 Std.',
+          score: 33 + (numSeed % 15),
+          commentType: 'dialectic_critique',
+          text: 'Akustische Kontemplation schult dieselben Hirnareale wie tiefes Lesen. In einer Welt permanenter Dopamin-Pings ist bewusstes Verweilen in einer Klangschleife ein subversiver Akt.'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/lofi_artisan',
+          authorBadge: 'Improvisation',
+          timeAgo: 'vor 50 Min.',
+          score: 21 + (numSeed % 11),
+          commentType: 'didactic_transfer',
+          text: 'Praxistipp: Reduziert man die musikalischen Kontrollparameter auf zwei bis drei Drehregler, zwingt man sich selbst zu echtem Ausdruck statt technischer Ablenkung.'
+        }
+      ];
+
+    case 'science_society':
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/fakt_und_diskurs',
+          authorBadge: 'Wissenschaftsredaktion',
+          timeAgo: 'vor 3 Std.',
+          score: 59 + (numSeed % 25),
+          commentType: 'dialectic_critique',
+          text: `Gute Einordnung zu „${title.slice(0, 48)}…“. Wichtig ist die saubere Unterscheidung zwischen vorläufigen Korrelationsbefunden und methodisch gesicherter Kausalität.`
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/politischer_lehrer',
+          authorBadge: 'Gemeinschaftskunde Sek II',
+          timeAgo: 'vor 2 Std.',
+          score: 41 + (numSeed % 17),
+          commentType: 'didactic_transfer',
+          text: 'Genau das müssen wir Schülern vermitteln: Wie orientiert man sich in komplexen gesellschaftlichen Debatten anhand verifizierter, öffentlich-rechtlicher Quellen ohne in Zynismus zu verfallen?'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/gesellschaft_2030',
+          authorBadge: 'Techniksoziologe',
+          timeAgo: 'vor 1 Std.',
+          score: 26 + (numSeed % 13),
+          commentType: 'creative_synthesis',
+          text: 'Institutionelles Vertrauen wächst nur dort, wo Menschen als mündige, denkende Wesen angesprochen werden – nicht als Klick-Vieh für Werbealgorithmen.'
+        }
+      ];
+
+    case 'contemplation_mind':
+    default:
+      return [
+        {
+          id: `c_${seed}_1`,
+          authorHandle: 'u/stille_in_dresden',
+          authorBadge: 'Achtsamkeit & Kognition',
+          timeAgo: 'vor 4 Std.',
+          score: 61 + (numSeed % 28),
+          commentType: 'dialectic_critique',
+          text: 'Doomscrolling fragmentiert die Aufmerksamkeit im präfrontalen Kortex. Schon drei Minuten fokussiertes Lesen ohne Ablenkung bewirken eine spürbare kognitive Beruhigung.'
+        },
+        {
+          id: `c_${seed}_2`,
+          authorHandle: 'u/seneca_reader',
+          authorBadge: 'Stoische Philosophie',
+          timeAgo: 'vor 2 Std.',
+          score: 38 + (numSeed % 14),
+          commentType: 'creative_synthesis',
+          text: 'Freiheit beginnt da, wo man dem ersten sensorischen Reiz nicht reflexartig nachgibt. Jedes bewusste Innehalten ist gelebte Geistesgegenwart.'
+        },
+        {
+          id: `c_${seed}_3`,
+          authorHandle: 'u/schul_kontemplation',
+          authorBadge: 'Lehrer Sek I/II',
+          timeAgo: 'vor 1 Std.',
+          score: 24 + (numSeed % 12),
+          commentType: 'didactic_transfer',
+          text: 'Wir praktizieren vor anspruchsvollen Textanalysen eine Minute bewusstes Durchatmen. Die Konzentrationsqualität im Raum verändert sich dadurch fundamental.'
+        }
+      ];
+  }
+}
+
+/**
+ * Deterministic, instant intellectual AI sparring reply to a user reflection note.
+ */
+export function generateSparringReply(
+  noteText: string,
+  tag: 'einwand' | 'unterricht' | 'these' | 'notiz' = 'notiz',
+  itemTitle?: string
+): SparringReply {
+  const noteSnippet = noteText.length > 50 ? `${noteText.slice(0, 47)}…` : noteText;
+
+  switch (tag) {
+    case 'einwand':
+      return {
+        id: `reply_${Date.now()}`,
+        authorHandle: 'u/sokrates_2026',
+        authorBadge: 'Sokratischer Sparring-Partner',
+        createdAt: new Date().toISOString(),
+        text: `Scharfer Einwand! Du argumentierst: „${noteSnippet}“. Wenn wir diesen Faden zu Ende spinnen: Müsste man dann nicht konsequenterweise auch hinterfragen, ob die zugrundeliegende Prämisse überhaupt universell gilt? Wie würdest du auf den Vorwurf antworten, dass du hier die Ausnahme zum Maßstab machst?`
+      };
+
+    case 'unterricht':
+      return {
+        id: `reply_${Date.now()}`,
+        authorHandle: 'u/didaktik_labor',
+        authorBadge: 'Fachdidaktik Sek II',
+        createdAt: new Date().toISOString(),
+        text: `Starker Praxistransfer! Du schlägst vor: „${noteSnippet}“. Für die didaktische Reduktion im 45-Minuten-Takt: Mit welchem konkreten Einstiegsimpuls bringst du die Lerngruppe dazu, das Problem sofort als ihr eigenes Erkenntnisproblem wahrzunehmen?`
+      };
+
+    case 'these':
+      return {
+        id: `reply_${Date.now()}`,
+        authorHandle: 'u/dialektik_dresden',
+        authorBadge: 'Dialektischer Sparring-Partner',
+        createdAt: new Date().toISOString(),
+        text: `Mutige These: „${noteSnippet}“. Der dialektische Härtetest: Welches wäre das stärkste Argument eines philosophischen Skeptikers gegen diese Position – und wie würdest du den dialektischen Widerspruch auflösen?`
+      };
+
+    case 'notiz':
+    default:
+      return {
+        id: `reply_${Date.now()}`,
+        authorHandle: 'u/atem_curator',
+        authorBadge: 'Erkenntnis-Begleiter',
+        createdAt: new Date().toISOString(),
+        text: `Wesentliche Beobachtung zu diesem Text: „${noteSnippet}“. Dieser Gedanke berührt die fundamentale Frage nach kognitiver Souveränität: Wie bewahren wir eigenständige Urteilskraft in einer von Algorithmen getriebenen Aufmerksamkeitsökonomie?`
+      };
+  }
+}
+
+/**
  * Shared calculation function for word count and reading time.
  * Documented rule: Standard adult reading speed is 220 words per minute.
  * Time is rounded to nearest integer (minimum 1 minute).
@@ -94,6 +345,7 @@ function createFixture(item: any): FeedItem {
     challengePrompt: item.challengePrompt ?? (item.deepeningOptions?.reflectionPrompt || 'Welcher Einwand oder Praxistransfer fällt dir spontan ein?'),
     didacticSeed: item.didacticSeed ?? item.deepeningOptions?.didacticSeed,
     upvotesCount: item.upvotesCount ?? baseUpvotes,
+    comments: item.comments ?? getSimulatedCommentsForTopic(topic, item.title, item.id),
     ...item,
     wordCount: item.wordCount ?? stats.wordCount,
     estimatedReadingMinutes: item.estimatedReadingMinutes ?? stats.estimatedReadingMinutes

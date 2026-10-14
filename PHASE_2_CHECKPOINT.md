@@ -27,15 +27,14 @@
 - [x] **Stage 5**: Explainable Multi-Dimensional Personalization Engine (goals, feedback memory, 10% targets, explanation generation). Commit `0fccdd7`.
 - [x] **Stage 6**: Rich Standalone Feed UI & "Weiter entdecken" Batching (interactive cards, progressive disclosure, virtualization). Commit `0051b71`.
 - [x] **Stage 7**: Full Test Suite, Clean Verification, Screenshots & Review Archive.
-- [x] **Stage 8**: Atem Network Transformation ("Reddit for the Mind").
-  - Community Spaces (`c/acceleration`, `c/didaktik_labor`, `c/dialektik`, `c/synth_alchemie`, `c/kontemplation`, `c/serendipity`) with space badges, icons, tints, and filter tabs.
-  - Interactive Reflection Challenge Mini-Composer right on every card (`[⚡️ Einwand]`, `[🏫 Unterricht]`, `[💡 These]`, `[📝 Notiz]`) with offline persistence and dedicated "Meine Gedanken & Notizen" notebook in the Library.
-  - Reddit-style Upvoting/Downvoting (`▲ 89 ▼`) integrated with deterministic ranking.
-  - Real, curated high-resolution aesthetic photography for all domain categories.
-  - Key insight quote container, dialectic skeptic counter-argument container, and didactic laboratory transfer.
-  - Desktop (Mac) & iPad centering (`maxWidth: 780, alignSelf: 'center'`) across Feed, Reader, Library, Header, and Tab Bar.
-  - Infinite Mind-Scroll with smooth pagination, mindfulness milestones (`🌿 10 Erkenntnisse gesammelt`), and serendipity pulses.
-  - 50 passing unit tests across 6 suites, 0 typecheck errors, 0 lint warnings. Commit `78a59f2`.
+- [x] **Stage 8**: Atem Network Transformation ("Reddit for the Mind"). Commit `78a59f2`.
+- [x] **Stage 9**: Dedicated Desktop Reddit App, Öffentlich-Rechtliche Feeds, AI Sparring & Craft Docs Export:
+  - **Dedicated Reddit Desktop UI**: Two-column layout (`width >= 960px`) featuring `DesktopRedditHeader.tsx` (logo emblem, space selector, global search, Karma badge, AI budget meter, Craft shortcut) and sticky `DesktopSidebar.tsx` (rules, verified sources, budget progress, Craft export). Mobile bottom bar cleanly hides on desktop.
+  - **Trustworthy German News (Öffentlich-Rechtliche)**: Integrated ARD Tagesschau (Wissen & Inland) and ZDFheute with high-resolution image parsing (`<enclosure>`, `<media:content>`, `<img>`), yielding 48 verified, schema-valid articles in `pipeline-output.json`.
+  - **AI that Fakes Reddit for Me (Intellectual Sparring)**: Real articles enriched with 3 simulated community discussion comments (`💬 3 Community-Diskussion`: dialectic critique, didactic transfer, interdisciplinary synthesis). When the user writes a reflection, the AI acts as an intellectual sparring partner (`u/sokrates_2026`, `u/didaktik_labor`) with nested responses.
+  - **€5.00 Monthly Budget Cap**: Hard-capped with grounded Gemini Flash pricing ($0.10/M In, $0.40/M Out) via `EnrichmentUsageLedger`, with automatic zero-cost heuristic fallback.
+  - **Data Sovereignty & Craft Docs Exporter**: 1-click export of saved articles, user reflections, and sparring threads to structured Markdown for Craft Docs / Obsidian / Bear, with clipboard copy and `.md` download.
+  - **53 passing unit tests across 7 suites** (100% green), 0 typecheck errors, 0 lint warnings, production web export (`dist/`).
 
 ---
 
@@ -43,6 +42,7 @@
 
 1. **Typecheck**: `npm run typecheck` (`tsc --noEmit`) passes with 0 errors.
 2. **Lint**: `npm run lint` (`expo lint`) passes with 0 warnings.
-3. **Tests**: `npm test` runs 50 tests across 6 suites in ~1.4s; all 50 pass (100%).
-4. **Dev Server**: Running live on `http://localhost:8081` (desktop, tablet, and mobile web responsive).
-5. **Git Branch**: `feature/phase-2-discovery-pipeline`.
+3. **Tests**: `npm test` runs 53 tests across 7 suites in ~1.8s; all 53 pass (100%).
+4. **Web Build**: `npx expo export -p web` exported `dist/` cleanly (0 errors).
+5. **Dev Server**: Running live on `http://localhost:8081` (desktop, tablet, and mobile web responsive).
+6. **Git Branch**: `feature/phase-2-discovery-pipeline`.

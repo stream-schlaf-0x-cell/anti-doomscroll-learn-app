@@ -1,5 +1,5 @@
 import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP } from '../domain/types';
-import { INITIAL_FIXTURES, getCuratedImageForTopic } from './fixtures';
+import { INITIAL_FIXTURES, getCuratedImageForTopic, getSimulatedCommentsForTopic } from './fixtures';
 import { rankAndInterleaveFeed, ScoredFeedItem } from '../domain/ranking';
 
 // Safely load pipeline output if present
@@ -28,6 +28,9 @@ function enrichSocialFeedItem(item: FeedItem): FeedItem {
       : 'Welcher Gedanke oder Einwand fällt dir spontan dazu ein?'
   );
   const upvotesCount = item.upvotesCount || (40 + ((item.id.charCodeAt(item.id.length - 1) * 3) % 75));
+  const comments = item.comments && item.comments.length > 0
+    ? item.comments
+    : getSimulatedCommentsForTopic(topic, item.title, item.id);
 
   return {
     ...item,
@@ -36,7 +39,8 @@ function enrichSocialFeedItem(item: FeedItem): FeedItem {
     imageUrl,
     keyInsight,
     challengePrompt,
-    upvotesCount
+    upvotesCount,
+    comments
   };
 }
 

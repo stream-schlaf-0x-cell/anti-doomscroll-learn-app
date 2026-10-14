@@ -7,7 +7,8 @@ import {
   formatEvidenceTier,
   TOPIC_SPACE_MAP,
   TopicTag,
-  UserNote
+  UserNote,
+  CommunityComment
 } from '../../core/domain/types';
 import { useApp } from '../../core/context/AppContext';
 import { ReadingTimeBadge } from './ReadingTimeBadge';
@@ -38,6 +39,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
   const { colors, interactions, toggleSaveItem, openArticle, openWhyModal, voteItem, addNote } = useApp();
 
   const [isComposerOpen, setIsComposerOpen] = useState(false);
+  const [isDiscussionOpen, setIsDiscussionOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [selectedTag, setSelectedTag] = useState<'einwand' | 'unterricht' | 'these' | 'notiz'>('einwand');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
@@ -49,6 +51,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
   const isCompleted = (interaction?.completedAt !== undefined) || progress >= 95;
   const voteScore = interaction?.voteScore ?? 0;
   const userNotes: UserNote[] = interaction?.userNotes ?? [];
+  const communityComments: CommunityComment[] = item.comments || [];
 
   // Space information
   const spaceMeta = TOPIC_SPACE_MAP[item.primaryTopic as TopicTag];
@@ -360,7 +363,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
           </View>
         )}
 
-        {/* Render already saved user notes */}
+        {/* Render already saved user notes with AI sparring replies */}
         {userNotes.length > 0 && (
           <View style={styles.savedNotesList}>
             {userNotes.map(n => (
@@ -368,7 +371,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
                 <View style={styles.userNoteHeader}>
                   <View style={[styles.userNoteTag, { backgroundColor: colors.accentSubtle }]}>
                     <Text style={[styles.userNoteTagText, { color: colors.accent }]}>
-                      {n.tag === 'einwand' ? '⚡️ Einwand' : n.tag === 'unterricht' ? '🏫 Unterricht' : n.tag === 'these' ? '💡 These' : '📝 Notiz'}
+                      {n.tag === 'einwand' ? '⚡️ Dein Einwand' : n.tag === 'unterricht' ? '🏫 Dein Unterrichtsentwurf' : n.tag === 'these' ? '💡 Deine These' : '📝 Deine Notiz'}
                     </Text>
                   </View>
                   <Text style={[styles.userNoteDate, { color: colors.textMuted }]}>
@@ -378,6 +381,26 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
                 <Text style={[styles.userNoteContent, { color: colors.textPrimary }]}>
                   {n.text}
                 </Text>
+
+                {/* Indented AI Sparring Partner Response */}
+                {n.sparringReply && (
+                  <View style={[styles.sparringReplyBox, { backgroundColor: colors.surfaceSecondary, borderLeftColor: colors.accent }]}>
+                    <View style={styles.sparringHeader}>
+                      <Ionicons name="chatbubbles-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
+                      <Text style={[styles.sparringHandle, { color: colors.accent }]}>
+                        {n.sparringReply.authorHandle}
+                      </Text>
+                      <View style={[styles.sparringBadge, { backgroundColor: colors.accentSubtle }]}>
+                        <Text style={[styles.sparringBadgeText, { color: colors.accent }]}>
+                          {n.sparringReply.authorBadge || 'Sparring'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={[styles.sparringText, { color: colors.textPrimary }]}>
+                      {n.sparringReply.text}
+                    </Text>
+                  </View>
+                )}
               </View>
             ))}
           </View>
@@ -415,7 +438,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
         </View>
       )}
 
-      {/* 12. Bottom Social Action Bar: Upvote/Downvote, Why Sparkle, Completion Status */}
+      {/* 12. Bottom Social Action Bar: Upvote/Downvote, Discussion Pill, Why Sparkle, Completion Status */}
       <View style={[styles.footerRow, { borderTopColor: colors.borderSubtle }]}>
         {/* Reddit-style Upvote/Downvote Pill */}
         <View style={[styles.voteContainer, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
@@ -457,6 +480,30 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
           </TouchableOpacity>
         </View>
 
+        {/* Reddit-style Comments & Sparring Toggle */}
+        <TouchableOpacity
+          onPress={() => setIsDiscussionOpen(prev => !prev)}
+          style={[styles.commentsButton, { backgroundColor: isDiscussionOpen ? colors.accentSubtle : colors.surfaceSecondary }]}
+          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          accessibilityLabel="Community-Diskussion öffnen"
+        >
+          <Ionicons
+            name="chatbubble-ellipses-outline"
+            size={13}
+            color={isDiscussionOpen ? colors.accent : colors.textMuted}
+            style={{ marginRight: 5 }}
+          />
+          <Text style={[styles.commentsButtonText, { color: isDiscussionOpen ? colors.accent : colors.textPrimary }]}>
+            {communityComments.length + userNotes.length}
+          </Text>
+          <Ionicons
+            name={isDiscussionOpen ? 'chevron-up' : 'chevron-down'}
+            size={11}
+            color={isDiscussionOpen ? colors.accent : colors.textMuted}
+            style={{ marginLeft: 3 }}
+          />
+        </TouchableOpacity>
+
         {/* Why this post pill */}
         <TouchableOpacity
           onPress={handleWhyPress}
@@ -465,7 +512,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
         >
           <Ionicons name="sparkles-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
           <Text style={[styles.whyText, { color: colors.textMuted }]}>
-            Warum sehe ich das?
+            Warum?
           </Text>
         </TouchableOpacity>
 
@@ -481,6 +528,62 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
           </Text>
         )}
       </View>
+
+      {/* 13. Simulated Reddit Community Discussion Thread */}
+      {isDiscussionOpen && (
+        <View style={[styles.discussionContainer, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.borderSubtle }]}>
+          <View style={styles.discussionHeader}>
+            <View style={styles.discussionHeaderLeft}>
+              <Ionicons name="people-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+              <Text style={[styles.discussionTitle, { color: colors.textPrimary }]}>
+                Atem Community Diskurs ({communityComments.length + userNotes.length})
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => setIsComposerOpen(true)}>
+              <Text style={[styles.replyLink, { color: colors.accent }]}>+ Replik wagen</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.commentsList}>
+            {communityComments.map(c => (
+              <View key={c.id} style={[styles.commentCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <View style={styles.commentHeader}>
+                  <View style={styles.commentAuthorRow}>
+                    <View style={[styles.commentAvatar, { backgroundColor: colors.accentSubtle }]}>
+                      <Text style={[styles.commentAvatarText, { color: colors.accent }]}>
+                        {c.authorHandle.charAt(2).toUpperCase()}
+                      </Text>
+                    </View>
+                    <Text style={[styles.commentHandle, { color: colors.textPrimary }]}>
+                      {c.authorHandle}
+                    </Text>
+                    {c.authorBadge && (
+                      <View style={[styles.commentBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                        <Text style={[styles.commentBadgeText, { color: colors.textMuted }]}>
+                          {c.authorBadge}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.commentMetaRight}>
+                    <Text style={[styles.commentScore, { color: colors.textMuted }]}>
+                      ▲ {c.score}
+                    </Text>
+                    <Text style={[styles.commentTime, { color: colors.textMuted }]}>
+                      {c.timeAgo}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={[styles.commentBody, { color: colors.textPrimary }]}>
+                  {c.text}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
     </View>
   );
 };
@@ -867,5 +970,129 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.micro,
     fontWeight: '500',
     maxWidth: 110
+  },
+  sparringReplyBox: {
+    marginTop: 8,
+    paddingLeft: 10,
+    borderLeftWidth: 2,
+    paddingVertical: 4
+  },
+  sparringHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2
+  },
+  sparringHandle: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  sparringBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4
+  },
+  sparringBadgeText: {
+    fontSize: 9,
+    fontWeight: '700'
+  },
+  sparringText: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontStyle: 'italic'
+  },
+  commentsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill
+  },
+  commentsButtonText: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  discussionContainer: {
+    borderTopWidth: 0.5,
+    padding: spacing.md,
+    marginTop: spacing.sm,
+    borderBottomLeftRadius: radius.lg,
+    borderBottomRightRadius: radius.lg
+  },
+  discussionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm
+  },
+  discussionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  discussionTitle: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  replyLink: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  commentsList: {
+    gap: 8
+  },
+  commentCard: {
+    padding: 10,
+    borderRadius: radius.md,
+    borderWidth: 0.5
+  },
+  commentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  commentAuthorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  commentAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  commentAvatarText: {
+    fontSize: 10,
+    fontWeight: '800'
+  },
+  commentHandle: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  commentBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 3
+  },
+  commentBadgeText: {
+    fontSize: 9
+  },
+  commentMetaRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  commentScore: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  commentTime: {
+    fontSize: 10
+  },
+  commentBody: {
+    fontSize: 12,
+    lineHeight: 17
   }
 });

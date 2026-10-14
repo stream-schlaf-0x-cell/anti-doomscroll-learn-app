@@ -129,10 +129,12 @@ export function normalizeFeedEntry(entry: RawFeedEntry, source: RawFeedSource): 
       interpretation: entry.summary.slice(0, 200),
       humanSource: author
     } : undefined,
+    imageUrl: entry.imageUrl,
 
     // Atem Network & Social Discovery Additions
     space: TOPIC_SPACE_MAP[source.primaryTopic]?.space,
     flair: TOPIC_SPACE_MAP[source.primaryTopic]?.flair,
-    upvotesCount: 42 + (contentHash.charCodeAt(0) % 50)
+    upvotesCount: 42 + (contentHash.charCodeAt(0) % 50),
+    comments: []
   };
 }

@@ -1,5 +1,6 @@
 import { ReadingInteraction, ReadingInteractionSchema, FeedItem, FeedItemSchema } from '../domain/types';
 import { AtemStorage, appStorage, CorruptedDataError } from './storage';
+import { generateSparringReply } from './fixtures';
 
 export const INTERACTIONS_STORAGE_KEY = '@atem:interactions:v1';
 export const SAVED_ARTICLES_STORAGE_KEY = '@atem:saved_articles:v1';
@@ -268,11 +269,13 @@ export class LocalLibraryRepository implements ILibraryRepository {
       if (existing) return existing;
       return this.mutateInteraction(itemId, c => c);
     }
+    const sparringReply = generateSparringReply(trimmed, tag);
     const note = {
       id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       text: trimmed,
       createdAt: new Date().toISOString(),
-      tag
+      tag,
+      sparringReply
     };
     return this.mutateInteraction(itemId, current => ({
       ...current,

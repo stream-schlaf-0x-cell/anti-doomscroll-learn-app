@@ -165,6 +165,18 @@ export const PerspectiveDetailsSchema = z.object({
 });
 export type PerspectiveDetails = z.infer<typeof PerspectiveDetailsSchema>;
 
+// Simulated Reddit Community Discussion Comments
+export const CommunityCommentSchema = z.object({
+  id: z.string(),
+  authorHandle: z.string(), // e.g. "u/dialektik_dresden", "u/didaktik_labor", "u/synth_alchemie"
+  authorBadge: z.string().optional(), // e.g. "Philosophie Sek II", "Gymnasiallehrer", "Modular Alchemist"
+  timeAgo: z.string(),
+  score: z.number().int().default(1),
+  text: z.string(),
+  commentType: z.enum(['dialectic_critique', 'didactic_transfer', 'creative_synthesis', 'sparring_reply']).default('dialectic_critique')
+});
+export type CommunityComment = z.infer<typeof CommunityCommentSchema>;
+
 export const FeedItemSchema = z.object({
   id: z.string(),
   type: ContentTypeSchema,
@@ -212,7 +224,8 @@ export const FeedItemSchema = z.object({
   keyInsight: z.string().optional(),
   challengePrompt: z.string().optional(),
   didacticSeed: z.string().optional(),
-  upvotesCount: z.number().int().default(42)
+  upvotesCount: z.number().int().default(42),
+  comments: z.array(CommunityCommentSchema).default([])
 });
 export type FeedItem = z.infer<typeof FeedItemSchema>;
 
@@ -362,11 +375,21 @@ export const UserProfileSchema = z.object({
 });
 export type UserProfile = z.infer<typeof UserProfileSchema>;
 
+export const SparringReplySchema = z.object({
+  id: z.string(),
+  authorHandle: z.string(), // e.g. "u/sokrates_2026", "u/didaktik_labor", "u/dialektik_dresden"
+  authorBadge: z.string().optional(), // e.g. "Sokratischer Sparring-Partner"
+  text: z.string(),
+  createdAt: z.string()
+});
+export type SparringReply = z.infer<typeof SparringReplySchema>;
+
 export const UserNoteSchema = z.object({
   id: z.string(),
   text: z.string(),
   createdAt: z.string(),
-  tag: z.enum(['einwand', 'unterricht', 'these', 'notiz']).default('notiz')
+  tag: z.enum(['einwand', 'unterricht', 'these', 'notiz']).default('notiz'),
+  sparringReply: SparringReplySchema.optional()
 });
 export type UserNote = z.infer<typeof UserNoteSchema>;
 

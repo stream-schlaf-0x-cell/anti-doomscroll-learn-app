@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,6 +30,8 @@ const MainNavigator: React.FC = () => {
   } = useApp();
 
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 960;
 
   // Startup loading indicator
   if (startupState.status === 'loading') {
@@ -125,98 +127,100 @@ const MainNavigator: React.FC = () => {
       {/* Transparent "Why This" Modal */}
       <WhyThisModal />
 
-      {/* Bottom Tab Bar with Inset Padding */}
-      <View
-        style={[
-          styles.tabBar,
-          {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.borderSubtle,
-            paddingBottom: Math.max(insets.bottom, 10)
-          }
-        ]}
-      >
-        <View style={styles.tabBarInner}>
-          {/* Tab 1: Feed / Network */}
-          <TouchableOpacity
-            accessibilityRole="tab"
-            accessibilityLabel="Entdecken"
-            accessibilityState={{ selected: activeTab === 'feed' }}
-            onPress={() => setActiveTab('feed')}
-            style={styles.tabItem}
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name={activeTab === 'feed' ? 'compass' : 'compass-outline'}
-              size={22}
-              color={activeTab === 'feed' ? colors.accent : colors.textMuted}
-            />
-            <Text
-              style={[
-                styles.tabLabel,
-                { color: activeTab === 'feed' ? colors.accent : colors.textMuted }
-              ]}
+      {/* Bottom Tab Bar with Inset Padding (Mobile/Tablet only) */}
+      {!isDesktop && (
+        <View
+          style={[
+            styles.tabBar,
+            {
+              backgroundColor: colors.surface,
+              borderTopColor: colors.borderSubtle,
+              paddingBottom: Math.max(insets.bottom, 10)
+            }
+          ]}
+        >
+          <View style={styles.tabBarInner}>
+            {/* Tab 1: Feed / Network */}
+            <TouchableOpacity
+              accessibilityRole="tab"
+              accessibilityLabel="Entdecken"
+              accessibilityState={{ selected: activeTab === 'feed' }}
+              onPress={() => setActiveTab('feed')}
+              style={styles.tabItem}
+              activeOpacity={0.7}
             >
-              Entdecken
-            </Text>
-          </TouchableOpacity>
-
-          {/* Tab 2: Library & Notebook */}
-          <TouchableOpacity
-            accessibilityRole="tab"
-            accessibilityLabel="Bibliothek"
-            accessibilityState={{ selected: activeTab === 'library' }}
-            onPress={() => setActiveTab('library')}
-            style={styles.tabItem}
-            activeOpacity={0.7}
-          >
-            <View style={styles.iconBadgeWrapper}>
               <Ionicons
-                name={activeTab === 'library' ? 'bookmarks' : 'bookmarks-outline'}
+                name={activeTab === 'feed' ? 'compass' : 'compass-outline'}
                 size={22}
-                color={activeTab === 'library' ? colors.accent : colors.textMuted}
+                color={activeTab === 'feed' ? colors.accent : colors.textMuted}
               />
-              {savedCount > 0 && (
-                <View style={[styles.badge, { backgroundColor: colors.accent }]}>
-                  <Text style={styles.badgeText}>{savedCount}</Text>
-                </View>
-              )}
-            </View>
-            <Text
-              style={[
-                styles.tabLabel,
-                { color: activeTab === 'library' ? colors.accent : colors.textMuted }
-              ]}
-            >
-              Bibliothek
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  { color: activeTab === 'feed' ? colors.accent : colors.textMuted }
+                ]}
+              >
+                Entdecken
+              </Text>
+            </TouchableOpacity>
 
-          {/* Tab 3: Settings */}
-          <TouchableOpacity
-            accessibilityRole="tab"
-            accessibilityLabel="Einstellungen"
-            accessibilityState={{ selected: activeTab === 'settings' }}
-            onPress={() => setActiveTab('settings')}
-            style={styles.tabItem}
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name={activeTab === 'settings' ? 'options' : 'options-outline'}
-              size={22}
-              color={activeTab === 'settings' ? colors.accent : colors.textMuted}
-            />
-            <Text
-              style={[
-                styles.tabLabel,
-                { color: activeTab === 'settings' ? colors.accent : colors.textMuted }
-              ]}
+            {/* Tab 2: Library & Notebook */}
+            <TouchableOpacity
+              accessibilityRole="tab"
+              accessibilityLabel="Bibliothek"
+              accessibilityState={{ selected: activeTab === 'library' }}
+              onPress={() => setActiveTab('library')}
+              style={styles.tabItem}
+              activeOpacity={0.7}
             >
-              Steuerung
-            </Text>
-          </TouchableOpacity>
+              <View style={styles.iconBadgeWrapper}>
+                <Ionicons
+                  name={activeTab === 'library' ? 'bookmarks' : 'bookmarks-outline'}
+                  size={22}
+                  color={activeTab === 'library' ? colors.accent : colors.textMuted}
+                />
+                {savedCount > 0 && (
+                  <View style={[styles.badge, { backgroundColor: colors.accent }]}>
+                    <Text style={styles.badgeText}>{savedCount}</Text>
+                  </View>
+                )}
+              </View>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  { color: activeTab === 'library' ? colors.accent : colors.textMuted }
+                ]}
+              >
+                Bibliothek
+              </Text>
+            </TouchableOpacity>
+
+            {/* Tab 3: Settings */}
+            <TouchableOpacity
+              accessibilityRole="tab"
+              accessibilityLabel="Einstellungen"
+              accessibilityState={{ selected: activeTab === 'settings' }}
+              onPress={() => setActiveTab('settings')}
+              style={styles.tabItem}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={activeTab === 'settings' ? 'options' : 'options-outline'}
+                size={22}
+                color={activeTab === 'settings' ? colors.accent : colors.textMuted}
+              />
+              <Text
+                style={[
+                  styles.tabLabel,
+                  { color: activeTab === 'settings' ? colors.accent : colors.textMuted }
+                ]}
+              >
+                Steuerung
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      )}
     </SafeAreaView>
   );
 };
