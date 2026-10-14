@@ -226,4 +226,83 @@ describe('Deterministic Ranking Engine', () => {
     assert.ok(scored.relevanceExplanation.includes('Affinität zu') || scored.relevanceExplanation.length > 10);
     assert.ok(scored.scoreBreakdown.explanation.length > 10, 'Explanation must not be empty');
   });
+
+  it('should adjust scores based on explicit personal goals alignment', () => {
+    const techItem = INITIAL_FIXTURES.find(i => i.primaryTopic === 'ai_apple')!;
+    const highTechProfile = {
+      ...DEFAULT_USER_PROFILE,
+      explicitGoals: {
+        ...DEFAULT_USER_PROFILE.explicitGoals,
+        understand_tech: 1.0
+      }
+    };
+    const lowTechProfile = {
+      ...DEFAULT_USER_PROFILE,
+      explicitGoals: {
+        ...DEFAULT_USER_PROFILE.explicitGoals,
+        understand_tech: 0.1
+      }
+    };
+
+    const highScored = scoreFeedItem(techItem, highTechProfile);
+    const lowScored = scoreFeedItem(techItem, lowTechProfile);
+
+    assert.ok(
+      highScored.score > lowScored.score,
+      `High tech goal score (${highScored.score}) should exceed low tech goal score (${lowScored.score})`
+    );
+    assert.strictEqual(highScored.scoreBreakdown.goalAlignment, 1.0);
+    assert.strictEqual(lowScored.scoreBreakdown.goalAlignment, 0.1);
+  });
+
+  it('should adjust scores based on feedback memory for authors and topics', () => {
+    const item = INITIAL_FIXTURES[0];
+    const author = item.sourceReferences[0]?.author || 'Peter Kirn';
+
+    const boostedAuthorProfile = {
+      ...DEFAULT_USER_PROFILE,
+      feedbackMemory: {
+        ...DEFAULT_USER_PROFILE.feedbackMemory,
+        boostedAuthors: { [author]: 1 }
+      }
+    };
+    const penalizedAuthorProfile = {
+      ...DEFAULT_USER_PROFILE,
+      feedbackMemory: {
+        ...DEFAULT_USER_PROFILE.feedbackMemory,
+        penalizedAuthors: { [author]: 1 }
+      }
+    };
+
+    const boosted = scoreFeedItem(item, boostedAuthorProfile);
+    const penalized = scoreFeedItem(item, penalizedAuthorProfile);
+
+    assert.ok(boosted.score > penalized.score, 'Boosted author score must exceed penalized author score');
+    assert.ok(boosted.scoreBreakdown.authorBoost > 0);
+    assert.ok(penalized.scoreBreakdown.authorBoost < 0);
+  });
+
+  it('should enforce soft editorial quota for teaching items and challenging perspectives in primary batch', () => {
+    // User profile with low affinity to teaching and ethics
+    const extremeProfile = {
+      ...DEFAULT_USER_PROFILE,
+      explicitInterests: {
+        ai_apple: 1.0,
+        sound_synthesis: 1.0,
+        science_society: 0.9,
+        german_didactics: 0.05,
+        philosophy_ethics: 0.05,
+        contemplation_mind: 0.05
+      }
+    };
+
+    const batch = rankAndInterleaveFeed(INITIAL_FIXTURES, extremeProfile, {}, { batchSize: 5 });
+    const topBatch = batch.slice(0, 5);
+
+    const hasTeaching = topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics');
+    const hasChallenging = topBatch.some(i => i.isChallengingPerspective || i.type === 'perspective');
+
+    assert.strictEqual(hasTeaching, true, 'Top batch must contain at least one teaching-related item via soft quota');
+    assert.strictEqual(hasChallenging, true, 'Top batch must contain at least one challenging perspective via soft quota');
+  });
 });

@@ -24,23 +24,24 @@
 - [x] **Stage 2**: Storage Safeguards & Decoupled Library Persistence (bug fixes for data protection, offline library retention).
 - [x] **Stage 3**: Live Endpoint Discovery & Ingestion Pipeline (verified RSS/Atom feeds, normalization, deduplication, CLI runner).
 - [x] **Stage 4**: Provider-Independent Enrichment & €5 Budget Ledger (usage tracker, caching, Gemini pricing model grounding).
-- [ ] **Stage 5**: Explainable Multi-Dimensional Personalization Engine (goals, feedback memory, 10% targets, explanation generation).
+- [x] **Stage 5**: Explainable Multi-Dimensional Personalization Engine (goals, feedback memory, 10% targets, explanation generation).
 - [ ] **Stage 6**: Rich Standalone Feed UI & "Weiter entdecken" Batching (interactive cards, progressive disclosure, virtualization).
 - [ ] **Stage 7**: Full Test Suite, Clean Verification, Screenshots & Review Archive.
 
 ---
 
 ## 3. Current Stage
-**Stage 5: Explainable Multi-Dimensional Personalization Engine**
+**Stage 6: Rich Standalone Feed UI & "Weiter entdecken" Batching**
 - *Goal*:
-  1. Upgrade `src/core/domain/ranking.ts` to compute multidimensional affinity:
-     - Topic affinity from `explicitInterests` (weights 0.0 - 1.0)
-     - Personal goal affinity from `explicitGoals` (aligned goals)
-     - Duration preference match (`all`, `quick`, `balanced`, `deep`)
-     - Feedback memory boosts/penalties: `feedbackMemory.boostedTopics`, `penalizedTopics`, `boostedAuthors`, `penalizedAuthors`
-     - Behavioral signal decay: slight penalty for already-opened unread items to encourage fresh discoveries
-  2. Soft editorial quota enforcement during batch selection:
-     - Guarantee ~10% teaching-related items (`isTeachingRelated` or `german_didactics`)
-     - Guarantee ~10% challenging perspectives (`isChallengingPerspective` or `perspective_disagreement`)
-  3. Transparent German explanation generation (`relevanceExplanation` and detailed breakdown) so every card tells the user exactly why it appears.
-- *Validation*: Extend `tests/domain.test.ts` with ranking regression tests for goal alignment, feedback memory, editorial quota guarantees, and explanation transparency.
+  1. Update `FeedCard.tsx`:
+     - Display full, standalone substantive text (`feedText`) right inside the card (no clickbait snippets).
+     - Display format badge (`formatFeedItemFormat`: Kompakter Einblick, Quellengestütztes Update, Kreative Idee, Offene Leitfrage, Unerwartete Verbindung, Kontroverse Perspektive, Leseeinladung).
+     - Display evidence tier badge (`metadata_only`, `publisher_excerpt`, `permitted_full_text`, `multiple_sources`).
+     - Display "Weiterlesen →" button to open reader overlay only when expanded `articleBody` exists.
+     - Keep instant bookmark, feedback thumbs, and "Warum dieser Beitrag?" transparent explanation modal.
+  2. Update `FeedScreen.tsx`:
+     - Render primary finite edition batch (10–12 items).
+     - At the end of the batch: "Weiter entdecken" button appends the next 10–12 items smoothly to the bottom of the feed without re-shuffling previous items, repeating stories, or causing scroll jumps.
+     - Pull-to-refresh prepares fresh items at the top.
+     - Smooth FlatList performance.
+- *Validation*: Verify web rendering, responsiveness, zero scroll shift on "Weiter entdecken", and component tests.

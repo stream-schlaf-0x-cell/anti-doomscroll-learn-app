@@ -1,4 +1,4 @@
-import { FeedItem, UserProfile, ReadingInteraction, TopicTag } from './types';
+import { FeedItem, UserProfile, ReadingInteraction, TopicTag, PersonalGoal } from './types';
 
 export interface ScoredFeedItem extends FeedItem {
   score: number;
@@ -7,12 +7,24 @@ export interface ScoredFeedItem extends FeedItem {
     durationMatch: number;
     depthBonus: number;
     feedbackMultiplier: number;
+    goalAlignment: number;
+    authorBoost: number;
     explanation: string;
   };
 }
 
+const TOPIC_GOAL_MAP: Record<TopicTag, PersonalGoal> = {
+  ai_apple: 'understand_tech',
+  sound_synthesis: 'creative_music',
+  contemplation_mind: 'deepen_attention',
+  philosophy_ethics: 'philosophical_clarity',
+  science_society: 'society_and_ethics',
+  german_didactics: 'deepen_attention'
+};
+
 /**
- * Computes deterministic score for a feed item based on user profile and past interactions.
+ * Computes deterministic multi-dimensional score for a feed item based on user profile,
+ * personal goals, explicit feedback memory, and past interactions.
  */
 export function scoreFeedItem(
   item: FeedItem,
@@ -22,7 +34,7 @@ export function scoreFeedItem(
   const interaction = interactions[item.id];
 
   // 1. Topic Affinity Calculation
-  let primaryWeight = profile.explicitInterests[item.primaryTopic] ?? 0.5;
+  const primaryWeight = profile.explicitInterests[item.primaryTopic] ?? 0.5;
   let secondaryBonus = 0;
   for (const topic of item.topics) {
     if (topic !== item.primaryTopic) {
@@ -32,7 +44,11 @@ export function scoreFeedItem(
   }
   const topicAffinity = Math.min(1.0, primaryWeight + secondaryBonus);
 
-  // 2. Duration Matching
+  // 2. Personal Goal Alignment
+  const targetGoal = TOPIC_GOAL_MAP[item.primaryTopic];
+  const goalAlignment = profile.explicitGoals?.[targetGoal] ?? 0.80;
+
+  // 3. Duration Matching
   let durationMatch = 0.5;
   const pref = profile.readingPreferences.preferredDuration;
   const mins = item.estimatedReadingMinutes;
@@ -52,34 +68,82 @@ export function scoreFeedItem(
     durationMatch = 0.8;
   }
 
-  // 3. Intellectual Depth Bonus (encourage thought and perspective over quick consumption)
-  const depthBonus = (item.type === 'perspective' || item.type === 'deep_dive' || item.type === 'connection') ? 0.15 : 0;
+  // 4. Intellectual Depth Bonus (encourage thought and perspective over quick consumption)
+  const depthBonus = (
+    item.type === 'perspective' ||
+    item.type === 'deep_dive' ||
+    item.type === 'connection' ||
+    item.isChallengingPerspective
+  ) ? 0.15 : 0;
 
-  // 4. Feedback Adjustment
+  // 5. Author and Topic Feedback Memory
+  let authorBoost = 0;
+  const author = item.sourceReferences[0]?.author;
+  if (author && profile.feedbackMemory?.boostedAuthors?.[author]) {
+    authorBoost += 0.20;
+  }
+  if (author && profile.feedbackMemory?.penalizedAuthors?.[author]) {
+    authorBoost -= 0.30;
+  }
+
+  let topicMemoryDelta = 0;
+  if (profile.feedbackMemory?.boostedTopics?.[item.primaryTopic]) {
+    topicMemoryDelta += 0.15;
+  }
+  if (profile.feedbackMemory?.penalizedTopics?.[item.primaryTopic]) {
+    topicMemoryDelta -= 0.25;
+  }
+
+  // 6. Explicit Feedback Multiplier
   let feedbackMultiplier = 1.0;
   if (interaction?.feedback === 'more_like_this') {
-    feedbackMultiplier = 1.25;
+    feedbackMultiplier = 1.30;
   } else if (interaction?.feedback === 'less_like_this') {
     feedbackMultiplier = 0.40;
   }
 
-  // 5. Unread / In-Progress Freshness
-  const unreadBonus = interaction?.completedAt ? -0.15 : 0.10;
+  // 7. Behavioral signals & Freshness
+  let behaviorDelta = 0;
+  if (profile.behavioralSignals?.completedReadIds?.includes(item.id) || interaction?.completedAt) {
+    behaviorDelta -= 0.25;
+  } else if (profile.behavioralSignals?.recentSavedIds?.includes(item.id) || interaction?.saved) {
+    behaviorDelta += 0.15;
+  } else if (profile.behavioralSignals?.recentOpenedIds?.includes(item.id)) {
+    behaviorDelta -= 0.05;
+  }
 
-  // Normalized base score: topic (50%) + duration (25%) + depth (15%) + freshness (10%)
-  const baseScore = topicAffinity * 0.50 + durationMatch * 0.25 + depthBonus + Math.max(0, unreadBonus);
+  // Composite score: topic (40%) + goal (20%) + duration (20%) + depth (10%) + memory & behavior
+  const baseScore =
+    topicAffinity * 0.40 +
+    goalAlignment * 0.20 +
+    durationMatch * 0.20 +
+    depthBonus +
+    topicMemoryDelta +
+    authorBoost +
+    behaviorDelta;
 
-  // Final deterministic composite score
-  const finalScore = Math.max(0.01, Math.round((baseScore * feedbackMultiplier + (unreadBonus < 0 ? unreadBonus : 0)) * 1000) / 1000);
+  const finalScore = Math.max(
+    0.01,
+    Math.round((baseScore * feedbackMultiplier) * 1000) / 1000
+  );
 
-  // Human-readable explanation in German
+  // Human-readable German explanation
   const affinityPercent = Math.round(topicAffinity * 100);
   let reason = `Affinität zu ${getTopicLabel(item.primaryTopic)}: ${affinityPercent}% • Lesezeit: ${mins} Min.`;
-  if (depthBonus > 0) {
+  if (item.isTeachingRelated) {
+    reason += ` • Didaktischer Impuls für Schule & Unterricht`;
+  }
+  if (item.isChallengingPerspective) {
+    reason += ` • Hinterfragt etablierte Sichtweisen`;
+  }
+  if (depthBonus > 0 && !item.isChallengingPerspective) {
     reason += ` • Hohe inhaltliche Tiefe (${formatContentType(item.type)})`;
   }
   if (feedbackMultiplier > 1.0) {
     reason += ` • Positives Feedback vermerkt`;
+  }
+  if (authorBoost > 0) {
+    reason += ` • Bevorzugte Quelle`;
   }
 
   return {
@@ -91,41 +155,73 @@ export function scoreFeedItem(
       durationMatch,
       depthBonus,
       feedbackMultiplier,
+      goalAlignment,
+      authorBoost,
       explanation: reason
     }
   };
 }
 
 /**
- * Re-ranks feed items with topic diversity interleaving.
- * Prevents identical primary topics from clumping together consecutively.
+ * Re-ranks feed items with soft editorial quota enforcement and topic diversity interleaving.
+ * Guarantees ~10% teaching-related items and ~10% challenging perspectives in the primary batch,
+ * and prevents identical primary topics from clumping together consecutively.
  */
 export function rankAndInterleaveFeed(
   items: FeedItem[],
   profile: UserProfile,
-  interactions: Record<string, ReadingInteraction> = {}
+  interactions: Record<string, ReadingInteraction> = {},
+  options?: { batchSize?: number; targetTeachingRatio?: number; targetChallengingRatio?: number }
 ): ScoredFeedItem[] {
   // Score all items
   const scored = items.map(item => scoreFeedItem(item, profile, interactions));
-
-  // Sort descending by score
   scored.sort((a, b) => b.score - a.score);
 
-  // Apply diversity interleaving
+  const batchSize = options?.batchSize ?? Math.min(12, scored.length);
+  const teachingTarget = options?.targetTeachingRatio ?? profile.editorialTargets?.teachingTargetRatio ?? 0.10;
+  const challengingTarget = options?.targetChallengingRatio ?? profile.editorialTargets?.challengingTargetRatio ?? 0.10;
+
+  // Split into active candidate batch and overflow pool
+  const topBatch = scored.slice(0, batchSize);
+  const remainder = scored.slice(batchSize);
+
+  // Soft quota 1: Teaching related (~10% -> at least 1 item in batch of 10-12)
+  if (teachingTarget > 0 && !topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics')) {
+    const teachingIndex = remainder.findIndex(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics');
+    if (teachingIndex !== -1) {
+      const [elevated] = remainder.splice(teachingIndex, 1);
+      const replaceIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
+      if (replaceIdx !== -1) {
+        remainder.push(topBatch[replaceIdx]);
+        topBatch.splice(replaceIdx, 1, elevated);
+      }
+    }
+  }
+
+  // Soft quota 2: Challenging perspective (~10% -> at least 1 item in batch of 10-12)
+  if (challengingTarget > 0 && !topBatch.some(i => i.isChallengingPerspective || i.type === 'perspective')) {
+    const challengingIndex = remainder.findIndex(i => i.isChallengingPerspective || i.type === 'perspective');
+    if (challengingIndex !== -1) {
+      const [elevated] = remainder.splice(challengingIndex, 1);
+      const replaceIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
+      if (replaceIdx !== -1) {
+        remainder.push(topBatch[replaceIdx]);
+        topBatch.splice(replaceIdx, 1, elevated);
+      }
+    }
+  }
+
+  // Interleave topics to prevent clumping
+  const combined = [...topBatch, ...remainder];
   const result: ScoredFeedItem[] = [];
-  const pool = [...scored];
+  const pool = [...combined];
 
   while (pool.length > 0) {
     const lastTopic = result.length > 0 ? result[result.length - 1].primaryTopic : null;
-
-    // Find the highest scoring item whose primaryTopic is different from the last added item
     let nextIndex = pool.findIndex(item => item.primaryTopic !== lastTopic);
-
-    // If no distinct topic exists (or only 1-2 items remaining), take the next highest
     if (nextIndex === -1) {
       nextIndex = 0;
     }
-
     const [chosen] = pool.splice(nextIndex, 1);
     result.push(chosen);
   }
