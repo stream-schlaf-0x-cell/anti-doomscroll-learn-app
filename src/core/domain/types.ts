@@ -136,6 +136,16 @@ export const EvidenceTierSchema = z.enum([
 ]);
 export type EvidenceTier = z.infer<typeof EvidenceTierSchema>;
 
+export function formatEvidenceTier(tier?: EvidenceTier): string {
+  switch (tier) {
+    case 'permitted_full_text': return 'Volltext verfügbar';
+    case 'multiple_sources': return 'Quellensynthese';
+    case 'publisher_excerpt': return 'Herausgeber-Auszug';
+    case 'metadata_only': return 'Quellnotiz';
+    default: return 'Verifizierte Quelle';
+  }
+}
+
 // Phase 2 Content Origin
 export const ContentOriginSchema = z.enum([
   'live_ingested',    // Frisch aus verifizierten RSS/Atom-Quellen bezogen

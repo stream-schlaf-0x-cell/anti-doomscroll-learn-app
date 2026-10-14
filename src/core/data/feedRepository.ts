@@ -49,18 +49,23 @@ export class LocalFeedRepository implements IFeedRepository {
     profile: UserProfile,
     interactions: Record<string, ReadingInteraction> = {}
   ): Promise<ScoredFeedItem[]> {
-    // Curated daily items for the finite edition
+    // Curated daily items for the finite edition (top 10-12 items)
     const dailyPool = this.items.filter(item => item.isDailyEdition);
-    return rankAndInterleaveFeed(dailyPool, profile, interactions);
+    const rankedDaily = rankAndInterleaveFeed(dailyPool, profile, interactions);
+    return rankedDaily.slice(0, 12);
   }
 
   async getDiscoveryItems(
     profile: UserProfile,
     interactions: Record<string, ReadingInteraction> = {}
   ): Promise<ScoredFeedItem[]> {
-    // Extended discovery items (items not in daily edition, or all items for infinite continuation)
-    const discoveryPool = this.items.filter(item => !item.isDailyEdition);
-    return rankAndInterleaveFeed(discoveryPool, profile, interactions);
+    // Discovery pool contains all remaining items beyond the finite daily edition
+    const dailyPool = this.items.filter(item => item.isDailyEdition);
+    const rankedDaily = rankAndInterleaveFeed(dailyPool, profile, interactions);
+    const dailyTop12Ids = new Set(rankedDaily.slice(0, 12).map(i => i.id));
+
+    const remainingItems = this.items.filter(item => !dailyTop12Ids.has(item.id));
+    return rankAndInterleaveFeed(remainingItems, profile, interactions);
   }
 
   async getItemById(id: string): Promise<FeedItem | null> {
