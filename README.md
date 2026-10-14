@@ -23,7 +23,7 @@ npm run web
 Öffnet automatisch `http://localhost:8081`. URL-Deeplinks wie `http://localhost:8081/?article=art-007-bundle-self` werden direkt unterstützt.
 
 ### 3. Auf dem physischen iPhone 15 Pro testen (Expo Go)
-> **Kompatibilitätshinweis**: Das Projekt ist auf **Expo SDK 54** ausgerichtet (React Native 0.76.7), da die offizielle Apple App Store Version von Expo Go bis SDK 54 unterstützt.
+> **Kompatibilitätshinweis**: Das Projekt ist auf **Expo SDK 54** ausgerichtet (React Native 0.81.5), da die offizielle Apple App Store Version von Expo Go bis SDK 54 unterstützt.
 1. Installiere **Expo Go** kostenlos aus dem App Store auf deinem iPhone 15 Pro (kein kostenpflichtiger Developer-Account nötig).
 2. Starte im Terminal auf deinem Mac:
    ```bash
@@ -33,29 +33,27 @@ npm run web
 4. Atem öffnet sich direkt nativ auf deinem iPhone.
 *(Hinweis: Lokale physische Gerätetests bleiben als „bereit für Expo Go SDK 54 auf iPhone 15 Pro“ gekennzeichnet, bis sie physisch am Gerät beobachtet wurden; die interaktive Web-Laufzeit ist zu 100% verifiziert).*
 
-### 4. Tests, Typüberprüfung & Linting
+### 4. Tests, Ingestion & Typüberprüfung
 ```bash
-npm run typecheck    # TypeScript Compiler (0 Fehler)
-npm run lint         # Expo ESLint (0 Warnungen / 0 Fehler)
-npm test             # 18 automatisierte Tests (Domain, Ranking, Persistenz)
+npm run typecheck      # TypeScript Compiler (0 Fehler)
+npm run lint           # Expo ESLint (0 Warnungen / 0 Fehler)
+npm test               # 48 automatisierte Tests in 6 Suites
+npm run ingest         # Externe RSS/Atom-Ingestion ausführen
 npx expo-doctor@latest # 18/18 Checks bestanden
 ```
 
 ---
 
-## 🌟 Kernfunktionen (Phase 1.2 — Nachgewiesene Zuverlässigkeit)
+## 🌟 Kernfunktionen (Phase 2 — Personalisierter Discovery-Feed mit Live-Pipeline)
 
-- **Fokussierte Tagesausgabe (Finite Daily Edition)**: Klare redaktionelle Auswahl statt Endlos-Feed, mit explizitem Abschluss-Banner „Ende dieser Ausgabe“ gegen Doomscrolling.
-- **Redaktionelle Längenvielfalt**:
-  - *3 Kompaktimpulse* (100–200 Wörter, ca. 1 Min. Lesezeit bei 220 W/Min.)
-  - *3 Briefings* (350–650 Wörter, ca. 2–3 Min.)
-  - *2 Tiefgänge / Essays* (900–1.400 Wörter, ca. 4–5 Min.)
-  - *1 Entdeckungsbeitrag* (500–800 Wörter, ca. 2–3 Min.)
-- **Verifizierte Quellenherkunft & Transparenz**: Vollständige URLs zu realen Primärquellen, echte Autoren, Original-Publikationszeitstempel, Erfassungszeitpunkte und deutsche Fact-Review-Statusanzeige.
-- **Deadlock-freie Persistenz**: Single-Lock Mutex-Architektur mit `TransactionScope` verhindert Race Conditions und Verklemmungen bei gleichzeitigen Schreibvorgängen.
-- **Transparente Fehlerbehandlung & Quarantäne**: Typisierte Speicherfehler (`StorageUnavailableError`, `CorruptedDataError`); beschädigte Rohdaten werden in isolierte Quarantäne verschoben statt stillschweigend überschrieben.
-- **Zustandserhaltender Reader**: Als Overlay gerendert; Feed-Scrollposition, Themenfilter und Entdeckungsaufklappung bleiben beim Schließen eines Artikels vollständig erhalten. Vollständige Browser-History-Synchronisation (`?article=...`).
-- **Getrennte Einstellungen**: Nicht-destruktives „Onboarding wiederholen“ (Lesezeichen und Leseverlauf bleiben erhalten) getrennt von destructivem „Alle lokalen Daten löschen“ mit explizitem Bestätigungsdialog.
+- **Substanzielle In-Card-Lektüre (`feedText`)**: Vollständiger, eigenständiger Leseinhalt direkt auf der Karte (keine leeren Teaser-Snippets). Kurze Beiträge sind direkt im Feed abgeschlossen; ausführliche Essays öffnen den vertiefenden Lesemodus.
+- **7 Redaktionelle Formate & 4 Belegstufen**: Klare Einordnung (`⚡︎ Kompaktimpuls`, `◈ Recherche & Update`, `✦ Philosophische Gegenposition`, `☍ Interdisziplinäre Brücke`) und Evidenztransparenz (`Herausgeber-Auszug`, `Volltext verfügbar`, etc.).
+- **Reale RSS/Atom-Pipeline**: 10 verifizierte Live-Quellen aus Philosophie, Didaktik, KI-Beschleunigung, Modular-Synthese und Wissenschaft mit kanonischer URL-Deduplizierung und SHA-256-Hashing.
+- **Provider-unabhängiges Enrichment & €5-Budgetgrenze**: Offiziell grounded Gemini-Flash-Preise mit persistentem Monats-Ledger (`EnrichmentUsageLedger`). Automatischer Null-Kosten-Fallback (`SourceOnlyEnricher`) verhindert unerwartete Kosten.
+- **Mehrdimensionales Relevanz-Scoring**: Berücksichtigt Themenaffinitäten, persönliche Ziele (`PersonalGoal`), Lesezeit-Passung, Feedback-Memory für Autoren und Themen sowie abklingende Verhaltenssignale.
+- **Redaktionelle Quoten**: Garantiert ~10% Didaktik-Bezug und ~10% dialektische Gegenpositionen in der primären Tagesausgabe.
+- **Fokussierte Tagesausgabe & „Weiter entdecken“**: 10–12 Artikel mit bewusstem Innehalte-Banner („Ende dieser Ausgabe“). Zusätzliche Artikel werden deterministisch unten angehängt, ohne bestehende Karten neu zu sortieren oder zu wiederholen.
+- **Entkoppelte Offline-Bibliothek**: Vollständige Artikelentitäten werden offline unter `@atem:saved_articles:v1` gesichert und überdauern Feed-Rotationen und Cache-Bereinigungen.
 
 ---
 
@@ -64,7 +62,9 @@ npx expo-doctor@latest # 18/18 Checks bestanden
 - [`AGENTS.md`](./AGENTS.md): Runbook für Antigravity-Agenten
 - [`docs/PRODUCT.md`](./docs/PRODUCT.md): Produktspezifikation & Leitbild
 - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md): Systemtopologie & Schichtenarchitektur
-- [`docs/DECISIONS.md`](./docs/DECISIONS.md): Architektur-Entscheidungen (ADRs)
+- [`docs/INTEGRATIONS.md`](./docs/INTEGRATIONS.md): Quellen-Register & Kostenmodell
+- [`docs/DECISIONS.md`](./docs/DECISIONS.md): Architektur-Entscheidungen (ADR 001 – ADR 013)
 - [`docs/BACKLOG.md`](./docs/BACKLOG.md): Entwicklungs-Backlog
 - [`docs/PROGRESS.md`](./docs/PROGRESS.md): Fortschritts- und Meilenstein-Log
-- [`docs/QA.md`](./docs/QA.md): Testplan & Akzeptanzkriterien
+- [`docs/QA.md`](./docs/QA.md): Testplan & Verifikations-Runbook
+- [`REVIEW_HANDOFF_PHASE_2.md`](./REVIEW_HANDOFF_PHASE_2.md): Ausführlicher Handoff-Bericht zu Phase 2

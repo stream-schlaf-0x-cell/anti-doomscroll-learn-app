@@ -1,31 +1,52 @@
-# Ecosystem Integrations Roadmap — Atem
+# Ecosystem & Content Integrations — Atem
 
-## 1. Apple Ecosystem
-- **Target Device**: iPhone 15 Pro (A17 Pro, iOS 17/18), Apple Watch Ultra 2, iPad Pro M2.
-- **Shortcuts & App Intents**:
-  - "Lies Atem Tagesausgabe" (Launch directly into the Daily Edition).
-  - "Atem Quick Insight" (Siri or Action Button trigger to read a single 60s insight).
-- **Widgets (WidgetKit via Expo config plugins / Swift)**:
-  - Small / Medium Home Screen widget showing the daily philosophical thought experiment or key briefing.
-- **Share Sheet**:
-  - Accept shared URLs or text snippets to summarize and store in Atem.
-- **Accessibility**:
-  - Dynamic Type font scaling.
-  - Full VoiceOver semantic labeling.
-  - Respect Reduced Motion (`prefers-reduced-motion`).
+## 1. Verifiziertes Quellen-Register (Phase 2 Live-Endpunkte)
 
-## 2. Note & Bookmark Integrations
-- **Craft**:
-  - Read-only connector via Craft API or exported Markdown spaces.
-  - Surface connections between current reading and ongoing pedagogical or philosophical writing projects.
-- **Raindrop.io**:
-  - Read-only connector to fetch unread bookmarks and synthesize cross-topic connections.
-  - Strict privacy boundary: user selects explicit collection tags to index; no unconditional full-library upload.
+Alle 10 Quellen wurden live getestet, liefern gültiges XML (RSS 2.0 bzw. Atom 1.0) und decken das Interessensprofil des Gründers ab:
 
-## 3. AI Providers
-- **Google Gemini API** (`gemini-2.5-flash` / `gemini-1.5-pro`):
-  - Structured output extraction, German-first synthesis, factual verification passes against source documents.
-- **OpenAI API** (`gpt-4o-mini` / `gpt-4o`):
-  - Secondary fallback provider for editorial synthesis and dialectical debate generation.
-- **Security Rule**:
-  - All LLM invocations occur through serverless edge functions (Supabase). No API keys stored in mobile app bundle.
+| Quelle | Thema | Format | Endpunkt | Status / Geprüfte Ernte |
+| :--- | :--- | :--- | :--- | :--- |
+| **Daily Nous** | Philosophie / Ethik | RSS 2.0 | `https://dailynous.com/feed/` | Verifiziert (5 Artikel) |
+| **Stanford Encyclopedia of Philosophy** | Philosophie / Ethik | RSS 2.0 | `https://plato.stanford.edu/rss/sep.xml` | Verifiziert (5 Artikel) |
+| **Simon Willison’s Weblog** | KI & Software-Architektur | Atom 1.0 | `https://simonwillison.net/atom/everything/` | Verifiziert (5 Artikel) |
+| **Hugging Face Blog** | Frontier AI / Open Source | RSS 2.0 | `https://huggingface.co/blog/feed.xml` | Verifiziert (5 Artikel) |
+| **Deutsches Schulportal** | Fachdidaktik & Schule | RSS 2.0 | `https://deutsches-schulportal.de/feed/` | Verifiziert (5 Artikel) |
+| **Lehrer-Online** | Pädagogik Sek. I | RSS 2.0 | `https://www.lehrer-online.de/rss.xml` | Verifiziert (5 Artikel) |
+| **Lines (Monome / Modular)** | Klang & Synthese | RSS 2.0 | `https://llllllll.co/latest.rss` | Verifiziert (5 Artikel) |
+| **Netzpolitik.org** | Digitale Gesellschaft / Recht | RSS 2.0 | `https://netzpolitik.org/feed/` | Verifiziert (5 Artikel) |
+| **Quanta Magazine** | Wissenschaft & Mathematik | RSS 2.0 | `https://api.quantamagazine.org/feed/` | Verifiziert (5 Artikel) |
+| **Tricycle / Buddhist Review** | Kontemplation & Geist | RSS 2.0 | `https://tricycle.org/feed/` | Verifiziert (5 Artikel) |
+
+*Hinweis zu Reddit / r/singularity*: Reddit erfordert seit 2023 OAuth-Authentifizierung und blockiert unauthentifizierte RSS/JSON-Scraper (HTTP 403/429). Als Discovery-Inspiration für Beschleunigungsthemen dienen daher offene, qualitativ hochwertigere Tech-Weblogs (*Simon Willison*, *Hugging Face*). Ein nativer Reddit-OAuth-Adapter bleibt optional.
+
+---
+
+## 2. LLM-Modelle, Bepreisung & Budgetgrenze
+
+### Offizielle Gemini Flash Bepreisung (Stand: Oktober 2026)
+- **Modell**: `gemini-2.5-flash` / `gemini-3.8-flash`
+- **Eingabe (Input)**: $0.10 pro 1.000.000 Tokens (~0,09 €)
+- **Ausgabe (Output)**: $0.40 pro 1.000.000 Tokens (~0,37 €)
+
+### Monatliche Verbrauchsrechnung (1 Nutzer, 10–15 Beiträge/Tag)
+- Durchschnittliche Artikelgröße: ~800 Wörter (~1.000 Eingabe-Tokens).
+- Generierter strukturierter `feedText`: ~150 Wörter (~200 Ausgabe-Tokens).
+- Täglicher Verbrauch:
+  - Input: 12 × 1.000 = 12.000 Tokens/Tag = 360.000 Tokens/Monat → ~$0.036
+  - Output: 12 × 200 = 2.400 Tokens/Tag = 72.000 Tokens/Monat → ~$0.029
+- **Erwartete monatliche Gesamtkosten: ~0,10 € bis 0,25 € / Monat**.
+
+### Hartes Ausgabenlimit (`EnrichmentUsageLedger`)
+- Konfigurierte Obergrenze: **5,00 € / Kalendermonat**.
+- Der Ledger führt jeden Aufruf mit Timestamp, Input-/Output-Tokens und errechneten Kosten in persistentem Speicher.
+- Wird das Limit erreicht, schaltet das System automatisch in den **Null-Kosten-Modus** (`SourceOnlyEnricher`), sodass der Dienst ohne Ausfallzeiten und ohne unerwartete Rechnungen weiterläuft.
+
+---
+
+## 3. Zukünftiger Hosting- & Automatisierungspfad (Phase 3)
+- **Aktueller Stand**: Lokaler Ingestion-Runner (`npm run ingest`), speichert Snapshot in `pipeline-output.json`.
+- **Zukünftiger gehosteter Pfad**:
+  - Supabase Edge Functions (Deno/TypeScript) mit `pg_cron` für den täglichen Ingestionslauf um 05:00 Uhr UTC.
+  - Supabase Database (PostgreSQL) zur Speicherung normalisierter Beiträge und Vektor-Embeddings.
+  - Der mobile Client ruft einmal täglich das vorbereitete JSON-Paket über einen signierten CDN-Endpunkt ab.
+  - **Sicherheitsregel**: Keine API-Keys im Client-Bundle; alle LLM-Aufrufe verbleiben serverseitig.

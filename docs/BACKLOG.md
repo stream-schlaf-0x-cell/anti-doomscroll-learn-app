@@ -2,66 +2,53 @@
 
 ## Phase 0: Foundation & Environment (Completed)
 - [x] Host reconnaissance (macOS 13.7.8 Ventura, Intel x86_64, Node 24.13.0, npm 11.6.2).
-- [x] Select stable framework: React Native with Expo SDK 57 + TypeScript + strict mode.
-- [x] Identify iOS build constraints (no local modern Xcode; prioritize Expo Go + Web preview).
+- [x] Select stable framework: React Native with Expo SDK 54 + TypeScript + strict mode.
+- [x] Identify iOS build constraints (prioritize Expo Go on physical device + Web preview).
 - [x] Draft Architecture Decision Records (`docs/DECISIONS.md`).
 - [x] Define Domain Schemas with Zod validation.
 
-## Phase 1: Functional Vertical Slice (Current)
-- [x] Install runtime dependencies (`@react-native-async-storage/async-storage`, `react-native-safe-area-context`, `@expo/vector-icons`, `zod`).
-- [ ] Implement domain models and Zod schemas (`src/core/domain/`).
-- [ ] Implement deterministic feed ranking algorithm (`src/core/domain/ranking.ts`).
-- [ ] Create rich, grounded German-first editorial demonstration content across Philosophy, Ethics, AI, Education, and Science (`src/core/data/fixtures.ts`).
-- [ ] Implement repository interfaces and local persistence (`src/core/data/`).
-- [ ] Build design tokens and editorial typography system (`src/ui/theme.ts`).
-- [ ] Implement Main Navigation / Tab Shell (Feed, Bibliothek, Einstellungen).
-- [ ] Implement Onboarding flow with topic selection and reading preference setup.
-- [ ] Implement Editorial Feed Screen:
-  - Hero featured cards, Perspective cards, Deep Dive cards, Quick Insights.
-  - "Tagesausgabe" finite edition completion banner.
-  - "Warum sehe ich das?" (Relevance explanation modal).
-  - Quick save/bookmark with persistent state.
-  - Filter / Category switcher.
-- [ ] Implement Article Reader Screen:
-  - Editorial reading layout, adjustable font size, light/dark mode.
-  - Source provenance attribution & external links.
-  - Deepening actions ("Gegenposition", "Didaktik im Unterricht", "Philosophischer Kontext").
-  - Reading progress indicator.
-- [ ] Implement Saved Library Screen:
-  - Filter by topic tag / status.
-  - Reopen and continue reading.
-  - Remove from saved.
-- [ ] Implement Settings & Preferences Screen:
-  - Topic weights sliders (observable feed re-ranking).
-  - Reading length preferences.
-  - Language toggle.
-  - Clear data & transparency info.
-- [ ] Unit tests for ranking algorithm and Zod schema validation.
-- [ ] Verification on Web and Expo Go.
+---
 
-## Phase 2: Live Content & Ingestion Pipeline
-- [ ] RSS / Atom feed adapters (e.g. PhilPapers, Stanford Encyclopedia updates, Heise/Golem, Die Zeit/Spiegel Wissenschaft, Deutsches Schulportal).
-- [ ] Normalization, deduplication, and topic categorization.
-- [ ] Offline caching and background refresh.
+## Phase 1 & 1.1: Functional Vertical Slice & iPhone Compatibility (Completed)
+- [x] Expo SDK 54 alignment for App Store Expo Go compatibility.
+- [x] Design tokens and editorial typography system (`src/ui/theme.ts`).
+- [x] Main Navigation / Tab Shell (Ausgabe, Bibliothek, Steuerung).
+- [x] Onboarding flow with topic selection and reading preference setup.
+- [x] Focused Article Reader with dark/light mode and deepening options.
 
-## Phase 3: AI Enrichment (Server-Side)
-- [ ] Provider-agnostic AI interface (Gemini & OpenAI).
-- [ ] German-language editorial synthesis and structured claim extraction.
-- [ ] Interactive deepening generation ("Gegenargument formulieren", "Unterrichtsbezug herstellen").
-- [ ] Caching, rate limiting, and cost monitoring.
+---
 
-## Phase 4: Dynamic Personalization
-- [ ] Implicit reading signal weighting (dwell time without clickbait, completed reads).
-- [ ] Topic feedback loops ("Mehr zu diesem Aspekt", "Thema pausieren").
-- [ ] Cross-disciplinary connection synthesis.
+## Phase 1.2: Reliable Persistence & Reading Experience (Completed)
+- [x] Eliminate nested-lock storage deadlock (`TransactionScope` in `src/core/data/storage.ts`).
+- [x] Quarantining corrupted data with `CorruptedDataError`.
+- [x] Reader mounted as non-unmounting overlay with web URL sync (`?article=...`).
+- [x] 18 unit tests passing across domain, ranking, and storage mutex.
 
-## Phase 5: Knowledge Integrations
-- [ ] Read-only Craft document connector (authorized project sync).
-- [ ] Read-only Raindrop.io bookmark connector.
-- [ ] User-controlled privacy boundaries and data deletion.
+---
 
-## Phase 6: Apple Ecosystem & Native Enhancements
-- [ ] Home Screen widgets (Daily Reflection / Insight of the Day).
-- [ ] Apple Shortcuts & App Intents.
-- [ ] Share extension (Send article to Atem).
-- [ ] Dynamic Type and VoiceOver accessibility auditing.
+## Phase 2: Real Personalized Discovery Feed & Pipeline (Completed)
+- [x] **Domänen-Erweiterungen**: `feedText`, 7 redaktionelle Formate, 4 Evidenzstufen, 5 Gründer-Ziele (`PersonalGoal`), `PerspectiveDetails`.
+- [x] **Speicherschutz**: `CorruptedDataError` schützt vor Datenverlust; entkoppelte Offline-Bibliothek (`saveArticle`/`unsaveArticle` unter `@atem:saved_articles:v1`); `storageGenerationRef` sichert Daten-Resets ab.
+- [x] **RSS/Atom-Ingestion**: 10 verifizierte öffentliche Endpunkte; robuster XML-Parser; Normalisierung, SHA-256-Hashing und kanonische URL-Deduplizierung; 36 reale Artikel in `pipeline-output.json`.
+- [x] **Provider-unabhängiges Enrichment**: Offizielle Gemini-Tokenpreise modelliert; `EnrichmentUsageLedger` erzwingt harte 5,00 €/Monat Grenze; `EnrichmentCache`; Null-Kosten-Fallback `SourceOnlyEnricher`.
+- [x] **Mehrdimensionale Personalisierung**: Themen, Ziele (`TOPIC_GOAL_MAP`), Lesezeit, Feedback-Memory (`boostedAuthors`/`penalizedTopics`), weiche redaktionelle Quoten (~10% Didaktik, ~10% Gegenpositionen), transparentes „Warum sehe ich das?“-Modal.
+- [x] **Feed-UI & Batching**: Substanzieller In-Card Leseinhalt (`feedText`), Format- und Evidenz-Badges, Quoten-Hinweise, In-Feed Feedback-Daumen, feste Tagesausgabe (10–12 Artikel), „Weiter entdecken“ hängt 10 Artikel ohne Kartensprung oder Wiederholungen an.
+- [x] **Verifikation & Evidenz**: 48 Unit-Tests (6 Suites), 0 Typecheck-Fehler, 0 Lint-Warnungen, Expo Doctor 18/18 Checks, Produktions-Web-Export `dist/`, 8 Headless Chrome Screenshots (iPhone 15 Pro: 393 × 852 px), Review-Archiv `atem-phase-2-review.zip`.
+
+---
+
+## Phase 3: Gehostete Automatisierung & Cloud-Deployment (Nächster Schritt)
+- [ ] Supabase Edge Function für täglichen Ingestion-Cron (05:00 UTC).
+- [ ] PostgreSQL Schema-Migration für normalisierte Beiträge und Cache.
+- [ ] Signierter API-Endpunkt für den mobilen Client (Tagesausgabe als leichtgewichtiger JSON-Snapshot).
+- [ ] Optionaler nativer Reddit-OAuth-Adapter für kuratiertes r/singularity / Tech-Scanning.
+- [ ] Produktions-Aktivierung des `ProviderEnricher` mit hinterlegtem API-Schlüssel auf Server-Ebene.
+
+---
+
+## Phase 4: Apple-Ökosystem & Wissens-Integrationen
+- [ ] Apple Shortcuts & App Intents („Lies Atem Tagesausgabe“, „Atem Quick Insight“).
+- [ ] Lock Screen & Home Screen Widgets (WidgetKit via Expo Config Plugin).
+- [ ] Craft Read-Only Connector (Verknüpfung mit didaktischen Schreibprojekten).
+- [ ] Raindrop.io Connector (Lesezeichen-Abgleich mit privater Sammlungsbegrenzung).
+- [ ] Dynamic Type Font Scaling & VoiceOver Barrierefreiheits-Audit.

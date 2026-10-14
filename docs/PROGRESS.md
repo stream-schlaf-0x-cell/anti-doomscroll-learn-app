@@ -1,43 +1,69 @@
 # Progress Log — Atem
 
 ## Phase 0: Reconnaissance & Environment
-- **Date**: October 2026
-- **Status**: Completed
-- **Findings**:
-  - Host OS: macOS 13.7.8 (Ventura) on x86_64 Intel MacBook Pro (2014).
-  - Node version: v24.13.0, npm version: 11.6.2.
-  - Command Line Tools installed, but no modern Xcode.app (macOS Ventura cannot run Xcode 15/16).
-  - Target user device: iPhone 15 Pro running iOS 17/18.
-  - Solution: Expo SDK 57 with React Native, TypeScript, Expo Go on physical device over LAN/tunnel, and Expo Web for rapid browser verification.
-  - TCC privacy restrictions on `~/Desktop` observed during sandboxed execution; commands run with appropriate bypass or sandboxed filesystem handling.
+- **Datum**: Oktober 2026
+- **Status**: Abgeschlossen
+- **Erkenntnisse**:
+  - Host OS: macOS 13.7.8 (Ventura) auf x86_64 Intel MacBook Pro (2014).
+  - Node Version: v24.13.0, npm Version: 11.6.2.
+  - Zielgerät: iPhone 15 Pro unter iOS 17/18.
+  - Expo SDK 54 mit React Native 0.81.5, Expo Go auf physischem Gerät und Expo Web für schnelle Browser-Prüfung.
 
-## Phase 1: Functional Vertical Slice
-- **Status**: Completed
+---
 
-## Phase 1.1: Physical iPhone Compatibility & Audit
-- **Status**: Completed
-- **Milestones**:
-  - [x] Resolved Expo SDK mismatch: Apple App Store Expo Go stops at SDK 54. Aligned project to Expo SDK 54 (React Native 0.76.7, React 18.3.1).
-  - [x] Audited full codebase and documented acceptance criteria.
+## Phase 1 & 1.1: Vertikaler Schnitt & iPhone-Kompatibilität
+- **Status**: Abgeschlossen
+- **Ergebnisse**:
+  - Expo-Go-Versionskonflikt gelöst (App Store Expo Go stoppt bei SDK 54).
+  - Grundlegende UI-Architektur, Themes und Navigationsstruktur aufgebaut.
 
-## Phase 1.2: Reliable Persistence & Demonstrated Reading Experience
-- **Status**: Completed
-- **Milestones**:
-  - [x] **Deadlock Resolution**: Diagnosed and eliminated storage deadlock in `src/core/data/storage.ts` where `runTransaction` held an outer mutex while inner primitives re-acquired the same lock. Introduced `TransactionScope` (`tx.get`, `tx.set`, `tx.remove`) operating directly on driver without re-locking.
-  - [x] **Error Recovery & Quarantine**: Defined typed errors (`StorageUnavailableError`, `StorageWriteError`, `CorruptedDataError`). Corrupt data is quarantined in key `<key>.corrupt.<iso>` rather than silently overwritten. Added startup error screen in `App.tsx` with retry and reset actions.
-  - [x] **State Retention & Navigation**: Preserved originating tab, feed scroll offset, topic filters, and discovery expansion by mounting `ReaderScreen` as an absolute overlay (`StyleSheet.absoluteFillObject`) over mounted tabs. Enabled full web browser history sync (`pushState`, `popstate`, `?article=...`).
-  - [x] **Reading Lengths Distribution**: Curated 9 rich German demonstration articles with verified word counts and reading times (220 wpm):
-    - 3 Quick Insights (100–200 words, ~1 min): `art-001`, `art-002`, `art-003`
-    - 3 Briefings (350–650 words, ~2–3 min): `art-004`, `art-005`, `art-006`
-    - 2 Deep Dives (900–1,400 words, ~4–5 min): `art-007`, `art-008`
-    - 1 Discovery Piece (500–800 words, ~2–3 min): `art-009`
-  - [x] **Editorial Provenance**: Grounded all fixtures in real primary sources with valid URLs, authors, publication timestamps, and German fact-review status (`formatFactReviewStatus`).
-  - [x] **User Tone & Reset Distinction**: Unified user-facing copy to friendly German "du". Separated non-destructive "Onboarding wiederholen" from destructive "Alle lokalen Daten löschen" with an explicit confirmation dialog.
-  - [x] **Testing & Verification**:
-    - `npm test`: 18 tests passing across domain schemas, ranking engine, and persistence mutex.
-    - `npm run typecheck`: 0 errors.
-    - `npm run lint`: 0 warnings/errors.
-    - `npx expo-doctor@latest`: 18/18 checks passed.
-    - `npm ci`: Lockfile verified and reproducible.
-    - `npx expo export -p web`: Clean bundle generation in `dist/`.
-    - Live UI verification: 8 full-resolution iPhone-dimension screenshots captured via Chrome CDP.
+---
+
+## Phase 1.2: Zuverlässige Persistenz & Leseerlebnis
+- **Status**: Abgeschlossen
+- **Ergebnisse**:
+  - Nested-Lock Speicher-Deadlock in `storage.ts` behoben (`TransactionScope`).
+  - Quarantäne beschädigter Daten und sauberer Startup-Fehlerscreen implementiert.
+  - Reader als Overlay gemountet, Browser-History (`?article=...`) synchronisiert.
+  - 18 Unit-Tests implementiert und bestanden.
+
+---
+
+## Phase 2: Personalisierter Discovery-Feed mit Live-Pipeline & €5-Budget
+- **Status**: Abgeschlossen & Verifiziert
+- **Etappen**:
+  - [x] **Etappe 1: Domänen-Schemas & Invarianten** (Commit `61a3e76`):
+    - `feedText`: Substanzieller Leseinhalt direkt in der Feed-Karte.
+    - `format`: 7 redaktionelle Formate (`FeedItemFormat`).
+    - `evidenceTier`: 4 transparente Belegstufen (`EvidenceTier`).
+    - `PersonalGoal`: 5 Gründerziele mit deutscher Metadaten-Zuordnung.
+    - `PerspectiveDetails`: Explizite Gegenpositionen und Unsicherheitshinweise.
+  - [x] **Etappe 2: Speicherschutz & Entkoppelte Bibliothek** (Commit `158079b`):
+    - `CorruptedDataError` verhindert Überschreiben beschädigter Daten.
+    - Entkoppelte Speicherung gespeicherter Artikel unter `@atem:saved_articles:v1`.
+    - `storageGenerationRef` sichert Datenbereinigung gegen verzögerte Schreibvorgänge ab.
+  - [x] **Etappe 3: Reale RSS/Atom-Pipeline** (Commit `2de9819`):
+    - 10 öffentliche Feeds erfolgreich getestet.
+    - XML-Parser (`rssParser.ts`) mit robuster HTML-Dekodierung.
+    - Normalisierung, SHA-256-Hashing und kanonische URL-Deduplizierung.
+    - `npm run ingest` erntete **36 geprüfte Artikel** in `src/core/data/pipeline-output.json`.
+  - [x] **Etappe 4: Provider-unabhängiges Enrichment & Budget-Deckelung** (Commit `a80dc81`):
+    - Offizielle Gemini-Preise ($0.10/1M In, $0.40/1M Out) modelliert.
+    - `EnrichmentUsageLedger` erzwingt harte 5,00 €/Monat Grenze.
+    - `EnrichmentCache` vermeidet redundante Ausgaben.
+    - `SourceOnlyEnricher` stellt ununterbrochenen Null-Kosten-Betrieb sicher.
+  - [x] **Etappe 5: Mehrdimensionale Personalisierung & Quoten** (Commit `0fccdd7`):
+    - Relevanz-Scoring mit Themen, Zielen, Lesezeit, Feedback-Memory und Verhaltenssignalen.
+    - Redaktionelle Mindestquoten: ~10% Didaktik und ~10% Gegenpositionen in der Tagesausgabe.
+    - Detaillierte Transparenzaufschlüsselung im Modal „Warum sehe ich das?“.
+  - [x] **Etappe 6: Standalone Feed-UI & Deterministisches Batching** (Commit `0051b71`):
+    - `FeedCard.tsx` zeigt vollständigen `feedText`, Format-Badges, Evidenzstufen und In-Feed Daumen-Feedback.
+    - Feste Tagesausgabe (10–12 Artikel) mit klarem Abschlussbanner („Ende dieser Ausgabe“).
+    - „Weiter entdecken“ hängt jeweils 10 Artikel an, ohne frühere Karten zu verschieben oder zu wiederholen.
+  - [x] **Etappe 7: Vollständige Verifikation & Review-Paket** (Commit `9eebafb`):
+    - 48 Tests in 6 Test-Suites bestanden (`npm test`).
+    - `npm run typecheck` (0 Fehler) & `npm run lint` (0 Warnungen).
+    - `npx expo-doctor@latest` (18/18 Checks bestanden).
+    - Produktions-Web-Export `dist/` erfolgreich.
+    - 8 Screenshots in iPhone 15 Pro Dimensionen (393 × 852 px) in `docs/screenshots/`.
+    - Review-Archiv `atem-phase-2-review.zip` erstellt.
