@@ -33,7 +33,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Run verification checks
         run: |
@@ -41,7 +41,9 @@ jobs:
           npm test
 
       - name: Export Expo Web Bundle
-        run: npx expo export -p web
+        run: |
+          npx expo export -p web
+          cp dist/index.html dist/404.html
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v4
