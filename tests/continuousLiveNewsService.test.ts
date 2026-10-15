@@ -85,4 +85,28 @@ describe('ContinuousLiveNewsService & Instant Research Invariants', () => {
       assert.ok(item.didacticTransfer && item.didacticTransfer.length > 0);
     }
   });
+
+  it('filters out disabled sources from the live stream', async () => {
+    const { defaultSourceRepository } = await import('../src/core/data/sourceRepository');
+    const allSources = await defaultSourceRepository.getAllSources();
+    const tagesschauSources = allSources.filter(s => s.name.toLowerCase().includes('tagesschau'));
+    assert.ok(tagesschauSources.length > 0);
+
+    for (const s of tagesschauSources) {
+      await defaultSourceRepository.toggleSource(s.id, false);
+    }
+
+    const stream = await ContinuousLiveNewsService.getLiveStream({ limit: 50 });
+    for (const item of stream) {
+      const publisher = (item.sourceReferences[0]?.publisher || '').toLowerCase();
+      const domain = (item.sourceDomain || '').toLowerCase();
+      assert.ok(!publisher.includes('tagesschau'), 'Disabled publisher should not appear in live stream');
+      assert.ok(!domain.includes('tagesschau'), 'Disabled domain should not appear in live stream');
+    }
+
+    // Re-enable
+    for (const s of tagesschauSources) {
+      await defaultSourceRepository.toggleSource(s.id, true);
+    }
+  });
 });

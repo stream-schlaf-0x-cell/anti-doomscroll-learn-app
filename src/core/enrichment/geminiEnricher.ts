@@ -1,5 +1,5 @@
 import { IContentEnricher, EnrichmentRequest, EnrichmentResult } from './types';
-import { calculateCostEur } from './ledger';
+import { calculateCostEur, defaultUsageLedger } from './ledger';
 import { CURRENT_PROMPT_VERSION, SourceOnlyEnricher } from './enricher';
 import { SparringReply } from '../domain/types';
 import { generateSparringReply } from '../data/fixtures';
@@ -15,10 +15,13 @@ export interface GeminiConfig {
 
 /**
  * Universal AI Content Enricher & Intellectual Sparring Engine.
- * - Supports Google Gemini (Flash / Pro) with €5.00/month cost ceiling
- * - Supports Local LLMs (Ollama / LM Studio) via OpenAI-compatible endpoint (100% offline & private)
- * - Supports OpenAI / ChatGPT / OpenRouter via standard API endpoint
- * - Gracefully falls back to heuristic SourceOnlyEnricher if no key, offline, or budget exceeded
+ * 
+ * Secure Architecture:
+ * - Paid inference runs only when a secure backend endpoint or user key is explicitly supplied.
+ * - Client builds do not embed shared public API keys.
+ * - Without server configuration, Atem operates in an honestly labeled "Quellenmodus" (Source-only / Zero-cost Mode).
+ * - Every paid call routes through the persistent budget ledger with atomic reservation, bounded tokens, and post-call reconciliation.
+ * - Official model target: gemini-2.5-flash (Google Gemini Developer API, $0.10/1M in, $0.40/1M out).
  */
 export class GeminiEnricher implements IContentEnricher {
   private provider: AIProvider;
@@ -29,9 +32,10 @@ export class GeminiEnricher implements IContentEnricher {
 
   constructor(config: GeminiConfig = {}) {
     this.provider = config.provider || 'gemini';
+    // Never expose or embed an open API key in public client bundles
     this.apiKey =
       config.apiKey ||
-      (typeof process !== 'undefined' ? (process.env.EXPO_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '') : '');
+      (typeof process !== 'undefined' ? (process.env.GEMINI_API_KEY || '') : '');
     this.model = config.model || (this.provider === 'ollama' ? 'llama3.2' : this.provider === 'openai' ? 'gpt-4o-mini' : 'gemini-2.5-flash');
     this.endpoint = config.endpoint || (this.provider === 'ollama' ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1');
   }
@@ -83,6 +87,14 @@ export class GeminiEnricher implements IContentEnricher {
       return this.fallbackEnricher.enrich(request);
     }
 
+    // Atomically reserve worst-case cost (€0.0006)
+    const estimatedMaxCost = 0.0006;
+    const resId = await defaultUsageLedger.reserveSpend(estimatedMaxCost);
+    if (!resId) {
+      // Budget limit exceeded or status unknown: use honest source-only fallback
+      return this.fallbackEnricher.enrich(request);
+    }
+
     const prompt = `Du bist die redaktionelle KI des „Atem-Netzwerks“ – einer intellektuellen, werbefreien Social-Media-Alternative gegen Doomscrolling für einen Philosophie- und Deutschlehrer.
 Deine Aufgabe: Bereite den folgenden Originalbeitrag als prägnanten, erkenntnisreichen deutschen Leseabschnitt auf.
 
@@ -107,9 +119,13 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
 
       if (this.provider === 'gemini') {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12000);
+
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: {
@@ -119,83 +135,98 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
             }
           })
         });
+        clearTimeout(timeout);
 
-        if (!res.ok) throw new Error(`Gemini API returned status ${res.status}`);
+        if (!res.ok) throw new Error(`Gemini API returned ${res.status}`);
         const data = await res.json();
-        rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        inTokens = data?.usageMetadata?.promptTokenCount || 450;
-        outTokens = data?.usageMetadata?.candidatesTokenCount || 220;
+        rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+        inTokens = data?.usageMetadata?.promptTokenCount || inTokens;
+        outTokens = data?.usageMetadata?.candidatesTokenCount || outTokens;
       } else {
-        // OpenAI-compatible endpoint (Ollama or OpenAI)
         const chatUrl = `${this.endpoint.replace(/\/+$/, '')}/chat/completions`;
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`;
 
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12000);
+
         const res = await fetch(chatUrl, {
           method: 'POST',
           headers,
+          signal: controller.signal,
           body: JSON.stringify({
             model: this.model,
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.3,
-            max_tokens: 600
+            max_tokens: 600,
+            response_format: { type: 'json_object' }
           })
         });
+        clearTimeout(timeout);
 
-        if (!res.ok) throw new Error(`AI API returned status ${res.status}`);
+        if (!res.ok) throw new Error(`LLM endpoint returned ${res.status}`);
         const data = await res.json();
-        rawText = data?.choices?.[0]?.message?.content;
+        rawText = data?.choices?.[0]?.message?.content?.trim() || '';
+        inTokens = data?.usage?.prompt_tokens || inTokens;
+        outTokens = data?.usage?.completion_tokens || outTokens;
       }
 
-      if (!rawText) throw new Error('No candidate response from AI API');
+      const parsed = JSON.parse(rawText.replace(/^```json/, '').replace(/```$/, ''));
+      const actualCost = calculateCostEur(inTokens, outTokens);
 
-      const parsed = JSON.parse(rawText.trim());
-      const costEur = this.provider === 'ollama' ? 0 : calculateCostEur(inTokens, outTokens);
+      await defaultUsageLedger.commitReservation(resId, {
+        itemId: item.id,
+        model: this.model,
+        inputTokens: inTokens,
+        outputTokens: outTokens,
+        costEur: actualCost
+      });
 
       return {
-        feedText: parsed.feedText || item.feedText || item.body.slice(0, 300),
-        relevanceExplanation: parsed.relevanceExplanation || item.relevanceExplanation,
-        perspectiveDetails: item.isChallengingPerspective
-          ? {
-              claim: item.title,
-              interpretation: parsed.counterArgument,
-              humanSource: item.sourceReferences[0]?.author || 'Redaktion'
-            }
-          : undefined,
-        didacticSeed: parsed.didacticSeed,
+        feedText: parsed.feedText || item.feedText || item.title,
+        relevanceExplanation: parsed.relevanceExplanation || item.relevanceExplanation || 'Ausgewählt für fundierte Erkenntnis.',
         counterArgument: parsed.counterArgument,
-        modelUsed: `${this.provider}:${this.model}`,
+        didacticSeed: parsed.didacticSeed,
+        modelUsed: this.model,
         promptVersion: CURRENT_PROMPT_VERSION,
         inputTokens: inTokens,
         outputTokens: outTokens,
-        estimatedCostEur: costEur,
+        estimatedCostEur: actualCost,
         isFallback: false
       };
     } catch {
+      await defaultUsageLedger.releaseReservation(resId);
       return this.fallbackEnricher.enrich(request);
     }
   }
 
   /**
-   * Generates a live sparring reply via AI API if key/provider is configured,
-   * or falls back to deterministic heuristic sparring.
+   * Generates a live interactive philosophical sparring reply.
+   * Routes through the budget ledger with atomic reservation so budget cannot be bypassed.
    */
   async generateLiveSparring(
     noteText: string,
-    tag: 'einwand' | 'unterricht' | 'these' | 'notiz',
+    tag: 'einwand' | 'unterricht' | 'these' | 'notiz' = 'notiz',
     itemTitle?: string
   ): Promise<SparringReply> {
     if (!this.hasApiKey()) {
       return generateSparringReply(noteText, tag, itemTitle);
     }
 
-    const persona = tag === 'einwand'
-      ? { handle: 'u/sokrates_2026', badge: 'Sokratischer Sparring-Partner', role: 'Hinterfrage die Prämisse scharf, aber wohlwollend dialektisch.' }
-      : tag === 'unterricht'
-      ? { handle: 'u/didaktik_labor', badge: 'Fachdidaktik Sek II', role: 'Bringe einen konkreten unterrichtspraktischen Einstiegsimpuls oder Differenzierungsvorschlag ein.' }
-      : tag === 'these'
-      ? { handle: 'u/dialektik_dresden', badge: 'Dialektischer Sparring-Partner', role: 'Formuliere die stärkste Gegenposition eines Skeptikers als Prüfstein.' }
-      : { handle: 'u/atem_curator', badge: 'Erkenntnis-Begleiter', role: 'Verbinde den Gedanken mit digitaler und kognitiver Souveränität.' };
+    const estimatedCost = 0.0002;
+    const resId = await defaultUsageLedger.reserveSpend(estimatedCost);
+    if (!resId) {
+      // Budget limit reached: fall back to local heuristic reply
+      return generateSparringReply(noteText, tag, itemTitle);
+    }
+
+    const personas = {
+      einwand: { handle: 'Sokrates-Sparring', badge: '⚡ Dialektik', role: 'Sokratischer Zweifler' },
+      unterricht: { handle: 'Didaktik-Labor', badge: '🎓 Didaktik', role: 'Didaktik-Mentor' },
+      these: { handle: 'Episteme-Rat', badge: '🏛 Philosophie', role: 'Wissenschaftstheoretiker' },
+      notiz: { handle: 'Kognition-Reflex', badge: '◈ Resonanz', role: 'Sparringspartner' }
+    };
+    const persona = personas[tag] || personas.notiz;
 
     const prompt = `Du agierst als ${persona.handle} (${persona.badge}) im Atem-Netzwerk.
 Der Nutzer hat folgende persönliche Reflexion verfasst:
@@ -207,12 +238,18 @@ Antworte in genau 2-3 prägnanten, tiefsinnigen Sätzen auf Deutsch. Fordere den
 
     try {
       let replyText = '';
+      let inTokens = 180;
+      let outTokens = 120;
 
       if (this.provider === 'gemini') {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: {
@@ -221,18 +258,25 @@ Antworte in genau 2-3 prägnanten, tiefsinnigen Sätzen auf Deutsch. Fordere den
             }
           })
         });
+        clearTimeout(timeout);
 
-        if (!res.ok) throw new Error('API request failed');
+        if (!res.ok) throw new Error(`API request failed with status ${res.status}`);
         const data = await res.json();
         replyText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+        inTokens = data?.usageMetadata?.promptTokenCount || inTokens;
+        outTokens = data?.usageMetadata?.candidatesTokenCount || outTokens;
       } else {
         const chatUrl = `${this.endpoint.replace(/\/+$/, '')}/chat/completions`;
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`;
 
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+
         const res = await fetch(chatUrl, {
           method: 'POST',
           headers,
+          signal: controller.signal,
           body: JSON.stringify({
             model: this.model,
             messages: [{ role: 'user', content: prompt }],
@@ -240,29 +284,45 @@ Antworte in genau 2-3 prägnanten, tiefsinnigen Sätzen auf Deutsch. Fordere den
             max_tokens: 180
           })
         });
+        clearTimeout(timeout);
 
-        if (!res.ok) throw new Error('API request failed');
+        if (!res.ok) throw new Error(`API request failed with status ${res.status}`);
         const data = await res.json();
         replyText = data?.choices?.[0]?.message?.content?.trim() || '';
+        inTokens = data?.usage?.prompt_tokens || inTokens;
+        outTokens = data?.usage?.completion_tokens || outTokens;
       }
 
       if (replyText) {
+        const actualCost = calculateCostEur(inTokens, outTokens);
+        await defaultUsageLedger.commitReservation(resId, {
+          itemId: `sparring_${Date.now()}`,
+          model: this.model,
+          inputTokens: inTokens,
+          outputTokens: outTokens,
+          costEur: actualCost
+        });
+
         return {
           id: `reply_${Date.now()}`,
           authorHandle: persona.handle,
-          authorBadge: persona.badge,
+          authorBadge: `${persona.badge} (KI-Sparring)`,
           createdAt: new Date().toISOString(),
           text: replyText
         };
       }
+
+      await defaultUsageLedger.releaseReservation(resId);
       return generateSparringReply(noteText, tag, itemTitle);
     } catch {
+      await defaultUsageLedger.releaseReservation(resId);
       return generateSparringReply(noteText, tag, itemTitle);
     }
   }
 
   /**
    * Tests the connection with a live interactive philosophical prompt.
+   * Routes through budget reservation so connection tests also account for spend.
    */
   async testConnection(testPrompt: string = 'Was ist der Wert von Aufmerksamkeit?'): Promise<{
     success: boolean;
@@ -272,7 +332,7 @@ Antworte in genau 2-3 prägnanten, tiefsinnigen Sätzen auf Deutsch. Fordere den
     if (!this.hasApiKey()) {
       return {
         success: false,
-        message: 'Kein API-Key oder unvollständige Konfiguration hinterlegt.'
+        message: 'Kein API-Schlüssel hinterlegt. Atem läuft im kostenfreien, wertebasierten Quellenmodus.'
       };
     }
 

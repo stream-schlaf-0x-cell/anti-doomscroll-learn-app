@@ -153,18 +153,23 @@ export function synthesizeChallengePrompt(title: string, topic: TopicTag): strin
  * Finds a related "Old Gem of the Internet" (timeless classic) from the vault.
  */
 export function findRelatedEvergreenGem(topic: TopicTag, title: string): FeedItem | undefined {
-  // First look for matching topic in real knowledge vault
+  // Only consider genuinely timeless classics that share this topic
   const candidates = REAL_KNOWLEDGE_VAULT.filter(item => 
-    item.primaryTopic === topic || item.topics.includes(topic) || item.isEvergreenGem
+    item.isEvergreenGem === true && (item.primaryTopic === topic || item.topics.includes(topic))
   );
 
   if (candidates.length === 0) {
-    return REAL_KNOWLEDGE_VAULT[0];
+    return undefined;
   }
 
-  // Pick deterministically based on title hash so results are stable
-  const hash = title.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  return candidates[Math.abs(hash) % candidates.length];
+  // Find candidate with topical/semantic keyword relevance
+  const titleWords = title.toLowerCase().split(/\s+/).filter(w => w.length > 4);
+  const matched = candidates.find(c => {
+    const text = `${c.title} ${c.feedText}`.toLowerCase();
+    return titleWords.some(w => text.includes(w));
+  });
+
+  return matched || candidates[0];
 }
 
 /**
@@ -202,7 +207,7 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
     didacticSeed: didacticTransfer,
     challengePrompt,
     evergreenContext,
-    // Ensure didactic transfer is rendered prominently
-    isTeachingRelated: Boolean(item.isTeachingRelated || primaryTopic === 'german_didactics' || didacticTransfer)
+    // Only mark as teaching-related if it genuinely belongs to didactics/pedagogy
+    isTeachingRelated: Boolean(item.isTeachingRelated || primaryTopic === 'german_didactics' || item.topics?.includes('german_didactics'))
   };
 }

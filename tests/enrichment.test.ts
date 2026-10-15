@@ -185,5 +185,37 @@ describe('Provider-Independent Enrichment & €5 Budget Enforcement', () => {
     assert.strictEqual(sparring.authorBadge, 'Sokratischer Sparring-Partner');
     assert.ok(sparring.text.length > 30);
   });
+
+  it('10. Atomic budget reservation guarantees race-free spending limits', async () => {
+    const ledger = new EnrichmentUsageLedger('', false);
+
+    // Reserve 4.99
+    const res1 = await ledger.reserveSpend(4.99);
+    assert.ok(res1, 'First reservation should succeed');
+
+    // Second reservation for 0.05 would exceed 5.00 -> should fail
+    const res2 = await ledger.reserveSpend(0.05);
+    assert.strictEqual(res2, null, 'Second concurrent reservation exceeding 5.00 must fail');
+
+    // Release first reservation
+    await ledger.releaseReservation(res1);
+
+    // Now reservation for 0.05 must succeed
+    const res3 = await ledger.reserveSpend(0.05);
+    assert.ok(res3, 'Reservation should succeed after release');
+
+    // Commit reservation with actual spend
+    await ledger.commitReservation(res3, {
+      itemId: 'res-test',
+      model: 'gemini-2.5-flash',
+      inputTokens: 100,
+      outputTokens: 50,
+      costEur: 0.0001
+    });
+
+    const summary = await ledger.getSummary();
+    assert.strictEqual(summary.totalCalls, 1);
+    assert.ok(summary.totalCostEur > 0);
+  });
 });
 

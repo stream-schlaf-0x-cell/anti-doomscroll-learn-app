@@ -464,6 +464,7 @@ export const UserProfileSchema = z.object({
   language: z.enum(['de', 'en']).default('de'),
   region: z.enum(['de', 'eu', 'global']).default('de'),
   explicitInterests: z.record(TopicTagSchema, z.number().min(0).max(1)),
+  derivedWeights: z.record(z.string(), z.number().min(0).max(1)).optional().default({}),
   explicitGoals: z.record(z.string(), z.number().min(0).max(1)).default({
     understand_tech: 0.90,
     creative_music: 0.85,

@@ -128,9 +128,10 @@ export class ProviderEnricher implements IContentEnricher {
       return cached;
     }
 
-    // 2. Check budget ceiling
-    const canSpend = await this.ledger.canSpend(0.001); // estimated typical cost per call
-    if (!canSpend || !this.underlyingEnricher) {
+    // 2. Check and atomically reserve budget ceiling
+    const estimatedCost = 0.001; // estimated upper-bound cost per call
+    const reservationId = await this.ledger.reserveSpend(estimatedCost);
+    if (!reservationId || !this.underlyingEnricher) {
       // Budget cap reached or zero-cost mode: use source-only fallback
       const fallbackResult = await this.fallbackEnricher.enrich(request);
       await this.cache.set(contentHash, this.promptVersion, fallbackResult);
@@ -141,8 +142,8 @@ export class ProviderEnricher implements IContentEnricher {
     try {
       const result = await this.underlyingEnricher.enrich(request);
 
-      // Record spend in persistent ledger
-      await this.ledger.recordUsage({
+      // Commit actual spend against reservation in persistent ledger
+      await this.ledger.commitReservation(reservationId, {
         itemId: item.id,
         model: result.modelUsed,
         inputTokens: result.inputTokens,
@@ -154,7 +155,8 @@ export class ProviderEnricher implements IContentEnricher {
       await this.cache.set(contentHash, this.promptVersion, result);
       return result;
     } catch {
-      // Graceful fallback on network or provider error
+      // Release reservation and use graceful fallback on error
+      await this.ledger.releaseReservation(reservationId);
       const fallbackResult = await this.fallbackEnricher.enrich(request);
       return fallbackResult;
     }

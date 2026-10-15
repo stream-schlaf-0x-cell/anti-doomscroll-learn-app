@@ -1,45 +1,99 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { EnrichmentResult } from './types';
+import { appStorage, AtemStorage } from '../data/storage';
 
-const isBrowserEnv = typeof window !== 'undefined' || typeof document !== 'undefined';
+export interface ICacheStorage {
+  load(): Promise<Record<string, EnrichmentResult>>;
+  save(data: Record<string, EnrichmentResult>): Promise<void>;
+  clear(): Promise<void>;
+}
 
-function getSafeCacheFilePath(): string {
-  if (isBrowserEnv) return '';
-  try {
-    return typeof __dirname !== 'undefined' ? path.resolve(__dirname, '../data/enrichment-cache.json') : '';
-  } catch {
-    return '';
+export class MemoryCacheStorage implements ICacheStorage {
+  private data: Record<string, EnrichmentResult> = {};
+
+  async load(): Promise<Record<string, EnrichmentResult>> {
+    return { ...this.data };
+  }
+
+  async save(data: Record<string, EnrichmentResult>): Promise<void> {
+    this.data = { ...data };
+  }
+
+  async clear(): Promise<void> {
+    this.data = {};
+  }
+}
+
+export class StorageDriverCacheStorage implements ICacheStorage {
+  private static STORAGE_KEY = '@atem:enrichment_cache:v1';
+
+  constructor(private readonly storage: AtemStorage = appStorage) {}
+
+  async load(): Promise<Record<string, EnrichmentResult>> {
+    try {
+      const raw = await this.storage.getItem(StorageDriverCacheStorage.STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+      return {};
+    } catch {
+      return {};
+    }
+  }
+
+  async save(data: Record<string, EnrichmentResult>): Promise<void> {
+    try {
+      await this.storage.setItem(StorageDriverCacheStorage.STORAGE_KEY, JSON.stringify(data));
+    } catch {
+      // Non-fatal fallback
+    }
+  }
+
+  async clear(): Promise<void> {
+    try {
+      await this.storage.removeItem(StorageDriverCacheStorage.STORAGE_KEY);
+    } catch {
+      // Non-fatal fallback
+    }
   }
 }
 
 export class EnrichmentCache {
   private cache: Record<string, EnrichmentResult> = {};
+  private storage: ICacheStorage;
 
   constructor(
-    private readonly filePath: string = getSafeCacheFilePath(),
-    private readonly useFilePersistence: boolean = !isBrowserEnv && Boolean(getSafeCacheFilePath())
-  ) {}
+    _filePathOrStorage?: string | ICacheStorage,
+    useFilePersistence?: boolean,
+    storageOverride?: ICacheStorage
+  ) {
+    if (typeof _filePathOrStorage === 'object' && _filePathOrStorage !== null && 'load' in _filePathOrStorage) {
+      this.storage = _filePathOrStorage;
+    } else if (storageOverride) {
+      this.storage = storageOverride;
+    } else if (useFilePersistence === false) {
+      this.storage = new MemoryCacheStorage();
+    } else {
+      this.storage = new StorageDriverCacheStorage();
+    }
+  }
 
   private async load(): Promise<Record<string, EnrichmentResult>> {
-    if (!this.useFilePersistence) return this.cache;
     try {
-      const raw = await fs.readFile(this.filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        this.cache = parsed;
-        return parsed;
+      const loaded = await this.storage.load();
+      if (loaded && Object.keys(loaded).length > 0) {
+        this.cache = loaded;
       }
-      return {};
+      return this.cache;
     } catch {
       return this.cache;
     }
   }
 
   private async save(): Promise<void> {
-    if (!this.useFilePersistence) return;
     try {
-      await fs.writeFile(this.filePath, JSON.stringify(this.cache, null, 2), 'utf8');
+      await this.storage.save(this.cache);
     } catch {
       // Ignored
     }
@@ -64,13 +118,7 @@ export class EnrichmentCache {
 
   async clear(): Promise<void> {
     this.cache = {};
-    if (this.useFilePersistence) {
-      try {
-        await fs.unlink(this.filePath);
-      } catch {
-        // Ignored
-      }
-    }
+    await this.storage.clear();
   }
 }
 

@@ -22,13 +22,14 @@ export interface LearningTelemetryEvent {
 export interface LearningEngineState {
   events: LearningTelemetryEvent[];
   domainTrustScores: Record<string, number>; // Domain -> trust multiplier (e.g. 1.25)
+  processedInteractions: Record<string, string>; // itemId -> eventType (idempotency key)
   totalLearningCycles: number;
   lastTunedAt: string;
 }
 
 export class RecursiveLearningEngine {
   private static STORAGE_KEY = '@atem:recursive_learning_state';
-  private static DAMPENING_FACTOR = 0.85; // Prevents extreme swing
+  private static DAMPENING_FACTOR = 0.85; // Bounded dampening to prevent abrupt swings
   private static MIN_WEIGHT = 0.10;
   private static MAX_WEIGHT = 0.98;
 
@@ -49,15 +50,21 @@ export class RecursiveLearningEngine {
             'aeon.co': 1.25,
             'cdm.link': 1.15
           },
+          processedInteractions: {},
           totalLearningCycles: 0,
           lastTunedAt: new Date().toISOString()
         };
       }
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (!parsed.processedInteractions) {
+        parsed.processedInteractions = {};
+      }
+      return parsed;
     } catch {
       return {
         events: [],
         domainTrustScores: {},
+        processedInteractions: {},
         totalLearningCycles: 0,
         lastTunedAt: new Date().toISOString()
       };
@@ -66,15 +73,24 @@ export class RecursiveLearningEngine {
 
   /**
    * Records a learning event and recalculates updated topic weights.
+   * Enforces idempotency per itemId: repeat triggers of the same event do not multiply deltas.
+   * Keeps profile.explicitInterests immutable, writing learned adaptations into profile.derivedWeights.
    */
   public static async recordInteractionEvent(
     profile: UserProfile,
     item: FeedItem,
     eventType: 'upvote' | 'downvote' | 'completed_reading' | 'note_created' | 'feedback_positive' | 'feedback_negative'
-  ): Promise<{ updatedProfile: UserProfile; event: LearningTelemetryEvent }> {
+  ): Promise<{ updatedProfile: UserProfile; event: LearningTelemetryEvent | null }> {
     const state = await this.getEngineState();
     const primaryTopic = item.primaryTopic || 'philosophy_ethics';
-    const currentWeight = profile.explicitInterests[primaryTopic] ?? 0.50;
+
+    // Idempotency check: if this specific interaction was already applied to this item, return without re-applying delta
+    if (state.processedInteractions[item.id] === eventType) {
+      return { updatedProfile: profile, event: null };
+    }
+
+    // Base weight uses previous derived weight if present, otherwise explicit interest
+    const currentBase = profile.derivedWeights?.[primaryTopic] ?? profile.explicitInterests[primaryTopic] ?? 0.50;
 
     let delta = 0;
     let reason = '';
@@ -106,17 +122,17 @@ export class RecursiveLearningEngine {
         break;
     }
 
-    // Apply Bayesian dampening
+    // Apply bounded adaptive dampening [MIN_WEIGHT, MAX_WEIGHT]
     const newWeight = Math.max(
       this.MIN_WEIGHT,
-      Math.min(this.MAX_WEIGHT, currentWeight + delta * this.DAMPENING_FACTOR)
+      Math.min(this.MAX_WEIGHT, currentBase + delta * this.DAMPENING_FACTOR)
     );
 
     const event: LearningTelemetryEvent = {
       timestamp: new Date().toISOString(),
       type: eventType,
       topic: primaryTopic,
-      delta: Math.round((newWeight - currentWeight) * 100) / 100,
+      delta: Math.round((newWeight - currentBase) * 100) / 100,
       reason
     };
 
@@ -128,6 +144,9 @@ export class RecursiveLearningEngine {
       state.domainTrustScores[domain] = Math.max(0.5, Math.min(2.0, currentTrust + trustDelta));
     }
 
+    // Record idempotency token
+    state.processedInteractions[item.id] = eventType;
+
     state.events.unshift(event);
     if (state.events.length > 50) {
       state.events = state.events.slice(0, 50); // Keep latest 50 events
@@ -137,10 +156,11 @@ export class RecursiveLearningEngine {
 
     await appStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
 
+    // Update derivedWeights while keeping explicitInterests untouched
     const updatedProfile: UserProfile = {
       ...profile,
-      explicitInterests: {
-        ...profile.explicitInterests,
+      derivedWeights: {
+        ...(profile.derivedWeights || {}),
         [primaryTopic]: Math.round(newWeight * 100) / 100
       }
     };

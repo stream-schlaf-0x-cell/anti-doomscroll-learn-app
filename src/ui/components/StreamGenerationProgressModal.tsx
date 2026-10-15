@@ -14,6 +14,10 @@ import { typography, radius, spacing } from '../theme';
 export interface StreamGenerationProgressModalProps {
   visible: boolean;
   spaceName: string;
+  progress?: number;
+  statusMessage?: string;
+  isFinished?: boolean;
+  error?: string | null;
   onCompleted?: () => void;
   onCancel?: () => void;
 }
@@ -30,78 +34,76 @@ const GENERATION_STEPS: StepInfo[] = [
     title: 'Primärquellen & Evidenz scannen',
     detail: 'Stanford Encyclopedia, arXiv & verifizierte Wissenschaftsquellen',
     icon: 'search-outline',
-    threshold: 22
+    threshold: 20
   },
   {
-    title: 'Dialektische KI-Synthese',
-    detail: 'Sokratische Reibung & Hegelsche Antithese (mit 🤖 Banner)',
+    title: 'Epistemischer Kontrapunkt',
+    detail: 'Dialektische Reibung & Sokratische Perspektive (mit 🤖 Banner)',
     icon: 'sparkles-outline',
-    threshold: 52
+    threshold: 50
   },
   {
-    title: 'Menschliche Memes & Didaktik',
-    detail: 'Didaktischer Transfer & kulturelle Selbstironie gegen Ermüdung',
+    title: 'Didaktische Entlastung & Humor',
+    detail: 'Kulturelle Selbstironie & Transfer gegen kognitive Ermüdung',
     icon: 'happy-outline',
-    threshold: 78
+    threshold: 75
   },
   {
     title: 'Bibliotheka-Archivierung',
     detail: 'Dauerhaft autark im persönlichen Wissens-Kanon verankern',
     icon: 'library-outline',
-    threshold: 96
+    threshold: 95
   }
 ];
 
 export const StreamGenerationProgressModal: React.FC<StreamGenerationProgressModalProps> = ({
   visible,
   spaceName,
+  progress: controlledProgress,
+  statusMessage,
+  isFinished: controlledFinished,
+  error,
   onCompleted,
   onCancel
 }) => {
   const { colors } = useApp();
-  const [progress, setProgress] = useState<number>(0);
+  const [internalProgress, setInternalProgress] = useState<number>(0);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
-  const [isFinished, setIsFinished] = useState<boolean>(false);
+
+  const isFinished = controlledFinished ?? (controlledProgress !== undefined ? controlledProgress >= 100 : internalProgress >= 100);
+  const currentProgress = controlledProgress !== undefined
+    ? controlledProgress
+    : (isFinished ? 100 : internalProgress);
 
   useEffect(() => {
     if (!visible) {
-      setProgress(0);
+      setInternalProgress(0);
       setElapsedSeconds(0);
-      setIsFinished(false);
       return;
     }
 
-    // Timer for elapsed seconds
     const timerInterval = setInterval(() => {
       setElapsedSeconds(prev => +(prev + 0.1).toFixed(1));
     }, 100);
 
-    // Realistic progressive stepping over ~2.2 seconds
-    let current = 0;
-    const progressInterval = setInterval(() => {
-      current += Math.floor(Math.random() * 8) + 5;
-      if (current >= 100) {
-        current = 100;
-        setProgress(100);
-        setIsFinished(true);
-        clearInterval(progressInterval);
-        clearInterval(timerInterval);
-        // Call onCompleted after a brief moment
-        setTimeout(() => {
-          if (onCompleted) {
-            onCompleted();
-          }
-        }, 500);
-      } else {
-        setProgress(current);
-      }
-    }, 110);
+    // If no controlled progress is provided, animate smoothly up to 85% while waiting for real completion
+    let progressInterval: ReturnType<typeof setInterval> | null = null;
+    if (controlledProgress === undefined && !controlledFinished) {
+      let current = 0;
+      progressInterval = setInterval(() => {
+        if (current < 85) {
+          current += Math.floor(Math.random() * 5) + 3;
+          if (current > 85) current = 85;
+          setInternalProgress(current);
+        }
+      }, 150);
+    }
 
     return () => {
       clearInterval(timerInterval);
-      clearInterval(progressInterval);
+      if (progressInterval) clearInterval(progressInterval);
     };
-  }, [visible, onCompleted]);
+  }, [visible, controlledProgress, controlledFinished]);
 
   if (!visible) return null;
 
@@ -132,11 +134,11 @@ export const StreamGenerationProgressModal: React.FC<StreamGenerationProgressMod
           {/* Big Progress Bar */}
           <View style={styles.progressContainer}>
             <View style={styles.progressHeaderRow}>
-              <Text style={[styles.progressStatusText, { color: colors.textSecondary }]}>
-                {isFinished ? '✓ Synthese abgeschlossen' : 'Recherchiere & baue Feed-Struktur…'}
+              <Text style={[styles.progressStatusText, { color: error ? '#EF4444' : colors.textSecondary }]}>
+                {error ? `✕ ${error}` : (statusMessage || (isFinished ? '✓ Synthese abgeschlossen' : 'Recherchiere & baue Feed-Struktur…'))}
               </Text>
-              <Text style={[styles.progressPercentText, { color: colors.accent }]}>
-                {progress}%
+              <Text style={[styles.progressPercentText, { color: error ? '#EF4444' : colors.accent }]}>
+                {currentProgress}%
               </Text>
             </View>
 
@@ -146,8 +148,8 @@ export const StreamGenerationProgressModal: React.FC<StreamGenerationProgressMod
                 style={[
                   styles.fill,
                   {
-                    backgroundColor: isFinished ? '#10B981' : colors.accent,
-                    width: `${progress}%`
+                    backgroundColor: error ? '#EF4444' : (isFinished ? '#10B981' : colors.accent),
+                    width: `${currentProgress}%`
                   }
                 ]}
               />
@@ -157,8 +159,8 @@ export const StreamGenerationProgressModal: React.FC<StreamGenerationProgressMod
           {/* Stepped Process List */}
           <View style={styles.stepsList}>
             {GENERATION_STEPS.map((step, idx) => {
-              const isCompleted = progress >= step.threshold;
-              const isCurrent = !isCompleted && (idx === 0 || progress >= GENERATION_STEPS[idx - 1].threshold);
+              const isCompleted = currentProgress >= step.threshold;
+              const isCurrent = !isCompleted && !error && (idx === 0 || currentProgress >= GENERATION_STEPS[idx - 1].threshold);
 
               return (
                 <View key={step.title} style={styles.stepRow}>
@@ -222,7 +224,15 @@ export const StreamGenerationProgressModal: React.FC<StreamGenerationProgressMod
               </Text>
             </View>
 
-            {isFinished && (
+            {error ? (
+              <TouchableOpacity
+                onPress={onCancel}
+                style={[styles.readyButton, { backgroundColor: colors.surfaceSecondary }]}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.readyButtonText, { color: colors.textPrimary }]}>Schließen</Text>
+              </TouchableOpacity>
+            ) : isFinished ? (
               <TouchableOpacity
                 onPress={onCompleted}
                 style={[styles.readyButton, { backgroundColor: '#10B981' }]}
@@ -230,7 +240,15 @@ export const StreamGenerationProgressModal: React.FC<StreamGenerationProgressMod
               >
                 <Text style={styles.readyButtonText}>Jetzt öffnen ✓</Text>
               </TouchableOpacity>
-            )}
+            ) : onCancel ? (
+              <TouchableOpacity
+                onPress={onCancel}
+                style={{ paddingVertical: 6, paddingHorizontal: 12 }}
+                activeOpacity={0.7}
+              >
+                <Text style={{ color: colors.textMuted, fontSize: 13 }}>Abbrechen</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
       </View>

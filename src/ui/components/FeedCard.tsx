@@ -53,6 +53,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
   const [showAwardModal, setShowAwardModal] = useState(false);
   const [awardToast, setAwardToast] = useState<string | null>(null);
   const [showLinkPreview, setShowLinkPreview] = useState(false);
+  const [showDidactic, setShowDidactic] = useState<boolean>(Boolean(item.isTeachingRelated || item.primaryTopic === 'german_didactics' || isHero));
 
   const originalUrl = item.canonicalUrl || item.sourceReferences[0]?.originalUrl;
 
@@ -372,19 +373,44 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
         </View>
       )}
 
-      {/* 8. Didactic / Learning Partner Transfer */}
+      {/* 8. Didactic / Learning Partner Transfer (on-demand to prevent card-overload) */}
       {didacticTransfer && (
-        <View style={[styles.didacticBox, { backgroundColor: colors.surfaceSecondary, borderLeftColor: '#10B981' }]}>
-          <View style={styles.didacticHeader}>
-            <Ionicons name="school-outline" size={14} color="#10B981" style={{ marginRight: 5 }} />
-            <Text style={[styles.didacticLabel, { color: '#10B981' }]}>
-              {item.primaryTopic === 'german_didactics' || item.isTeachingRelated ? 'Didaktik-Labor & Transfer' : '🎓 Lern-Partner & Transfer'}
+        showDidactic ? (
+          <View style={[styles.didacticBox, { backgroundColor: colors.surfaceSecondary, borderLeftColor: '#10B981' }]}>
+            <TouchableOpacity
+              onPress={() => setShowDidactic(false)}
+              style={styles.didacticHeader}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Didaktik-Transfer einklappen"
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <Ionicons name="school-outline" size={14} color="#10B981" style={{ marginRight: 5 }} />
+                <Text style={[styles.didacticLabel, { color: '#10B981' }]}>
+                  {item.primaryTopic === 'german_didactics' || item.isTeachingRelated ? 'Didaktik-Labor & Transfer' : '🎓 Lern-Partner & Transfer'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-up" size={14} color={colors.textMuted} />
+            </TouchableOpacity>
+            <Text style={[styles.didacticText, { color: colors.textSecondary }]}>
+              {didacticTransfer}
             </Text>
           </View>
-          <Text style={[styles.didacticText, { color: colors.textSecondary }]}>
-            {didacticTransfer}
-          </Text>
-        </View>
+        ) : (
+          <TouchableOpacity
+            onPress={() => setShowDidactic(true)}
+            style={[styles.didacticToggleChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Lernimpuls & Didaktik-Transfer einblenden"
+          >
+            <Ionicons name="school-outline" size={13} color="#10B981" style={{ marginRight: 6 }} />
+            <Text style={[styles.didacticToggleText, { color: colors.textSecondary }]}>
+              {item.primaryTopic === 'german_didactics' || item.isTeachingRelated ? 'Didaktik-Transfer einblenden' : '🎓 Lernimpuls & Transfer prüfen'}
+            </Text>
+            <Ionicons name="chevron-down" size={13} color={colors.textMuted} style={{ marginLeft: 'auto' }} />
+          </TouchableOpacity>
+        )
       )}
 
       {/* 8.0 Evergreen Internet Gem Cross-Reference */}
@@ -1267,6 +1293,19 @@ const styles = StyleSheet.create({
   didacticText: {
     fontSize: 13,
     lineHeight: 19
+  },
+  didacticToggleChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: radius.sm,
+    borderWidth: 0.5,
+    marginVertical: 4
+  },
+  didacticToggleText: {
+    fontSize: 12,
+    fontWeight: '600'
   },
   evergreenBox: {
     borderLeftWidth: 3,

@@ -12,14 +12,14 @@ import {
   ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { TopicTag } from '../../core/domain/types';
+import { TopicTag, FeedItem } from '../../core/domain/types';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
 import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
 import { DesktopSidebar } from '../../ui/components/DesktopSidebar';
 import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
-import { ScoredFeedItem } from '../../core/domain/ranking';
+import { ScoredFeedItem, scoreFeedItem } from '../../core/domain/ranking';
 import { Subchannel, defaultSpaceRepository } from '../../core/spaces/spaceRepository';
 import { UltraMasterModal } from '../../ui/components/UltraMasterModal';
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
@@ -27,8 +27,6 @@ import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerat
 import { AtemBreathingModal } from '../../ui/components/AtemBreathingModal';
 import { ContinuousLiveNewsService, NewsHubFilterCategory } from '../../core/data/continuousLiveNewsService';
 import { NewsHubModal } from '../../ui/components/NewsHubModal';
-import { scoreFeedItem } from '../../core/domain/ranking';
-import { FeedItem } from '../../core/domain/types';
 
 export const FeedScreen: React.FC = () => {
   const {
@@ -39,15 +37,17 @@ export const FeedScreen: React.FC = () => {
     activeFeedOption,
     setActiveFeedOption,
     profile,
-    interactions
+    interactions,
+    selectedFilter,
+    setSelectedFilter,
+    searchQuery,
+    setSearchQuery
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
 
   type SortMode = 'hot' | 'new' | 'top' | 'gems';
-  const [selectedFilter, setSelectedFilter] = useState<string | 'all'>('all');
   const [sortMode, setSortMode] = useState<SortMode>('hot');
-  const [searchQuery, setSearchQuery] = useState<string>('');
   const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [subchannels, setSubchannels] = useState<Subchannel[]>([]);
@@ -55,6 +55,10 @@ export const FeedScreen: React.FC = () => {
   const [isGeneratingPocket, setIsGeneratingPocket] = useState<boolean>(false);
   const [showProgressModal, setShowProgressModal] = useState<boolean>(false);
   const [progressSpaceName, setProgressSpaceName] = useState<string>('');
+  const [streamProgress, setStreamProgress] = useState<number>(0);
+  const [streamStatusText, setStreamStatusText] = useState<string>('');
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [streamFinished, setStreamFinished] = useState<boolean>(false);
   const [showBreathingModal, setShowBreathingModal] = useState<boolean>(false);
 
   // Live News Hub & Classics State
@@ -126,6 +130,10 @@ export const FeedScreen: React.FC = () => {
       : selectedFilter;
 
     setProgressSpaceName(targetSpace);
+    setStreamProgress(5);
+    setStreamStatusText('Recherche vorbereiten…');
+    setStreamError(null);
+    setStreamFinished(false);
     setShowProgressModal(true);
     setIsGeneratingPocket(true);
 
@@ -134,15 +142,21 @@ export const FeedScreen: React.FC = () => {
         space: targetSpace,
         includeAiSynthesis: true,
         includeMemes: true,
-        count: 4
+        count: 4,
+        onProgress: (p, label) => {
+          setStreamProgress(p);
+          setStreamStatusText(label);
+        }
       });
+      setStreamFinished(true);
       await refreshFeed();
       await loadSubchannels();
       if (selectedFilter !== targetSpace) {
         setSelectedFilter(targetSpace);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Error generating pocket stream:', e);
+      setStreamError(e?.message || 'Fehler beim Generieren des Streams.');
     } finally {
       setIsGeneratingPocket(false);
     }
@@ -699,9 +713,9 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <View style={styles.sortRightInfo}>
-                    <Ionicons name="infinite-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                    <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
                     <Text style={[styles.sortInfoText, { color: colors.textMuted }]}>
-                      Endlos-Stream
+                      Kuratierte Entdeckung
                     </Text>
                   </View>
                 </View>
@@ -875,16 +889,25 @@ export const FeedScreen: React.FC = () => {
                   </React.Fragment>
                 ))}
 
-                {/* End of Stream / Manual Load More Trigger */}
-                <TouchableOpacity
-                  onPress={handleLoadMoreDiscovery}
-                  style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
-                >
-                  <Ionicons name="infinite-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
-                  <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
-                    Endlos weiter scrollen (+10 Gedanken & Gems)
-                  </Text>
-                </TouchableOpacity>
+                {/* End of Section / Conscious Discovery Trigger */}
+                {visibleDiscoveryCount < allStreamItems.length ? (
+                  <TouchableOpacity
+                    onPress={handleLoadMoreDiscovery}
+                    style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
+                  >
+                    <Ionicons name="compass-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
+                    <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
+                      Weiter entdecken (+10 Beiträge)
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={[styles.loadMoreButton, { borderColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary, opacity: 0.85 }]}>
+                    <Ionicons name="checkmark-circle-outline" size={18} color={colors.textMuted} style={{ marginRight: 6 }} />
+                    <Text style={[styles.loadMoreButtonText, { color: colors.textMuted }]}>
+                      Alle verfügbaren Beiträge dieser Ausgabe gelesen
+                    </Text>
+                  </View>
+                )}
               </>
             )}
             </>
@@ -913,6 +936,10 @@ export const FeedScreen: React.FC = () => {
       <StreamGenerationProgressModal
         visible={showProgressModal}
         spaceName={progressSpaceName}
+        progress={streamProgress}
+        statusMessage={streamStatusText}
+        isFinished={streamFinished}
+        error={streamError}
         onCompleted={() => setShowProgressModal(false)}
         onCancel={() => setShowProgressModal(false)}
       />

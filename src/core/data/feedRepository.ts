@@ -1,5 +1,5 @@
 import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP } from '../domain/types';
-import { INITIAL_FIXTURES, getCuratedImageForTopic, getSimulatedCommentsForTopic } from './fixtures';
+import { INITIAL_FIXTURES, getCuratedImageForTopic } from './fixtures';
 import { rankAndInterleaveFeed, ScoredFeedItem } from '../domain/ranking';
 import { AtemStorage, appStorage } from './storage';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
@@ -25,10 +25,10 @@ function enrichSocialFeedItem(rawItem: FeedItem): FeedItem {
   const space = item.space || topicMeta?.space || `c/${topic}`;
   const flair = item.flair || topicMeta?.flair || '◈ Recherche';
   const imageUrl = item.imageUrl || getCuratedImageForTopic(topic, item.id);
-  const upvotesCount = item.upvotesCount || (40 + ((item.id.charCodeAt(item.id.length - 1) * 3) % 75));
-  const comments = item.comments && item.comments.length > 0
-    ? item.comments
-    : getSimulatedCommentsForTopic(topic, item.title, item.id);
+  // Grounded: No simulated upvotes or artificial community numbers. Personal voting is tracked locally.
+  const upvotesCount = item.upvotesCount ?? 0;
+  // Grounded: Only retain authentic comments with origin/link, zero synthetic comments.
+  const comments = item.comments ?? [];
 
   return {
     ...item,

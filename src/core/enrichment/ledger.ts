@@ -1,8 +1,10 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { EnrichmentLedgerEntry, EnrichmentLedgerSummary } from './types';
+import { appStorage, AtemStorage, KeyLockManager } from '../data/storage';
 
-// Grounded in official Gemini Flash pricing ($0.10/1M input, $0.40/1M output converted to EUR at 0.95 EUR/USD)
+// Grounded in official Google Gemini Flash pricing:
+// Input: $0.10 / 1M tokens ($0.00000010/token)
+// Output: $0.40 / 1M tokens ($0.00000040/token)
+// Converted to EUR at 0.95 EUR/USD:
 export const EUR_PER_INPUT_TOKEN = 0.000000095;
 export const EUR_PER_OUTPUT_TOKEN = 0.00000038;
 
@@ -22,56 +24,131 @@ export function getCurrentMonthKey(): string {
   return `${year}-${month}`;
 }
 
-const isBrowserEnv = typeof window !== 'undefined' || typeof document !== 'undefined';
+export interface ILedgerStorage {
+  load(): Promise<Record<string, EnrichmentLedgerSummary>>;
+  save(data: Record<string, EnrichmentLedgerSummary>): Promise<void>;
+  clear(): Promise<void>;
+}
 
-function getSafeLedgerFilePath(): string {
-  if (isBrowserEnv) return '';
-  try {
-    return typeof __dirname !== 'undefined' ? path.resolve(__dirname, '../data/usage-ledger.json') : '';
-  } catch {
-    return '';
+export class MemoryLedgerStorage implements ILedgerStorage {
+  private data: Record<string, EnrichmentLedgerSummary> = {};
+
+  async load(): Promise<Record<string, EnrichmentLedgerSummary>> {
+    return { ...this.data };
   }
+
+  async save(data: Record<string, EnrichmentLedgerSummary>): Promise<void> {
+    this.data = { ...data };
+  }
+
+  async clear(): Promise<void> {
+    this.data = {};
+  }
+}
+
+export class StorageDriverLedgerStorage implements ILedgerStorage {
+  private static STORAGE_KEY = '@atem:usage_ledger:v1';
+
+  constructor(private readonly storage: AtemStorage = appStorage) {}
+
+  async load(): Promise<Record<string, EnrichmentLedgerSummary>> {
+    try {
+      const raw = await this.storage.getItem(StorageDriverLedgerStorage.STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+      return {};
+    } catch {
+      return {};
+    }
+  }
+
+  async save(data: Record<string, EnrichmentLedgerSummary>): Promise<void> {
+    try {
+      await this.storage.setItem(StorageDriverLedgerStorage.STORAGE_KEY, JSON.stringify(data));
+    } catch {
+      // Non-fatal fallback
+    }
+  }
+
+  async clear(): Promise<void> {
+    try {
+      await this.storage.removeItem(StorageDriverLedgerStorage.STORAGE_KEY);
+    } catch {
+      // Non-fatal fallback
+    }
+  }
+}
+
+interface ActiveReservation {
+  id: string;
+  amountEur: number;
+  monthKey: string;
+  createdAt: number;
 }
 
 export class EnrichmentUsageLedger {
   private inMemorySummary: Record<string, EnrichmentLedgerSummary> = {};
+  private activeReservations: Map<string, ActiveReservation> = new Map();
+  private lockManager: KeyLockManager = new KeyLockManager();
+  private storage: ILedgerStorage;
 
   constructor(
-    private readonly filePath: string = getSafeLedgerFilePath(),
-    private readonly useFilePersistence: boolean = !isBrowserEnv && Boolean(getSafeLedgerFilePath())
-  ) {}
+    _filePathOrStorage?: string | ILedgerStorage,
+    useFilePersistence?: boolean,
+    storageOverride?: ILedgerStorage
+  ) {
+    if (typeof _filePathOrStorage === 'object' && _filePathOrStorage !== null && 'load' in _filePathOrStorage) {
+      this.storage = _filePathOrStorage;
+    } else if (storageOverride) {
+      this.storage = storageOverride;
+    } else if (useFilePersistence === false) {
+      this.storage = new MemoryLedgerStorage();
+    } else {
+      this.storage = new StorageDriverLedgerStorage();
+    }
+  }
 
   private async loadLedger(): Promise<Record<string, EnrichmentLedgerSummary>> {
-    if (!this.useFilePersistence) {
-      return this.inMemorySummary;
-    }
-
     try {
-      const raw = await fs.readFile(this.filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        this.inMemorySummary = parsed;
-        return parsed;
+      const loaded = await this.storage.load();
+      if (loaded && Object.keys(loaded).length > 0) {
+        this.inMemorySummary = loaded;
       }
-      return {};
+      return this.inMemorySummary;
     } catch {
       return this.inMemorySummary;
     }
   }
 
   private async saveLedger(): Promise<void> {
-    if (!this.useFilePersistence) return;
     try {
-      await fs.writeFile(this.filePath, JSON.stringify(this.inMemorySummary, null, 2), 'utf8');
+      await this.storage.save(this.inMemorySummary);
     } catch {
-      // Non-fatal if storage write fails
+      // Non-fatal
     }
   }
 
+  private getReservedAmountForMonth(monthKey: string): number {
+    let reserved = 0;
+    const now = Date.now();
+    // Reservations expire after 60 seconds if abandoned
+    for (const [id, res] of this.activeReservations.entries()) {
+      if (now - res.createdAt > 60000) {
+        this.activeReservations.delete(id);
+      } else if (res.monthKey === monthKey) {
+        reserved += res.amountEur;
+      }
+    }
+    return Math.round(reserved * 1000000) / 1000000;
+  }
+
   async getSummary(monthKey: string = getCurrentMonthKey()): Promise<EnrichmentLedgerSummary> {
-    const all = await this.loadLedger();
-    return (
-      all[monthKey] ?? {
+    return this.lockManager.acquire(monthKey, async () => {
+      const all = await this.loadLedger();
+      const summary = all[monthKey] ?? {
         monthKey,
         totalCalls: 0,
         totalInputTokens: 0,
@@ -80,16 +157,82 @@ export class EnrichmentUsageLedger {
         budgetLimitEur: MONTHLY_BUDGET_CEILING_EUR,
         isBudgetExceeded: false,
         entries: []
-      }
-    );
+      };
+      return summary;
+    });
   }
 
   async canSpend(estimatedEur: number = 0.001, monthKey: string = getCurrentMonthKey()): Promise<boolean> {
-    const summary = await this.getSummary(monthKey);
-    return summary.totalCostEur + estimatedEur <= MONTHLY_BUDGET_CEILING_EUR;
+    return this.lockManager.acquire(monthKey, async () => {
+      const all = await this.loadLedger();
+      const summary = all[monthKey];
+      const committed = summary ? summary.totalCostEur : 0;
+      const reserved = this.getReservedAmountForMonth(monthKey);
+      return committed + reserved + estimatedEur <= MONTHLY_BUDGET_CEILING_EUR;
+    });
+  }
+
+  /**
+   * Atomically reserves an estimated budget chunk.
+   * Prevents race conditions where concurrent calls bypass the monthly budget ceiling.
+   */
+  async reserveSpend(estimatedEur: number, monthKey: string = getCurrentMonthKey()): Promise<string | null> {
+    return this.lockManager.acquire(monthKey, async () => {
+      const all = await this.loadLedger();
+      const summary = all[monthKey];
+      const committed = summary ? summary.totalCostEur : 0;
+      const reserved = this.getReservedAmountForMonth(monthKey);
+
+      if (committed + reserved + estimatedEur > MONTHLY_BUDGET_CEILING_EUR) {
+        return null; // Budget exceeded or unknown status, reject reservation
+      }
+
+      const reservationId = `res_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      this.activeReservations.set(reservationId, {
+        id: reservationId,
+        amountEur: estimatedEur,
+        monthKey,
+        createdAt: Date.now()
+      });
+      return reservationId;
+    });
+  }
+
+  /**
+   * Releases an unconsumed reservation (e.g. if the API call failed or was aborted).
+   */
+  async releaseReservation(reservationId: string): Promise<void> {
+    const res = this.activeReservations.get(reservationId);
+    if (!res) return;
+    await this.lockManager.acquire(res.monthKey, async () => {
+      this.activeReservations.delete(reservationId);
+    });
+  }
+
+  /**
+   * Commits the actual spend against a previously held reservation.
+   */
+  async commitReservation(
+    reservationId: string,
+    entry: Omit<EnrichmentLedgerEntry, 'timestamp' | 'costEur'> & { costEur?: number },
+    monthKey: string = getCurrentMonthKey()
+  ): Promise<EnrichmentLedgerSummary> {
+    return this.lockManager.acquire(monthKey, async () => {
+      this.activeReservations.delete(reservationId);
+      return this.recordUsageInternal(entry, monthKey);
+    });
   }
 
   async recordUsage(
+    entry: Omit<EnrichmentLedgerEntry, 'timestamp' | 'costEur'> & { costEur?: number },
+    monthKey: string = getCurrentMonthKey()
+  ): Promise<EnrichmentLedgerSummary> {
+    return this.lockManager.acquire(monthKey, async () => {
+      return this.recordUsageInternal(entry, monthKey);
+    });
+  }
+
+  private async recordUsageInternal(
     entry: Omit<EnrichmentLedgerEntry, 'timestamp' | 'costEur'> & { costEur?: number },
     monthKey: string = getCurrentMonthKey()
   ): Promise<EnrichmentLedgerSummary> {
@@ -135,13 +278,8 @@ export class EnrichmentUsageLedger {
 
   async resetLedger(): Promise<void> {
     this.inMemorySummary = {};
-    if (this.useFilePersistence) {
-      try {
-        await fs.unlink(this.filePath);
-      } catch {
-        // Ignored
-      }
-    }
+    this.activeReservations.clear();
+    await this.storage.clear();
   }
 }
 

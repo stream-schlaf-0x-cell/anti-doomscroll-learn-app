@@ -12,8 +12,8 @@ describe('RecursiveLearningEngine (Adaptive Cognitive Personalization)', () => {
     assert.ok(state.domainTrustScores['quantamagazine.org'] >= 1.2);
   });
 
-  it('records upvote and increases topic weight with Bayesian dampening', async () => {
-    const item = INITIAL_FIXTURES.find(f => f.primaryTopic === 'philosophy_ethics') || INITIAL_FIXTURES[0];
+  it('records upvote and increases topic weight with bounded adaptive dampening', async () => {
+    const item = { ...(INITIAL_FIXTURES.find(f => f.primaryTopic === 'philosophy_ethics') || INITIAL_FIXTURES[0]), id: 'test-item-upvote-1' };
     const targetTopic = item.primaryTopic;
     const initialWeight = DEFAULT_USER_PROFILE.explicitInterests[targetTopic] ?? 0.5;
 
@@ -23,23 +23,39 @@ describe('RecursiveLearningEngine (Adaptive Cognitive Personalization)', () => {
       'upvote'
     );
 
+    assert.ok(event);
     assert.equal(event.type, 'upvote');
     assert.equal(event.topic, targetTopic);
     assert.ok(event.delta > 0);
-    assert.ok((updatedProfile.explicitInterests[targetTopic] ?? 0) > initialWeight);
+    const effectiveWeight = updatedProfile.derivedWeights?.[targetTopic] ?? updatedProfile.explicitInterests[targetTopic] ?? 0;
+    assert.ok(effectiveWeight > initialWeight);
+    // Explicit interests remain untouched
+    assert.equal(updatedProfile.explicitInterests[targetTopic], DEFAULT_USER_PROFILE.explicitInterests[targetTopic]);
   });
 
   it('records critical feedback and dampens topic weight without falling below min floor', async () => {
-    const item = INITIAL_FIXTURES[0];
+    const item = { ...INITIAL_FIXTURES[0], id: 'test-item-feedback-1' };
     const { updatedProfile, event } = await RecursiveLearningEngine.recordInteractionEvent(
       DEFAULT_USER_PROFILE,
       item,
       'feedback_negative'
     );
 
+    assert.ok(event);
     assert.equal(event.type, 'feedback_negative');
     assert.ok(event.delta < 0);
-    assert.ok((updatedProfile.explicitInterests.philosophy_ethics ?? 0) >= 0.10);
+    const effectivePhil = updatedProfile.derivedWeights?.philosophy_ethics ?? updatedProfile.explicitInterests.philosophy_ethics ?? 0;
+    assert.ok(effectivePhil >= 0.10);
+  });
+
+  it('enforces idempotency on duplicate interaction events for the same item', async () => {
+    const item = { ...INITIAL_FIXTURES[0], id: 'test-item-idempotency-1' };
+    const first = await RecursiveLearningEngine.recordInteractionEvent(DEFAULT_USER_PROFILE, item, 'upvote');
+    assert.ok(first.event);
+
+    const second = await RecursiveLearningEngine.recordInteractionEvent(first.updatedProfile, item, 'upvote');
+    assert.equal(second.event, null);
+    assert.deepEqual(second.updatedProfile.derivedWeights, first.updatedProfile.derivedWeights);
   });
 
   it('generates transparent explanation of topic evolution', () => {

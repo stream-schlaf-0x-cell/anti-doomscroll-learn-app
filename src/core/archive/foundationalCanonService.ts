@@ -12,7 +12,7 @@
 
 import { FeedItem, TopicTag } from '../domain/types';
 import { RaindropItem } from '../raindrop/raindropService';
-import { appStorage } from '../data/storage';
+import { appStorage, CorruptedDataError } from '../data/storage';
 
 export interface FoundationalCanon {
   id: string;
@@ -30,11 +30,11 @@ export interface FoundationalCanon {
 }
 
 export const INITIAL_FOUNDATIONAL_CANON: FoundationalCanon = {
-  id: 'canon-genesis-2026',
-  name: 'atmen Ur-Fundament (Raindrop Genesis Snapshot)',
-  savedAt: '2026-10-15T02:10:00.000Z',
-  description: 'Unveränderlicher epistemischer Grundstock. Vollständig unabhängig von Raindrop.io gespeichert.',
-  provenance: 'Raindrop.io Initial Sync & Cognitive Seed',
+  id: 'canon-seed-2026',
+  name: 'atmen Ur-Fundament (Vorbereiteter Seed-Datensatz)',
+  savedAt: '2026-10-14T20:00:00.000Z',
+  description: 'Epistemischer Initialbestand zur Orientierung vor einer persönlichen Raindrop-Synchronisation.',
+  provenance: 'Vorbereiteter Basis-Kanon (Initialer Seed-Datensatz vor Raindrop-Synchronisation)',
   totalBookmarks: 4,
   totalArticles: 4,
   boostedDomains: ['aeon.co', 'cdm.link', 'quantamagazine.org', 'hubermanlab.com'],
@@ -96,11 +96,12 @@ export const INITIAL_FOUNDATIONAL_CANON: FoundationalCanon = {
     }
   ],
   canonicalItems: [],
-  epistemicManifesto: 'Dieses Fundament sichert die ursprünglichen Quellen und Kognitionsgewichte der Genesis-Phase. Es garantiert, dass atmen auf verlässliche, tiefgründige Denktraditionen aufbaut, ohne jemals von externen APIs oder Datenverlust abhängig zu sein.'
+  epistemicManifesto: 'Dieses Fundament sichert die ursprünglichen Quellen und Kognitionsgewichte der Seed-Phase. Es garantiert, dass atmen auf verlässliche, tiefgründige Denktraditionen aufbaut, ohne jemals von externen APIs oder Datenverlust abhängig zu sein.'
 };
 
 export class FoundationalCanonService {
   private static STORAGE_KEY = '@atem:foundational_canon';
+  private static CORRUPTED_BACKUP_KEY_PREFIX = '@atem:foundational_canon:corrupted:';
 
   /**
    * Saves a foundational canon snapshot to persistent local storage.
@@ -110,16 +111,39 @@ export class FoundationalCanonService {
   }
 
   /**
-   * Retrieves the foundational canon. If none has been customized, returns the initial genesis canon.
+   * Retrieves the foundational canon. If none has been saved, returns the initial seed canon.
+   * Throws CorruptedDataError when existing data cannot be parsed, preserving the raw content.
    */
   public static async getCanon(): Promise<FoundationalCanon> {
+    const raw = await appStorage.getItem(this.STORAGE_KEY);
+    if (!raw) return INITIAL_FOUNDATIONAL_CANON;
     try {
-      const raw = await appStorage.getItem(this.STORAGE_KEY);
-      if (!raw) return INITIAL_FOUNDATIONAL_CANON;
-      return JSON.parse(raw);
-    } catch {
-      return INITIAL_FOUNDATIONAL_CANON;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.bookmarks)) {
+        throw new Error('Ungültige Kanon-Struktur.');
+      }
+      return parsed as FoundationalCanon;
+    } catch (err) {
+      if (err instanceof CorruptedDataError) throw err;
+      throw new CorruptedDataError(
+        `Kanon-Speicherdaten beschädigt. Das rohe Abbild wurde erhalten.`,
+        raw,
+        err
+      );
     }
+  }
+
+  /**
+   * Safely recovers from a corrupted canon by preserving the raw corrupted payload
+   * under a timestamped backup key, and replacing the active canon with a valid snapshot.
+   */
+  public static async recoverCanon(validReplacement: FoundationalCanon = INITIAL_FOUNDATIONAL_CANON): Promise<void> {
+    const raw = await appStorage.getItem(this.STORAGE_KEY);
+    if (raw) {
+      const backupKey = `${this.CORRUPTED_BACKUP_KEY_PREFIX}${Date.now()}`;
+      await appStorage.setItem(backupKey, raw);
+    }
+    await this.saveCanon(validReplacement);
   }
 
   /**

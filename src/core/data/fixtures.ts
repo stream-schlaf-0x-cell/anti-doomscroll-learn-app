@@ -1100,6 +1100,7 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
   language: 'de',
   region: 'de',
   explicitInterests: { ...DEFAULT_STARTER_INTERESTS },
+  derivedWeights: {},
   explicitGoals: {
     understand_tech: 0.95,
     creative_music: 0.85,

@@ -2,6 +2,7 @@ import { FeedItem, TopicTag } from '../domain/types';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
 import { optimizeImageUrl } from '../utils/imageQuality';
+import { defaultSourceRepository } from './sourceRepository';
 
 // Safely load real-world ingested pipeline items
 let rawPipelineItems: FeedItem[] = [];
@@ -48,11 +49,42 @@ export class ContinuousLiveNewsService {
     // 1. Gather all authentic real-world news candidates
     const pool = rawPipelineItems.length > 0 ? rawPipelineItems : REAL_KNOWLEDGE_VAULT;
 
-    // 2. Filter by category
+    // Filter out disabled sources according to user settings in NewsHub
+    const disabledDomains = new Set<string>();
+    const disabledTokens: string[] = [];
+    try {
+      const allSources = await defaultSourceRepository.getAllSources();
+      for (const s of allSources.filter(src => !src.enabled)) {
+        disabledTokens.push(s.name.toLowerCase());
+        disabledTokens.push(s.id.toLowerCase());
+        try {
+          const parsedUrl = new URL(s.url);
+          const host = parsedUrl.hostname.replace(/^www\./, '').toLowerCase();
+          disabledDomains.add(host);
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // Non-fatal
+    }
+
+    // 2. Filter by category and enabled sources
     let filtered = pool.filter(item => {
+      const publisher = (item.sourceReferences?.[0]?.publisher || '').toLowerCase();
+      const domain = (item.sourceDomain || '').replace(/^www\./, '').toLowerCase();
+
+      if (domain && disabledDomains.has(domain)) {
+        return false;
+      }
+      for (const token of disabledTokens) {
+        if (token && (publisher.includes(token) || item.id.toLowerCase().includes(token))) {
+          return false;
+        }
+      }
+
       if (category === 'all') return true;
 
-      const domain = (item.sourceDomain || item.sourceReferences[0]?.publisher || '').toLowerCase();
       const topic = item.primaryTopic;
 
       switch (category) {
@@ -133,7 +165,8 @@ export class ContinuousLiveNewsService {
    * Retrieves all timeless masterpieces ("old gems of the internet") from the vault.
    */
   public static getEvergreenClassics(): FeedItem[] {
-    return REAL_KNOWLEDGE_VAULT.map(item => {
+    const classicsOnly = REAL_KNOWLEDGE_VAULT.filter(item => item.isEvergreenGem === true);
+    return classicsOnly.map(item => {
       const enriched = enrichItemWithInstantResearch(item);
       return {
         ...enriched,

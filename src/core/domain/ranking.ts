@@ -27,6 +27,10 @@ const TOPIC_GOAL_MAP: Record<TopicTag, PersonalGoal> = {
   opportunities_growth: 'understand_tech'
 };
 
+export function getEffectiveTopicWeight(profile: UserProfile, topic: TopicTag): number {
+  return profile.derivedWeights?.[topic] ?? profile.explicitInterests[topic] ?? 0.5;
+}
+
 /**
  * Computes deterministic multi-dimensional score for a feed item based on user profile,
  * personal goals, explicit feedback memory, and past interactions.
@@ -38,12 +42,12 @@ export function scoreFeedItem(
 ): ScoredFeedItem {
   const interaction = interactions[item.id];
 
-  // 1. Topic Affinity Calculation
-  const primaryWeight = profile.explicitInterests[item.primaryTopic] ?? 0.5;
+  // 1. Topic Affinity Calculation (considering both explicit and learned adaptive weights)
+  const primaryWeight = getEffectiveTopicWeight(profile, item.primaryTopic);
   let secondaryBonus = 0;
   for (const topic of item.topics) {
     if (topic !== item.primaryTopic) {
-      const w = profile.explicitInterests[topic] ?? 0.5;
+      const w = getEffectiveTopicWeight(profile, topic);
       secondaryBonus += w * 0.2;
     }
   }

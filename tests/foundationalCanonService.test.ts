@@ -48,4 +48,31 @@ describe('FoundationalCanonService (Independent Knowledge Foundation)', () => {
     assert.equal(parsed.id, INITIAL_FOUNDATIONAL_CANON.id);
     assert.equal(parsed.bookmarks.length, 4);
   });
+
+  it('honestly states provenance as pre-seeded foundation without claiming personal Raindrop genesis sync', () => {
+    assert.ok(INITIAL_FOUNDATIONAL_CANON.provenance.includes('Vorbereiteter Basis-Kanon'));
+    assert.ok(!INITIAL_FOUNDATIONAL_CANON.provenance.includes('Genesis Snapshot'));
+  });
+
+  it('rejects corrupted stored canon with CorruptedDataError and preserves raw data during recovery', async () => {
+    const { appStorage, CorruptedDataError } = await import('../src/core/data/storage');
+    // Inject corrupt JSON
+    await appStorage.setItem('@atem:foundational_canon', 'INVALID_CANON_JSON{{');
+
+    await assert.rejects(
+      async () => FoundationalCanonService.getCanon(),
+      (err: any) => {
+        assert.ok(err.name === 'CorruptedDataError' || err instanceof CorruptedDataError);
+        assert.equal(err.raw, 'INVALID_CANON_JSON{{');
+        return true;
+      }
+    );
+
+    // Perform recovery
+    await FoundationalCanonService.recoverCanon();
+
+    // After recovery, valid canon is restored
+    const restored = await FoundationalCanonService.getCanon();
+    assert.equal(restored.id, INITIAL_FOUNDATIONAL_CANON.id);
+  });
 });

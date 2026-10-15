@@ -4,6 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing } from '../theme';
 import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
+import { defaultUsageLedger } from '../../core/enrichment/ledger';
+import { EnrichmentLedgerSummary } from '../../core/enrichment/types';
 
 interface DesktopSidebarProps {
   articleCount?: number;
@@ -13,6 +15,11 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 6
   const { colors, savedArticles, interactions, refreshFeed } = useApp();
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [budgetSummary, setBudgetSummary] = useState<EnrichmentLedgerSummary | null>(null);
+
+  React.useEffect(() => {
+    void defaultUsageLedger.getSummary().then(setBudgetSummary);
+  }, []);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -185,17 +192,33 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 6
 
         <View style={styles.budgetBody}>
           <View style={styles.budgetRow}>
-            <Text style={[styles.budgetLabel, { color: colors.textSecondary }]}>Verbraucht (Oktober 2026):</Text>
-            <Text style={[styles.budgetValue, { color: colors.textPrimary }]}>€0.14 / €5.00</Text>
+            <Text style={[styles.budgetLabel, { color: colors.textSecondary }]}>
+              {budgetSummary ? `Verbraucht (${budgetSummary.monthKey}):` : 'Verbraucht:'}
+            </Text>
+            <Text style={[styles.budgetValue, { color: colors.textPrimary }]}>
+              {budgetSummary
+                ? `€${budgetSummary.totalCostEur.toFixed(4)} / €${budgetSummary.budgetLimitEur.toFixed(2)}`
+                : 'Noch nicht erfasst'}
+            </Text>
           </View>
 
           {/* Progress bar */}
           <View style={[styles.budgetTrack, { backgroundColor: colors.surfaceSecondary }]}>
-            <View style={[styles.budgetFill, { width: '3%', backgroundColor: '#10B981' }]} />
+            <View
+              style={[
+                styles.budgetFill,
+                {
+                  width: `${Math.min(100, Math.max(1, Math.round(((budgetSummary?.totalCostEur ?? 0) / (budgetSummary?.budgetLimitEur ?? 5)) * 100)))}%`,
+                  backgroundColor: (budgetSummary?.totalCostEur ?? 0) >= 4.50 ? '#EF4444' : '#10B981'
+                }
+              ]}
+            />
           </View>
 
           <Text style={[styles.budgetNote, { color: colors.textMuted }]}>
-            Gedeckelt durch EnrichmentUsageLedger. Bei Erreichen der €5.00 schaltet Atem automatisch auf den kostenlosen Heuristik-Modus um.
+            {budgetSummary && budgetSummary.totalCalls > 0
+              ? `${budgetSummary.totalCalls} bezahlte Abrufe erfasst. Rechnungsprüfung via EnrichmentUsageLedger.`
+              : 'Quellenmodus aktiv: 0 bezahlte Abrufe. Bei aktiviertem Provider automatisch auf €5.00/Monat gedeckelt.'}
           </Text>
         </View>
       </View>

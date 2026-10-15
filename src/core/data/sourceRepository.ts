@@ -175,19 +175,28 @@ export class SourceRepository {
   }
 
   /**
-   * Toggles a source on or off. Returns new enabled status.
+   * Toggles a source on or off. Optional forceStatus allows explicitly enabling or disabling. Returns new enabled status.
    */
-  async toggleSource(sourceId: string): Promise<boolean> {
+  async toggleSource(sourceId: string, forceStatus?: boolean): Promise<boolean> {
     const state = await this.loadState();
     const disabledSet = new Set(state.disabledIds);
     let isNowEnabled: boolean;
 
-    if (disabledSet.has(sourceId)) {
-      disabledSet.delete(sourceId);
-      isNowEnabled = true;
+    if (typeof forceStatus === 'boolean') {
+      isNowEnabled = forceStatus;
+      if (isNowEnabled) {
+        disabledSet.delete(sourceId);
+      } else {
+        disabledSet.add(sourceId);
+      }
     } else {
-      disabledSet.add(sourceId);
-      isNowEnabled = false;
+      if (disabledSet.has(sourceId)) {
+        disabledSet.delete(sourceId);
+        isNowEnabled = true;
+      } else {
+        disabledSet.add(sourceId);
+        isNowEnabled = false;
+      }
     }
 
     state.disabledIds = Array.from(disabledSet);

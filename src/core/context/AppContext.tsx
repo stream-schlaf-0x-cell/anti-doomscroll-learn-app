@@ -13,6 +13,7 @@ import { libraryRepository } from '../data/libraryRepository';
 import { userProfileRepository } from '../data/userProfileRepository';
 import { DEFAULT_USER_PROFILE, DEFAULT_STARTER_INTERESTS } from '../data/fixtures';
 import { appStorage, CorruptedDataError, StorageUnavailableError } from '../data/storage';
+import { RecursiveLearningEngine } from '../recommendations/recursiveLearningEngine';
 import { ThemeColors, ThemePalette, getThemeColors } from '../../ui/theme';
 
 export type StartupState =
@@ -36,6 +37,10 @@ interface AppContextValue {
   setActiveTab: (tab: 'feed' | 'library' | 'settings') => void;
   activeFeedOption: 'daily' | 'live_news' | 'classics';
   setActiveFeedOption: (option: 'daily' | 'live_news' | 'classics') => void;
+  selectedFilter: string | 'all';
+  setSelectedFilter: (filter: string | 'all') => void;
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
   selectedArticleId: string | null;
   selectedArticle: FeedItem | null;
   openArticle: (id: string) => Promise<void>;
@@ -76,6 +81,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'feed' | 'library' | 'settings'>('feed');
   const [activeFeedOption, setActiveFeedOption] = useState<'daily' | 'live_news' | 'classics'>('daily');
+  const [selectedFilter, setSelectedFilter] = useState<string | 'all'>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<FeedItem | null>(null);
   const [whyModalItem, setWhyModalItem] = useState<ScoredFeedItem | null>(null);
@@ -331,6 +338,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setWhyModalItem(null);
     setActiveTab('feed');
     setActiveFeedOption('daily');
+    setSelectedFilter('all');
+    setSearchQuery('');
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       try {
@@ -473,6 +482,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const nextInteractions = { ...latestInteractionsRef.current, [id]: updated };
       latestInteractionsRef.current = nextInteractions;
       setInteractions(nextInteractions);
+
+      let item = await feedRepository.getItemById(id);
+      if (!item) {
+        item = await libraryRepository.getSavedArticle(id);
+      }
+      if (item && (feedback === 'more_like_this' || feedback === 'less_like_this')) {
+        const eventType = feedback === 'more_like_this' ? 'feedback_positive' : 'feedback_negative';
+        const res = await RecursiveLearningEngine.recordInteractionEvent(latestProfileRef.current, item, eventType);
+        if (res.event) {
+          latestProfileRef.current = res.updatedProfile;
+          setProfile(res.updatedProfile);
+          await userProfileRepository.saveProfile(res.updatedProfile);
+        }
+      }
+
       await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
     } catch {
       setErrorMessage('Feedback konnte nicht gespeichert werden.');
@@ -485,10 +509,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const nextInteractions = { ...latestInteractionsRef.current, [id]: updated };
       latestInteractionsRef.current = nextInteractions;
       setInteractions(nextInteractions);
+
+      let item = await feedRepository.getItemById(id);
+      if (!item) {
+        item = await libraryRepository.getSavedArticle(id);
+      }
+      if (item) {
+        const res = await RecursiveLearningEngine.recordInteractionEvent(latestProfileRef.current, item, 'note_created');
+        if (res.event) {
+          latestProfileRef.current = res.updatedProfile;
+          setProfile(res.updatedProfile);
+          await userProfileRepository.saveProfile(res.updatedProfile);
+          await scheduleFeedRecompute(res.updatedProfile, nextInteractions);
+        }
+      }
     } catch {
       setErrorMessage('Notiz konnte nicht gespeichert werden.');
     }
-  }, []);
+  }, [scheduleFeedRecompute]);
 
   const voteItem = useCallback(async (id: string, direction: 'up' | 'down' | 'clear') => {
     try {
@@ -496,6 +534,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const nextInteractions = { ...latestInteractionsRef.current, [id]: updated };
       latestInteractionsRef.current = nextInteractions;
       setInteractions(nextInteractions);
+
+      let item = await feedRepository.getItemById(id);
+      if (!item) {
+        item = await libraryRepository.getSavedArticle(id);
+      }
+      if (item && (direction === 'up' || direction === 'down')) {
+        const eventType = direction === 'up' ? 'upvote' : 'downvote';
+        const res = await RecursiveLearningEngine.recordInteractionEvent(latestProfileRef.current, item, eventType);
+        if (res.event) {
+          latestProfileRef.current = res.updatedProfile;
+          setProfile(res.updatedProfile);
+          await userProfileRepository.saveProfile(res.updatedProfile);
+        }
+      }
+
       await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
     } catch {
       setErrorMessage('Bewertung konnte nicht gespeichert werden.');
@@ -668,6 +721,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveTab,
         activeFeedOption,
         setActiveFeedOption,
+        selectedFilter,
+        setSelectedFilter,
+        searchQuery,
+        setSearchQuery,
         selectedArticleId,
         selectedArticle,
         openArticle,

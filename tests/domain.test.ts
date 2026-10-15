@@ -307,4 +307,29 @@ describe('Deterministic Ranking Engine', () => {
     assert.strictEqual(hasTeaching, true, 'Top batch must contain at least one teaching-related item via soft quota');
     assert.strictEqual(hasChallenging, true, 'Top batch must contain at least one challenging perspective via soft quota');
   });
+
+  it('should use derivedWeights in preference to explicitInterests when computing effective topic weight', () => {
+    const { getEffectiveTopicWeight } = require('../src/core/domain/ranking');
+    const profile = {
+      ...DEFAULT_USER_PROFILE,
+      explicitInterests: {
+        ...DEFAULT_STARTER_INTERESTS,
+        philosophy_ethics: 0.50
+      },
+      derivedWeights: {
+        philosophy_ethics: 0.85
+      }
+    };
+
+    const effective = getEffectiveTopicWeight(profile, 'philosophy_ethics');
+    assert.strictEqual(effective, 0.85, 'Learned derived weight should take precedence over explicit interest');
+    assert.strictEqual(profile.explicitInterests.philosophy_ethics, 0.50, 'Explicit interests must remain immutable');
+  });
+
+  it('should ensure teaching items do not exceed balanced proportions across all feed items', () => {
+    // In backgroundResearchPipeline, items should not all be marked isTeachingRelated just because they have didacticTransfer
+    const teachingCount = INITIAL_FIXTURES.filter(i => i.isTeachingRelated).length;
+    const ratio = teachingCount / INITIAL_FIXTURES.length;
+    assert.ok(ratio < 0.5, `Teaching items (${teachingCount}/${INITIAL_FIXTURES.length} = ${(ratio * 100).toFixed(0)}%) must not dominate the entire collection`);
+  });
 });
