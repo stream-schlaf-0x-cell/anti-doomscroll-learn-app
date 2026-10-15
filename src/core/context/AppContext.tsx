@@ -38,6 +38,7 @@ interface AppContextValue {
   selectedArticle: FeedItem | null;
   openArticle: (id: string) => Promise<void>;
   closeArticle: () => void;
+  goHome: () => void;
   whyModalItem: ScoredFeedItem | null;
   openWhyModal: (item: ScoredFeedItem) => void;
   closeWhyModal: () => void;
@@ -308,6 +309,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     flushReadingProgress();
     setSelectedArticleId(null);
     setSelectedArticle(null);
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      try {
+        if (window.location.search.includes('article=')) {
+          window.history.pushState({}, '', window.location.pathname);
+        }
+      } catch {
+        // Ignored
+      }
+    }
+  }, [flushReadingProgress]);
+
+  const goHome = useCallback(() => {
+    void flushReadingProgress();
+    setSelectedArticleId(null);
+    setSelectedArticle(null);
+    setWhyModalItem(null);
+    setActiveTab('feed');
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       try {
@@ -647,6 +666,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         selectedArticle,
         openArticle,
         closeArticle,
+        goHome,
         whyModalItem,
         openWhyModal,
         closeWhyModal,

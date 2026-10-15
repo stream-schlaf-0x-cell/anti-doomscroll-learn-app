@@ -18,11 +18,14 @@ import { ReadingTimeBadge } from '../../ui/components/ReadingTimeBadge';
 import { DeepeningCard } from '../../ui/components/DeepeningCard';
 import { typography, radius, spacing } from '../../ui/theme';
 import { LinkPreviewModal } from '../../ui/components/LinkPreviewModal';
+import { optimizeImageUrl } from '../../core/utils/imageQuality';
+import { RaindropService } from '../../core/raindrop/raindropService';
 
 export const ReaderScreen: React.FC = () => {
   const {
     selectedArticle,
     closeArticle,
+    goHome,
     colors,
     isDark,
     setThemePreference,
@@ -37,6 +40,7 @@ export const ReaderScreen: React.FC = () => {
 
   const [scrollPercent, setScrollPercent] = useState<number>(0);
   const [contentHeight, setContentHeight] = useState<number>(0);
+  const [isRaindropSaved, setIsRaindropSaved] = useState<boolean>(false);
   const [layoutHeight, setLayoutHeight] = useState<number>(0);
   const [previewTarget, setPreviewTarget] = useState<{ visible: boolean; url: string; title: string; publisher: string } | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
@@ -135,6 +139,24 @@ export const ReaderScreen: React.FC = () => {
     }
   };
 
+  const handleSaveToRaindrop = async () => {
+    if (!selectedArticle) return;
+    try {
+      const originalUrl = selectedArticle.sourceReferences[0]?.originalUrl || selectedArticle.canonicalUrl;
+      const res = await RaindropService.saveToRaindrop('demo', {
+        title: selectedArticle.title,
+        link: originalUrl || `https://atmen.app/article/${selectedArticle.id}`,
+        excerpt: selectedArticle.keyInsight || selectedArticle.subtitle,
+        tags: [selectedArticle.primaryTopic || 'philosophy', 'atmen', 'focus']
+      });
+      if (res.success) {
+        setIsRaindropSaved(true);
+      }
+    } catch {
+      // non-fatal
+    }
+  };
+
   const authorDisplay = selectedArticle.sourceReferences[0]?.author
     || selectedArticle.sourceBroadcasterName
     || 'Redaktion atmen';
@@ -169,18 +191,35 @@ export const ReaderScreen: React.FC = () => {
             </Text>
           </TouchableOpacity>
 
-          {/* Center Magazine Brand */}
-          <View style={styles.centerBrand}>
+          {/* Center Magazine Brand - Always Clickable to go Home */}
+          <TouchableOpacity
+            onPress={goHome}
+            style={styles.centerBrand}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Zurück zur Startseite"
+          >
             <View style={[styles.brandEmblem, { backgroundColor: colors.accent }]}>
               <Text style={styles.brandEmblemGlyph}>◎</Text>
             </View>
             <Text style={[styles.brandTitle, { color: colors.textPrimary }]}>
               atmen <Text style={{ fontWeight: '400', fontStyle: 'italic', color: colors.textMuted }}>magazin</Text>
             </Text>
-          </View>
+          </TouchableOpacity>
 
-          {/* Right Tools: Progress, Font Size, Theme & Save */}
+          {/* Right Tools: Progress, Font Size, Theme, Home & Save */}
           <View style={styles.navRight}>
+            {/* Direct Home Button */}
+            <TouchableOpacity
+              onPress={goHome}
+              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel="Zur Startseite"
+            >
+              <Ionicons name="home-outline" size={16} color={colors.accent} />
+            </TouchableOpacity>
+
             {/* Reading Progress Pill */}
             <View style={[styles.readingProgressPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
               <Text style={[styles.readingProgressText, { color: colors.textSecondary }]}>
@@ -224,6 +263,21 @@ export const ReaderScreen: React.FC = () => {
                 name={isSaved ? 'bookmark' : 'bookmark-outline'}
                 size={16}
                 color={isSaved ? colors.accent : colors.textPrimary}
+              />
+            </TouchableOpacity>
+
+            {/* Raindrop.io 1-Click Export Button */}
+            <TouchableOpacity
+              onPress={handleSaveToRaindrop}
+              style={[styles.navButton, { backgroundColor: isRaindropSaved ? '#0284C7' + '22' : colors.surfaceSecondary }]}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel="In Raindrop.io speichern"
+            >
+              <Ionicons
+                name={isRaindropSaved ? 'water' : 'water-outline'}
+                size={16}
+                color={isRaindropSaved ? '#0284C7' : colors.textPrimary}
               />
             </TouchableOpacity>
           </View>
@@ -304,7 +358,7 @@ export const ReaderScreen: React.FC = () => {
           {selectedArticle.imageUrl && (
             <View style={[styles.readerImageContainer, { borderColor: colors.borderSubtle }]}>
               <Image
-                source={{ uri: selectedArticle.imageUrl }}
+                source={{ uri: optimizeImageUrl(selectedArticle.imageUrl) || selectedArticle.imageUrl }}
                 style={styles.readerHeroImage}
                 resizeMode="cover"
               />

@@ -1,0 +1,163 @@
+/**
+ * Recursive Learning Engine
+ * 
+ * Continuously adapts the user's cognitive vector and recommendation weights
+ * based on reading behavior, feedback signals, and Raindrop curation.
+ * 
+ * The learning loop is transparent, inspectable by the Ultra Master,
+ * and maintains epistemic diversity (preventing narrow algorithmic filter bubbles).
+ */
+
+import { TopicTag, UserProfile, FeedItem } from '../domain/types';
+import { appStorage } from '../data/storage';
+
+export interface LearningTelemetryEvent {
+  timestamp: string;
+  type: 'upvote' | 'downvote' | 'completed_reading' | 'note_created' | 'feedback_positive' | 'feedback_negative' | 'raindrop_sync';
+  topic: TopicTag;
+  delta: number;
+  reason: string;
+}
+
+export interface LearningEngineState {
+  events: LearningTelemetryEvent[];
+  domainTrustScores: Record<string, number>; // Domain -> trust multiplier (e.g. 1.25)
+  totalLearningCycles: number;
+  lastTunedAt: string;
+}
+
+export class RecursiveLearningEngine {
+  private static STORAGE_KEY = '@atem:recursive_learning_state';
+  private static DAMPENING_FACTOR = 0.85; // Prevents extreme swing
+  private static MIN_WEIGHT = 0.10;
+  private static MAX_WEIGHT = 0.98;
+
+  /**
+   * Retrieves the current telemetry and learning state.
+   */
+  public static async getEngineState(): Promise<LearningEngineState> {
+    try {
+      const raw = await appStorage.getItem(this.STORAGE_KEY);
+      if (!raw) {
+        return {
+          events: [],
+          domainTrustScores: {
+            'plato.stanford.edu': 1.35,
+            'quantamagazine.org': 1.30,
+            'tagesschau.de': 1.20,
+            'spektrum.de': 1.25,
+            'aeon.co': 1.25,
+            'cdm.link': 1.15
+          },
+          totalLearningCycles: 0,
+          lastTunedAt: new Date().toISOString()
+        };
+      }
+      return JSON.parse(raw);
+    } catch {
+      return {
+        events: [],
+        domainTrustScores: {},
+        totalLearningCycles: 0,
+        lastTunedAt: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Records a learning event and recalculates updated topic weights.
+   */
+  public static async recordInteractionEvent(
+    profile: UserProfile,
+    item: FeedItem,
+    eventType: 'upvote' | 'downvote' | 'completed_reading' | 'note_created' | 'feedback_positive' | 'feedback_negative'
+  ): Promise<{ updatedProfile: UserProfile; event: LearningTelemetryEvent }> {
+    const state = await this.getEngineState();
+    const primaryTopic = item.primaryTopic || 'philosophy_ethics';
+    const currentWeight = profile.explicitInterests[primaryTopic] ?? 0.50;
+
+    let delta = 0;
+    let reason = '';
+
+    switch (eventType) {
+      case 'upvote':
+        delta = 0.06;
+        reason = `Positives Votum für „${item.title.slice(0, 30)}…“`;
+        break;
+      case 'downvote':
+        delta = -0.10;
+        reason = `Kritisches Votum für „${item.title.slice(0, 30)}…“`;
+        break;
+      case 'completed_reading':
+        delta = 0.08;
+        reason = `Vollständige Lesezeit absolviert (${item.estimatedReadingMinutes} Min.)`;
+        break;
+      case 'note_created':
+        delta = 0.12;
+        reason = `Substantielle Notiz/Reflexion verfasst`;
+        break;
+      case 'feedback_positive':
+        delta = 0.15;
+        reason = `Direktes Feedback „Mehr davon“`;
+        break;
+      case 'feedback_negative':
+        delta = -0.18;
+        reason = `Direktes Feedback „Weniger davon“`;
+        break;
+    }
+
+    // Apply Bayesian dampening
+    const newWeight = Math.max(
+      this.MIN_WEIGHT,
+      Math.min(this.MAX_WEIGHT, currentWeight + delta * this.DAMPENING_FACTOR)
+    );
+
+    const event: LearningTelemetryEvent = {
+      timestamp: new Date().toISOString(),
+      type: eventType,
+      topic: primaryTopic,
+      delta: Math.round((newWeight - currentWeight) * 100) / 100,
+      reason
+    };
+
+    // Update domain trust
+    const domain = item.sourceReferences?.[0]?.publisher || '';
+    if (domain) {
+      const currentTrust = state.domainTrustScores[domain] || 1.0;
+      const trustDelta = delta > 0 ? 0.04 : -0.05;
+      state.domainTrustScores[domain] = Math.max(0.5, Math.min(2.0, currentTrust + trustDelta));
+    }
+
+    state.events.unshift(event);
+    if (state.events.length > 50) {
+      state.events = state.events.slice(0, 50); // Keep latest 50 events
+    }
+    state.totalLearningCycles++;
+    state.lastTunedAt = new Date().toISOString();
+
+    await appStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
+
+    const updatedProfile: UserProfile = {
+      ...profile,
+      explicitInterests: {
+        ...profile.explicitInterests,
+        [primaryTopic]: Math.round(newWeight * 100) / 100
+      }
+    };
+
+    return { updatedProfile, event };
+  }
+
+  /**
+   * Explains why a topic has its current weight based on learning history.
+   */
+  public static explainTopicEvolution(topic: TopicTag, events: LearningTelemetryEvent[]): string {
+    const relevant = events.filter(e => e.topic === topic);
+    if (relevant.length === 0) {
+      return 'Grundkalibrierung aus dem Starter-Profil (noch keine individuellen Lesesignale).';
+    }
+    const positiveCount = relevant.filter(e => e.delta > 0).length;
+    const negativeCount = relevant.filter(e => e.delta < 0).length;
+    return `${relevant.length} Lernzyklen registriert (+${positiveCount} Bestätigungen, -${negativeCount} Korrekturen). Letzter Impuls: ${relevant[0].reason}.`;
+  }
+}

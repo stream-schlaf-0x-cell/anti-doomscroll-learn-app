@@ -20,20 +20,33 @@ import {
 } from '../../core/data/sourceRepository';
 import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
 import { typography, radius, spacing } from '../theme';
-import { copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
+import { copyToClipboard, downloadMarkdownFile, downloadJsonFile } from '../../core/export/craftExport';
 import { MusicTrackCard } from './MusicTrackCard';
 import {
   MusicRecommendationService,
   MusicTrackItem,
   CURATED_SOUND_MASTERS
 } from '../../core/music/musicRecommendationService';
+import {
+  RaindropService,
+  RaindropUser,
+  RaindropCollection,
+  RaindropItem
+} from '../../core/raindrop/raindropService';
+import {
+  FoundationalCanonService,
+  FoundationalCanon,
+  INITIAL_FOUNDATIONAL_CANON
+} from '../../core/archive/foundationalCanonService';
+import { feedRepository } from '../../core/data/feedRepository';
+import { userProfileRepository } from '../../core/data/userProfileRepository';
 
 interface NewsHubModalProps {
   visible: boolean;
   onClose: () => void;
 }
 
-type HubTab = 'sources' | 'import' | 'music' | 'sync';
+type HubTab = 'sources' | 'import' | 'raindrop' | 'music' | 'sync';
 
 export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) => {
   const { colors, refreshFeed } = useApp();
@@ -57,9 +70,138 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
   // Status & Feedback toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Raindrop state
+  const [raindropTokenInput, setRaindropTokenInput] = useState<string>('demo');
+  const [raindropUser, setRaindropUser] = useState<RaindropUser | null>(null);
+  const [raindropCollections, setRaindropCollections] = useState<RaindropCollection[]>([]);
+  const [raindropBookmarks, setRaindropBookmarks] = useState<RaindropItem[]>([]);
+  const [selectedRaindropCollection, setSelectedRaindropCollection] = useState<number>(0);
+  const [isRaindropLoading, setIsRaindropLoading] = useState<boolean>(false);
+  const [savedCanonSnapshot, setSavedCanonSnapshot] = useState<FoundationalCanon | null>(null);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleConnectRaindrop = async (tokenOverride?: string) => {
+    const token = (tokenOverride || raindropTokenInput).trim();
+    if (!token) {
+      showToast('Bitte einen Raindrop-Token eingeben');
+      return;
+    }
+    setIsRaindropLoading(true);
+    try {
+      const auth = await RaindropService.verifyToken(token);
+      if (!auth.success || !auth.user) {
+        showToast(auth.error || 'Verbindung fehlgeschlagen');
+        return;
+      }
+      setRaindropUser(auth.user);
+      const [colls, marks] = await Promise.all([
+        RaindropService.getCollections(token),
+        RaindropService.getRaindrops(token, 0, 30)
+      ]);
+      setRaindropCollections(colls);
+      setRaindropBookmarks(marks);
+      showToast(`✓ Verbunden mit Raindrop als „${auth.user.name}“`);
+    } catch (e: any) {
+      showToast(`Verbindungsfehler: ${e.message}`);
+    } finally {
+      setIsRaindropLoading(false);
+    }
+  };
+
+  const handleSelectRaindropCollection = async (collId: number) => {
+    setSelectedRaindropCollection(collId);
+    setIsRaindropLoading(true);
+    try {
+      const marks = await RaindropService.getRaindrops(raindropTokenInput, collId, 30);
+      setRaindropBookmarks(marks);
+    } finally {
+      setIsRaindropLoading(false);
+    }
+  };
+
+  const handleLearnFromRaindrop = async () => {
+    if (raindropBookmarks.length === 0) {
+      showToast('Keine Lesezeichen zum Analysieren gefunden');
+      return;
+    }
+    setIsRaindropLoading(true);
+    try {
+      const { interests } = RaindropService.deriveProfileFromRaindrop(raindropBookmarks);
+      await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        explicitInterests: {
+          ...curr.explicitInterests,
+          ...interests
+        }
+      }));
+      await refreshFeed();
+      showToast(`✓ Profil-Interessen aus ${raindropBookmarks.length} Raindrop-Tags gelernt!`);
+    } catch {
+      showToast('Fehler beim Lernen aus Raindrop');
+    } finally {
+      setIsRaindropLoading(false);
+    }
+  };
+
+  const handleImportRaindropToFeed = async () => {
+    if (raindropBookmarks.length === 0) {
+      showToast('Keine Lesezeichen zum Importieren');
+      return;
+    }
+    setIsRaindropLoading(true);
+    try {
+      const items = raindropBookmarks.map((b, idx) => RaindropService.convertRaindropToFeedItem(b, idx));
+      if (feedRepository.addItems) {
+        feedRepository.addItems(items);
+      }
+      await refreshFeed();
+      showToast(`✓ ${items.length} Raindrop-Artikel in den Feed importiert!`);
+    } catch {
+      showToast('Import fehlgeschlagen');
+    } finally {
+      setIsRaindropLoading(false);
+    }
+  };
+
+  const handleSnapshotFoundationalCanon = async () => {
+    setIsRaindropLoading(true);
+    try {
+      const activeBookmarks = raindropBookmarks.length > 0 ? raindropBookmarks : (savedCanonSnapshot?.bookmarks || []);
+      const { interests, boostedDomains } = RaindropService.deriveProfileFromRaindrop(activeBookmarks);
+      const snapshot = FoundationalCanonService.createSnapshot({
+        name: `atmen Ur-Fundament (${new Date().toLocaleDateString('de-DE')})`,
+        description: 'Dauerhaft abgesicherter Wissens-Kanon. Vollständig unabhängig von Raindrop.io.',
+        bookmarks: activeBookmarks,
+        feedItems: [],
+        derivedWeights: interests,
+        boostedDomains
+      });
+      await FoundationalCanonService.saveCanon(snapshot);
+      setSavedCanonSnapshot(snapshot);
+      showToast('✓ Lesezeichen als unabhängiges Ur-Fundament dauerhaft gesichert!');
+    } catch (err: any) {
+      showToast(`Fehler beim Sichern: ${err?.message || 'Unbekannt'}`);
+    } finally {
+      setIsRaindropLoading(false);
+    }
+  };
+
+  const handleExportCanonMarkdown = () => {
+    const canon = savedCanonSnapshot || INITIAL_FOUNDATIONAL_CANON;
+    const md = FoundationalCanonService.exportCanonToMarkdown(canon);
+    downloadMarkdownFile('atmen-ur-fundament.md', md);
+    showToast('✓ Fundament als Markdown exportiert!');
+  };
+
+  const handleExportCanonJson = () => {
+    const canon = savedCanonSnapshot || INITIAL_FOUNDATIONAL_CANON;
+    const json = FoundationalCanonService.exportCanonToJson(canon);
+    downloadJsonFile('atmen-ur-fundament.json', json);
+    showToast('✓ Fundament als JSON exportiert!');
   };
 
   const loadSources = async () => {
@@ -77,6 +219,7 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
   useEffect(() => {
     if (visible) {
       void loadSources();
+      void FoundationalCanonService.getCanon().then(setSavedCanonSnapshot);
     }
   }, [visible]);
 
@@ -303,6 +446,29 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                 ]}
               >
                 Import & OPML
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setActiveTab('raindrop')}
+              style={[
+                styles.tabItem,
+                activeTab === 'raindrop' && { borderBottomColor: '#0284C7', backgroundColor: colors.surface }
+              ]}
+            >
+              <Ionicons
+                name="water-outline"
+                size={14}
+                color={activeTab === 'raindrop' ? '#0284C7' : colors.textMuted}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.tabItemText,
+                  { color: activeTab === 'raindrop' ? '#0284C7' : colors.textSecondary }
+                ]}
+              >
+                💧 Raindrop.io
               </Text>
             </TouchableOpacity>
 
@@ -678,6 +844,241 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                     </TouchableOpacity>
                   </View>
                 </View>
+              </ScrollView>
+            )}
+
+            {/* TAB: Raindrop.io Integration */}
+            {activeTab === 'raindrop' && (
+              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+                {/* Intro Box */}
+                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                  <View style={styles.sectionHeaderRow}>
+                    <Ionicons name="water" size={20} color="#0284C7" style={{ marginRight: 8 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                        Raindrop.io Lesezeichen & Empfehlungs-Brücke
+                      </Text>
+                      <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
+                        Verbinde deine Raindrop-Sammlungen direkt mit Atem. Lerne dein thematisches Interessen-Profil automatisch aus deinen Tags und importiere Lesezeichen in den Magazin-Reader.
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Token Connection Form */}
+                  {!raindropUser ? (
+                    <View style={{ marginTop: spacing.md }}>
+                      <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                        Raindrop.io Personal Access Token (oder &apos;demo&apos;):
+                      </Text>
+                      <TextInput
+                        value={raindropTokenInput}
+                        onChangeText={setRaindropTokenInput}
+                        placeholder="z.B. demo oder 5a1b2c3d-..."
+                        placeholderTextColor={colors.textMuted}
+                        style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                      />
+
+                      <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm, flexWrap: 'wrap' }}>
+                        <TouchableOpacity
+                          onPress={() => void handleConnectRaindrop('demo')}
+                          disabled={isRaindropLoading}
+                          style={[styles.secondaryActionBtn, { backgroundColor: '#0284C7' + '1A', borderColor: '#0284C7' }]}
+                        >
+                          <Ionicons name="sparkles" size={14} color="#0284C7" style={{ marginRight: 4 }} />
+                          <Text style={[styles.secondaryActionBtnText, { color: '#0284C7' }]}>
+                            💧 Demo-Konto laden (1-Klick)
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          onPress={() => void handleConnectRaindrop()}
+                          disabled={isRaindropLoading}
+                          style={[styles.primaryActionBtn, { backgroundColor: '#0284C7' }]}
+                        >
+                          {isRaindropLoading ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <Ionicons name="link-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                              <Text style={styles.primaryActionBtnText}>Token verbinden</Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={[styles.hintText, { color: colors.textMuted, marginTop: 8 }]}>
+                        Tipp: Einen echten Token erstellst du in Raindrop unter Einstellungen → Integrationen → For Developers.
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ marginTop: spacing.md }}>
+                      {/* Connected Account Card */}
+                      <View style={[styles.userBadgeCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                        <View style={styles.userBadgeLeft}>
+                          <View style={[styles.avatarCircle, { backgroundColor: '#0284C7' }]}>
+                            <Text style={styles.avatarLetter}>{raindropUser.name.charAt(0).toUpperCase()}</Text>
+                          </View>
+                          <View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Text style={[styles.userNameText, { color: colors.textPrimary }]}>{raindropUser.name}</Text>
+                              {raindropUser.pro && (
+                                <View style={styles.proBadge}>
+                                  <Text style={styles.proBadgeText}>PRO</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={[styles.userSubText, { color: colors.textMuted }]}>
+                              {raindropCollections.length} Sammlungen • {raindropBookmarks.length} Lesezeichen geladen
+                            </Text>
+                          </View>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => setRaindropUser(null)}
+                          style={[styles.disconnectBtn, { backgroundColor: colors.surfaceSecondary }]}
+                        >
+                          <Text style={[styles.disconnectBtnText, { color: colors.textSecondary }]}>Trennen</Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      {/* Action Buttons Row */}
+                      <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md, flexWrap: 'wrap' }}>
+                        <TouchableOpacity
+                          onPress={handleLearnFromRaindrop}
+                          disabled={isRaindropLoading}
+                          style={[styles.primaryActionBtn, { backgroundColor: '#8B5CF6' }]}
+                        >
+                          <Ionicons name="bulb-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text style={styles.primaryActionBtnText}>🧠 Interessen-Profil aus Tags lernen</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          onPress={handleImportRaindropToFeed}
+                          disabled={isRaindropLoading}
+                          style={[styles.primaryActionBtn, { backgroundColor: '#0284C7' }]}
+                        >
+                          <Ionicons name="download-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text style={styles.primaryActionBtnText}>📥 In den Feed importieren ({raindropBookmarks.length})</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </View>
+
+                {/* Independent Knowledge Foundation (Ur-Kanon) */}
+                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <Text style={{ fontSize: 16 }}>🏛️</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                      Unabhängiges Wissens-Fundament (Ur-Kanon)
+                    </Text>
+                  </View>
+                  <Text style={[styles.hintText, { color: colors.textSecondary, marginBottom: spacing.md }]}>
+                    Sichert deine importierten Raindrop-Lesezeichen und Profilgewichte dauerhaft lokal ab. Selbst wenn Raindrop getrennt wird oder offline ist, dient dieses Fundament als unveränderlicher Ausgangspunkt für Empfehlungen.
+                  </Text>
+
+                  <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
+                    <TouchableOpacity
+                      onPress={handleSnapshotFoundationalCanon}
+                      disabled={isRaindropLoading}
+                      style={[styles.primaryActionBtn, { backgroundColor: '#10B981' }]}
+                    >
+                      <Ionicons name="shield-checkmark-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.primaryActionBtnText}>🏛️ Als Ur-Fundament sichern</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={handleExportCanonMarkdown}
+                      style={[styles.secondaryActionBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+                    >
+                      <Ionicons name="document-text-outline" size={14} color={colors.accent} style={{ marginRight: 4 }} />
+                      <Text style={[styles.secondaryActionBtnText, { color: colors.accent }]}>Markdown Export</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={handleExportCanonJson}
+                      style={[styles.secondaryActionBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+                    >
+                      <Ionicons name="code-download-outline" size={14} color={colors.accent} style={{ marginRight: 4 }} />
+                      <Text style={[styles.secondaryActionBtnText, { color: colors.accent }]}>JSON Export</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {savedCanonSnapshot && (
+                    <View style={{ marginTop: spacing.md, padding: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.borderSubtle }}>
+                      <Text style={{ fontSize: typography.sizes.caption, color: '#10B981', fontWeight: '700', marginBottom: 2 }}>
+                        ✓ Gesichertes Fundament: {savedCanonSnapshot.name}
+                      </Text>
+                      <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted }}>
+                        {savedCanonSnapshot.totalBookmarks} Lesezeichen • Stamm-Domains: {savedCanonSnapshot.boostedDomains.join(', ')} • Stand: {savedCanonSnapshot.savedAt.slice(0, 10)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Collections Bar */}
+                {raindropUser && raindropCollections.length > 0 && (
+                  <View style={{ marginTop: spacing.md }}>
+                    <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
+                      Sammlungen ({raindropCollections.length})
+                    </Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                      {raindropCollections.map(coll => {
+                        const isSelected = selectedRaindropCollection === coll._id;
+                        return (
+                          <TouchableOpacity
+                            key={coll._id}
+                            onPress={() => void handleSelectRaindropCollection(coll._id)}
+                            style={[
+                              styles.categoryChip,
+                              {
+                                backgroundColor: isSelected ? '#0284C7' : colors.surfaceSecondary,
+                                borderColor: colors.borderSubtle
+                              }
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.categoryChipText,
+                                { color: isSelected ? '#FFFFFF' : colors.textPrimary }
+                              ]}
+                            >
+                              {coll.title} ({coll.count})
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+
+                {/* Bookmarks List */}
+                {raindropUser && (
+                  <View style={{ marginTop: spacing.md }}>
+                    <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
+                      Geladene Lesezeichen ({raindropBookmarks.length})
+                    </Text>
+                    {raindropBookmarks.map(bm => (
+                      <View
+                        key={bm._id}
+                        style={[styles.bookmarkCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                            <Text style={[styles.bookmarkDomain, { color: '#0284C7' }]}>{bm.domain}</Text>
+                            {bm.tags.map(tag => (
+                              <View key={tag} style={[styles.tagBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                                <Text style={[styles.tagBadgeText, { color: colors.textSecondary }]}>#{tag}</Text>
+                              </View>
+                            ))}
+                          </View>
+                          <Text style={[styles.bookmarkTitle, { color: colors.textPrimary }]}>{bm.title}</Text>
+                          <Text style={[styles.bookmarkExcerpt, { color: colors.textMuted }]} numberOfLines={2}>
+                            {bm.excerpt}
+                          </Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
               </ScrollView>
             )}
 
@@ -1168,5 +1569,91 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.caption,
     lineHeight: 20,
     marginTop: 6
+  },
+  userBadgeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 0.5
+  },
+  userBadgeLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10
+  },
+  avatarCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  avatarLetter: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: typography.sizes.body
+  },
+  userNameText: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '800'
+  },
+  userSubText: {
+    fontSize: typography.sizes.micro,
+    marginTop: 2
+  },
+  proBadge: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radius.pill
+  },
+  proBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '900'
+  },
+  disconnectBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill
+  },
+  disconnectBtnText: {
+    fontSize: typography.sizes.micro,
+    fontWeight: '700'
+  },
+  bookmarkCard: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 0.5,
+    marginBottom: spacing.sm
+  },
+  bookmarkDomain: {
+    fontSize: typography.sizes.micro,
+    fontWeight: '800',
+    textTransform: 'uppercase'
+  },
+  bookmarkTitle: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '700',
+    marginBottom: 4
+  },
+  bookmarkExcerpt: {
+    fontSize: typography.sizes.caption,
+    lineHeight: 18
+  },
+  tagBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.sm
+  },
+  tagBadgeText: {
+    fontSize: 9,
+    fontWeight: '700'
+  },
+  hintText: {
+    fontSize: typography.sizes.micro,
+    fontStyle: 'italic'
   }
 });

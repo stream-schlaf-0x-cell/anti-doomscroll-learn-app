@@ -11,7 +11,7 @@ import {
   useWindowDimensions
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
+import { TopicTag } from '../../core/domain/types';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
 import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
@@ -19,6 +19,9 @@ import { DesktopSidebar } from '../../ui/components/DesktopSidebar';
 import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
 import { ScoredFeedItem } from '../../core/domain/ranking';
+import { Subchannel, defaultSpaceRepository } from '../../core/spaces/spaceRepository';
+import { UltraMasterModal } from '../../ui/components/UltraMasterModal';
+import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
 
 export const FeedScreen: React.FC = () => {
   const { dailyEdition, discoveryItems, colors, refreshFeed } = useApp();
@@ -26,21 +29,55 @@ export const FeedScreen: React.FC = () => {
   const isDesktop = width >= 960;
 
   type SortMode = 'hot' | 'new' | 'top' | 'gems';
-  const [selectedFilter, setSelectedFilter] = useState<TopicTag | 'all'>('all');
+  const [selectedFilter, setSelectedFilter] = useState<string | 'all'>('all');
   const [sortMode, setSortMode] = useState<SortMode>('hot');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [subchannels, setSubchannels] = useState<Subchannel[]>([]);
+  const [showMasterModal, setShowMasterModal] = useState<boolean>(false);
+  const [isGeneratingPocket, setIsGeneratingPocket] = useState<boolean>(false);
+
+  const loadSubchannels = useCallback(async () => {
+    const all = await defaultSpaceRepository.getAllSpaces();
+    setSubchannels(all);
+  }, []);
+
+  React.useEffect(() => {
+    void loadSubchannels();
+  }, [loadSubchannels]);
 
   const onRefresh = async () => {
     setRefreshing(true);
     await refreshFeed();
+    await loadSubchannels();
     setVisibleDiscoveryCount(10);
     setRefreshing(false);
   };
 
-  const handleFilterChange = (tag: TopicTag | 'all') => {
-    setSelectedFilter(tag);
+  const handleGenerateEmptyPocket = async () => {
+    setIsGeneratingPocket(true);
+    try {
+      const targetSpace = selectedFilter === 'all'
+        ? (searchQuery ? `c/${searchQuery.toLowerCase().replace(/[^a-z0-9_]/g, '_')}` : 'c/persoenlicher_focus')
+        : selectedFilter;
+      await OnTheFlyStreamService.generateStreamForPocket({
+        space: targetSpace,
+        includeAiSynthesis: true,
+        includeMemes: true,
+        count: 4
+      });
+      await refreshFeed();
+      await loadSubchannels();
+    } catch (e) {
+      console.error('Error generating pocket stream:', e);
+    } finally {
+      setIsGeneratingPocket(false);
+    }
+  };
+
+  const handleFilterChange = (filter: string | 'all') => {
+    setSelectedFilter(filter);
     setVisibleDiscoveryCount(10);
   };
 
@@ -62,7 +99,12 @@ export const FeedScreen: React.FC = () => {
   const filteredDaily = useMemo(() => {
     const spaceFiltered = selectedFilter === 'all'
       ? dailyEdition
-      : dailyEdition.filter(item => item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter));
+      : dailyEdition.filter(item => {
+          if (selectedFilter.startsWith('c/')) {
+            return item.space === selectedFilter;
+          }
+          return item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter as TopicTag);
+        });
     return filterByQuery(spaceFiltered);
   }, [dailyEdition, selectedFilter, filterByQuery]);
 
@@ -70,7 +112,12 @@ export const FeedScreen: React.FC = () => {
   const filteredDiscovery = useMemo(() => {
     const spaceFiltered = selectedFilter === 'all'
       ? discoveryItems
-      : discoveryItems.filter(item => item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter));
+      : discoveryItems.filter(item => {
+          if (selectedFilter.startsWith('c/')) {
+            return item.space === selectedFilter;
+          }
+          return item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter as TopicTag);
+        });
     return filterByQuery(spaceFiltered);
   }, [discoveryItems, selectedFilter, filterByQuery]);
 
@@ -149,7 +196,7 @@ export const FeedScreen: React.FC = () => {
 
   const activeSpaceName = selectedFilter === 'all'
     ? 'Alle Spaces'
-    : (TOPIC_SPACE_MAP[selectedFilter]?.space || selectedFilter);
+    : (subchannels.find(s => s.handle === selectedFilter || s.primaryTopic === selectedFilter)?.handle || selectedFilter);
 
   const renderSpacePills = () => (
     <ScrollView
@@ -184,27 +231,26 @@ export const FeedScreen: React.FC = () => {
         </Text>
       </TouchableOpacity>
 
-      {/* Individual Spaces */}
-      {(Object.keys(TOPIC_SPACE_MAP) as TopicTag[]).map(tag => {
-        const isSelected = selectedFilter === tag;
-        const meta = TOPIC_SPACE_MAP[tag];
+      {/* Subchannels from Space Repository */}
+      {subchannels.map(s => {
+        const isSelected = selectedFilter === s.handle || selectedFilter === s.primaryTopic;
 
         return (
           <TouchableOpacity
-            key={tag}
-            onPress={() => handleFilterChange(tag)}
+            key={s.id}
+            onPress={() => handleFilterChange(s.handle)}
             style={[
               styles.spacePill,
               {
-                backgroundColor: isSelected ? meta.color : colors.surfaceSecondary,
-                borderColor: isSelected ? meta.color : colors.borderSubtle
+                backgroundColor: isSelected ? s.accentColor : colors.surfaceSecondary,
+                borderColor: isSelected ? s.accentColor : colors.borderSubtle
               }
             ]}
           >
             <Ionicons
-              name={(meta.icon as any) || 'planet-outline'}
+              name={(s.icon as any) || 'planet-outline'}
               size={13}
-              color={isSelected ? '#FFFFFF' : meta.color}
+              color={isSelected ? '#FFFFFF' : s.accentColor}
               style={{ marginRight: 5 }}
             />
             <Text
@@ -213,11 +259,33 @@ export const FeedScreen: React.FC = () => {
                 { color: isSelected ? '#FFFFFF' : colors.textPrimary }
               ]}
             >
-              {meta.space}
+              {s.handle}
             </Text>
           </TouchableOpacity>
         );
       })}
+
+      {/* Persistent "+ Neuer Raum" Button */}
+      <TouchableOpacity
+        onPress={() => setShowMasterModal(true)}
+        style={[
+          styles.spacePill,
+          {
+            backgroundColor: '#F59E0B' + '20',
+            borderColor: '#F59E0B'
+          }
+        ]}
+      >
+        <Ionicons
+          name="add-circle-outline"
+          size={13}
+          color="#F59E0B"
+          style={{ marginRight: 5 }}
+        />
+        <Text style={[styles.spacePillText, { color: '#F59E0B' }]}>
+          + Neuer Raum
+        </Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 
@@ -344,23 +412,73 @@ export const FeedScreen: React.FC = () => {
             </View>
 
             {allStreamItems.length === 0 ? (
-              <View style={[styles.emptyBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                <Ionicons name="filter-outline" size={32} color={colors.textMuted} style={{ marginBottom: spacing.sm }} />
+              <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <View style={[styles.emptyPocketBadge, { backgroundColor: colors.accentSubtle }]}>
+                  <Ionicons name="sparkles" size={15} color={colors.accent} />
+                  <Text style={[styles.emptyPocketBadgeText, { color: colors.accent }]}>
+                    Epistemischer Raum • On-the-Fly Entdeckung
+                  </Text>
+                </View>
+
                 <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-                  Keine Beiträge gefunden
+                  {selectedFilter !== 'all'
+                    ? `Raum ${selectedFilter} erschließen`
+                    : (searchQuery ? `Erkenntnis-Stream zu „${searchQuery}“ generieren` : 'Neuen Erkenntnis-Stream generieren')}
                 </Text>
+
                 <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-                  {searchQuery ? 'Versuche einen anderen Suchbegriff.' : 'Wähle „Alle Spaces“ oder wechsle den Themenfilter.'}
+                  Dieser Wissensraum enthält noch keine kuratierten Beiträge. Du kannst hier auf Knopfdruck eine fundierte Recherche, eine dialektische KI-Synthese (mit sichtbarem Banner), menschliche Memes und Kanon-Literatur generieren — und direkt im Bibliotheka-Archiv speichern.
                 </Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setSelectedFilter('all');
-                    setSearchQuery('');
-                  }}
-                  style={[styles.emptyButton, { backgroundColor: colors.accent }]}
-                >
-                  <Text style={styles.emptyButtonText}>Filter zurücksetzen</Text>
-                </TouchableOpacity>
+
+                <View style={styles.pocketFeaturesRow}>
+                  <View style={[styles.pocketFeaturePill, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Text style={styles.pocketFeatureEmoji}>🔬</Text>
+                    <Text style={[styles.pocketFeatureText, { color: colors.textSecondary }]}>Wissenschaft & Quellen</Text>
+                  </View>
+                  <View style={[styles.pocketFeaturePill, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Text style={styles.pocketFeatureEmoji}>🤖</Text>
+                    <Text style={[styles.pocketFeatureText, { color: colors.textSecondary }]}>KI-Synthese Banner</Text>
+                  </View>
+                  <View style={[styles.pocketFeaturePill, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Text style={styles.pocketFeatureEmoji}>🎭</Text>
+                    <Text style={[styles.pocketFeatureText, { color: colors.textSecondary }]}>Menschliche Memes</Text>
+                  </View>
+                  <View style={[styles.pocketFeaturePill, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Text style={styles.pocketFeatureEmoji}>🏛</Text>
+                    <Text style={[styles.pocketFeatureText, { color: colors.textSecondary }]}>Bibliotheka-Archiv</Text>
+                  </View>
+                </View>
+
+                <View style={styles.pocketActionsRow}>
+                  <TouchableOpacity
+                    onPress={handleGenerateEmptyPocket}
+                    disabled={isGeneratingPocket}
+                    style={[
+                      styles.generatePocketButton,
+                      { backgroundColor: colors.accent, opacity: isGeneratingPocket ? 0.7 : 1 }
+                    ]}
+                  >
+                    <Ionicons
+                      name={isGeneratingPocket ? 'hourglass-outline' : 'flash-outline'}
+                      size={16}
+                      color="#FFFFFF"
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={styles.generatePocketButtonText}>
+                      {isGeneratingPocket ? 'Recherchiere & synthetisiere Stream…' : '⚡ Stream on-the-fly generieren'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      setSelectedFilter('all');
+                      setSearchQuery('');
+                    }}
+                    style={[styles.resetFilterButton, { borderColor: colors.borderSubtle }]}
+                  >
+                    <Text style={[styles.resetFilterButtonText, { color: colors.textMuted }]}>Alle Spaces anzeigen</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ) : (
               <>
@@ -448,6 +566,15 @@ export const FeedScreen: React.FC = () => {
           )}
         </View>
       </ScrollView>
+
+      {/* Ultra Master Studio Modal */}
+      <UltraMasterModal
+        visible={showMasterModal}
+        onClose={() => {
+          setShowMasterModal(false);
+          void loadSubchannels();
+        }}
+      />
     </View>
   );
 };
@@ -533,22 +660,97 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.caption,
     fontWeight: '700'
   },
-  emptyBox: {
+  emptyPocketCard: {
     padding: spacing.xl,
     borderRadius: radius.lg,
     borderWidth: 1,
     alignItems: 'center',
     marginVertical: spacing.xl
   },
+  emptyPocketBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    marginBottom: spacing.md,
+    gap: 6
+  },
+  emptyPocketBadgeText: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
   emptyTitle: {
     fontSize: typography.sizes.title2,
     fontWeight: '700',
-    marginBottom: 6
+    marginBottom: 6,
+    textAlign: 'center'
   },
   emptySubtitle: {
     fontSize: typography.sizes.bodySmall,
     textAlign: 'center',
-    marginBottom: spacing.md
+    marginBottom: spacing.md,
+    maxWidth: 520,
+    lineHeight: 20
+  },
+  pocketFeaturesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+    marginVertical: spacing.md
+  },
+  pocketFeaturePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    gap: 6
+  },
+  pocketFeatureEmoji: {
+    fontSize: 13
+  },
+  pocketFeatureText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  pocketActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: spacing.sm,
+    flexWrap: 'wrap',
+    justifyContent: 'center'
+  },
+  generatePocketButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: radius.pill
+  },
+  generatePocketButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  resetFilterButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  resetFilterButtonText: {
+    fontSize: 13,
+    fontWeight: '600'
+  },
+  emptyBox: {
+    padding: spacing.xl,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    alignItems: 'center',
+    marginVertical: spacing.xl
   },
   emptyButton: {
     paddingHorizontal: 16,

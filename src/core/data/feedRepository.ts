@@ -50,6 +50,8 @@ export interface IFeedRepository {
   getItemById(id: string): Promise<FeedItem | null>;
   searchItems(query: string, profile: UserProfile, interactions: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
   setItems?(items: FeedItem[]): void;
+  addItems?(items: FeedItem[]): void;
+  getAllItems?(): FeedItem[];
 }
 
 export class LocalFeedRepository implements IFeedRepository {
@@ -74,6 +76,21 @@ export class LocalFeedRepository implements IFeedRepository {
 
   setItems(items: FeedItem[]): void {
     this.items = items.map(enrichSocialFeedItem);
+  }
+
+  addItems(newItems: FeedItem[]): void {
+    const map = new Map<string, FeedItem>();
+    for (const item of this.items) {
+      map.set(item.id, item);
+    }
+    for (const item of newItems) {
+      map.set(item.id, enrichSocialFeedItem(item));
+    }
+    this.items = Array.from(map.values());
+  }
+
+  getAllItems(): FeedItem[] {
+    return [...this.items];
   }
 
   async getDailyEdition(

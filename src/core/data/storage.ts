@@ -191,6 +191,14 @@ export interface TransactionScope {
   remove(): Promise<void>;
 }
 
+function createDefaultDriver(): IStorageDriver {
+  // If running in Node.js (test runner or CLI daemon) without browser window, use MemoryStorageDriver
+  if (typeof window === 'undefined' && typeof process !== 'undefined' && process.versions?.node != null) {
+    return new MemoryStorageDriver();
+  }
+  return new AsyncStorageDriver();
+}
+
 /**
  * Core AtemStorage manager.
  * Guarantees atomic serialization per key without inner re-locking.
@@ -198,7 +206,7 @@ export interface TransactionScope {
 export class AtemStorage {
   private lockManager: KeyLockManager = new KeyLockManager();
 
-  constructor(public readonly driver: IStorageDriver = new AsyncStorageDriver()) {}
+  constructor(public readonly driver: IStorageDriver = createDefaultDriver()) {}
 
   /**
    * Reads raw string value directly from driver.

@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import { typography, spacing } from '../theme';
+import { UltraMasterModal } from './UltraMasterModal';
+import { MobilePublishModal } from './MobilePublishModal';
 
 interface HeaderProps {
   title?: string;
@@ -15,46 +17,88 @@ export const Header: React.FC<HeaderProps> = ({
   subtitle = 'atmen network • Raum für Erkenntnis & Souveränität',
   showThemeToggle = true
 }) => {
-  const { colors, isDark, setThemePreference } = useApp();
+  const { colors, isDark, setThemePreference, goHome } = useApp();
+  const [showMaster, setShowMaster] = useState<boolean>(false);
+  const [showMobile, setShowMobile] = useState<boolean>(false);
 
   const handleToggleTheme = () => {
     setThemePreference(isDark ? 'light' : 'dark');
   };
 
   return (
-    <View style={[styles.headerContainer, { borderBottomColor: colors.borderSubtle }]}>
-      <View style={styles.headerInner}>
-        <View style={styles.titleColumn}>
-          <View style={styles.titleRow}>
-            <Text style={[styles.logoText, { color: colors.textPrimary }]}>
-              {title}
+    <>
+      <View style={[styles.headerContainer, { borderBottomColor: colors.borderSubtle }]}>
+        <View style={styles.headerInner}>
+          <View style={styles.titleColumn}>
+            <TouchableOpacity
+              onPress={goHome}
+              activeOpacity={0.7}
+              style={styles.titleRow}
+              accessibilityRole="button"
+              accessibilityLabel="Zurück zur Home Startseite"
+            >
+              <Text style={[styles.logoText, { color: colors.textPrimary }]}>
+                {title}
+              </Text>
+              <View style={[styles.demoTag, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}>
+                <Text style={[styles.demoTagText, { color: colors.accent }]}>COMMUNITY</Text>
+              </View>
+            </TouchableOpacity>
+            <Text style={[styles.subtitleText, { color: colors.textMuted }]}>
+              {subtitle}
             </Text>
-            <View style={[styles.demoTag, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}>
-              <Text style={[styles.demoTagText, { color: colors.accent }]}>COMMUNITY</Text>
-            </View>
           </View>
-          <Text style={[styles.subtitleText, { color: colors.textMuted }]}>
-            {subtitle}
-          </Text>
-        </View>
 
-        {showThemeToggle && (
-          <TouchableOpacity
-            onPress={handleToggleTheme}
-            style={[styles.themeToggle, { backgroundColor: colors.surfaceSecondary }]}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessibilityRole="button"
-            accessibilityLabel={isDark ? "Helles Erscheinungsbild aktivieren" : "Dunkles Erscheinungsbild aktivieren"}
-          >
-            <Ionicons
-              name={isDark ? 'sunny-outline' : 'moon-outline'}
-              size={18}
-              color={colors.textSecondary}
-            />
-          </TouchableOpacity>
-        )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <TouchableOpacity
+              onPress={goHome}
+              style={[styles.themeToggle, { backgroundColor: colors.accentSubtle }]}
+              accessibilityRole="button"
+              accessibilityLabel="Home Menü öffnen"
+            >
+              <Ionicons name="home" size={16} color={colors.accent} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setShowMaster(true)}
+              style={[styles.themeToggle, { backgroundColor: '#F59E0B' + '22' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Ultra Master Studio öffnen"
+            >
+              <Ionicons name="sparkles" size={16} color="#F59E0B" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setShowMobile(true)}
+              style={[styles.themeToggle, { backgroundColor: '#06B6D4' + '22' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Auf Smartphone öffnen"
+            >
+              <Ionicons name="phone-portrait-outline" size={16} color="#06B6D4" />
+            </TouchableOpacity>
+
+            {showThemeToggle && (
+              <TouchableOpacity
+                onPress={handleToggleTheme}
+                style={[styles.themeToggle, { backgroundColor: colors.surfaceSecondary }]}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel={isDark ? "Helles Erscheinungsbild aktivieren" : "Dunkles Erscheinungsbild aktivieren"}
+              >
+                <Ionicons
+                  name={isDark ? 'sunny-outline' : 'moon-outline'}
+                  size={18}
+                  color={colors.textSecondary}
+                />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
       </View>
-    </View>
+
+      <UltraMasterModal visible={showMaster} onClose={() => setShowMaster(false)} />
+      <MobilePublishModal visible={showMobile} onClose={() => setShowMobile(false)} />
+    </>
   );
 };
 

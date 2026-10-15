@@ -23,6 +23,7 @@ const MainNavigator: React.FC = () => {
     clearError,
     activeTab,
     setActiveTab,
+    goHome,
     selectedArticleId,
     colors,
     isDark,
@@ -140,17 +141,23 @@ const MainNavigator: React.FC = () => {
           ]}
         >
           <View style={styles.tabBarInner}>
-            {/* Tab 1: Feed / Network */}
+            {/* Tab 1: Home / Feed */}
             <TouchableOpacity
               accessibilityRole="tab"
-              accessibilityLabel="Entdecken"
+              accessibilityLabel="Home"
               accessibilityState={{ selected: activeTab === 'feed' }}
-              onPress={() => setActiveTab('feed')}
+              onPress={() => {
+                if (activeTab === 'feed') {
+                  goHome();
+                } else {
+                  setActiveTab('feed');
+                }
+              }}
               style={styles.tabItem}
               activeOpacity={0.7}
             >
               <Ionicons
-                name={activeTab === 'feed' ? 'compass' : 'compass-outline'}
+                name={activeTab === 'feed' ? 'home' : 'home-outline'}
                 size={22}
                 color={activeTab === 'feed' ? colors.accent : colors.textMuted}
               />
@@ -160,7 +167,7 @@ const MainNavigator: React.FC = () => {
                   { color: activeTab === 'feed' ? colors.accent : colors.textMuted }
                 ]}
               >
-                Entdecken
+                Home
               </Text>
             </TouchableOpacity>
 

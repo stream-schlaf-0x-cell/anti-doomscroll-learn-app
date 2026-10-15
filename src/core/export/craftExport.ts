@@ -136,3 +136,27 @@ export function downloadMarkdownFile(filename: string, content: string): boolean
     return false;
   }
 }
+
+/**
+ * Triggers a browser download of a JSON file on Web.
+ */
+export function downloadJsonFile(filename: string, content: string): boolean {
+  try {
+    if (typeof document !== 'undefined') {
+      const blob = new Blob([content], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', filename.endsWith('.json') ? filename : `${filename}.json`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.warn('JSON file download failed:', err);
+    return false;
+  }
+}

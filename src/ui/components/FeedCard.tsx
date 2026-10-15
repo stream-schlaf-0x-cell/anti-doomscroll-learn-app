@@ -16,6 +16,8 @@ import { typography, radius, spacing } from '../theme';
 import { LinkPreviewModal } from './LinkPreviewModal';
 import { MusicTrackCard } from './MusicTrackCard';
 import { CURATED_SOUND_MASTERS, MusicTrackItem } from '../../core/music/musicRecommendationService';
+import { optimizeImageUrl } from '../../core/utils/imageQuality';
+import { RaindropService } from '../../core/raindrop/raindropService';
 
 interface FeedCardProps {
   item: ScoredFeedItem;
@@ -138,6 +140,24 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
       setIsComposerOpen(false);
     } finally {
       setIsSubmittingNote(false);
+    }
+  };
+
+  const [isRaindropSaved, setIsRaindropSaved] = useState<boolean>(false);
+
+  const handleSaveToRaindrop = async () => {
+    try {
+      const res = await RaindropService.saveToRaindrop('demo', {
+        title: item.title,
+        link: originalUrl || `https://atmen.app/article/${item.id}`,
+        excerpt: item.keyInsight || item.subtitle,
+        tags: [item.primaryTopic || 'philosophy', 'atmen', 'focus']
+      });
+      if (res.success) {
+        setIsRaindropSaved(true);
+      }
+    } catch {
+      // non-fatal
     }
   };
 
@@ -287,7 +307,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
       {item.imageUrl && !imageError && (
         <TouchableOpacity activeOpacity={0.9} onPress={handleCardPress} style={styles.imageContainer}>
           <Image
-            source={{ uri: item.imageUrl }}
+            source={{ uri: optimizeImageUrl(item.imageUrl) || item.imageUrl }}
             style={styles.cardImage}
             resizeMode="cover"
             onError={() => setImageError(true)}
@@ -837,6 +857,24 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
             </Text>
           </TouchableOpacity>
         )}
+
+        {/* Raindrop 1-Click Save */}
+        <TouchableOpacity
+          onPress={handleSaveToRaindrop}
+          style={[styles.sourceLinkPill, { backgroundColor: isRaindropSaved ? '#0284C7' + '20' : colors.surfaceSecondary }]}
+          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          accessibilityLabel="In Raindrop.io speichern"
+        >
+          <Ionicons
+            name={isRaindropSaved ? 'water' : 'water-outline'}
+            size={11}
+            color={isRaindropSaved ? '#0284C7' : colors.textMuted}
+            style={{ marginRight: 3 }}
+          />
+          <Text style={[styles.sourceLinkPillText, { color: isRaindropSaved ? '#0284C7' : colors.textMuted }]}>
+            {isRaindropSaved ? 'In Raindrop' : 'Raindrop'}
+          </Text>
+        </TouchableOpacity>
 
         {/* Completed status or publisher */}
         {isCompleted ? (

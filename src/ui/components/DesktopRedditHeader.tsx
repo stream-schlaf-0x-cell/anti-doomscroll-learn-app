@@ -15,13 +15,15 @@ import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '..
 import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
 import { defaultGeminiEnricher, AIProvider } from '../../core/enrichment/geminiEnricher';
 import { NewsHubModal } from './NewsHubModal';
+import { UltraMasterModal } from './UltraMasterModal';
+import { MobilePublishModal } from './MobilePublishModal';
 
 interface DesktopRedditHeaderProps {
   searchQuery: string;
   onSearchChange: (q: string) => void;
   activeSpaceName?: string;
-  selectedFilter?: TopicTag | 'all';
-  onSelectSpace?: (space: TopicTag | 'all') => void;
+  selectedFilter?: TopicTag | 'all' | string;
+  onSelectSpace?: (space: TopicTag | 'all' | string) => void;
 }
 
 export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
@@ -39,6 +41,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     setPalettePreference,
     activeTab,
     setActiveTab,
+    goHome,
+    selectedArticleId,
     savedArticles,
     interactions,
     refreshFeed
@@ -50,6 +54,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
   const [showPaletteModal, setShowPaletteModal] = useState<boolean>(false);
   const [showSpaceModal, setShowSpaceModal] = useState<boolean>(false);
   const [showNewsHubModal, setShowNewsHubModal] = useState<boolean>(false);
+  const [showUltraMasterModal, setShowUltraMasterModal] = useState<boolean>(false);
+  const [showMobilePublishModal, setShowMobilePublishModal] = useState<boolean>(false);
   const [bannerNotice, setBannerNotice] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
@@ -152,12 +158,16 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         <View style={styles.headerInner}>
           {/* Left: Brand + Reddit Space Selector */}
           <View style={styles.leftSection}>
+            {/* 1. Brand: Always returns to Home Center */}
             <TouchableOpacity
-              onPress={() => setActiveTab('feed')}
-              activeOpacity={0.8}
+              onPress={() => {
+                goHome();
+                if (onSelectSpace) onSelectSpace('all');
+              }}
+              activeOpacity={0.7}
               style={styles.brandRow}
               accessibilityRole="button"
-              accessibilityLabel="Atem Startseite"
+              accessibilityLabel="Zurück zur Home Startseite"
             >
               {/* atmen Circular Aperture Emblem */}
               <View style={[styles.logoEmblem, { backgroundColor: colors.accent }]}>
@@ -165,6 +175,39 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               </View>
               <Text style={[styles.brandText, { color: colors.textPrimary }]}>
                 atmen
+              </Text>
+            </TouchableOpacity>
+
+            {/* 2. Center of App: Dedicated Home Pill */}
+            <TouchableOpacity
+              onPress={() => {
+                goHome();
+                if (onSelectSpace) onSelectSpace('all');
+              }}
+              style={[
+                styles.homeCenterPill,
+                {
+                  backgroundColor: activeTab === 'feed' && !selectedArticleId ? colors.accent : colors.surfaceSecondary,
+                  borderColor: activeTab === 'feed' && !selectedArticleId ? colors.accent : colors.borderSubtle
+                }
+              ]}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Home Menü und Feed öffnen"
+            >
+              <Ionicons
+                name={activeTab === 'feed' && !selectedArticleId ? 'home' : 'home-outline'}
+                size={14}
+                color={activeTab === 'feed' && !selectedArticleId ? '#FFFFFF' : colors.textPrimary}
+                style={{ marginRight: 5 }}
+              />
+              <Text
+                style={[
+                  styles.homeCenterPillText,
+                  { color: activeTab === 'feed' && !selectedArticleId ? '#FFFFFF' : colors.textPrimary }
+                ]}
+              >
+                Home
               </Text>
             </TouchableOpacity>
 
@@ -235,6 +278,34 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               <Ionicons name="radio-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
               <Text style={[styles.newsHubText, { color: colors.textPrimary }]}>
                 News-Hub (29)
+              </Text>
+            </TouchableOpacity>
+
+            {/* Ultra Master Studio Button */}
+            <TouchableOpacity
+              onPress={() => setShowUltraMasterModal(true)}
+              style={[styles.ultraMasterBadge, { backgroundColor: '#F59E0B' + '22', borderColor: '#F59E0B' }]}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Ultra Master Studio öffnen"
+            >
+              <Ionicons name="sparkles" size={13} color="#F59E0B" style={{ marginRight: 4 }} />
+              <Text style={[styles.ultraMasterText, { color: '#F59E0B' }]}>
+                ⚡ Master Studio
+              </Text>
+            </TouchableOpacity>
+
+            {/* Mobile / Smartphone QR Button */}
+            <TouchableOpacity
+              onPress={() => setShowMobilePublishModal(true)}
+              style={[styles.mobileBadge, { backgroundColor: '#06B6D4' + '20', borderColor: '#06B6D4' }]}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Auf Smartphone öffnen"
+            >
+              <Ionicons name="phone-portrait-outline" size={13} color="#06B6D4" style={{ marginRight: 4 }} />
+              <Text style={[styles.mobileBadgeText, { color: '#06B6D4' }]}>
+                📱 Aufs Handy
               </Text>
             </TouchableOpacity>
 
@@ -664,6 +735,18 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         </TouchableOpacity>
       </Modal>
 
+      {/* Ultra Master Studio Modal */}
+      <UltraMasterModal
+        visible={showUltraMasterModal}
+        onClose={() => setShowUltraMasterModal(false)}
+      />
+
+      {/* Mobile Publish & QR Modal */}
+      <MobilePublishModal
+        visible={showMobilePublishModal}
+        onClose={() => setShowMobilePublishModal(false)}
+      />
+
       {/* News-Hub & Quellen-Zentrale Modal */}
       <NewsHubModal
         visible={showNewsHubModal}
@@ -718,6 +801,19 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     letterSpacing: 1
+  },
+  homeCenterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  homeCenterPillText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '800',
+    letterSpacing: 0.3
   },
   spaceDropdown: {
     flexDirection: 'row',
@@ -820,6 +916,30 @@ const styles = StyleSheet.create({
   newsHubText: {
     fontSize: 11,
     fontWeight: '700'
+  },
+  ultraMasterBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    height: 30,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  ultraMasterText: {
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  mobileBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    height: 30,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  mobileBadgeText: {
+    fontSize: 11,
+    fontWeight: '800'
   },
   toolCluster: {
     flexDirection: 'row',
