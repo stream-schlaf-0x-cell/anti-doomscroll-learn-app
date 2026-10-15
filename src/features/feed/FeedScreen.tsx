@@ -48,7 +48,9 @@ export const FeedScreen: React.FC = () => {
     searchQuery,
     setSearchQuery,
     openArticle,
-    toggleSaveItem
+    toggleSaveItem,
+    simulateDailyGeneration,
+    activeDateSeed
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -57,6 +59,8 @@ export const FeedScreen: React.FC = () => {
   const [sortMode, setSortMode] = useState<SortMode>('hot');
   const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [simulatingDay, setSimulatingDay] = useState<boolean>(false);
+  const [simToast, setSimToast] = useState<string | null>(null);
   const [subchannels, setSubchannels] = useState<Subchannel[]>([]);
   const [showMasterModal, setShowMasterModal] = useState<boolean>(false);
   const [isGeneratingPocket, setIsGeneratingPocket] = useState<boolean>(false);
@@ -129,6 +133,34 @@ export const FeedScreen: React.FC = () => {
     }
     setVisibleDiscoveryCount(10);
     setRefreshing(false);
+  };
+
+  const handleSimulateToday = async () => {
+    setSimulatingDay(true);
+    try {
+      const res = await simulateDailyGeneration(0);
+      setSimToast(`✓ Ausgabe für ${res.simulatedDate} neu durchmischt & Live-Feeds synchronisiert!`);
+      setTimeout(() => setSimToast(null), 3000);
+    } catch {
+      setSimToast('Simulation fehlgeschlagen.');
+      setTimeout(() => setSimToast(null), 3000);
+    } finally {
+      setSimulatingDay(false);
+    }
+  };
+
+  const handleSimulateNextDay = async () => {
+    setSimulatingDay(true);
+    try {
+      const res = await simulateDailyGeneration(1);
+      setSimToast(`✓ Nächster Tag simuliert: ${res.simulatedDate} (${res.itemCount} frische Artikel)!`);
+      setTimeout(() => setSimToast(null), 3500);
+    } catch {
+      setSimToast('Simulation fehlgeschlagen.');
+      setTimeout(() => setSimToast(null), 3000);
+    } finally {
+      setSimulatingDay(false);
+    }
   };
 
   const handleGenerateEmptyPocket = async () => {
@@ -797,7 +829,51 @@ export const FeedScreen: React.FC = () => {
                       );
                     })}
                   </View>
+
+                  {/* Dev Content Generation Simulation Bar */}
+                  <View style={[styles.devSimRow, { borderTopColor: colors.borderSubtle }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="calendar-outline" size={13} color={colors.textMuted} style={{ marginRight: 4 }} />
+                      <Text style={[styles.devSimDateText, { color: colors.textMuted }]}>
+                        Stand: {activeDateSeed}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <TouchableOpacity
+                        onPress={handleSimulateToday}
+                        disabled={simulatingDay}
+                        style={[styles.devSimPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Heutigen Tag neu würfeln"
+                      >
+                        <Ionicons name="refresh" size={11} color={colors.accent} style={{ marginRight: 3 }} />
+                        <Text style={[styles.devSimPillText, { color: colors.textPrimary }]}>
+                          {simulatingDay ? 'Lädt…' : 'Neu würfeln'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={handleSimulateNextDay}
+                        disabled={simulatingDay}
+                        style={[styles.devSimPill, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Nächsten Tag simulieren"
+                      >
+                        <Ionicons name="flask" size={11} color={colors.accent} style={{ marginRight: 3 }} />
+                        <Text style={[styles.devSimPillText, { color: colors.accent, fontWeight: '700' }]}>
+                          +1 Tag (Simulieren)
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 </View>
+
+                {simToast && (
+                  <View style={[styles.simToastContainer, { backgroundColor: colors.accent }]}>
+                    <Text style={styles.simToastText}>{simToast}</Text>
+                  </View>
+                )}
 
                 {/* Open-Meteo Weather Card for Morning Edition (collapses cleanly if weatherData is null) */}
                 {selectedEditionType === 'morning' && weatherData && (
@@ -1661,5 +1737,42 @@ const styles = StyleSheet.create({
   },
   weatherSourceText: {
     fontSize: 11
+  },
+  devSimRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 8,
+    marginTop: 8,
+    borderTopWidth: 0.5
+  },
+  devSimDateText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  devSimPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  devSimPillText: {
+    fontSize: 10
+  },
+  simToastContainer: {
+    position: 'absolute',
+    top: 12,
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    zIndex: 999
+  },
+  simToastText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700'
   }
 });

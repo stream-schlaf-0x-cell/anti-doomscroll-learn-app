@@ -21,7 +21,7 @@ export interface GeminiConfig {
  * - Client builds do not embed shared public API keys.
  * - Without server configuration, Atem operates in an honestly labeled "Quellenmodus" (Source-only / Zero-cost Mode).
  * - Every paid call routes through the persistent budget ledger with atomic reservation, bounded tokens, and post-call reconciliation.
- * - Official model target: gemini-2.5-flash (Google Gemini Developer API, $0.10/1M in, $0.40/1M out).
+ * - Official model target: gemini-3.8-flash (with options for gemini-3.7-flash and gemini-4-argon).
  */
 export class GeminiEnricher implements IContentEnricher {
   private provider: AIProvider;
@@ -36,7 +36,7 @@ export class GeminiEnricher implements IContentEnricher {
     this.apiKey =
       config.apiKey ||
       (typeof process !== 'undefined' ? (process.env.GEMINI_API_KEY || '') : '');
-    this.model = config.model || (this.provider === 'ollama' ? 'llama3.2' : this.provider === 'openai' ? 'gpt-4o-mini' : 'gemini-2.5-flash');
+    this.model = config.model || (this.provider === 'ollama' ? 'llama3.2' : this.provider === 'openai' ? 'gpt-4o-mini' : 'gemini-3.8-flash');
     this.endpoint = config.endpoint || (this.provider === 'ollama' ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1');
   }
 
@@ -46,8 +46,8 @@ export class GeminiEnricher implements IContentEnricher {
       this.model = 'llama3.2';
     } else if (provider === 'openai' && !this.model.includes('gpt')) {
       this.model = 'gpt-4o-mini';
-    } else if (provider === 'gemini' && !this.model.includes('gemini')) {
-      this.model = 'gemini-2.5-flash';
+    } else if (provider === 'gemini' && !this.model.includes('gemini') && !this.model.includes('argon')) {
+      this.model = 'gemini-3.8-flash';
     }
   }
 

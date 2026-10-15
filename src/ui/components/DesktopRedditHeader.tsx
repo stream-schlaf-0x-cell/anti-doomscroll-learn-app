@@ -47,12 +47,16 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     selectedArticleId,
     savedArticles,
     interactions,
-    refreshFeed
+    refreshFeed,
+    simulateDailyGeneration,
+    activeDateSeed
   } = useApp();
 
   // Modals state
   const [showKarmaModal, setShowKarmaModal] = useState<boolean>(false);
   const [showAIModal, setShowAIModal] = useState<boolean>(false);
+  const [showDevSimModal, setShowDevSimModal] = useState<boolean>(false);
+  const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [showPaletteModal, setShowPaletteModal] = useState<boolean>(false);
   const [showSpaceModal, setShowSpaceModal] = useState<boolean>(false);
   const [showNewsHubModal, setShowNewsHubModal] = useState<boolean>(false);
@@ -151,6 +155,19 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
       }
     } finally {
       setIsTestingAI(false);
+    }
+  };
+
+  const handleSimulateDay = async (daysOffset: number = 0, targetDate?: string) => {
+    setIsSimulating(true);
+    try {
+      const res = await simulateDailyGeneration(daysOffset, targetDate);
+      showToast(`✓ Neue Tagesausgabe generiert für ${res.simulatedDate} (${res.itemCount} kuratierte Artikel)!`);
+      setShowDevSimModal(false);
+    } catch (e: any) {
+      showToast(`Fehler bei Simulation: ${e?.message || 'Unbekannt'}`);
+    } finally {
+      setIsSimulating(false);
     }
   };
 
@@ -298,6 +315,20 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 ]}
               >
                 ⚡ Live News Hub
+              </Text>
+            </TouchableOpacity>
+
+            {/* Dev Content Simulator Button */}
+            <TouchableOpacity
+              onPress={() => setShowDevSimModal(true)}
+              style={[styles.devSimBadge, { backgroundColor: '#8B5CF6' + '22', borderColor: '#8B5CF6' }]}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Dev Content Generation Simulator öffnen"
+            >
+              <Ionicons name="flask-outline" size={13} color="#8B5CF6" style={{ marginRight: 4 }} />
+              <Text style={[styles.devSimBadgeText, { color: '#8B5CF6' }]}>
+                🧪 Content-Sim
               </Text>
             </TouchableOpacity>
 
@@ -618,10 +649,45 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
             <View style={{ gap: 8, marginTop: 12 }}>
               <View>
                 <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Modell:</Text>
+                
+                {/* 1-Click Model Presets */}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 6 }}>
+                  {[
+                    { id: 'gemini-3.8-flash', label: '⚡️ 3.8 Flash (Standard)', provider: 'gemini' },
+                    { id: 'gemini-3.7-flash', label: '⚡️ 3.7 Flash', provider: 'gemini' },
+                    { id: 'gemini-4-argon', label: '🧪 4 Argon (Experimental)', provider: 'gemini' },
+                    { id: 'gemini-2.5-flash', label: '⚡️ 2.5 Flash', provider: 'gemini' },
+                    { id: 'llama3.2', label: '🦙 Llama 3.2', provider: 'ollama' },
+                    { id: 'mistral', label: '🦙 Mistral', provider: 'ollama' },
+                    { id: 'gpt-4o-mini', label: '🔮 GPT-4o mini', provider: 'openai' },
+                    { id: 'gpt-4o', label: '🔮 GPT-4o', provider: 'openai' }
+                  ].filter(m => m.provider === aiProvider).map(m => (
+                    <TouchableOpacity
+                      key={m.id}
+                      onPress={() => {
+                        setAiModel(m.id);
+                        defaultGeminiEnricher.setModel(m.id);
+                        showToast(`Modell gewählt: ${m.id}`);
+                      }}
+                      style={[
+                        styles.modelPresetPill,
+                        {
+                          backgroundColor: aiModel === m.id ? colors.accent : colors.surfaceSecondary,
+                          borderColor: aiModel === m.id ? colors.accent : colors.borderSubtle
+                        }
+                      ]}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: aiModel === m.id ? '#FFFFFF' : colors.textPrimary }}>
+                        {m.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
                 <TextInput
                   value={aiModel}
                   onChangeText={setAiModel}
-                  placeholder="z.B. gemini-2.5-flash oder llama3.2"
+                  placeholder="z.B. gemini-3.8-flash, gemini-3.7-flash oder gemini-4-argon"
                   placeholderTextColor={colors.textMuted}
                   style={[styles.modalInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
                 />
@@ -772,6 +838,98 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         visible={showNewsHubModal}
         onClose={() => setShowNewsHubModal(false)}
       />
+
+      {/* Dev Content Generation Simulation Modal */}
+      <Modal
+        visible={showDevSimModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowDevSimModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowDevSimModal(false)}
+        >
+          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, maxWidth: 520 }]}>
+            <View style={styles.modalHeader}>
+              <Ionicons name="flask" size={22} color="#8B5CF6" style={{ marginRight: 8 }} />
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Tägliche Content-Generation simulieren</Text>
+              <TouchableOpacity onPress={() => setShowDevSimModal(false)}>
+                <Ionicons name="close" size={20} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.modalSubHeader, { color: colors.textMuted }]}>
+              Entwickler-Werkzeug: Durchbricht repetitive Feeds durch Live-RSS-Recherche und autonome 24h-Generierungsläufe mit neuen Datum-Seeds.
+            </Text>
+
+            <View style={[styles.karmaHeroBox, { backgroundColor: colors.surfaceSecondary, marginTop: 8 }]}>
+              <Text style={[styles.karmaHeroLabel, { color: '#8B5CF6' }]}>Aktiver Redaktionsstand:</Text>
+              <Text style={[styles.karmaHeroNumber, { color: colors.textPrimary, fontSize: 18 }]}>
+                📅 {activeDateSeed}
+              </Text>
+              <Text style={[styles.karmaHeroDesc, { color: colors.textMuted, marginTop: 4 }]}>
+                Aktives KI-Modell: <Text style={{ color: colors.accent, fontWeight: '700' }}>{aiModel}</Text>
+              </Text>
+            </View>
+
+            <View style={{ gap: 10, marginTop: 14 }}>
+              <TouchableOpacity
+                onPress={() => handleSimulateDay(0)}
+                disabled={isSimulating}
+                style={[styles.simActionButton, { backgroundColor: colors.accent }]}
+              >
+                {isSimulating ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                ) : (
+                  <Ionicons name="refresh" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
+                    ⚡️ Heute neu durchmischen & generieren
+                  </Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 11 }}>
+                    Zieht Live-RSS-Feeds ein & ordnet die heutige Ausgabe mit dialektischen Trends neu an.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => handleSimulateDay(1)}
+                disabled={isSimulating}
+                style={[styles.simActionButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+              >
+                <Ionicons name="sunny-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 13 }}>
+                    🌅 Nächsten Tag simulieren (+1 Tag)
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>
+                    Simuliert den autonomen 24h-Turnus für morgen mit frischem Hash-Seed.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => handleSimulateDay(3)}
+                disabled={isSimulating}
+                style={[styles.simActionButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+              >
+                <Ionicons name="play-forward-outline" size={18} color="#8B5CF6" style={{ marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 13 }}>
+                    ⏩ 3 Tage vorspulen (+3 Tage)
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>
+                    Stresstest für Feed-Rotation & Entdeckung ungesehener Klassiker.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </>
   );
 };
@@ -960,6 +1118,30 @@ const styles = StyleSheet.create({
   mobileBadgeText: {
     fontSize: 11,
     fontWeight: '800'
+  },
+  devSimBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    height: 30,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  devSimBadgeText: {
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  simActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: radius.md
+  },
+  modelPresetPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1
   },
   toolCluster: {
     flexDirection: 'row',

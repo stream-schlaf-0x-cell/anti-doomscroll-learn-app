@@ -13,6 +13,7 @@ import { ArchiveService, ArchivedEdition } from '../archive/archiveService';
 import { TrendRadarService } from '../synthesis/trendRadarService';
 import { feedRepository } from '../data/feedRepository';
 import { appStorage } from '../data/storage';
+import { ContinuousLiveNewsService } from '../data/continuousLiveNewsService';
 
 export interface DailyGenerationStatus {
   lastGeneratedDate: string;
@@ -111,6 +112,46 @@ export class DailyGenerationService {
     }
 
     return { edition, generatedItems: selectedItems };
+  }
+
+  /**
+   * Simulates daily content generation as a developer:
+   * - Computes a simulated date (e.g. today, tomorrow, or offset)
+   * - Optionally forces fresh real-world live RSS fetching
+   * - Re-ranks candidate pools with that date's seed
+   * - Persists into ArchiveService and feedRepository
+   */
+  public static async simulateDailyGeneration(options: {
+    profile: UserProfile;
+    daysOffset?: number;
+    targetDate?: string;
+    fetchLiveNews?: boolean;
+  }): Promise<{ edition: ArchivedEdition; generatedItems: FeedItem[]; simulatedDate: string }> {
+    const { profile, daysOffset = 0, targetDate, fetchLiveNews = true } = options;
+
+    let simulatedDate = targetDate;
+    if (!simulatedDate) {
+      const d = new Date();
+      d.setDate(d.getDate() + daysOffset);
+      simulatedDate = d.toISOString().slice(0, 10);
+    }
+
+    // 1. Optionally fetch fresh live news and inject into pool
+    if (fetchLiveNews) {
+      try {
+        const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
+        if (liveItems.length > 0 && feedRepository.addItems) {
+          feedRepository.addItems(liveItems);
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
+
+    // 2. Generate and force refresh for simulated date
+    const { edition, generatedItems } = await this.generateDailyEdition(profile, simulatedDate, true);
+
+    return { edition, generatedItems, simulatedDate };
   }
 
   /**

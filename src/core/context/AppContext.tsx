@@ -16,6 +16,8 @@ import { DEFAULT_USER_PROFILE, DEFAULT_STARTER_INTERESTS } from '../data/fixture
 import { appStorage, CorruptedDataError, StorageUnavailableError } from '../data/storage';
 import { RecursiveLearningEngine } from '../recommendations/recursiveLearningEngine';
 import { WeatherService, WeatherData } from '../weather/weatherService';
+import { DailyGenerationService } from '../daily/dailyGenerationService';
+import { ContinuousLiveNewsService } from '../data/continuousLiveNewsService';
 import { ThemeColors, ThemePalette, getThemeColors } from '../../ui/theme';
 
 export type StartupState =
@@ -74,6 +76,8 @@ interface AppContextValue {
   repeatOnboarding: () => Promise<void>;
   clearAllLocalData: () => Promise<void>;
   refreshFeed: () => Promise<void>;
+  simulateDailyGeneration: (daysOffset?: number, customDate?: string) => Promise<{ simulatedDate: string; itemCount: number }>;
+  activeDateSeed: string;
   retryStartup: () => Promise<void>;
   resetCorruptedData: () => Promise<void>;
 }
@@ -100,9 +104,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return determineCurrentEditionType(new Date(), DEFAULT_USER_PROFILE);
   });
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
+  const [activeDateSeed, setActiveDateSeed] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
   const selectedEditionTypeRef = useRef<DayEditionType>(selectedEditionType);
   selectedEditionTypeRef.current = selectedEditionType;
+
+  const activeDateSeedRef = useRef<string>(activeDateSeed);
+  activeDateSeedRef.current = activeDateSeed;
 
   // References to track latest committed state and prevent stale closures
   const latestProfileRef = useRef<UserProfile>(profile);
@@ -142,13 +150,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const scheduleFeedRecompute = useCallback(async (
     prof: UserProfile,
     inter: Record<string, ReadingInteraction>,
-    targetEdition?: DayEditionType
+    targetEdition?: DayEditionType,
+    customDateSeed?: string
   ) => {
     const currentVersion = ++feedRecomputeVersion.current;
     try {
       const edition = targetEdition ?? selectedEditionTypeRef.current;
+      const seed = customDateSeed ?? activeDateSeedRef.current;
       const [daily, disc] = await Promise.all([
-        feedRepository.getEditionFeed(edition, prof, inter),
+        feedRepository.getEditionFeed(edition, prof, inter, seed),
         feedRepository.getDiscoveryItems(prof, inter)
       ]);
       if (currentVersion === feedRecomputeVersion.current) {
@@ -327,6 +337,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshFeed = useCallback(async () => {
     try {
       try {
+        const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
+        if (liveItems.length > 0 && (feedRepository as any).addItems) {
+          (feedRepository as any).addItems(liveItems);
+        }
+      } catch {
+        // Fallback
+      }
+      try {
         const fresh = require('../data/pipeline-output.json');
         if (Array.isArray(fresh) && (feedRepository as any).setItems) {
           (feedRepository as any).setItems(fresh);
@@ -338,6 +356,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err) {
       console.warn('Feed-Aktualisierung fehlgeschlagen:', err);
     }
+  }, [scheduleFeedRecompute]);
+
+  const simulateDailyGeneration = useCallback(async (daysOffset: number = 0, customDate?: string) => {
+    const res = await DailyGenerationService.simulateDailyGeneration({
+      profile: latestProfileRef.current,
+      daysOffset,
+      targetDate: customDate,
+      fetchLiveNews: true
+    });
+    setActiveDateSeed(res.simulatedDate);
+    activeDateSeedRef.current = res.simulatedDate;
+    await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, selectedEditionTypeRef.current, res.simulatedDate);
+    return { simulatedDate: res.simulatedDate, itemCount: res.generatedItems.length };
   }, [scheduleFeedRecompute]);
 
   const openArticle = useCallback(async (id: string) => {
@@ -814,6 +845,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         repeatOnboarding,
         clearAllLocalData,
         refreshFeed,
+        simulateDailyGeneration,
+        activeDateSeed,
         retryStartup: loadInitialData,
         resetCorruptedData
       }}

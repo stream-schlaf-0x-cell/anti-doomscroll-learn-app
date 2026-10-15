@@ -113,7 +113,16 @@ export class ContinuousLiveNewsService {
       // Seamless fallback on any network or parsing error
     }
 
-    return this.liveCache?.items || [];
+    if (this.liveCache && this.liveCache.items.length > 0) {
+      return this.liveCache.items;
+    }
+
+    const fallbackItems = rawPipelineItems.length > 0 ? rawPipelineItems : REAL_KNOWLEDGE_VAULT;
+    this.liveCache = {
+      items: fallbackItems,
+      timestamp: Date.now()
+    };
+    return fallbackItems;
   }
 
   /**
