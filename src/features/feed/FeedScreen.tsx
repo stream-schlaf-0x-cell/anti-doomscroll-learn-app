@@ -23,6 +23,7 @@ import { Subchannel, defaultSpaceRepository } from '../../core/spaces/spaceRepos
 import { UltraMasterModal } from '../../ui/components/UltraMasterModal';
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
 import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerationProgressModal';
+import { AtemBreathingModal } from '../../ui/components/AtemBreathingModal';
 
 export const FeedScreen: React.FC = () => {
   const { dailyEdition, discoveryItems, colors, refreshFeed } = useApp();
@@ -40,6 +41,7 @@ export const FeedScreen: React.FC = () => {
   const [isGeneratingPocket, setIsGeneratingPocket] = useState<boolean>(false);
   const [showProgressModal, setShowProgressModal] = useState<boolean>(false);
   const [progressSpaceName, setProgressSpaceName] = useState<string>('');
+  const [showBreathingModal, setShowBreathingModal] = useState<boolean>(false);
 
   const loadSubchannels = useCallback(async () => {
     const all = await defaultSpaceRepository.getAllSpaces();
@@ -111,7 +113,18 @@ export const FeedScreen: React.FC = () => {
       ? dailyEdition
       : dailyEdition.filter(item => {
           if (selectedFilter.startsWith('c/')) {
-            return item.space === selectedFilter;
+            const raw = selectedFilter.slice(2).toLowerCase();
+            const matchesSpace = item.space?.toLowerCase() === selectedFilter.toLowerCase();
+            const matchesTopic = item.primaryTopic?.toLowerCase().includes(raw) || item.topics.some(t => t.toLowerCase().includes(raw));
+            const matchesSingularity = (raw.includes('singularity') || raw.includes('beschleunigung') || raw.includes('ai')) && (item.primaryTopic === 'ai_apple' || item.topics.includes('ai_apple'));
+            const matchesDidaktik = raw.includes('didaktik') && (item.primaryTopic === 'german_didactics' || item.topics.includes('german_didactics'));
+            const matchesKlang = (raw.includes('klang') || raw.includes('musik')) && (item.primaryTopic === 'sound_synthesis' || item.topics.includes('sound_synthesis'));
+            const matchesPhil = raw.includes('philosoph') && (item.primaryTopic === 'philosophy_ethics' || item.topics.includes('philosophy_ethics'));
+            const matchesWiss = raw.includes('wiss') && (item.primaryTopic === 'science_society' || item.topics.includes('science_society'));
+            const matchesBuch = (raw.includes('buch') || raw.includes('buecher')) && (item.primaryTopic === 'book_mastery' || item.topics.includes('book_mastery'));
+            const matchesYT = (raw.includes('youtube') || raw.includes('video')) && (item.primaryTopic === 'youtube_gems' || item.topics.includes('youtube_gems'));
+            const matchesMeme = (raw.includes('meme') || raw.includes('satire')) && (item.primaryTopic === 'memes_satire' || item.topics.includes('memes_satire'));
+            return matchesSpace || matchesTopic || matchesSingularity || matchesDidaktik || matchesKlang || matchesPhil || matchesWiss || matchesBuch || matchesYT || matchesMeme;
           }
           return item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter as TopicTag);
         });
@@ -124,7 +137,18 @@ export const FeedScreen: React.FC = () => {
       ? discoveryItems
       : discoveryItems.filter(item => {
           if (selectedFilter.startsWith('c/')) {
-            return item.space === selectedFilter;
+            const raw = selectedFilter.slice(2).toLowerCase();
+            const matchesSpace = item.space?.toLowerCase() === selectedFilter.toLowerCase();
+            const matchesTopic = item.primaryTopic?.toLowerCase().includes(raw) || item.topics.some(t => t.toLowerCase().includes(raw));
+            const matchesSingularity = (raw.includes('singularity') || raw.includes('beschleunigung') || raw.includes('ai')) && (item.primaryTopic === 'ai_apple' || item.topics.includes('ai_apple'));
+            const matchesDidaktik = raw.includes('didaktik') && (item.primaryTopic === 'german_didactics' || item.topics.includes('german_didactics'));
+            const matchesKlang = (raw.includes('klang') || raw.includes('musik')) && (item.primaryTopic === 'sound_synthesis' || item.topics.includes('sound_synthesis'));
+            const matchesPhil = raw.includes('philosoph') && (item.primaryTopic === 'philosophy_ethics' || item.topics.includes('philosophy_ethics'));
+            const matchesWiss = raw.includes('wiss') && (item.primaryTopic === 'science_society' || item.topics.includes('science_society'));
+            const matchesBuch = (raw.includes('buch') || raw.includes('buecher')) && (item.primaryTopic === 'book_mastery' || item.topics.includes('book_mastery'));
+            const matchesYT = (raw.includes('youtube') || raw.includes('video')) && (item.primaryTopic === 'youtube_gems' || item.topics.includes('youtube_gems'));
+            const matchesMeme = (raw.includes('meme') || raw.includes('satire')) && (item.primaryTopic === 'memes_satire' || item.topics.includes('memes_satire'));
+            return matchesSpace || matchesTopic || matchesSingularity || matchesDidaktik || matchesKlang || matchesPhil || matchesWiss || matchesBuch || matchesYT || matchesMeme;
           }
           return item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter as TopicTag);
         });
@@ -503,14 +527,32 @@ export const FeedScreen: React.FC = () => {
                     {/* Mindfulness Milestone after item 5 in daily edition */}
                     {index === 4 && (
                       <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                        <Ionicons name="leaf-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                        <Ionicons name="leaf-outline" size={20} color="#10B981" style={{ marginRight: 10, marginTop: 2 }} />
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
-                            Innehalten & Nachdenken
+                            Kognitive Atempause
                           </Text>
                           <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
-                            5 Gedanken aufgenommen. Nimm dir einen Moment, bevor du weiter scrollst.
+                            5 Gedanken aufgenommen. Nimm dir 3 tiefe Atemzüge, um das Gelesene kognitiv zu verarbeiten.
                           </Text>
+                          <TouchableOpacity
+                            onPress={() => setShowBreathingModal(true)}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              alignSelf: 'flex-start',
+                              marginTop: 8,
+                              backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                              paddingHorizontal: 12,
+                              paddingVertical: 6,
+                              borderRadius: radius.full
+                            }}
+                          >
+                            <Ionicons name="leaf-outline" size={13} color="#10B981" style={{ marginRight: 5 }} />
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#10B981' }}>
+                              Atem-Simulator starten (4-4-4-4)
+                            </Text>
+                          </TouchableOpacity>
                         </View>
                       </View>
                     )}
@@ -540,14 +582,32 @@ export const FeedScreen: React.FC = () => {
                     {/* Periodic Mindfulness Milestone every 8 discovery cards */}
                     {(index + 1) % 8 === 0 && (
                       <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                        <Ionicons name="water-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                        <Ionicons name="water-outline" size={20} color="#06B6D4" style={{ marginRight: 10, marginTop: 2 }} />
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
-                            Bewusstes Weiterlernen
+                            Kognitive Weite & Atempause
                           </Text>
                           <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
-                            {index + 1 + sortedDaily.length} Erkenntnisse gesammelt. Dein Geist wächst mit jedem bewussten Gedanken.
+                            {index + 1 + sortedDaily.length} Erkenntnisse gesammelt. Atme durch, um das Rauschen der Welt loszulassen.
                           </Text>
+                          <TouchableOpacity
+                            onPress={() => setShowBreathingModal(true)}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              alignSelf: 'flex-start',
+                              marginTop: 8,
+                              backgroundColor: 'rgba(6, 182, 212, 0.15)',
+                              paddingHorizontal: 12,
+                              paddingVertical: 6,
+                              borderRadius: radius.full
+                            }}
+                          >
+                            <Ionicons name="leaf-outline" size={13} color="#06B6D4" style={{ marginRight: 5 }} />
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#06B6D4' }}>
+                              Atempause nehmen (4-4-4-4)
+                            </Text>
+                          </TouchableOpacity>
                         </View>
                       </View>
                     )}
@@ -592,6 +652,13 @@ export const FeedScreen: React.FC = () => {
         spaceName={progressSpaceName}
         onCompleted={() => setShowProgressModal(false)}
         onCancel={() => setShowProgressModal(false)}
+      />
+
+      {/* Kognitive Atempause & Mindful Breathing Simulator */}
+      <AtemBreathingModal
+        visible={showBreathingModal}
+        onClose={() => setShowBreathingModal(false)}
+        targetRounds={3}
       />
     </View>
   );

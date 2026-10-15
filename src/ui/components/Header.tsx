@@ -5,6 +5,7 @@ import { useApp } from '../../core/context/AppContext';
 import { typography, spacing } from '../theme';
 import { UltraMasterModal } from './UltraMasterModal';
 import { MobilePublishModal } from './MobilePublishModal';
+import { AtemBreathingModal } from './AtemBreathingModal';
 
 interface HeaderProps {
   title?: string;
@@ -20,6 +21,7 @@ export const Header: React.FC<HeaderProps> = ({
   const { colors, isDark, setThemePreference, goHome } = useApp();
   const [showMaster, setShowMaster] = useState<boolean>(false);
   const [showMobile, setShowMobile] = useState<boolean>(false);
+  const [showBreathing, setShowBreathing] = useState<boolean>(false);
 
   const handleToggleTheme = () => {
     setThemePreference(isDark ? 'light' : 'dark');
@@ -69,6 +71,15 @@ export const Header: React.FC<HeaderProps> = ({
             </TouchableOpacity>
 
             <TouchableOpacity
+              onPress={() => setShowBreathing(true)}
+              style={[styles.themeToggle, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Kognitive Atempause & Atem-Simulator starten"
+            >
+              <Ionicons name="leaf-outline" size={16} color="#10B981" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
               onPress={() => setShowMobile(true)}
               style={[styles.themeToggle, { backgroundColor: '#06B6D4' + '22' }]}
               accessibilityRole="button"
@@ -98,6 +109,7 @@ export const Header: React.FC<HeaderProps> = ({
 
       <UltraMasterModal visible={showMaster} onClose={() => setShowMaster(false)} />
       <MobilePublishModal visible={showMobile} onClose={() => setShowMobile(false)} />
+      <AtemBreathingModal visible={showBreathing} onClose={() => setShowBreathing(false)} targetRounds={3} />
     </>
   );
 };
