@@ -3,6 +3,9 @@
     "name": "atmen",
     "slug": "atmen-antidote-feed",
     "version": "1.0.0",
+    "experiments": {
+      "baseUrl": "/anti-doomscroll-learn-app"
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
