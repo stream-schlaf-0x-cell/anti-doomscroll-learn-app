@@ -1,6 +1,7 @@
 import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP } from '../domain/types';
 import { INITIAL_FIXTURES, getCuratedImageForTopic, getSimulatedCommentsForTopic } from './fixtures';
 import { rankAndInterleaveFeed, ScoredFeedItem } from '../domain/ranking';
+import { AtemStorage, appStorage } from './storage';
 
 // Safely load pipeline output if present
 let pipelineItems: FeedItem[] = [];
@@ -56,8 +57,11 @@ export interface IFeedRepository {
 
 export class LocalFeedRepository implements IFeedRepository {
   private items: FeedItem[];
+  private dynamicItems: FeedItem[] = [];
+  private storage: AtemStorage;
 
-  constructor(customItems?: FeedItem[]) {
+  constructor(customItems?: FeedItem[], storage: AtemStorage = appStorage) {
+    this.storage = storage;
     if (customItems) {
       this.items = customItems.map(enrichSocialFeedItem);
     } else {
@@ -72,10 +76,50 @@ export class LocalFeedRepository implements IFeedRepository {
       }
       this.items = Array.from(map.values());
     }
+    // Asynchronously re-hydrate dynamic items from local storage
+    this.initDynamicItems();
+  }
+
+  private async initDynamicItems(): Promise<void> {
+    try {
+      const raw = await this.storage.getItem('@atem:dynamic_items:v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          this.dynamicItems = parsed.map(enrichSocialFeedItem);
+          const map = new Map<string, FeedItem>();
+          for (const item of this.items) {
+            map.set(item.id, item);
+          }
+          for (const dyn of this.dynamicItems) {
+            map.set(dyn.id, dyn);
+          }
+          this.items = Array.from(map.values());
+        }
+      }
+    } catch {
+      // Non-fatal fallback
+    }
+  }
+
+  private async persistDynamicItems(): Promise<void> {
+    try {
+      await this.storage.setItem('@atem:dynamic_items:v1', JSON.stringify(this.dynamicItems));
+    } catch {
+      // Non-fatal fallback
+    }
   }
 
   setItems(items: FeedItem[]): void {
-    this.items = items.map(enrichSocialFeedItem);
+    const map = new Map<string, FeedItem>();
+    for (const item of items) {
+      map.set(item.id, enrichSocialFeedItem(item));
+    }
+    // Always preserve dynamically generated pocket items!
+    for (const dyn of this.dynamicItems) {
+      map.set(dyn.id, dyn);
+    }
+    this.items = Array.from(map.values());
   }
 
   addItems(newItems: FeedItem[]): void {
@@ -84,9 +128,14 @@ export class LocalFeedRepository implements IFeedRepository {
       map.set(item.id, item);
     }
     for (const item of newItems) {
-      map.set(item.id, enrichSocialFeedItem(item));
+      const enriched = enrichSocialFeedItem(item);
+      map.set(item.id, enriched);
+      if (!this.dynamicItems.some(d => d.id === item.id)) {
+        this.dynamicItems.push(enriched);
+      }
     }
     this.items = Array.from(map.values());
+    this.persistDynamicItems();
   }
 
   getAllItems(): FeedItem[] {

@@ -16,6 +16,7 @@ import { FeedItem, TopicTag } from '../domain/types';
 import { feedRepository } from '../data/feedRepository';
 import { ArchiveService } from '../archive/archiveService';
 import { optimizeImageUrl } from '../utils/imageQuality';
+import { defaultSpaceRepository } from '../spaces/spaceRepository';
 
 export interface PocketGenerationOptions {
   space: string;
@@ -288,7 +289,24 @@ Ein humorvoller, zutiefst menschlicher Blick auf den Erkenntnisdrang: Es ist vö
       feedRepository.addItems(items);
     }
 
-    // 6. Automatically archive into the permanent Bibliotheka!
+    // 6. Ensure space is registered in space repository
+    try {
+      const existingSpaces = await defaultSpaceRepository.getAllSpaces();
+      if (!existingSpaces.some(s => s.handle.toLowerCase() === spaceHandle.toLowerCase())) {
+        await defaultSpaceRepository.createSubchannel({
+          title: spaceHandle.replace(/^c\//, '').replace(/_/g, ' '),
+          handle: spaceHandle,
+          description: `On-the-Fly kuratierter Wissensraum für ${spaceHandle}`,
+          primaryTopic,
+          icon: 'sparkles',
+          flair: '◈ On-The-Fly'
+        });
+      }
+    } catch {
+      // Non-fatal
+    }
+
+    // 7. Automatically archive into the permanent Bibliotheka!
     try {
       await ArchiveService.recordEdition(items, today);
     } catch {

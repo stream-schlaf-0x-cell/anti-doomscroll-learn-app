@@ -18,7 +18,7 @@ import {
   SourceCategory,
   CATEGORY_METADATA
 } from '../../core/data/sourceRepository';
-import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
+import { TopicTag, TOPIC_SPACE_MAP, FeedItem } from '../../core/domain/types';
 import { typography, radius, spacing } from '../theme';
 import { copyToClipboard, downloadMarkdownFile, downloadJsonFile } from '../../core/export/craftExport';
 import { MusicTrackCard } from './MusicTrackCard';
@@ -40,18 +40,44 @@ import {
 } from '../../core/archive/foundationalCanonService';
 import { feedRepository } from '../../core/data/feedRepository';
 import { userProfileRepository } from '../../core/data/userProfileRepository';
+import {
+  AutonomousResearcherService,
+  POPULAR_QUALITY_FEEDS,
+  DiscoveredFeedCandidate
+} from '../../core/ingestion/autonomousResearcherService';
+
+let pipelineNewsItems: FeedItem[] = [];
+try {
+  const loaded = require('../../core/data/pipeline-output.json');
+  if (Array.isArray(loaded)) {
+    pipelineNewsItems = loaded as FeedItem[];
+  }
+} catch {
+  pipelineNewsItems = [];
+}
 
 interface NewsHubModalProps {
   visible: boolean;
   onClose: () => void;
 }
 
-type HubTab = 'sources' | 'import' | 'raindrop' | 'music' | 'sync';
+type HubTab = 'curated_news' | 'sources' | 'gatherer' | 'import' | 'raindrop' | 'music' | 'sync';
 
 export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) => {
-  const { colors, refreshFeed } = useApp();
+  const { colors, refreshFeed, openArticle, toggleSaveItem, savedArticles } = useApp();
 
-  const [activeTab, setActiveTab] = useState<HubTab>('sources');
+  const [activeTab, setActiveTab] = useState<HubTab>('curated_news');
+  const [curatedNewsList, setCuratedNewsList] = useState<FeedItem[]>(pipelineNewsItems);
+  const [newsFilter, setNewsFilter] = useState<'all' | 'oerr' | 'tech' | 'science' | 'culture'>('all');
+  const [newsSearch, setNewsSearch] = useState<string>('');
+  const [isGeneratingNews, setIsGeneratingNews] = useState<boolean>(false);
+
+  // Automated Gatherer & Scraper state
+  const [discoveryUrlInput, setDiscoveryUrlInput] = useState<string>('');
+  const [discoveredCandidate, setDiscoveredCandidate] = useState<DiscoveredFeedCandidate | null>(null);
+  const [isDiscoveringFeed, setIsDiscoveringFeed] = useState<boolean>(false);
+  const [inquiryTopicInput, setInquiryTopicInput] = useState<string>('');
+  const [isInquiring, setIsInquiring] = useState<boolean>(false);
   const [musicQuery, setMusicQuery] = useState<string>('');
   const [musicResults, setMusicResults] = useState<MusicTrackItem[]>(CURATED_SOUND_MASTERS);
   const [isSearchingMusic, setIsSearchingMusic] = useState<boolean>(false);
@@ -222,6 +248,108 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
       void FoundationalCanonService.getCanon().then(setSavedCanonSnapshot);
     }
   }, [visible]);
+
+  const handleGenerateFreshNews = async () => {
+    setIsGeneratingNews(true);
+    try {
+      await refreshFeed();
+      const shuffled = [...curatedNewsList].sort(() => 0.5 - Math.random());
+      setCuratedNewsList(shuffled);
+      showToast(`✓ ${shuffled.length} Meldungen aus 24 Live-Feeds aktualisiert`);
+    } catch {
+      showToast('Fehler beim Aktualisieren der Feeds');
+    } finally {
+      setIsGeneratingNews(false);
+    }
+  };
+
+  const handleDiscoverFeed = async () => {
+    if (!discoveryUrlInput.trim()) {
+      showToast('Bitte eine Website-URL oder Domain eingeben (z.B. spiegel.de)');
+      return;
+    }
+    setIsDiscoveringFeed(true);
+    setDiscoveredCandidate(null);
+    try {
+      const candidate = await AutonomousResearcherService.discoverFeedFromWebsite(discoveryUrlInput);
+      if (candidate) {
+        setDiscoveredCandidate(candidate);
+        showToast(`✓ RSS-Feed für ${candidate.name} gefunden!`);
+      } else {
+        showToast('Kein RSS-Feed für diese URL ermittelbar.');
+      }
+    } catch (e: any) {
+      showToast(`Recherche-Fehler: ${e.message}`);
+    } finally {
+      setIsDiscoveringFeed(false);
+    }
+  };
+
+  const handleSubscribeDiscovered = async (candidate: DiscoveredFeedCandidate) => {
+    try {
+      const added = await defaultSourceRepository.addCustomSource({
+        name: candidate.name,
+        url: candidate.url,
+        primaryTopic: candidate.primaryTopic,
+        category: candidate.category
+      });
+      setSources(prev => [...prev, added]);
+      await refreshFeed();
+      showToast(`✓ „${candidate.name}“ erfolgreich abonniert!`);
+      setDiscoveredCandidate(null);
+      setDiscoveryUrlInput('');
+    } catch (e: any) {
+      showToast(e.message || 'Konnte Quelle nicht abonnieren');
+    }
+  };
+
+  const handleConductInquiry = async () => {
+    if (!inquiryTopicInput.trim()) {
+      showToast('Bitte ein Thema oder eine Frage für den Teammate eingeben');
+      return;
+    }
+    setIsInquiring(true);
+    try {
+      const inquiryItem = await AutonomousResearcherService.conductSpiritualInquiry(inquiryTopicInput);
+      if (feedRepository.addItems) {
+        feedRepository.addItems([inquiryItem]);
+      }
+      await refreshFeed();
+      showToast(`✓ Spirituelles Dossier zu „${inquiryTopicInput}“ erstellt & im Feed verankert!`);
+      setInquiryTopicInput('');
+    } catch (e: any) {
+      showToast(`Inquiry-Fehler: ${e.message}`);
+    } finally {
+      setIsInquiring(false);
+    }
+  };
+
+  const filteredNews = useMemo(() => {
+    let list = curatedNewsList;
+    if (newsFilter === 'oerr') {
+      list = list.filter(i => {
+        const pub = i.sourceReferences[0]?.publisher?.toLowerCase() || '';
+        return pub.includes('tagesschau') || pub.includes('zdf') || pub.includes('deutschlandfunk') || pub.includes('bpb');
+      });
+    } else if (newsFilter === 'tech') {
+      list = list.filter(i => i.primaryTopic === 'ai_apple' || i.topics.includes('ai_apple'));
+    } else if (newsFilter === 'science') {
+      list = list.filter(i => i.primaryTopic === 'science_society' || i.primaryTopic === 'philosophy_ethics');
+    } else if (newsFilter === 'culture') {
+      list = list.filter(i => i.primaryTopic === 'sound_synthesis' || i.primaryTopic === 'contemplation_mind' || i.primaryTopic === 'book_mastery');
+    }
+
+    if (newsSearch.trim()) {
+      const q = newsSearch.toLowerCase().trim();
+      list = list.filter(i =>
+        i.title.toLowerCase().includes(q) ||
+        (i.feedText && i.feedText.toLowerCase().includes(q)) ||
+        (i.sourceReferences[0]?.publisher && i.sourceReferences[0].publisher.toLowerCase().includes(q))
+      );
+    }
+
+    return list;
+  }, [curatedNewsList, newsFilter, newsSearch]);
 
   const handleToggle = async (id: string) => {
     const newStatus = await defaultSourceRepository.toggleSource(id);
@@ -403,6 +531,31 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
 
           {/* Nav Tabs */}
           <View style={[styles.tabBar, { borderBottomColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary }]}>
+            {/* TAB 0: Curated News Magazine (DEFAULT) */}
+            <TouchableOpacity
+              onPress={() => setActiveTab('curated_news')}
+              style={[
+                styles.tabItem,
+                activeTab === 'curated_news' && { borderBottomColor: colors.accent, backgroundColor: colors.surface }
+              ]}
+            >
+              <Ionicons
+                name="newspaper-outline"
+                size={14}
+                color={activeTab === 'curated_news' ? colors.accent : colors.textMuted}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.tabItemText,
+                  { color: activeTab === 'curated_news' ? colors.accent : colors.textSecondary }
+                ]}
+              >
+                📰 Kuratierte News ({filteredNews.length})
+              </Text>
+            </TouchableOpacity>
+
+            {/* TAB 1: Sources & Feeds Settings */}
             <TouchableOpacity
               onPress={() => setActiveTab('sources')}
               style={[
@@ -411,7 +564,7 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
               ]}
             >
               <Ionicons
-                name="list-outline"
+                name="settings-outline"
                 size={14}
                 color={activeTab === 'sources' ? colors.accent : colors.textMuted}
                 style={{ marginRight: 6 }}
@@ -422,7 +575,31 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                   { color: activeTab === 'sources' ? colors.accent : colors.textSecondary }
                 ]}
               >
-                Quellen-Katalog ({sources.length})
+                ⚙️ Quellen ({sources.length})
+              </Text>
+            </TouchableOpacity>
+
+            {/* TAB 2: Gatherer & Scraper */}
+            <TouchableOpacity
+              onPress={() => setActiveTab('gatherer')}
+              style={[
+                styles.tabItem,
+                activeTab === 'gatherer' && { borderBottomColor: colors.accent, backgroundColor: colors.surface }
+              ]}
+            >
+              <Ionicons
+                name="sparkles-outline"
+                size={14}
+                color={activeTab === 'gatherer' ? colors.accent : colors.textMuted}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.tabItemText,
+                  { color: activeTab === 'gatherer' ? colors.accent : colors.textSecondary }
+                ]}
+              >
+                🤖 Scraper & Teammate
               </Text>
             </TouchableOpacity>
 
@@ -491,7 +668,7 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                   { color: activeTab === 'music' ? '#EF4444' : colors.textSecondary }
                 ]}
               >
-                Musik & Audio
+                Musik
               </Text>
             </TouchableOpacity>
 
@@ -514,13 +691,378 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                   { color: activeTab === 'sync' ? colors.accent : colors.textSecondary }
                 ]}
               >
-                Status & Sync
+                Sync
               </Text>
             </TouchableOpacity>
           </View>
 
           {/* Tab Content */}
           <View style={styles.contentContainer}>
+            {/* TAB 0: CURATED NEWS FEED */}
+            {activeTab === 'curated_news' && (
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.md }}>
+                {/* News Header & Action Bar */}
+                <View style={[styles.newsHeaderBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                  <View style={styles.newsHeaderLeft}>
+                    <Text style={[styles.newsHeaderTitle, { color: colors.textPrimary }]}>
+                      Kuratierte Tagesausgabe ({filteredNews.length})
+                    </Text>
+                    <Text style={[styles.newsHeaderSubtitle, { color: colors.textMuted }]}>
+                      Recherchierte Meldungen aus Tagesschau, ZDFheute, DLF, heise, Quanta & Spektrum
+                    </Text>
+                  </View>
+
+                  <View style={styles.newsActionRow}>
+                    <TouchableOpacity
+                      onPress={handleGenerateFreshNews}
+                      disabled={isGeneratingNews}
+                      style={[styles.generateNewsButton, { backgroundColor: colors.accent, opacity: isGeneratingNews ? 0.7 : 1 }]}
+                    >
+                      <Ionicons
+                        name={isGeneratingNews ? 'hourglass-outline' : 'refresh-outline'}
+                        size={14}
+                        color="#FFFFFF"
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={styles.generateNewsButtonText}>
+                        {isGeneratingNews ? 'Lade Feeds…' : '🔄 Neu generieren'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => setActiveTab('sources')}
+                      style={[styles.settingsShortcutButton, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+                    >
+                      <Ionicons name="settings-outline" size={14} color={colors.textPrimary} style={{ marginRight: 4 }} />
+                      <Text style={[styles.settingsShortcutText, { color: colors.textPrimary }]}>
+                        Quellen anpassen
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => setActiveTab('gatherer')}
+                      style={[styles.settingsShortcutButton, { backgroundColor: colors.surface, borderColor: colors.accent }]}
+                    >
+                      <Ionicons name="sparkles-outline" size={14} color={colors.accent} style={{ marginRight: 4 }} />
+                      <Text style={[styles.settingsShortcutText, { color: colors.accent }]}>
+                        + Scraper
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* News Search & Category Bar */}
+                <View style={styles.newsFilterRow}>
+                  <View style={[styles.newsSearchBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                    <Ionicons name="search" size={14} color={colors.textMuted} style={{ marginRight: 6 }} />
+                    <TextInput
+                      value={newsSearch}
+                      onChangeText={setNewsSearch}
+                      placeholder="Meldungen durchsuchen…"
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.newsSearchInput, { color: colors.textPrimary }]}
+                    />
+                    {newsSearch.length > 0 && (
+                      <TouchableOpacity onPress={() => setNewsSearch('')}>
+                        <Ionicons name="close-circle" size={14} color={colors.textMuted} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.newsCategoryScroll}>
+                    <TouchableOpacity
+                      onPress={() => setNewsFilter('all')}
+                      style={[styles.newsCategoryChip, { backgroundColor: newsFilter === 'all' ? colors.accent : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                    >
+                      <Text style={[styles.newsCategoryChipText, { color: newsFilter === 'all' ? '#FFFFFF' : colors.textPrimary }]}>
+                        🌐 Alle Top-Meldungen
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setNewsFilter('oerr')}
+                      style={[styles.newsCategoryChip, { backgroundColor: newsFilter === 'oerr' ? '#0284C7' : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                    >
+                      <Text style={[styles.newsCategoryChipText, { color: newsFilter === 'oerr' ? '#FFFFFF' : colors.textPrimary }]}>
+                        🏛️ ÖRR (Tagesschau/ZDF/DLF)
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setNewsFilter('tech')}
+                      style={[styles.newsCategoryChip, { backgroundColor: newsFilter === 'tech' ? '#3B82F6' : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                    >
+                      <Text style={[styles.newsCategoryChipText, { color: newsFilter === 'tech' ? '#FFFFFF' : colors.textPrimary }]}>
+                        💻 Tech & KI
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setNewsFilter('science')}
+                      style={[styles.newsCategoryChip, { backgroundColor: newsFilter === 'science' ? '#8B5CF6' : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                    >
+                      <Text style={[styles.newsCategoryChipText, { color: newsFilter === 'science' ? '#FFFFFF' : colors.textPrimary }]}>
+                        🔬 Wissenschaft (Quanta/Spektrum)
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setNewsFilter('culture')}
+                      style={[styles.newsCategoryChip, { backgroundColor: newsFilter === 'culture' ? '#F59E0B' : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                    >
+                      <Text style={[styles.newsCategoryChipText, { color: newsFilter === 'culture' ? '#FFFFFF' : colors.textPrimary }]}>
+                        🎧 Kultur & Sound
+                      </Text>
+                    </TouchableOpacity>
+                  </ScrollView>
+                </View>
+
+                {/* News Cards */}
+                {filteredNews.length === 0 ? (
+                  <View style={[styles.newsEmptyCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                    <Ionicons name="newspaper-outline" size={32} color={colors.textMuted} />
+                    <Text style={[styles.newsEmptyTitle, { color: colors.textPrimary }]}>
+                      Keine Meldungen für diesen Filter gefunden
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => { setNewsFilter('all'); setNewsSearch(''); }}
+                      style={[styles.resetFilterBtn, { backgroundColor: colors.accentSubtle }]}
+                    >
+                      <Text style={{ color: colors.accent, fontWeight: '600' }}>Filter zurücksetzen</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={styles.newsCardGrid}>
+                    {filteredNews.map(item => {
+                      const pub = item.sourceReferences[0]?.publisher || 'Verifizierte Quelle';
+                      const isSaved = savedArticles.some(s => s.id === item.id);
+                      return (
+                        <View
+                          key={item.id}
+                          style={[styles.newsArticleCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+                        >
+                          <View style={styles.newsCardTop}>
+                            <View style={[styles.newsPublisherBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                              <Ionicons name="checkmark-circle" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+                              <Text style={[styles.newsPublisherText, { color: colors.textPrimary }]}>{pub}</Text>
+                            </View>
+                            <Text style={[styles.newsTimeText, { color: colors.textMuted }]}>
+                              vor 45 Min.
+                            </Text>
+                          </View>
+
+                          <Text style={[styles.newsArticleTitle, { color: colors.textPrimary }]}>
+                            {item.title}
+                          </Text>
+
+                          {item.feedText ? (
+                            <Text style={[styles.newsArticleSummary, { color: colors.textSecondary }]} numberOfLines={3}>
+                              {item.feedText}
+                            </Text>
+                          ) : null}
+
+                          <View style={styles.newsCardActions}>
+                            <TouchableOpacity
+                              onPress={() => {
+                                onClose();
+                                void openArticle(item.id);
+                              }}
+                              style={[styles.readArticleButton, { backgroundColor: colors.accent }]}
+                            >
+                              <Ionicons name="book-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                              <Text style={styles.readArticleButtonText}>Im Reader lesen</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              onPress={() => void toggleSaveItem(item.id)}
+                              style={[styles.saveArticleButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                            >
+                              <Ionicons
+                                name={isSaved ? 'bookmark' : 'bookmark-outline'}
+                                size={14}
+                                color={isSaved ? colors.accent : colors.textMuted}
+                              />
+                            </TouchableOpacity>
+
+                            {item.canonicalUrl && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  if (typeof window !== 'undefined' && window.open) {
+                                    window.open(item.canonicalUrl, '_blank');
+                                  }
+                                }}
+                                style={[styles.openLinkButton, { backgroundColor: colors.surfaceSecondary }]}
+                              >
+                                <Ionicons name="open-outline" size={13} color={colors.textMuted} />
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </ScrollView>
+            )}
+
+            {/* TAB: GATHERER & SCRAPER (SPIRITUAL TEAMMATE) */}
+            {activeTab === 'gatherer' && (
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.md }}>
+                {/* Spiritual Teammate Header Banner */}
+                <View style={[styles.gathererHeaderBanner, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}>
+                  <View style={styles.gathererBannerTop}>
+                    <Ionicons name="sparkles" size={20} color={colors.accent} style={{ marginRight: 8 }} />
+                    <Text style={[styles.gathererBannerTitle, { color: colors.accent }]}>
+                      Automatischer Gatherer & Spiritueller Teammate
+                    </Text>
+                  </View>
+                  <Text style={[styles.gathererBannerDesc, { color: colors.textSecondary }]}>
+                    Gib eine beliebige Website ein oder frage den Teammate nach einer Recherche. Atem durchforstet das Web, findet RSS-Endpoints und synthetisiert substanzielle Erkenntnis-Dossiers.
+                  </Text>
+                </View>
+
+                {/* Section 1: Auto-RSS Website Scraper */}
+                <View style={[styles.gathererCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                  <View style={styles.gathererCardHeader}>
+                    <Ionicons name="globe-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
+                    <Text style={[styles.gathererCardTitle, { color: colors.textPrimary }]}>
+                      Neuer Website folgen (Auto-Discovery & RSS-Scraper)
+                    </Text>
+                  </View>
+
+                  <Text style={[styles.gathererCardDesc, { color: colors.textMuted }]}>
+                    Gib die Domain einer Zeitung, eines Blogs oder Magazins ein (z.B. spiegel.de, theverge.com, heise.de, aeon.co):
+                  </Text>
+
+                  <View style={styles.gathererInputRow}>
+                    <TextInput
+                      value={discoveryUrlInput}
+                      onChangeText={setDiscoveryUrlInput}
+                      placeholder="z.B. https://www.spiegel.de oder theverge.com"
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.gathererInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
+                    />
+                    <TouchableOpacity
+                      onPress={handleDiscoverFeed}
+                      disabled={isDiscoveringFeed}
+                      style={[styles.gathererSearchBtn, { backgroundColor: colors.accent, opacity: isDiscoveringFeed ? 0.7 : 1 }]}
+                    >
+                      {isDiscoveringFeed ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.gathererSearchBtnText}>🔍 Finden</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Discovered Candidate Result Card */}
+                  {discoveredCandidate && (
+                    <View style={[styles.discoveredResultCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.accent }]}>
+                      <View style={styles.candidateTopRow}>
+                        <View style={styles.candidateInfo}>
+                          <Text style={[styles.candidateName, { color: colors.textPrimary }]}>
+                            {discoveredCandidate.name}
+                          </Text>
+                          <Text style={[styles.candidateUrl, { color: colors.accent }]}>
+                            {discoveredCandidate.url}
+                          </Text>
+                          <Text style={[styles.candidateDesc, { color: colors.textMuted }]}>
+                            {discoveredCandidate.description}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => void handleSubscribeDiscovered(discoveredCandidate)}
+                          style={[styles.candidateAddBtn, { backgroundColor: '#10B981' }]}
+                        >
+                          <Text style={styles.candidateAddBtnText}>+ Folgen ✓</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </View>
+
+                {/* Section 2: Spiritual Teammate Inquiry */}
+                <View style={[styles.gathererCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                  <View style={styles.gathererCardHeader}>
+                    <Ionicons name="bulb-outline" size={16} color="#8B5CF6" style={{ marginRight: 6 }} />
+                    <Text style={[styles.gathererCardTitle, { color: colors.textPrimary }]}>
+                      Spirituellen Impuls & Recherche anfordern
+                    </Text>
+                  </View>
+                  <Text style={[styles.gathererCardDesc, { color: colors.textMuted }]}>
+                    Über welches philosophische, musikalische oder gesellschaftliche Thema soll der Teammate für dich recherchieren?
+                  </Text>
+                  <View style={styles.gathererInputRow}>
+                    <TextInput
+                      value={inquiryTopicInput}
+                      onChangeText={setInquiryTopicInput}
+                      placeholder="z.B. Kognitive Gelassenheit, Modular Synthesizer, Epistemische Souveränität…"
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.gathererInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
+                    />
+                    <TouchableOpacity
+                      onPress={handleConductInquiry}
+                      disabled={isInquiring}
+                      style={[styles.gathererSearchBtn, { backgroundColor: '#8B5CF6', opacity: isInquiring ? 0.7 : 1 }]}
+                    >
+                      {isInquiring ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.gathererSearchBtnText}>✨ Dossier bauen</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Section 3: Popular Pre-Vetted Quality Feeds Catalog */}
+                <View style={[styles.gathererCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                  <View style={styles.gathererCardHeader}>
+                    <Ionicons name="ribbon-outline" size={16} color="#F59E0B" style={{ marginRight: 6 }} />
+                    <Text style={[styles.gathererCardTitle, { color: colors.textPrimary }]}>
+                      Schnell-Abonnieren: Beliebte Qualitäts-Feeds
+                    </Text>
+                  </View>
+                  <Text style={[styles.gathererCardDesc, { color: colors.textMuted }]}>
+                    Mit einem Klick zu deinen Quellen hinzufügen:
+                  </Text>
+
+                  <View style={styles.popularGrid}>
+                    {POPULAR_QUALITY_FEEDS.map(item => {
+                      const isSubscribed = sources.some(s => s.url.toLowerCase() === item.url.toLowerCase());
+                      return (
+                        <View
+                          key={item.url}
+                          style={[styles.popularCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                        >
+                          <View style={styles.popularCardContent}>
+                            <Text style={[styles.popularTitle, { color: colors.textPrimary }]}>
+                              {item.name}
+                            </Text>
+                            <Text style={[styles.popularDesc, { color: colors.textMuted }]} numberOfLines={2}>
+                              {item.description}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (!isSubscribed) {
+                                void handleSubscribeDiscovered(item);
+                              }
+                            }}
+                            disabled={isSubscribed}
+                            style={[
+                              styles.popularSubscribeBtn,
+                              { backgroundColor: isSubscribed ? colors.surface : colors.accent }
+                            ]}
+                          >
+                            <Text style={[styles.popularSubscribeText, { color: isSubscribed ? colors.textMuted : '#FFFFFF' }]}>
+                              {isSubscribed ? '✓ Abonniert' : '+ Abonnieren'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              </ScrollView>
+            )}
+
             {/* TAB 1: Sources Catalog */}
             {activeTab === 'sources' && (
               <View style={{ flex: 1 }}>
@@ -1655,5 +2197,305 @@ const styles = StyleSheet.create({
   hintText: {
     fontSize: typography.sizes.micro,
     fontStyle: 'italic'
+  },
+  newsHeaderBox: {
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 0.5,
+    marginBottom: spacing.md
+  },
+  newsHeaderLeft: {
+    marginBottom: spacing.sm
+  },
+  newsHeaderTitle: {
+    fontSize: typography.sizes.body,
+    fontWeight: '700',
+    marginBottom: 2
+  },
+  newsHeaderSubtitle: {
+    fontSize: 12,
+    lineHeight: 16
+  },
+  newsActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs
+  },
+  generateNewsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
+    borderRadius: radius.full
+  },
+  generateNewsButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  settingsShortcutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    borderWidth: 0.5
+  },
+  settingsShortcutText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  newsFilterRow: {
+    marginBottom: spacing.md
+  },
+  newsSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radius.full,
+    borderWidth: 0.5,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    marginBottom: spacing.xs
+  },
+  newsSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    padding: 0
+  },
+  newsCategoryScroll: {
+    gap: spacing.xs,
+    paddingVertical: 2
+  },
+  newsCategoryChip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderRadius: radius.full,
+    borderWidth: 0.5
+  },
+  newsCategoryChipText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  newsCardGrid: {
+    gap: spacing.sm
+  },
+  newsArticleCard: {
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 0.5
+  },
+  newsCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs
+  },
+  newsPublisherBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: radius.sm
+  },
+  newsPublisherText: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  newsTimeText: {
+    fontSize: 11
+  },
+  newsArticleTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 20,
+    marginBottom: spacing.xs
+  },
+  newsArticleSummary: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: spacing.sm
+  },
+  newsCardActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs
+  },
+  readArticleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.full
+  },
+  readArticleButtonText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  saveArticleButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    borderWidth: 0.5,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  openLinkButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  newsEmptyCard: {
+    padding: spacing.xl,
+    borderRadius: radius.lg,
+    borderWidth: 0.5,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  newsEmptyTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginVertical: spacing.sm,
+    textAlign: 'center'
+  },
+  resetFilterBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.full
+  },
+  gathererHeaderBanner: {
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    marginBottom: spacing.md
+  },
+  gathererBannerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4
+  },
+  gathererBannerTitle: {
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  gathererBannerDesc: {
+    fontSize: 12,
+    lineHeight: 16
+  },
+  gathererCard: {
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 0.5
+  },
+  gathererCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2
+  },
+  gathererCardTitle: {
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  gathererCardDesc: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginBottom: spacing.sm
+  },
+  gathererInputRow: {
+    flexDirection: 'row',
+    gap: spacing.xs
+  },
+  gathererInput: {
+    flex: 1,
+    borderRadius: radius.md,
+    borderWidth: 0.5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 7,
+    fontSize: 13
+  },
+  gathererSearchBtn: {
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  gathererSearchBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  discoveredResultCard: {
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  candidateTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start'
+  },
+  candidateInfo: {
+    flex: 1,
+    marginRight: spacing.sm
+  },
+  candidateName: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 2
+  },
+  candidateUrl: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 2
+  },
+  candidateDesc: {
+    fontSize: 11,
+    lineHeight: 15
+  },
+  candidateAddBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.full
+  },
+  candidateAddBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  popularGrid: {
+    gap: spacing.xs
+  },
+  popularCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 0.5
+  },
+  popularCardContent: {
+    flex: 1,
+    marginRight: spacing.sm
+  },
+  popularTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 1
+  },
+  popularDesc: {
+    fontSize: 11,
+    lineHeight: 14
+  },
+  popularSubscribeBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderRadius: radius.full
+  },
+  popularSubscribeText: {
+    fontSize: 11,
+    fontWeight: '700'
   }
 });

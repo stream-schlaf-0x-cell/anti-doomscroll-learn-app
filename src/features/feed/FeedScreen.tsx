@@ -22,6 +22,7 @@ import { ScoredFeedItem } from '../../core/domain/ranking';
 import { Subchannel, defaultSpaceRepository } from '../../core/spaces/spaceRepository';
 import { UltraMasterModal } from '../../ui/components/UltraMasterModal';
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
+import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerationProgressModal';
 
 export const FeedScreen: React.FC = () => {
   const { dailyEdition, discoveryItems, colors, refreshFeed } = useApp();
@@ -37,6 +38,8 @@ export const FeedScreen: React.FC = () => {
   const [subchannels, setSubchannels] = useState<Subchannel[]>([]);
   const [showMasterModal, setShowMasterModal] = useState<boolean>(false);
   const [isGeneratingPocket, setIsGeneratingPocket] = useState<boolean>(false);
+  const [showProgressModal, setShowProgressModal] = useState<boolean>(false);
+  const [progressSpaceName, setProgressSpaceName] = useState<string>('');
 
   const loadSubchannels = useCallback(async () => {
     const all = await defaultSpaceRepository.getAllSpaces();
@@ -56,11 +59,15 @@ export const FeedScreen: React.FC = () => {
   };
 
   const handleGenerateEmptyPocket = async () => {
+    const targetSpace = selectedFilter === 'all'
+      ? (searchQuery ? `c/${searchQuery.toLowerCase().replace(/[^a-z0-9_]/g, '_')}` : 'c/persoenlicher_focus')
+      : selectedFilter;
+
+    setProgressSpaceName(targetSpace);
+    setShowProgressModal(true);
     setIsGeneratingPocket(true);
+
     try {
-      const targetSpace = selectedFilter === 'all'
-        ? (searchQuery ? `c/${searchQuery.toLowerCase().replace(/[^a-z0-9_]/g, '_')}` : 'c/persoenlicher_focus')
-        : selectedFilter;
       await OnTheFlyStreamService.generateStreamForPocket({
         space: targetSpace,
         includeAiSynthesis: true,
@@ -69,6 +76,9 @@ export const FeedScreen: React.FC = () => {
       });
       await refreshFeed();
       await loadSubchannels();
+      if (selectedFilter !== targetSpace) {
+        setSelectedFilter(targetSpace);
+      }
     } catch (e) {
       console.error('Error generating pocket stream:', e);
     } finally {
@@ -574,6 +584,14 @@ export const FeedScreen: React.FC = () => {
           setShowMasterModal(false);
           void loadSubchannels();
         }}
+      />
+
+      {/* Epistemic On-The-Fly Stream Progress Modal */}
+      <StreamGenerationProgressModal
+        visible={showProgressModal}
+        spaceName={progressSpaceName}
+        onCompleted={() => setShowProgressModal(false)}
+        onCancel={() => setShowProgressModal(false)}
       />
     </View>
   );
