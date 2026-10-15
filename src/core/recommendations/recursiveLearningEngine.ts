@@ -13,7 +13,7 @@ import { appStorage } from '../data/storage';
 
 export interface LearningTelemetryEvent {
   timestamp: string;
-  type: 'upvote' | 'downvote' | 'completed_reading' | 'note_created' | 'feedback_positive' | 'feedback_negative' | 'raindrop_sync';
+  type: 'upvote' | 'downvote' | 'completed_reading' | 'note_created' | 'feedback_positive' | 'feedback_negative' | 'feedback_already_known' | 'feedback_more_depth' | 'raindrop_sync';
   topic: TopicTag;
   delta: number;
   reason: string;
@@ -79,7 +79,7 @@ export class RecursiveLearningEngine {
   public static async recordInteractionEvent(
     profile: UserProfile,
     item: FeedItem,
-    eventType: 'upvote' | 'downvote' | 'completed_reading' | 'note_created' | 'feedback_positive' | 'feedback_negative'
+    eventType: 'upvote' | 'downvote' | 'completed_reading' | 'note_created' | 'feedback_positive' | 'feedback_negative' | 'feedback_already_known' | 'feedback_more_depth'
   ): Promise<{ updatedProfile: UserProfile; event: LearningTelemetryEvent | null }> {
     const state = await this.getEngineState();
     const primaryTopic = item.primaryTopic || 'philosophy_ethics';
@@ -119,6 +119,14 @@ export class RecursiveLearningEngine {
       case 'feedback_negative':
         delta = -0.18;
         reason = `Direktes Feedback „Weniger davon“`;
+        break;
+      case 'feedback_already_known':
+        delta = -0.06;
+        reason = `Als bereits bekannt markiert (verhindert Wiederholungen)`;
+        break;
+      case 'feedback_more_depth':
+        delta = 0.14;
+        reason = `Bedarf nach mehr intellektueller Tiefe`;
         break;
     }
 

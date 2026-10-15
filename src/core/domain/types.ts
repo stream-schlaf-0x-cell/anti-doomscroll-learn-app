@@ -215,6 +215,77 @@ export const CommunityCommentSchema = z.object({
 });
 export type CommunityComment = z.infer<typeof CommunityCommentSchema>;
 
+// Three Daily Editions (Morgen, Mittendrin, Abend)
+export const DayEditionTypeSchema = z.enum(['morning', 'midday', 'evening']);
+export type DayEditionType = z.infer<typeof DayEditionTypeSchema>;
+
+export const DAY_EDITIONS_META: Record<DayEditionType, {
+  id: DayEditionType;
+  label: string;
+  periodLabel: string;
+  tagline: string;
+  icon: string;
+  targetMinCount: number;
+  targetMaxCount: number;
+}> = {
+  morning: {
+    id: 'morning',
+    label: 'Guten Morgen',
+    periodLabel: 'Morgenausgabe',
+    tagline: 'Frisch, neugierig, orientierend',
+    icon: 'sunny-outline',
+    targetMinCount: 6,
+    targetMaxCount: 8
+  },
+  midday: {
+    id: 'midday',
+    label: 'Mittendrin',
+    periodLabel: 'Tagesausgabe',
+    tagline: 'Lebendig, Werkzeuge, Ideen & Entdeckungen',
+    icon: 'flash-outline',
+    targetMinCount: 4,
+    targetMaxCount: 6
+  },
+  evening: {
+    id: 'evening',
+    label: 'Guten Abend',
+    periodLabel: 'Abendausgabe',
+    tagline: 'Ruhig, vertiefend, Kultur & Klang',
+    icon: 'moon-outline',
+    targetMinCount: 4,
+    targetMaxCount: 6
+  }
+};
+
+// Ebene 2: Editorial Abstract (Orientierung beim Öffnen)
+export const EditorialAbstractSchema = z.object({
+  overview: z.string(), // Worum geht es? (ca. 25-45 Wörter)
+  keyFinding: z.string(), // Was ist die zentrale Aussage oder neue Entwicklung? (ca. 30-50 Wörter)
+  relevanceWhy: z.string(), // Warum könnte das interessant sein? (ca. 25-45 Wörter)
+  limitation: z.string().optional() // Welche wichtige Einschränkung / Caveat muss ich kennen? (ca. 15-30 Wörter)
+});
+export type EditorialAbstract = z.infer<typeof EditorialAbstractSchema>;
+
+// Ebene 3: Art der redaktionellen Aufbereitung
+export const EditorialSynthesisTypeSchema = z.enum([
+  'original_text',            // Ungekürzter Primärtext / Autorenaufsatz
+  'publisher_excerpt',        // Autorisierter Auszug des Verlags / Herausgebers
+  'editorial_deepening',      // Redaktionell kuratierte & geprüfte Vertiefung
+  'scientific_synthesis'      // Wissenschaftliche Quellensynthese & Einordnung
+]);
+export type EditorialSynthesisType = z.infer<typeof EditorialSynthesisTypeSchema>;
+
+export function formatEditorialSynthesisType(type?: EditorialSynthesisType): string {
+  switch (type) {
+    case 'original_text': return 'Authentischer Primärtext';
+    case 'publisher_excerpt': return 'Autorisierter Herausgeber-Auszug';
+    case 'scientific_synthesis': return 'Wissenschaftliche Quellensynthese';
+    case 'editorial_deepening':
+    default:
+      return 'Redaktionell aufbereitete Vertiefung';
+  }
+}
+
 export const FeedItemSchema = z.object({
   id: z.string(),
   type: ContentTypeSchema,
@@ -313,7 +384,11 @@ export const FeedItemSchema = z.object({
     'community_curated'
   ]).default('verified_creator'),
   sourceDomain: z.string().optional(),
-  sourceBroadcasterName: z.string().optional()
+  sourceBroadcasterName: z.string().optional(),
+  editorialAbstract: EditorialAbstractSchema.optional(),
+  editorialSynthesisType: EditorialSynthesisTypeSchema.optional(),
+  targetEditions: z.array(DayEditionTypeSchema).optional(),
+  imageCredit: z.string().optional()
 });
 export type FeedItem = z.infer<typeof FeedItemSchema>;
 
@@ -509,6 +584,21 @@ export const UserProfileSchema = z.object({
     palette: ThemePaletteSchema.default('tidalglass'),
     fontSize: z.enum(['sm', 'md', 'lg', 'xl']).default('md')
   }),
+  editionPreferences: z.object({
+    timezone: z.string().default('Europe/Berlin'),
+    morningStartHour: z.number().default(5),
+    middayStartHour: z.number().default(12),
+    eveningStartHour: z.number().default(18),
+    weatherEnabled: z.boolean().default(true),
+    weatherCity: z.string().default('berlin')
+  }).default({
+    timezone: 'Europe/Berlin',
+    morningStartHour: 5,
+    middayStartHour: 12,
+    eveningStartHour: 18,
+    weatherEnabled: true,
+    weatherCity: 'berlin'
+  }),
   isOnboarded: z.boolean().default(false),
   lastActiveDate: z.string().optional()
 });
@@ -539,7 +629,8 @@ export const ReadingInteractionSchema = z.object({
   progressPercent: z.number().min(0).max(100).default(0), // resume position
   furthestPositionPercent: z.number().min(0).max(100).default(0), // furthest position reached
   completedAt: z.string().optional(),
-  feedback: z.enum(['more_like_this', 'less_like_this', 'neutral']).optional(),
+  feedback: z.enum(['more_like_this', 'less_like_this', 'neutral', 'already_known', 'more_depth']).optional(),
+  timeWorthFeedback: z.enum(['very_worthwhile', 'worthwhile', 'neutral', 'not_worthwhile']).optional(),
   userNotes: z.array(UserNoteSchema).default([]),
   voteScore: z.number().default(0) // +1 for upvote, -1 for downvote
 });

@@ -1131,6 +1131,14 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
     palette: 'tidalglass',
     fontSize: 'md'
   },
+  editionPreferences: {
+    timezone: 'Europe/Berlin',
+    morningStartHour: 5,
+    middayStartHour: 12,
+    eveningStartHour: 18,
+    weatherEnabled: true,
+    weatherCity: 'berlin'
+  },
   isOnboarded: false,
   lastActiveDate: '2026-10-14'
 };

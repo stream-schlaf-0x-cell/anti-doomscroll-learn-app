@@ -5,15 +5,17 @@ import {
   ReadingInteraction,
   TopicTag,
   ReadingPreferenceDuration,
-  FeedItem
+  FeedItem,
+  DayEditionType
 } from '../domain/types';
-import { ScoredFeedItem } from '../domain/ranking';
+import { ScoredFeedItem, determineCurrentEditionType } from '../domain/ranking';
 import { feedRepository } from '../data/feedRepository';
 import { libraryRepository } from '../data/libraryRepository';
 import { userProfileRepository } from '../data/userProfileRepository';
 import { DEFAULT_USER_PROFILE, DEFAULT_STARTER_INTERESTS } from '../data/fixtures';
 import { appStorage, CorruptedDataError, StorageUnavailableError } from '../data/storage';
 import { RecursiveLearningEngine } from '../recommendations/recursiveLearningEngine';
+import { WeatherService, WeatherData } from '../weather/weatherService';
 import { ThemeColors, ThemePalette, getThemeColors } from '../../ui/theme';
 
 export type StartupState =
@@ -37,6 +39,10 @@ interface AppContextValue {
   setActiveTab: (tab: 'feed' | 'library' | 'settings') => void;
   activeFeedOption: 'daily' | 'live_news' | 'classics';
   setActiveFeedOption: (option: 'daily' | 'live_news' | 'classics') => void;
+  selectedEditionType: DayEditionType;
+  currentEditionType: DayEditionType;
+  setSelectedEditionType: (edition: DayEditionType) => void;
+  weatherData: WeatherData | null;
   selectedFilter: string | 'all';
   setSelectedFilter: (filter: string | 'all') => void;
   searchQuery: string;
@@ -52,7 +58,11 @@ interface AppContextValue {
   toggleSaveItem: (id: string) => Promise<void>;
   updateReadingProgress: (id: string, percent: number) => Promise<void>;
   flushReadingProgress: () => Promise<void>;
-  setFeedback: (id: string, feedback: 'more_like_this' | 'less_like_this' | 'neutral') => Promise<void>;
+  setFeedback: (
+    id: string,
+    feedback: 'more_like_this' | 'less_like_this' | 'neutral' | 'already_known' | 'more_depth',
+    timeWorthFeedback?: 'very_worthwhile' | 'worthwhile' | 'neutral' | 'not_worthwhile'
+  ) => Promise<void>;
   addNote: (id: string, text: string, tag?: 'einwand' | 'unterricht' | 'these' | 'notiz') => Promise<void>;
   voteItem: (id: string, direction: 'up' | 'down' | 'clear') => Promise<void>;
   updateTopicWeight: (topic: TopicTag, weight: number) => Promise<void>;
@@ -86,12 +96,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<FeedItem | null>(null);
   const [whyModalItem, setWhyModalItem] = useState<ScoredFeedItem | null>(null);
+  const [selectedEditionType, setSelectedEditionTypeState] = useState<DayEditionType>(() => {
+    return determineCurrentEditionType(new Date(), DEFAULT_USER_PROFILE);
+  });
+  const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
+
+  const selectedEditionTypeRef = useRef<DayEditionType>(selectedEditionType);
+  selectedEditionTypeRef.current = selectedEditionType;
 
   // References to track latest committed state and prevent stale closures
   const latestProfileRef = useRef<UserProfile>(profile);
   const latestInteractionsRef = useRef<Record<string, ReadingInteraction>>(interactions);
   latestProfileRef.current = profile;
   latestInteractionsRef.current = interactions;
+
+  const currentEditionType = useMemo(() => {
+    return determineCurrentEditionType(new Date(), profile);
+  }, [profile]);
 
   // Sequencing token to discard stale asynchronous feed recomputations
   const feedRecomputeVersion = useRef<number>(0);
@@ -118,21 +139,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [isDark, palette]);
 
   // Sequenced feed recomputation: newest committed call always wins
-  const scheduleFeedRecompute = useCallback(async (prof: UserProfile, inter: Record<string, ReadingInteraction>) => {
+  const scheduleFeedRecompute = useCallback(async (
+    prof: UserProfile,
+    inter: Record<string, ReadingInteraction>,
+    targetEdition?: DayEditionType
+  ) => {
     const currentVersion = ++feedRecomputeVersion.current;
     try {
+      const edition = targetEdition ?? selectedEditionTypeRef.current;
       const [daily, disc] = await Promise.all([
-        feedRepository.getDailyEdition(prof, inter),
+        feedRepository.getEditionFeed(edition, prof, inter),
         feedRepository.getDiscoveryItems(prof, inter)
       ]);
       if (currentVersion === feedRecomputeVersion.current) {
         setDailyEdition(daily);
         setDiscoveryItems(disc);
       }
+
+      if (edition === 'morning' && prof.editionPreferences?.weatherEnabled !== false) {
+        const city = prof.editionPreferences?.weatherCity || 'Berlin';
+        const weather = await WeatherService.getWeatherForCity(city);
+        if (currentVersion === feedRecomputeVersion.current) {
+          setWeatherData(weather);
+        }
+      } else {
+        if (currentVersion === feedRecomputeVersion.current) {
+          setWeatherData(null);
+        }
+      }
     } catch (err) {
       console.warn('Feed-Berechnung fehlgeschlagen:', err);
     }
   }, []);
+
+  const setSelectedEditionType = useCallback((edition: DayEditionType) => {
+    setSelectedEditionTypeState(edition);
+    selectedEditionTypeRef.current = edition;
+    void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, edition);
+  }, [scheduleFeedRecompute]);
 
   // Flush pending reading progress immediately to persistent storage
   const flushReadingProgress = useCallback(async () => {
@@ -226,7 +270,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setSavedArticles(loadedSavedArticles);
 
-      await scheduleFeedRecompute(loadedProfile, loadedInteractions);
+      const initialEdition = determineCurrentEditionType(new Date(), loadedProfile);
+      setSelectedEditionTypeState(initialEdition);
+      selectedEditionTypeRef.current = initialEdition;
+      await scheduleFeedRecompute(loadedProfile, loadedInteractions, initialEdition);
       setStartupState({ status: 'ready' });
 
       // On Web: check initial URL query for ?article=<id>
@@ -340,6 +387,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveFeedOption('daily');
     setSelectedFilter('all');
     setSearchQuery('');
+    const autoEdition = determineCurrentEditionType(new Date(), latestProfileRef.current);
+    setSelectedEditionTypeState(autoEdition);
+    selectedEditionTypeRef.current = autoEdition;
+    void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, autoEdition);
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       try {
@@ -350,7 +401,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Ignored
       }
     }
-  }, [flushReadingProgress]);
+  }, [flushReadingProgress, scheduleFeedRecompute]);
 
   // Web Browser History Navigation (back / forward / direct URL)
   useEffect(() => {
@@ -476,9 +527,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 800);
   }, []);
 
-  const setFeedback = useCallback(async (id: string, feedback: 'more_like_this' | 'less_like_this' | 'neutral') => {
+  const setFeedback = useCallback(async (
+    id: string,
+    feedback: 'more_like_this' | 'less_like_this' | 'neutral' | 'already_known' | 'more_depth',
+    timeWorthFeedback?: 'very_worthwhile' | 'worthwhile' | 'neutral' | 'not_worthwhile'
+  ) => {
     try {
-      const updated = await libraryRepository.setFeedback(id, feedback);
+      const updated = await libraryRepository.setFeedback(id, feedback, timeWorthFeedback);
       const nextInteractions = { ...latestInteractionsRef.current, [id]: updated };
       latestInteractionsRef.current = nextInteractions;
       setInteractions(nextInteractions);
@@ -487,8 +542,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!item) {
         item = await libraryRepository.getSavedArticle(id);
       }
-      if (item && (feedback === 'more_like_this' || feedback === 'less_like_this')) {
-        const eventType = feedback === 'more_like_this' ? 'feedback_positive' : 'feedback_negative';
+      if (item && (feedback === 'more_like_this' || feedback === 'less_like_this' || feedback === 'already_known' || feedback === 'more_depth')) {
+        let eventType: 'feedback_positive' | 'feedback_negative' | 'feedback_already_known' | 'feedback_more_depth' = 'feedback_positive';
+        if (feedback === 'less_like_this') {
+          eventType = 'feedback_negative';
+        } else if (feedback === 'already_known') {
+          eventType = 'feedback_already_known';
+        } else if (feedback === 'more_depth') {
+          eventType = 'feedback_more_depth';
+        }
         const res = await RecursiveLearningEngine.recordInteractionEvent(latestProfileRef.current, item, eventType);
         if (res.event) {
           latestProfileRef.current = res.updatedProfile;
@@ -721,6 +783,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveTab,
         activeFeedOption,
         setActiveFeedOption,
+        selectedEditionType,
+        currentEditionType,
+        setSelectedEditionType,
+        weatherData,
         selectedFilter,
         setSelectedFilter,
         searchQuery,

@@ -12,7 +12,7 @@ import {
   ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { TopicTag, FeedItem } from '../../core/domain/types';
+import { TopicTag, FeedItem, DayEditionType, DAY_EDITIONS_META } from '../../core/domain/types';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
 import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
@@ -36,6 +36,10 @@ export const FeedScreen: React.FC = () => {
     refreshFeed,
     activeFeedOption,
     setActiveFeedOption,
+    selectedEditionType,
+    currentEditionType,
+    setSelectedEditionType,
+    weatherData,
     profile,
     interactions,
     selectedFilter,
@@ -655,6 +659,91 @@ export const FeedScreen: React.FC = () => {
                     <TouchableOpacity onPress={() => setSearchQuery('')} style={{ marginLeft: 'auto' }}>
                       <Text style={[styles.searchNoticeClear, { color: colors.accent }]}>Filter aufheben</Text>
                     </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* 3-Editions Bar (Morgen, Mittendrin, Abend) */}
+                <View style={[styles.editionsContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                  <View style={styles.editionsHeaderRow}>
+                    <Text style={[styles.editionsTitle, { color: colors.textPrimary }]}>
+                      {DAY_EDITIONS_META[selectedEditionType].label}
+                    </Text>
+                    <Text style={[styles.editionsSubtitle, { color: colors.textMuted }]}>
+                      {DAY_EDITIONS_META[selectedEditionType].tagline}
+                    </Text>
+                  </View>
+
+                  <View style={styles.editionsPillsRow}>
+                    {(['morning', 'midday', 'evening'] as DayEditionType[]).map(edition => {
+                      const meta = DAY_EDITIONS_META[edition];
+                      const isSelected = selectedEditionType === edition;
+                      const isCurrent = currentEditionType === edition;
+                      return (
+                        <TouchableOpacity
+                          key={edition}
+                          onPress={() => setSelectedEditionType(edition)}
+                          style={[
+                            styles.editionPill,
+                            {
+                              backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
+                              borderColor: isSelected ? colors.accent : colors.borderSubtle
+                            }
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Ausgabe ${meta.label} anzeigen`}
+                        >
+                          <Ionicons
+                            name={meta.icon as any}
+                            size={14}
+                            color={isSelected ? '#FFFFFF' : colors.textPrimary}
+                          />
+                          <Text
+                            style={[
+                              styles.editionPillText,
+                              {
+                                color: isSelected ? '#FFFFFF' : colors.textPrimary,
+                                fontWeight: isSelected ? '700' : '600'
+                              }
+                            ]}
+                          >
+                            {meta.label}
+                          </Text>
+                          {isCurrent && (
+                            <View style={[styles.currentEditionDot, { backgroundColor: isSelected ? '#FFFFFF' : colors.accent }]} />
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {/* Open-Meteo Weather Card for Morning Edition (collapses cleanly if weatherData is null) */}
+                {selectedEditionType === 'morning' && weatherData && (
+                  <View style={[styles.weatherCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                    <View style={styles.weatherMainRow}>
+                      <View style={styles.weatherLeft}>
+                        <Ionicons name={weatherData.iconName as any || 'sunny-outline'} size={26} color={colors.accent} />
+                        <View style={{ marginLeft: 10 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                            <Text style={[styles.weatherTemp, { color: colors.textPrimary }]}>
+                              {Math.round(weatherData.temperatureCelsius)}°C
+                            </Text>
+                            <Text style={[styles.weatherCity, { color: colors.textSecondary }]}>
+                              in {weatherData.locationName}
+                            </Text>
+                          </View>
+                          <Text style={[styles.weatherDesc, { color: colors.textMuted }]}>
+                            {weatherData.weatherDescription}{weatherData.practicalNote ? ` • ${weatherData.practicalNote}` : ''}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.weatherSourceTag}>
+                        <Ionicons name="shield-checkmark-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+                        <Text style={[styles.weatherSourceText, { color: colors.textMuted }]}>
+                          Open-Meteo
+                        </Text>
+                      </View>
+                    </View>
                   </View>
                 )}
 
@@ -1384,5 +1473,87 @@ const styles = StyleSheet.create({
   classicsNoticeDesc: {
     fontSize: 13,
     lineHeight: 19
+  },
+  editionsContainer: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.sm
+  },
+  editionsHeaderRow: {
+    marginBottom: spacing.sm
+  },
+  editionsTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: -0.2
+  },
+  editionsSubtitle: {
+    fontSize: 12,
+    marginTop: 2
+  },
+  editionsPillsRow: {
+    flexDirection: 'row',
+    gap: 8
+  },
+  editionPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    gap: 5
+  },
+  editionPillIcon: {
+    fontSize: 14
+  },
+  editionPillText: {
+    fontSize: 12
+  },
+  currentEditionDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3
+  },
+  weatherCard: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.sm
+  },
+  weatherMainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  weatherLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1
+  },
+  weatherEmoji: {
+    fontSize: 26
+  },
+  weatherTemp: {
+    fontSize: 18,
+    fontWeight: '800'
+  },
+  weatherCity: {
+    fontSize: 13,
+    marginLeft: 6
+  },
+  weatherDesc: {
+    fontSize: 12,
+    marginTop: 2
+  },
+  weatherSourceTag: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  weatherSourceText: {
+    fontSize: 11
   }
 });

@@ -166,12 +166,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
   const formatText = item.flair || (item.format ? formatFeedItemFormat(item.format) : null);
   const evidenceText = formatEvidenceTier(item.evidenceTier);
 
-  // Check if article has substantial longform text beyond the card's feedText
-  const hasExpandedBody = Boolean(
-    (item.articleBody && item.articleBody.trim().length > (item.feedText?.trim().length || 0) + 40) ||
-    (item.body && item.body.trim().length > (item.feedText?.trim().length || 0) + 40)
-  );
-
   const displayFeedText = item.feedText && item.feedText.trim().length > 0
     ? item.feedText
     : item.body;
@@ -320,6 +314,13 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
             resizeMode="cover"
             onError={() => setImageError(true)}
           />
+          {item.imageCredit && (
+            <View style={styles.imageCreditOverlay}>
+              <Text style={styles.imageCreditText} numberOfLines={1}>
+                Bild: {item.imageCredit}
+              </Text>
+            </View>
+          )}
         </TouchableOpacity>
       )}
 
@@ -769,24 +770,24 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
         )}
       </View>
 
-      {/* 10. Progressive Reader Action (when longform body exists) */}
-      {hasExpandedBody && (
-        <TouchableOpacity
-          onPress={handleCardPress}
-          activeOpacity={0.75}
-          style={[styles.expandButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-        >
-          <View style={styles.expandButtonLeft}>
-            <Ionicons name="book-outline" size={14} color={colors.accent} style={{ marginRight: 6 }} />
-            <Text style={[styles.expandButtonText, { color: colors.accent }]}>
-              Im Lesemodus vertiefen
-            </Text>
-          </View>
-          <Text style={[styles.expandButtonMeta, { color: colors.textMuted }]}>
-            {item.wordCount} Wörter →
+      {/* 10. Progressive Reader Action (Ebene 2 Abstract & Ebene 3 Artikel) */}
+      <TouchableOpacity
+        onPress={handleCardPress}
+        activeOpacity={0.75}
+        style={[styles.expandButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+        accessibilityRole="button"
+        accessibilityLabel="Abstract und ausführliche Lektüre öffnen"
+      >
+        <View style={styles.expandButtonLeft}>
+          <Ionicons name="reader-outline" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+          <Text style={[styles.expandButtonText, { color: colors.accent }]}>
+            Abstract & Artikel lesen
           </Text>
-        </TouchableOpacity>
-      )}
+        </View>
+        <Text style={[styles.expandButtonMeta, { color: colors.textMuted }]}>
+          {item.wordCount ? `${item.wordCount} Wörter` : `${item.estimatedReadingMinutes} Min.`} →
+        </Text>
+      </TouchableOpacity>
 
       {/* 11. Reading Progress Track (if started) */}
       {progress > 0 && !isCompleted && (
@@ -1203,6 +1204,20 @@ const styles = StyleSheet.create({
   cardImage: {
     width: '100%',
     height: '100%'
+  },
+  imageCreditOverlay: {
+    position: 'absolute',
+    bottom: 6,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radius.xs
+  },
+  imageCreditText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '500'
   },
   title: {
     fontFamily: typography.fontFamilies.serif,

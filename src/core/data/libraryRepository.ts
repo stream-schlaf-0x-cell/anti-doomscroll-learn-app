@@ -250,11 +250,13 @@ export class LocalLibraryRepository implements ILibraryRepository {
 
   async setFeedback(
     itemId: string,
-    feedback: 'more_like_this' | 'less_like_this' | 'neutral'
+    feedback: 'more_like_this' | 'less_like_this' | 'neutral' | 'already_known' | 'more_depth',
+    timeWorthFeedback?: 'very_worthwhile' | 'worthwhile' | 'neutral' | 'not_worthwhile'
   ): Promise<ReadingInteraction> {
     return this.mutateInteraction(itemId, current => ({
       ...current,
-      feedback
+      feedback,
+      timeWorthFeedback: timeWorthFeedback ?? current.timeWorthFeedback
     }));
   }
 

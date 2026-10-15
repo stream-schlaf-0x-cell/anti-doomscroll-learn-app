@@ -1,6 +1,6 @@
-import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP } from '../domain/types';
+import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP, DayEditionType } from '../domain/types';
 import { INITIAL_FIXTURES, getCuratedImageForTopic } from './fixtures';
-import { rankAndInterleaveFeed, ScoredFeedItem } from '../domain/ranking';
+import { rankAndInterleaveFeed, rankEditionFeed, ScoredFeedItem } from '../domain/ranking';
 import { AtemStorage, appStorage } from './storage';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
@@ -41,10 +41,16 @@ function enrichSocialFeedItem(rawItem: FeedItem): FeedItem {
 }
 
 export interface IFeedRepository {
-  getDailyEdition(profile: UserProfile, interactions: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
-  getDiscoveryItems(profile: UserProfile, interactions: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
+  getDailyEdition(profile: UserProfile, interactions?: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
+  getEditionFeed(
+    editionType: DayEditionType,
+    profile: UserProfile,
+    interactions?: Record<string, ReadingInteraction>,
+    dateSeed?: string
+  ): Promise<ScoredFeedItem[]>;
+  getDiscoveryItems(profile: UserProfile, interactions?: Record<string, ReadingInteraction>, excludedIds?: Set<string>): Promise<ScoredFeedItem[]>;
   getItemById(id: string): Promise<FeedItem | null>;
-  searchItems(query: string, profile: UserProfile, interactions: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
+  searchItems(query: string, profile: UserProfile, interactions?: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
   setItems?(items: FeedItem[]): void;
   addItems?(items: FeedItem[]): void;
   getAllItems?(): FeedItem[];
@@ -158,16 +164,34 @@ export class LocalFeedRepository implements IFeedRepository {
     return rankedDaily.slice(0, 12);
   }
 
+  /**
+   * Returns curated items for one of the three daily editions:
+   * - morning: 6-8 items, fresh, curious, orienting, science & society
+   * - midday: 4-6 items, lively, tools, ideas, biohacking & satire
+   * - evening: 4-6 items, calm, deep essays, ambient synthesis, classics
+   */
+  async getEditionFeed(
+    editionType: DayEditionType,
+    profile: UserProfile,
+    interactions: Record<string, ReadingInteraction> = {},
+    dateSeed?: string
+  ): Promise<ScoredFeedItem[]> {
+    return rankEditionFeed(this.items, editionType, profile, interactions, dateSeed);
+  }
+
   async getDiscoveryItems(
     profile: UserProfile,
-    interactions: Record<string, ReadingInteraction> = {}
+    interactions: Record<string, ReadingInteraction> = {},
+    excludedIds?: Set<string>
   ): Promise<ScoredFeedItem[]> {
-    // Discovery pool contains all remaining items beyond the finite daily edition
-    const dailyPool = this.items.filter(item => item.isDailyEdition);
-    const rankedDaily = rankAndInterleaveFeed(dailyPool, profile, interactions);
-    const dailyTop12Ids = new Set(rankedDaily.slice(0, 12).map(i => i.id));
+    // Discovery pool contains all remaining items beyond the active edition
+    const excludeSet = excludedIds ?? (() => {
+      const dailyPool = this.items.filter(item => item.isDailyEdition);
+      const rankedDaily = rankAndInterleaveFeed(dailyPool, profile, interactions);
+      return new Set(rankedDaily.slice(0, 12).map(i => i.id));
+    })();
 
-    const remainingItems = this.items.filter(item => !dailyTop12Ids.has(item.id));
+    const remainingItems = this.items.filter(item => !excludeSet.has(item.id));
     return rankAndInterleaveFeed(remainingItems, profile, interactions);
   }
 

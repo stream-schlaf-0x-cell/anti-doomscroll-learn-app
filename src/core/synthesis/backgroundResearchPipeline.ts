@@ -1,4 +1,4 @@
-import { FeedItem, TopicTag } from '../domain/types';
+import { FeedItem, TopicTag, EditorialAbstract } from '../domain/types';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 
 /**
@@ -173,10 +173,48 @@ export function findRelatedEvergreenGem(topic: TopicTag, title: string): FeedIte
 }
 
 /**
+ * Synthesizes an Ebene 2 Editorial Abstract for items that do not yet have one:
+ * - overview: Worum geht es? (ca. 25-45 Wörter)
+ * - keyFinding: Was ist die zentrale Aussage / neue Entwicklung? (ca. 30-50 Wörter)
+ * - relevanceWhy: Warum könnte das für mich interessant sein? (ca. 25-45 Wörter)
+ * - limitation: Wichtige Einschränkung / Caveat / Gültigkeitsgrenze (ca. 15-30 Wörter)
+ */
+export function synthesizeEditorialAbstract(item: FeedItem): EditorialAbstract {
+  const primaryTopic = item.primaryTopic || 'philosophy_ethics';
+  const subtitle = item.subtitle || '';
+  const feedText = item.feedText || item.body || '';
+  const insight = item.keyInsight || synthesizeKeyInsight(item.title, feedText, primaryTopic);
+
+  const overview = subtitle.trim().length > 20
+    ? `${item.title}: ${subtitle}`
+    : `Eine quellengestützte Untersuchung zu „${item.title}“, die den aktuellen Sachverhalt und nötigen Hintergrund beleuchtet.`;
+
+  const keyFinding = insight.length > 25
+    ? insight
+    : `Die Analyse verdeutlicht, dass die Tragweite dieser Entwicklung vor allem in den zugrundeliegenden methodischen und strukturellen Bedingungen liegt.`;
+
+  const relevanceWhy = item.relevanceExplanation && item.relevanceExplanation.length > 20
+    ? item.relevanceExplanation
+    : `Eröffnet eine differenzierte Orientierung jenseits oberflächlicher Schlagzeilen und verbindet theoretischen Hintergrund mit persönlicher Urteilskraft.`;
+
+  const limitation = item.isChallengingPerspective
+    ? `Formuliert eine pointierte Gegenposition; methodische Unsicherheiten und alternative Interpretationen müssen im Diskurs sorgfältig abgewogen werden.`
+    : `Gültig im Rahmen der untersuchten Datenbasis; weitergehende Schlüsse verlangen eine fortlaufende Prüfung künftiger Evidenz.`;
+
+  return {
+    overview,
+    keyFinding,
+    relevanceWhy,
+    limitation
+  };
+}
+
+/**
  * Enriches any raw feed item with the complete, pristine Atem quality standard:
  * - 💡 Key Insight
  * - 🎓 Didactic / Learning Partner Transfer
  * - ⚡️ Socratic Challenge Prompt
+ * - 📑 Ebene 2 Editorial Abstract
  * - High-contrast domain branding and metadata
  */
 export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
@@ -200,6 +238,18 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
       : undefined
   );
 
+  const editorialAbstract = item.editorialAbstract || synthesizeEditorialAbstract({
+    ...item,
+    keyInsight
+  });
+
+  const editorialSynthesisType = item.editorialSynthesisType || (
+    item.evidenceTier === 'permitted_full_text' ? 'original_text' :
+    item.evidenceTier === 'publisher_excerpt' ? 'publisher_excerpt' :
+    item.factReviewStatus === 'scientific_paper' ? 'scientific_synthesis' :
+    'editorial_deepening'
+  );
+
   return {
     ...item,
     keyInsight,
@@ -207,6 +257,8 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
     didacticSeed: didacticTransfer,
     challengePrompt,
     evergreenContext,
+    editorialAbstract,
+    editorialSynthesisType,
     // Only mark as teaching-related if it genuinely belongs to didactics/pedagogy
     isTeachingRelated: Boolean(item.isTeachingRelated || primaryTopic === 'german_didactics' || item.topics?.includes('german_didactics'))
   };

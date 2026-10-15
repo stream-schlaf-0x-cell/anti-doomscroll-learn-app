@@ -1,4 +1,11 @@
-import { FeedItem, UserProfile, ReadingInteraction, TopicTag, PersonalGoal } from './types';
+import {
+  FeedItem,
+  UserProfile,
+  ReadingInteraction,
+  TopicTag,
+  PersonalGoal,
+  DayEditionType
+} from './types';
 
 export interface ScoredFeedItem extends FeedItem {
   score: number;
@@ -285,4 +292,167 @@ function formatContentType(type: string): string {
     case 'personal_update': return 'Themen-Update';
     default: return 'Entdeckung';
   }
+}
+
+/**
+ * Determines the appropriate daily edition (morning, midday, evening) based on current hour in user's timezone.
+ * Defaults to Europe/Berlin.
+ */
+export function determineCurrentEditionType(
+  date: Date = new Date(),
+  profile?: UserProfile
+): DayEditionType {
+  const morningStart = profile?.editionPreferences?.morningStartHour ?? 5;
+  const middayStart = profile?.editionPreferences?.middayStartHour ?? 12;
+  const eveningStart = profile?.editionPreferences?.eveningStartHour ?? 18;
+
+  let hour = date.getHours();
+  try {
+    const tz = profile?.editionPreferences?.timezone || 'Europe/Berlin';
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: 'numeric',
+      hour12: false
+    });
+    const parts = formatter.formatToParts(date);
+    const hourPart = parts.find(p => p.type === 'hour');
+    if (hourPart) {
+      hour = parseInt(hourPart.value, 10);
+    }
+  } catch {
+    hour = date.getHours();
+  }
+
+  if (hour >= morningStart && hour < middayStart) {
+    return 'morning';
+  } else if (hour >= middayStart && hour < eveningStart) {
+    return 'midday';
+  } else {
+    return 'evening';
+  }
+}
+
+/**
+ * Ranks items for a specific edition (Guten Morgen, Mittendrin, Guten Abend).
+ * Applies edition-specific affinities, batch sizes (6-8 for morning, 4-6 for midday/evening),
+ * soft editorial quotas, interleaving, and reproducible variation based on dateSeed.
+ */
+export function rankEditionFeed(
+  items: FeedItem[],
+  editionType: DayEditionType,
+  profile: UserProfile,
+  interactions: Record<string, ReadingInteraction> = {},
+  dateSeed?: string
+): ScoredFeedItem[] {
+  const seed = dateSeed || new Date().toISOString().slice(0, 10);
+  const targetCount = editionType === 'morning' ? 7 : 5;
+
+  // Compute reproducible hash variation factor per item
+  const scored = items.map(item => {
+    const base = scoreFeedItem(item, profile, interactions);
+
+    // Deterministic pseudo-random variation [0.94, 1.06] based on seed + item.id + editionType
+    let hash = 0;
+    const str = `${seed}_${editionType}_${item.id}`;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    const variationFactor = 0.94 + (Math.abs(hash) % 120) / 1000;
+
+    // Edition-specific affinity boosts
+    let editionMultiplier = 1.0;
+    if (editionType === 'morning') {
+      if (
+        item.primaryTopic === 'science_society' ||
+        item.primaryTopic === 'opportunities_growth' ||
+        item.format === 'sourced_update' ||
+        item.format === 'intriguing_question'
+      ) {
+        editionMultiplier = 1.15;
+      }
+    } else if (editionType === 'midday') {
+      if (
+        item.primaryTopic === 'memes_satire' ||
+        item.primaryTopic === 'health_biohacking' ||
+        item.format === 'creative_idea' ||
+        item.format === 'concise_insight'
+      ) {
+        editionMultiplier = 1.18;
+      }
+    } else if (editionType === 'evening') {
+      if (
+        item.primaryTopic === 'sound_synthesis' ||
+        item.primaryTopic === 'book_mastery' ||
+        item.primaryTopic === 'contemplation_mind' ||
+        item.isEvergreenGem ||
+        item.format === 'long_invitation'
+      ) {
+        editionMultiplier = 1.20;
+      }
+    }
+
+    // Explicit item targetEditions matching
+    if (item.targetEditions && item.targetEditions.length > 0) {
+      if (item.targetEditions.includes(editionType)) {
+        editionMultiplier += 0.10;
+      } else {
+        editionMultiplier -= 0.15;
+      }
+    }
+
+    const adjustedScore = Math.round(base.score * variationFactor * editionMultiplier * 1000) / 1000;
+    return {
+      ...base,
+      score: adjustedScore
+    };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  // Soft quotas according to edition
+  const topBatch = scored.slice(0, targetCount);
+  const remainder = scored.slice(targetCount);
+
+  // Quota 1: Teaching related (~10% across editions, at least 1 in morning if available)
+  if (editionType === 'morning' && !topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics')) {
+    const tIdx = remainder.findIndex(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics');
+    if (tIdx !== -1) {
+      const [elevated] = remainder.splice(tIdx, 1);
+      const repIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
+      if (repIdx !== -1) {
+        remainder.push(topBatch[repIdx]);
+        topBatch.splice(repIdx, 1, elevated);
+      }
+    }
+  }
+
+  // Quota 2: Challenging perspective (~10% across editions)
+  if (!topBatch.some(i => i.isChallengingPerspective || i.type === 'perspective')) {
+    const cIdx = remainder.findIndex(i => i.isChallengingPerspective || i.type === 'perspective');
+    if (cIdx !== -1) {
+      const [elevated] = remainder.splice(cIdx, 1);
+      const repIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
+      if (repIdx !== -1) {
+        remainder.push(topBatch[repIdx]);
+        topBatch.splice(repIdx, 1, elevated);
+      }
+    }
+  }
+
+  // Interleave topics to prevent clumping
+  const result: ScoredFeedItem[] = [];
+  const pool = [...topBatch];
+
+  while (pool.length > 0) {
+    const lastTopic = result.length > 0 ? result[result.length - 1].primaryTopic : null;
+    let nextIndex = pool.findIndex(item => item.primaryTopic !== lastTopic);
+    if (nextIndex === -1) {
+      nextIndex = 0;
+    }
+    const [chosen] = pool.splice(nextIndex, 1);
+    result.push(chosen);
+  }
+
+  return result;
 }

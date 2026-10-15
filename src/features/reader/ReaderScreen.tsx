@@ -13,7 +13,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
-import { formatFactReviewStatus } from '../../core/domain/types';
+import { formatFactReviewStatus, formatEditorialSynthesisType } from '../../core/domain/types';
+import { synthesizeEditorialAbstract } from '../../core/synthesis/backgroundResearchPipeline';
 import { ReadingTimeBadge } from '../../ui/components/ReadingTimeBadge';
 import { DeepeningCard } from '../../ui/components/DeepeningCard';
 import { typography, radius, spacing } from '../../ui/theme';
@@ -81,9 +82,15 @@ export const ReaderScreen: React.FC = () => {
     );
   }
 
-  const isSaved = interactions[selectedArticle.id]?.saved ?? false;
-  const currentFeedback = interactions[selectedArticle.id]?.feedback;
-  const savedProgress = interactions[selectedArticle.id]?.progressPercent ?? 0;
+  const currentInteraction = interactions[selectedArticle.id];
+  const isSaved = currentInteraction?.saved ?? false;
+  const currentFeedback = currentInteraction?.feedback;
+  const savedProgress = currentInteraction?.progressPercent ?? 0;
+
+  const abstract = selectedArticle.editorialAbstract ?? synthesizeEditorialAbstract(selectedArticle);
+  const fullArticleText = (selectedArticle.articleBody && selectedArticle.articleBody.trim().length > 60)
+    ? selectedArticle.articleBody
+    : selectedArticle.body;
 
   // Magazine Font sizing calculations: generous leading & golden measure
   const fontPref = profile.readingPreferences.fontSize;
@@ -365,7 +372,9 @@ export const ReaderScreen: React.FC = () => {
               <View style={[styles.imageCaptionBar, { backgroundColor: colors.surfaceSecondary }]}>
                 <Ionicons name="camera-outline" size={12} color={colors.textMuted} style={{ marginRight: 6 }} />
                 <Text style={[styles.imageCaptionText, { color: colors.textMuted }]} numberOfLines={1}>
-                  Titel-Illustration • Quelle: {publisherDisplay}
+                  {selectedArticle.imageCredit
+                    ? `Bildnachweis: ${selectedArticle.imageCredit} • Quelle: ${publisherDisplay}`
+                    : `Titel-Illustration • Quelle: ${publisherDisplay}`}
                 </Text>
               </View>
             </View>
@@ -383,9 +392,77 @@ export const ReaderScreen: React.FC = () => {
             </View>
           )}
 
+          {/* Ebene 2: Der Abstract (Kompakte Orientierung: 4 Leitfragen) */}
+          {abstract && (
+            <View style={[styles.abstractBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+              <View style={styles.abstractHeaderRow}>
+                <View style={[styles.ebeneTag, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Text style={[styles.ebeneTagText, { color: colors.accent }]}>EBENE 2 • ABSTRACT</Text>
+                </View>
+                <Text style={[styles.abstractReadingEstimate, { color: colors.textMuted }]}>
+                  Orientierung in 60 Sekunden
+                </Text>
+              </View>
+
+              <View style={styles.abstractSection}>
+                <View style={styles.abstractLabelRow}>
+                  <Text style={styles.abstractIcon}>📌</Text>
+                  <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>Worum geht es?</Text>
+                </View>
+                <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
+                  {abstract.overview}
+                </Text>
+              </View>
+
+              <View style={styles.abstractSection}>
+                <View style={styles.abstractLabelRow}>
+                  <Text style={styles.abstractIcon}>💡</Text>
+                  <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>Zentrale Erkenntnis & Entwicklung</Text>
+                </View>
+                <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
+                  {abstract.keyFinding}
+                </Text>
+              </View>
+
+              <View style={styles.abstractSection}>
+                <View style={styles.abstractLabelRow}>
+                  <Text style={styles.abstractIcon}>🎯</Text>
+                  <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>Warum lesenswert?</Text>
+                </View>
+                <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
+                  {abstract.relevanceWhy}
+                </Text>
+              </View>
+
+              <View style={styles.abstractSection}>
+                <View style={styles.abstractLabelRow}>
+                  <Text style={styles.abstractIcon}>⚠️</Text>
+                  <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>Gültigkeitsgrenze & Einschränkung</Text>
+                </View>
+                <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
+                  {abstract.limitation}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Ebene 3: Redaktionell aufbereiteter Artikel */}
+          <View style={styles.ebene3Header}>
+            <View style={styles.ebene3BadgeRow}>
+              <View style={[styles.ebeneTag, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.ebeneTagText, { color: colors.textSecondary }]}>EBENE 3 • AUSFÜHRLICHE LEKTÜRE</Text>
+              </View>
+              <View style={[styles.synthesisTypeBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                <Text style={[styles.synthesisTypeBadgeText, { color: colors.textMuted }]}>
+                  {formatEditorialSynthesisType(selectedArticle.editorialSynthesisType || 'editorial_deepening')}
+                </Text>
+              </View>
+            </View>
+          </View>
+
           {/* Article Body Paragraphs with Lede Styling */}
           <View style={styles.bodyContainer}>
-            {selectedArticle.body.split('\n\n').map((paragraph, index) => {
+            {fullArticleText.split('\n\n').map((paragraph, index) => {
               const isFirst = index === 0;
 
               return (
@@ -520,11 +597,11 @@ export const ReaderScreen: React.FC = () => {
           {/* Feedback Section */}
           <View style={[styles.feedbackBox, { backgroundColor: colors.surfaceSecondary }]}>
             <Text style={[styles.feedbackPrompt, { color: colors.textPrimary }]}>
-              War dieser Beitrag für deine intellektuellen Interessen relevant?
+              Wie soll atmen diesen Beitrag für zukünftige Ausgaben einordnen?
             </Text>
-            <View style={styles.feedbackButtonsRow}>
+            <View style={[styles.feedbackButtonsRow, { flexWrap: 'wrap', justifyContent: 'center' }]}>
               <TouchableOpacity
-                onPress={() => setFeedback(selectedArticle.id, 'more_like_this')}
+                onPress={() => setFeedback(selectedArticle.id, currentFeedback === 'more_like_this' ? 'neutral' : 'more_like_this')}
                 style={[
                   styles.feedbackPill,
                   currentFeedback === 'more_like_this' && { backgroundColor: colors.accent }
@@ -549,7 +626,7 @@ export const ReaderScreen: React.FC = () => {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => setFeedback(selectedArticle.id, 'less_like_this')}
+                onPress={() => setFeedback(selectedArticle.id, currentFeedback === 'less_like_this' ? 'neutral' : 'less_like_this')}
                 style={[
                   styles.feedbackPill,
                   currentFeedback === 'less_like_this' && { backgroundColor: colors.danger }
@@ -572,6 +649,90 @@ export const ReaderScreen: React.FC = () => {
                   Weniger
                 </Text>
               </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setFeedback(selectedArticle.id, currentFeedback === 'already_known' ? 'neutral' : 'already_known')}
+                style={[
+                  styles.feedbackPill,
+                  currentFeedback === 'already_known' && { backgroundColor: colors.accent }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Thema bereits bekannt"
+              >
+                <Ionicons
+                  name="checkmark-done-outline"
+                  size={14}
+                  color={currentFeedback === 'already_known' ? '#FFFFFF' : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.feedbackPillText,
+                    { color: currentFeedback === 'already_known' ? '#FFFFFF' : colors.textPrimary }
+                  ]}
+                >
+                  Schon bekannt
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setFeedback(selectedArticle.id, currentFeedback === 'more_depth' ? 'neutral' : 'more_depth')}
+                style={[
+                  styles.feedbackPill,
+                  currentFeedback === 'more_depth' && { backgroundColor: colors.accent }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Mehr intellektuelle Tiefe bevorzugen"
+              >
+                <Ionicons
+                  name="book-outline"
+                  size={14}
+                  color={currentFeedback === 'more_depth' ? '#FFFFFF' : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.feedbackPillText,
+                    { color: currentFeedback === 'more_depth' ? '#FFFFFF' : colors.textPrimary }
+                  ]}
+                >
+                  Mehr Tiefe
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Time-worth reflective feedback */}
+            <View style={[styles.timeWorthBox, { borderTopColor: colors.borderSubtle }]}>
+              <Text style={[styles.feedbackSubPrompt, { color: colors.textSecondary }]}>
+                War die Lesezeit bereichernd investiert?
+              </Text>
+              <View style={[styles.feedbackButtonsRow, { marginTop: 6 }]}>
+                <TouchableOpacity
+                  onPress={() => setFeedback(selectedArticle.id, currentFeedback || 'neutral', 'very_worthwhile')}
+                  style={[
+                    styles.feedbackMiniPill,
+                    currentInteraction?.timeWorthFeedback === 'very_worthwhile' && { backgroundColor: colors.accent }
+                  ]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.feedbackMiniPillText, { color: currentInteraction?.timeWorthFeedback === 'very_worthwhile' ? '#FFFFFF' : colors.textPrimary }]}>
+                    ✨ Sehr wertvoll
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setFeedback(selectedArticle.id, currentFeedback || 'neutral', 'worthwhile')}
+                  style={[
+                    styles.feedbackMiniPill,
+                    currentInteraction?.timeWorthFeedback === 'worthwhile' && { backgroundColor: colors.surface }
+                  ]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.feedbackMiniPillText, { color: colors.textPrimary }]}>
+                    👍 Gut investiert
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
@@ -1010,5 +1171,97 @@ const styles = StyleSheet.create({
   feedbackPillText: {
     fontSize: typography.sizes.caption,
     fontWeight: '700'
+  },
+  abstractBox: {
+    marginVertical: spacing.lg,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  abstractHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+    paddingBottom: spacing.xs,
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(128,128,128,0.2)'
+  },
+  ebeneTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.xs
+  },
+  ebeneTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5
+  },
+  abstractReadingEstimate: {
+    fontSize: 11
+  },
+  abstractSection: {
+    marginBottom: spacing.sm
+  },
+  abstractLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2
+  },
+  abstractIcon: {
+    fontSize: 12,
+    marginRight: 6
+  },
+  abstractLabel: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  abstractText: {
+    fontSize: 13,
+    lineHeight: 18,
+    paddingLeft: 18
+  },
+  ebene3Header: {
+    marginTop: spacing.md,
+    marginBottom: spacing.sm
+  },
+  ebene3BadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  synthesisTypeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.xs,
+    borderWidth: 0.5
+  },
+  synthesisTypeBadgeText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  timeWorthBox: {
+    marginTop: spacing.md,
+    paddingTop: spacing.sm,
+    borderTopWidth: 0.5,
+    alignItems: 'center',
+    width: '100%'
+  },
+  feedbackSubPrompt: {
+    fontSize: 12,
+    marginBottom: spacing.xs
+  },
+  feedbackMiniPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 0.5,
+    borderColor: 'rgba(128,128,128,0.2)'
+  },
+  feedbackMiniPillText: {
+    fontSize: 11,
+    fontWeight: '600'
   }
 });
