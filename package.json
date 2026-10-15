@@ -9,7 +9,7 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "ingest": "tsx scripts/run-pipeline.ts",
     "daemon": "tsx scripts/daily-pipeline-daemon.ts"
   },
