@@ -41,6 +41,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     setPalettePreference,
     activeTab,
     setActiveTab,
+    activeFeedOption,
+    setActiveFeedOption,
     goHome,
     selectedArticleId,
     savedArticles,
@@ -269,15 +271,33 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
 
             {/* News-Hub & Quellen-Zentrale Pill Button */}
             <TouchableOpacity
-              onPress={() => setShowNewsHubModal(true)}
-              style={[styles.newsHubBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+              onPress={() => {
+                setActiveTab('feed');
+                setActiveFeedOption('live_news');
+              }}
+              style={[
+                styles.newsHubBadge,
+                activeTab === 'feed' && activeFeedOption === 'live_news'
+                  ? { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  : { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+              ]}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel="News-Hub & Quellen-Zentrale öffnen"
+              accessibilityLabel="Zum Live News Hub Feed wechseln"
             >
-              <Ionicons name="radio-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-              <Text style={[styles.newsHubText, { color: colors.textPrimary }]}>
-                News-Hub (29)
+              <Ionicons
+                name="radio-outline"
+                size={13}
+                color={activeTab === 'feed' && activeFeedOption === 'live_news' ? colors.accent : colors.textPrimary}
+                style={{ marginRight: 4 }}
+              />
+              <Text
+                style={[
+                  styles.newsHubText,
+                  { color: activeTab === 'feed' && activeFeedOption === 'live_news' ? colors.accent : colors.textPrimary, fontWeight: activeFeedOption === 'live_news' ? '700' : '600' }
+                ]}
+              >
+                ⚡ Live News Hub
               </Text>
             </TouchableOpacity>
 

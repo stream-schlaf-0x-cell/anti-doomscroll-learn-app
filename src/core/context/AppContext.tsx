@@ -34,6 +34,8 @@ interface AppContextValue {
   palette: ThemePalette;
   activeTab: 'feed' | 'library' | 'settings';
   setActiveTab: (tab: 'feed' | 'library' | 'settings') => void;
+  activeFeedOption: 'daily' | 'live_news' | 'classics';
+  setActiveFeedOption: (option: 'daily' | 'live_news' | 'classics') => void;
   selectedArticleId: string | null;
   selectedArticle: FeedItem | null;
   openArticle: (id: string) => Promise<void>;
@@ -73,6 +75,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [startupState, setStartupState] = useState<StartupState>({ status: 'loading' });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'feed' | 'library' | 'settings'>('feed');
+  const [activeFeedOption, setActiveFeedOption] = useState<'daily' | 'live_news' | 'classics'>('daily');
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<FeedItem | null>(null);
   const [whyModalItem, setWhyModalItem] = useState<ScoredFeedItem | null>(null);
@@ -327,6 +330,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSelectedArticle(null);
     setWhyModalItem(null);
     setActiveTab('feed');
+    setActiveFeedOption('daily');
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       try {
@@ -662,6 +666,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         palette,
         activeTab,
         setActiveTab,
+        activeFeedOption,
+        setActiveFeedOption,
         selectedArticleId,
         selectedArticle,
         openArticle,

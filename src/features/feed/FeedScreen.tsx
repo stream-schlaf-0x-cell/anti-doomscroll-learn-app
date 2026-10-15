@@ -8,7 +8,8 @@ import {
   TouchableOpacity,
   NativeSyntheticEvent,
   NativeScrollEvent,
-  useWindowDimensions
+  useWindowDimensions,
+  ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag } from '../../core/domain/types';
@@ -24,9 +25,22 @@ import { UltraMasterModal } from '../../ui/components/UltraMasterModal';
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
 import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerationProgressModal';
 import { AtemBreathingModal } from '../../ui/components/AtemBreathingModal';
+import { ContinuousLiveNewsService, NewsHubFilterCategory } from '../../core/data/continuousLiveNewsService';
+import { NewsHubModal } from '../../ui/components/NewsHubModal';
+import { scoreFeedItem } from '../../core/domain/ranking';
+import { FeedItem } from '../../core/domain/types';
 
 export const FeedScreen: React.FC = () => {
-  const { dailyEdition, discoveryItems, colors, refreshFeed } = useApp();
+  const {
+    dailyEdition,
+    discoveryItems,
+    colors,
+    refreshFeed,
+    activeFeedOption,
+    setActiveFeedOption,
+    profile,
+    interactions
+  } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
 
@@ -43,10 +57,51 @@ export const FeedScreen: React.FC = () => {
   const [progressSpaceName, setProgressSpaceName] = useState<string>('');
   const [showBreathingModal, setShowBreathingModal] = useState<boolean>(false);
 
+  // Live News Hub & Classics State
+  const [liveNewsCategory, setLiveNewsCategory] = useState<NewsHubFilterCategory>('all');
+  const [liveNewsItems, setLiveNewsItems] = useState<FeedItem[]>([]);
+  const [liveNewsLoading, setLiveNewsLoading] = useState<boolean>(false);
+  const [liveNewsLimit, setLiveNewsLimit] = useState<number>(25);
+  const [showNewsHubSettingsModal, setShowNewsHubSettingsModal] = useState<boolean>(false);
+  const [classicsItems, setClassicsItems] = useState<FeedItem[]>([]);
+
+  const loadLiveNews = useCallback(async () => {
+    setLiveNewsLoading(true);
+    try {
+      const items = await ContinuousLiveNewsService.getLiveStream({
+        category: liveNewsCategory,
+        query: searchQuery,
+        limit: liveNewsLimit
+      });
+      setLiveNewsItems(items);
+    } catch {
+      // Non-fatal
+    } finally {
+      setLiveNewsLoading(false);
+    }
+  }, [liveNewsCategory, searchQuery, liveNewsLimit]);
+
+  React.useEffect(() => {
+    if (activeFeedOption === 'live_news') {
+      void loadLiveNews();
+    } else if (activeFeedOption === 'classics') {
+      setClassicsItems(ContinuousLiveNewsService.getEvergreenClassics());
+    }
+  }, [activeFeedOption, loadLiveNews]);
+
+  const scoredLiveItems = useMemo(() => {
+    return liveNewsItems.map(item => scoreFeedItem(item, profile, interactions));
+  }, [liveNewsItems, profile, interactions]);
+
+  const scoredClassicsItems = useMemo(() => {
+    return classicsItems.map(item => scoreFeedItem(item, profile, interactions));
+  }, [classicsItems, profile, interactions]);
+
   const loadSubchannels = useCallback(async () => {
     const all = await defaultSpaceRepository.getAllSpaces();
     setSubchannels(all);
   }, []);
+
 
   React.useEffect(() => {
     void loadSubchannels();
@@ -56,6 +111,11 @@ export const FeedScreen: React.FC = () => {
     setRefreshing(true);
     await refreshFeed();
     await loadSubchannels();
+    if (activeFeedOption === 'live_news') {
+      await loadLiveNews();
+    } else if (activeFeedOption === 'classics') {
+      setClassicsItems(ContinuousLiveNewsService.getEvergreenClassics());
+    }
     setVisibleDiscoveryCount(10);
     setRefreshing(false);
   };
@@ -363,87 +423,288 @@ export const FeedScreen: React.FC = () => {
       >
         <View style={[styles.mainLayoutWrapper, isDesktop && styles.desktopLayoutWrapper]}>
           {/* Feed Column (Center) */}
+          {/* Feed Column (Center) */}
           <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn]}>
-            {/* Desktop Spaces Selector Bar (Contained strictly within Feed Column, no stretching) */}
-            {isDesktop && (
-              <View style={[styles.desktopSpaceCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                {renderSpacePills()}
-              </View>
-            )}
-
-            {searchQuery.trim().length > 0 && (
-              <View style={[styles.searchNoticeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                <Ionicons name="search" size={14} color={colors.accent} style={{ marginRight: 6 }} />
-                <Text style={[styles.searchNoticeText, { color: colors.textPrimary }]}>
-                  Ergebnisse für „{searchQuery}“ ({allStreamItems.length} Treffer)
-                </Text>
-                <TouchableOpacity onPress={() => setSearchQuery('')} style={{ marginLeft: 'auto' }}>
-                  <Text style={[styles.searchNoticeClear, { color: colors.accent }]}>Filter aufheben</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Reddit Sort Filter Bar: Hot, New, Top, Gems */}
-            <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            {/* 1. Primary Feed Mode Segmented Switcher */}
+            <View style={[styles.feedModeSwitcher, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
               <TouchableOpacity
-                onPress={() => setSortMode('hot')}
+                onPress={() => setActiveFeedOption('daily')}
                 style={[
-                  styles.sortTab,
-                  sortMode === 'hot' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  styles.feedModeBtn,
+                  activeFeedOption === 'daily' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                 ]}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: activeFeedOption === 'daily' }}
               >
-                <Text style={styles.sortEmoji}>🔥</Text>
-                <Text style={[styles.sortTabText, { color: sortMode === 'hot' ? colors.accent : colors.textSecondary }]}>
-                  Heiß
+                <Ionicons
+                  name="newspaper-outline"
+                  size={15}
+                  color={activeFeedOption === 'daily' ? colors.accent : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.feedModeText,
+                    {
+                      color: activeFeedOption === 'daily' ? colors.accent : colors.textPrimary,
+                      fontWeight: activeFeedOption === 'daily' ? '700' : '600'
+                    }
+                  ]}
+                >
+                  📰 Tagesausgabe
                 </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => setSortMode('new')}
+                onPress={() => setActiveFeedOption('live_news')}
                 style={[
-                  styles.sortTab,
-                  sortMode === 'new' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  styles.feedModeBtn,
+                  activeFeedOption === 'live_news' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                 ]}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: activeFeedOption === 'live_news' }}
               >
-                <Text style={styles.sortEmoji}>⚡</Text>
-                <Text style={[styles.sortTabText, { color: sortMode === 'new' ? colors.accent : colors.textSecondary }]}>
-                  Neu
+                <View style={styles.livePulseDot} />
+                <Text
+                  style={[
+                    styles.feedModeText,
+                    {
+                      color: activeFeedOption === 'live_news' ? colors.accent : colors.textPrimary,
+                      fontWeight: activeFeedOption === 'live_news' ? '700' : '600'
+                    }
+                  ]}
+                >
+                  ⚡ Live News Hub
                 </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => setSortMode('top')}
+                onPress={() => setActiveFeedOption('classics')}
                 style={[
-                  styles.sortTab,
-                  sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  styles.feedModeBtn,
+                  activeFeedOption === 'classics' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                 ]}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: activeFeedOption === 'classics' }}
               >
-                <Text style={styles.sortEmoji}>🏆</Text>
-                <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
-                  Top
+                <Ionicons
+                  name="library-outline"
+                  size={15}
+                  color={activeFeedOption === 'classics' ? colors.accent : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.feedModeText,
+                    {
+                      color: activeFeedOption === 'classics' ? colors.accent : colors.textPrimary,
+                      fontWeight: activeFeedOption === 'classics' ? '700' : '600'
+                    }
+                  ]}
+                >
+                  🏛 Klassiker
                 </Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setSortMode('gems')}
-                style={[
-                  styles.sortTab,
-                  sortMode === 'gems' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                ]}
-              >
-                <Text style={styles.sortEmoji}>💎</Text>
-                <Text style={[styles.sortTabText, { color: sortMode === 'gems' ? colors.accent : colors.textSecondary }]}>
-                  Perlen & Memes
-                </Text>
-              </TouchableOpacity>
-
-              <View style={styles.sortRightInfo}>
-                <Ionicons name="infinite-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-                <Text style={[styles.sortInfoText, { color: colors.textMuted }]}>
-                  Endlos-Stream
-                </Text>
-              </View>
             </View>
+
+            {/* 2. MODE: LIVE NEWS HUB */}
+            {activeFeedOption === 'live_news' && (
+              <View style={styles.modeSectionContainer}>
+                {/* News Hub Sub-Bar: Ticker headline & Settings button */}
+                <View style={[styles.liveNewsSubBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                  <View style={styles.liveNewsTopRow}>
+                    <View style={styles.liveNewsTitleRow}>
+                      <View style={styles.liveGreenDot} />
+                      <Text style={[styles.liveNewsTitle, { color: colors.textPrimary }]}>
+                        Echtzeit-Ticker ({scoredLiveItems.length} verifizierte Meldungen)
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => setShowNewsHubSettingsModal(true)}
+                      style={[styles.hubSettingsBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Quellen- und Scraper-Setup öffnen"
+                    >
+                      <Ionicons name="options-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                      <Text style={[styles.hubSettingsBtnText, { color: colors.textPrimary }]}>
+                        ⚙️ Quellen & Setup
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Filter Chips for Live News */}
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.liveNewsCategoriesScroll}>
+                    {[
+                      { id: 'all', label: '🌟 Alle Meldungen' },
+                      { id: 'oerr', label: '🛡 Tagesschau & DLF' },
+                      { id: 'tech', label: '⚡️ Tech & KI-Grenzen' },
+                      { id: 'science', label: '🔬 Wissenschaft' },
+                      { id: 'didactic', label: '🏫 Didaktik-Labor' },
+                      { id: 'culture', label: '📚 Philosophie & Bücher' }
+                    ].map(cat => {
+                      const isSelected = liveNewsCategory === cat.id;
+                      return (
+                        <TouchableOpacity
+                          key={cat.id}
+                          onPress={() => setLiveNewsCategory(cat.id as NewsHubFilterCategory)}
+                          style={[
+                            styles.liveNewsCategoryChip,
+                            {
+                              backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
+                              borderColor: isSelected ? colors.accent : colors.borderSubtle
+                            }
+                          ]}
+                        >
+                          <Text style={[styles.liveNewsCategoryText, { color: isSelected ? '#FFFFFF' : colors.textSecondary }]}>
+                            {cat.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+
+                {/* Live News Items */}
+                {liveNewsLoading && liveNewsItems.length === 0 ? (
+                  <View style={[styles.loadingBox, { backgroundColor: colors.surface }]}>
+                    <ActivityIndicator size="large" color={colors.accent} />
+                    <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+                      Lade verifizierte Echtzeit-Feeds…
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    {scoredLiveItems.map((item, index) => (
+                      <FeedCard
+                        key={item.id}
+                        item={item}
+                        isHero={index === 0 && !searchQuery}
+                      />
+                    ))}
+
+                    <TouchableOpacity
+                      onPress={() => setLiveNewsLimit(prev => prev + 20)}
+                      disabled={liveNewsLoading}
+                      style={[styles.loadMoreLiveBtn, { backgroundColor: colors.surface, borderColor: colors.accent }]}
+                    >
+                      <Ionicons name="arrow-down-circle-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
+                      <Text style={[styles.loadMoreLiveText, { color: colors.accent }]}>
+                        {liveNewsLoading ? 'Lade weitere Meldungen…' : 'Weitere Live-Meldungen laden (+20)'}
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            )}
+
+            {/* 3. MODE: EVERGREEN CLASSICS & GEMS */}
+            {activeFeedOption === 'classics' && (
+              <View style={styles.modeSectionContainer}>
+                <View style={[styles.classicsNoticeCard, { backgroundColor: colors.surface, borderColor: '#D97706' }]}>
+                  <View style={styles.classicsNoticeHeader}>
+                    <Ionicons name="library" size={20} color="#D97706" style={{ marginRight: 8 }} />
+                    <Text style={[styles.classicsNoticeTitle, { color: colors.textPrimary }]}>
+                      Zeitlose Internet-Klassiker & Ur-Essays
+                    </Text>
+                  </View>
+                  <Text style={[styles.classicsNoticeDesc, { color: colors.textSecondary }]}>
+                    Gedanken, die auch in 50 Jahren noch Bestand haben. Von Vannevar Bushs Memex (1945) über Claude Shannons Informationstheorie (1948) bis zu Ted Chiangs scharfsinniger KI-Kritik (2023).
+                  </Text>
+                </View>
+
+                {scoredClassicsItems.map((item, index) => (
+                  <FeedCard
+                    key={item.id}
+                    item={item}
+                    isHero={index === 0}
+                  />
+                ))}
+              </View>
+            )}
+
+            {/* 4. MODE: DAILY FINITE EDITION (DEFAULT) */}
+            {activeFeedOption === 'daily' && (
+              <>
+                {/* Desktop Spaces Selector Bar */}
+                {isDesktop && (
+                  <View style={[styles.desktopSpaceCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                    {renderSpacePills()}
+                  </View>
+                )}
+
+                {searchQuery.trim().length > 0 && (
+                  <View style={[styles.searchNoticeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                    <Ionicons name="search" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+                    <Text style={[styles.searchNoticeText, { color: colors.textPrimary }]}>
+                      Ergebnisse für „{searchQuery}“ ({allStreamItems.length} Treffer)
+                    </Text>
+                    <TouchableOpacity onPress={() => setSearchQuery('')} style={{ marginLeft: 'auto' }}>
+                      <Text style={[styles.searchNoticeClear, { color: colors.accent }]}>Filter aufheben</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Reddit Sort Filter Bar: Hot, New, Top, Gems */}
+                <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                  <TouchableOpacity
+                    onPress={() => setSortMode('hot')}
+                    style={[
+                      styles.sortTab,
+                      sortMode === 'hot' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                  >
+                    <Text style={styles.sortEmoji}>🔥</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'hot' ? colors.accent : colors.textSecondary }]}>
+                      Heiß
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setSortMode('new')}
+                    style={[
+                      styles.sortTab,
+                      sortMode === 'new' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                  >
+                    <Text style={styles.sortEmoji}>⚡</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'new' ? colors.accent : colors.textSecondary }]}>
+                      Neu
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setSortMode('top')}
+                    style={[
+                      styles.sortTab,
+                      sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                  >
+                    <Text style={styles.sortEmoji}>🏆</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
+                      Top
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setSortMode('gems')}
+                    style={[
+                      styles.sortTab,
+                      sortMode === 'gems' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                  >
+                    <Text style={styles.sortEmoji}>💎</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'gems' ? colors.accent : colors.textSecondary }]}>
+                      Perlen & Memes
+                    </Text>
+                  </TouchableOpacity>
+
+                  <View style={styles.sortRightInfo}>
+                    <Ionicons name="infinite-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                    <Text style={[styles.sortInfoText, { color: colors.textMuted }]}>
+                      Endlos-Stream
+                    </Text>
+                  </View>
+                </View>
 
             {allStreamItems.length === 0 ? (
               <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
@@ -626,6 +887,8 @@ export const FeedScreen: React.FC = () => {
                 </TouchableOpacity>
               </>
             )}
+            </>
+          )}
           </View>
 
           {/* Right Column: Sticky Desktop Community Sidebar */}
@@ -659,6 +922,15 @@ export const FeedScreen: React.FC = () => {
         visible={showBreathingModal}
         onClose={() => setShowBreathingModal(false)}
         targetRounds={3}
+      />
+
+      {/* News-Hub Sources, Gatherer & Settings Modal */}
+      <NewsHubModal
+        visible={showNewsHubSettingsModal}
+        onClose={() => {
+          setShowNewsHubSettingsModal(false);
+          void loadLiveNews();
+        }}
       />
     </View>
   );
@@ -956,5 +1228,134 @@ const styles = StyleSheet.create({
   sortInfoText: {
     fontSize: 11,
     fontWeight: '500'
+  },
+  feedModeSwitcher: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 4,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: spacing.md,
+    gap: 4
+  },
+  feedModeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: 'transparent'
+  },
+  feedModeText: {
+    fontSize: 13
+  },
+  livePulseDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#10B981',
+    marginRight: 6
+  },
+  liveGreenDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+    marginRight: 8
+  },
+  modeSectionContainer: {
+    gap: spacing.md,
+    marginBottom: spacing.xl
+  },
+  liveNewsSubBar: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: spacing.sm
+  },
+  liveNewsTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  liveNewsTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  liveNewsTitle: {
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  hubSettingsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  hubSettingsBtnText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  liveNewsCategoriesScroll: {
+    flexDirection: 'row',
+    marginTop: 4
+  },
+  liveNewsCategoryChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    marginRight: 8
+  },
+  liveNewsCategoryText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  loadingBox: {
+    padding: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.md,
+    gap: spacing.sm
+  },
+  loadingText: {
+    fontSize: 13,
+    fontWeight: '500'
+  },
+  loadMoreLiveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginTop: spacing.xs
+  },
+  loadMoreLiveText: {
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  classicsNoticeCard: {
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: spacing.xs
+  },
+  classicsNoticeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  classicsNoticeTitle: {
+    fontSize: 16,
+    fontWeight: '700'
+  },
+  classicsNoticeDesc: {
+    fontSize: 13,
+    lineHeight: 19
   }
 });
