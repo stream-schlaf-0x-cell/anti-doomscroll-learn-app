@@ -33,7 +33,7 @@ export const VERIFIED_FEED_SOURCES: RawFeedSource[] = [
   {
     id: 'arxiv-cs-ai',
     name: 'arXiv Computer Science / AI',
-    url: 'http://export.arxiv.org/rss/cs.AI',
+    url: 'https://export.arxiv.org/api/query?search_query=cat:cs.AI&sortBy=submittedDate&sortOrder=descending&max_results=5',
     primaryTopic: 'ai_apple',
     topics: ['ai_apple', 'science_society'],
     defaultEvidenceTier: 'metadata_only',

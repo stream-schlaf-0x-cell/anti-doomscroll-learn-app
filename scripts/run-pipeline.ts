@@ -20,7 +20,7 @@ async function runPipeline() {
   for (const source of VERIFIED_FEED_SOURCES) {
     process.stdout.write(`Fetching ${source.name} (${source.url})... `);
     try {
-      const fetchRes = await fetchFeedXml(source.url, { timeoutMs: 7000 });
+      const fetchRes = await fetchFeedXml(source.url, { timeoutMs: 12000 });
       const rawEntries = parseFeedXml(fetchRes.content, source.id);
 
       // Limit to 4 freshest entries per source

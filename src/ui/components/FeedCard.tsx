@@ -894,10 +894,15 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
         <View style={[styles.discussionContainer, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.borderSubtle }]}>
           <View style={styles.discussionHeader}>
             <View style={styles.discussionHeaderLeft}>
-              <Ionicons name="people-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
-              <Text style={[styles.discussionTitle, { color: colors.textPrimary }]}>
-                Atem Community Diskurs ({communityComments.length + userNotes.length})
-              </Text>
+              <Ionicons name="sparkles" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+              <View>
+                <Text style={[styles.discussionTitle, { color: colors.textPrimary }]}>
+                  Dialektisches Sparring & Diskurs ({communityComments.length + userNotes.length})
+                </Text>
+                <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 1 }}>
+                  🤖 Transparente KI-Dialektik: Sokratische Reibung & didaktische Gegenpositionen
+                </Text>
+              </View>
             </View>
             <TouchableOpacity onPress={() => setIsComposerOpen(true)}>
               <Text style={[styles.replyLink, { color: colors.accent }]}>+ Replik wagen</Text>
@@ -917,13 +922,11 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
                     <Text style={[styles.commentHandle, { color: colors.textPrimary }]}>
                       {c.authorHandle}
                     </Text>
-                    {c.authorBadge && (
-                      <View style={[styles.commentBadge, { backgroundColor: colors.surfaceSecondary }]}>
-                        <Text style={[styles.commentBadgeText, { color: colors.textMuted }]}>
-                          {c.authorBadge}
-                        </Text>
-                      </View>
-                    )}
+                    <View style={[styles.commentBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Text style={[styles.commentBadgeText, { color: colors.textMuted }]}>
+                        {c.commentType === 'didactic_transfer' ? '🏫 Didaktik' : c.commentType === 'creative_synthesis' ? '☍ Synthese' : '⚡️ Dialektik'} • {c.authorBadge || 'Sparring'}
+                      </Text>
+                    </View>
                   </View>
 
                   <View style={styles.commentMetaRight}>
