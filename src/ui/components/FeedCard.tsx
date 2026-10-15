@@ -177,7 +177,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
 
   // Dialectic counter-argument or claim
   const counterClaim = item.perspectiveDetails?.claim || (item.isChallengingPerspective ? item.subtitle : null);
-  const didacticTransfer = item.didacticSeed || (item.isTeachingRelated ? item.relevanceExplanation : null);
+  const didacticTransfer = item.didacticTransfer || item.didacticSeed || (item.isTeachingRelated ? item.relevanceExplanation : null);
 
   return (
     <View
@@ -288,6 +288,13 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
 
       {/* 2. Flairs & Evidence Row */}
       <View style={styles.flairsRow}>
+        {item.isEvergreenGem && (
+          <View style={[styles.flairBadge, { backgroundColor: 'rgba(217, 119, 6, 0.15)', borderColor: '#D97706', borderWidth: 0.5 }]}>
+            <Text style={[styles.flairBadgeText, { color: '#D97706', fontWeight: '700' }]}>
+              🏛 Netz-Klassiker
+            </Text>
+          </View>
+        )}
         {formatText && (
           <View style={[styles.flairBadge, { backgroundColor: colors.accentSubtle }]}>
             <Text style={[styles.flairBadgeText, { color: colors.accent }]}>
@@ -365,15 +372,30 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
         </View>
       )}
 
-      {/* 8. Didactic Laboratory Transfer (if present) */}
-      {item.isTeachingRelated && didacticTransfer && (
+      {/* 8. Didactic / Learning Partner Transfer */}
+      {didacticTransfer && (
         <View style={[styles.didacticBox, { backgroundColor: colors.surfaceSecondary, borderLeftColor: '#10B981' }]}>
           <View style={styles.didacticHeader}>
             <Ionicons name="school-outline" size={14} color="#10B981" style={{ marginRight: 5 }} />
-            <Text style={[styles.didacticLabel, { color: '#10B981' }]}>Didaktik-Labor & Transfer</Text>
+            <Text style={[styles.didacticLabel, { color: '#10B981' }]}>
+              {item.primaryTopic === 'german_didactics' || item.isTeachingRelated ? 'Didaktik-Labor & Transfer' : '🎓 Lern-Partner & Transfer'}
+            </Text>
           </View>
           <Text style={[styles.didacticText, { color: colors.textSecondary }]}>
             {didacticTransfer}
+          </Text>
+        </View>
+      )}
+
+      {/* 8.0 Evergreen Internet Gem Cross-Reference */}
+      {item.evergreenContext && (
+        <View style={[styles.evergreenBox, { backgroundColor: colors.surfaceSecondary, borderLeftColor: '#D97706' }]}>
+          <View style={styles.evergreenHeader}>
+            <Ionicons name="library-outline" size={13} color="#D97706" style={{ marginRight: 5 }} />
+            <Text style={[styles.evergreenLabel, { color: '#D97706' }]}>Zeitloses Netz-Meisterwerk</Text>
+          </View>
+          <Text style={[styles.evergreenText, { color: colors.textSecondary }]}>
+            {item.evergreenContext}
           </Text>
         </View>
       )}
@@ -1243,6 +1265,27 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase'
   },
   didacticText: {
+    fontSize: 13,
+    lineHeight: 19
+  },
+  evergreenBox: {
+    borderLeftWidth: 3,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    marginVertical: 6
+  },
+  evergreenHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 3
+  },
+  evergreenLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase'
+  },
+  evergreenText: {
     fontSize: 13,
     lineHeight: 19
   },

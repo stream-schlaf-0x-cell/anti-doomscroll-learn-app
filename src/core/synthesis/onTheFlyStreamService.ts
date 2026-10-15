@@ -17,6 +17,7 @@ import { ArchiveService } from '../archive/archiveService';
 import { defaultSpaceRepository } from '../spaces/spaceRepository';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 import { optimizeImageUrl } from '../utils/imageQuality';
+import { enrichItemWithInstantResearch } from './backgroundResearchPipeline';
 
 let pipelineNewsItems: FeedItem[] = [];
 try {
@@ -213,9 +214,12 @@ export class OnTheFlyStreamService {
       });
     }
 
-    // 5. Register items in FeedRepository so they persist across refreshes
+    // 5. Run automated research & didactic transfer on all stream items
+    const enrichedItems = items.map(enrichItemWithInstantResearch);
+
+    // 6. Register items in FeedRepository so they persist across refreshes
     if (feedRepository.addItems) {
-      feedRepository.addItems(items);
+      feedRepository.addItems(enrichedItems);
     }
 
     // 6. Ensure space is registered in SpaceRepository
@@ -237,12 +241,12 @@ export class OnTheFlyStreamService {
 
     // 7. Automatically archive into the sovereign Bibliotheka ("nothing gets lost")
     try {
-      await ArchiveService.recordEdition(items, today);
+      await ArchiveService.recordEdition(enrichedItems, today);
     } catch {
       // Non-fatal
     }
 
-    return items;
+    return enrichedItems;
   }
 
   private static inferTopicFromSpace(spaceHandle: string): TopicTag {

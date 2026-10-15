@@ -1,6 +1,7 @@
 import { IContentEnricher, EnrichmentRequest, EnrichmentResult } from './types';
 import { EnrichmentUsageLedger, defaultUsageLedger, calculateCostEur } from './ledger';
 import { EnrichmentCache, defaultEnrichmentCache } from './cache';
+import { synthesizeDidacticTransfer } from '../synthesis/backgroundResearchPipeline';
 
 export const CURRENT_PROMPT_VERSION = 'v2-oct2026-de';
 
@@ -40,9 +41,12 @@ export class SourceOnlyEnricher implements IContentEnricher {
         }
       : undefined;
 
-    const didacticSeed = item.isTeachingRelated
-      ? `Diskussionsimpuls für das Seminar: Wie lässt sich die Kernfrage dieses Beitrags als sokratische Kontroverse aufbereiten?`
-      : undefined;
+    const didacticSeed = item.didacticSeed || synthesizeDidacticTransfer(
+      item.title,
+      item.body,
+      item.primaryTopic,
+      item.isTeachingRelated
+    );
 
     return {
       feedText,

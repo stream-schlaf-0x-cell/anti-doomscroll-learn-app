@@ -262,6 +262,9 @@ export const FeedItemSchema = z.object({
   keyInsight: z.string().optional(),
   challengePrompt: z.string().optional(),
   didacticSeed: z.string().optional(),
+  didacticTransfer: z.string().optional(),
+  isEvergreenGem: z.boolean().optional(),
+  evergreenContext: z.string().optional(),
   upvotesCount: z.number().int().default(42),
   comments: z.array(CommunityCommentSchema).default([]),
 

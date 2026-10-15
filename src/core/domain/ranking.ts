@@ -81,6 +81,9 @@ export function scoreFeedItem(
     item.isChallengingPerspective
   ) ? 0.15 : 0;
 
+  // 4.1 Evergreen Classic Bonus (reward timeless masterpieces)
+  const evergreenBonus = item.isEvergreenGem ? 0.12 : 0;
+
   // 5. Author and Topic Feedback Memory
   let authorBoost = 0;
   const author = item.sourceReferences[0]?.author;
@@ -117,12 +120,13 @@ export function scoreFeedItem(
     behaviorDelta -= 0.05;
   }
 
-  // Composite score: topic (40%) + goal (20%) + duration (20%) + depth (10%) + memory & behavior
+  // Composite score: topic (40%) + goal (20%) + duration (20%) + depth (10%) + evergreen & memory
   const baseScore =
     topicAffinity * 0.40 +
     goalAlignment * 0.20 +
     durationMatch * 0.20 +
     depthBonus +
+    evergreenBonus +
     topicMemoryDelta +
     authorBoost +
     behaviorDelta;
@@ -135,9 +139,13 @@ export function scoreFeedItem(
   // Human-readable German explanation
   const affinityPercent = Math.round(topicAffinity * 100);
   let reason = `Affinität zu ${getTopicLabel(item.primaryTopic)}: ${affinityPercent}% • Lesezeit: ${mins} Min.`;
+  if (item.isEvergreenGem) {
+    reason += ` • 🏛 Zeitloser Internet-Klassiker`;
+  }
   if (item.isTeachingRelated) {
     reason += ` • Didaktischer Impuls für Schule & Unterricht`;
   }
+
   if (item.isChallengingPerspective) {
     reason += ` • Hinterfragt etablierte Sichtweisen`;
   }
@@ -209,6 +217,19 @@ export function rankAndInterleaveFeed(
     if (challengingIndex !== -1) {
       const [elevated] = remainder.splice(challengingIndex, 1);
       const replaceIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
+      if (replaceIdx !== -1) {
+        remainder.push(topBatch[replaceIdx]);
+        topBatch.splice(replaceIdx, 1, elevated);
+      }
+    }
+  }
+
+  // Soft quota 3: Evergreen Classics & Internet Gems (~10-15% -> at least 1 timeless gem in primary batch)
+  if (!topBatch.some(i => i.isEvergreenGem || i.format === 'book_masterpiece')) {
+    const gemIndex = remainder.findIndex(i => i.isEvergreenGem || i.format === 'book_masterpiece');
+    if (gemIndex !== -1) {
+      const [elevated] = remainder.splice(gemIndex, 1);
+      const replaceIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated && !i.isEvergreenGem);
       if (replaceIdx !== -1) {
         remainder.push(topBatch[replaceIdx]);
         topBatch.splice(replaceIdx, 1, elevated);

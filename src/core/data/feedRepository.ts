@@ -2,6 +2,8 @@ import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP } from '../d
 import { INITIAL_FIXTURES, getCuratedImageForTopic, getSimulatedCommentsForTopic } from './fixtures';
 import { rankAndInterleaveFeed, ScoredFeedItem } from '../domain/ranking';
 import { AtemStorage, appStorage } from './storage';
+import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
+import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
 
 // Safely load pipeline output if present
 let pipelineItems: FeedItem[] = [];
@@ -14,20 +16,15 @@ try {
   pipelineItems = [];
 }
 
-function enrichSocialFeedItem(item: FeedItem): FeedItem {
+function enrichSocialFeedItem(rawItem: FeedItem): FeedItem {
+  // 1. Run automated epistemic research & didactic synthesis
+  const item = enrichItemWithInstantResearch(rawItem);
+
   const topic = item.primaryTopic || 'philosophy_ethics';
   const topicMeta = TOPIC_SPACE_MAP[topic];
   const space = item.space || topicMeta?.space || `c/${topic}`;
   const flair = item.flair || topicMeta?.flair || '◈ Recherche';
   const imageUrl = item.imageUrl || getCuratedImageForTopic(topic, item.id);
-  const keyInsight = item.keyInsight || (item.subtitle && item.subtitle.length > 20 ? item.subtitle : undefined);
-  const challengePrompt = item.challengePrompt || (
-    item.isTeachingRelated
-      ? 'Wie würdest du dieses Phänomen im Unterricht didaktisch aufbereiten?'
-      : item.isChallengingPerspective
-      ? 'Welches stärkste Argument spricht gegen diese Position?'
-      : 'Welcher Gedanke oder Einwand fällt dir spontan dazu ein?'
-  );
   const upvotesCount = item.upvotesCount || (40 + ((item.id.charCodeAt(item.id.length - 1) * 3) % 75));
   const comments = item.comments && item.comments.length > 0
     ? item.comments
@@ -38,8 +35,6 @@ function enrichSocialFeedItem(item: FeedItem): FeedItem {
     space,
     flair,
     imageUrl,
-    keyInsight,
-    challengePrompt,
     upvotesCount,
     comments
   };
@@ -66,9 +61,20 @@ export class LocalFeedRepository implements IFeedRepository {
       this.items = customItems.map(enrichSocialFeedItem);
     } else {
       const map = new Map<string, FeedItem>();
-      for (const item of pipelineItems) {
+
+      // 1. Prioritize Real Grounded Knowledge Vault & Timeless Classics
+      for (const item of REAL_KNOWLEDGE_VAULT) {
         map.set(item.id, enrichSocialFeedItem(item));
       }
+
+      // 2. Real Ingested Pipeline Items
+      for (const item of pipelineItems) {
+        if (!map.has(item.id)) {
+          map.set(item.id, enrichSocialFeedItem(item));
+        }
+      }
+
+      // 3. Initial Curated Fixtures
       for (const item of INITIAL_FIXTURES) {
         if (!map.has(item.id)) {
           map.set(item.id, enrichSocialFeedItem(item));

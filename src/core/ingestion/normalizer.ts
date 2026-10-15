@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { RawFeedEntry, RawFeedSource } from './types';
 import { FeedItem, FeedItemFormat, SourceReference, TOPIC_SPACE_MAP } from '../domain/types';
 import { calculateReadingStats, getCuratedImageForTopic, getSimulatedCommentsForTopic } from '../data/fixtures';
+import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
 
 /**
  * Removes tracking parameters (utm_*, fbclid, etc.) and normalizes URLs.
@@ -93,7 +94,7 @@ export function normalizeFeedEntry(entry: RawFeedEntry, source: RawFeedSource): 
 
   const todayStr = new Date().toISOString().split('T')[0];
 
-  return {
+  const baseItem: FeedItem = {
     id: `ingest-${source.id}-${contentHash.slice(0, 12)}`,
     type: wordCount <= 220 ? 'quick_insight' : isChallenging ? 'perspective' : 'briefing',
     format,
@@ -147,4 +148,7 @@ export function normalizeFeedEntry(entry: RawFeedEntry, source: RawFeedSource): 
     sourceDomain: canonicalUrl ? canonicalUrl.replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, '') : undefined,
     comments: getSimulatedCommentsForTopic(source.primaryTopic, entry.title, contentHash.slice(0, 8))
   };
+
+  return enrichItemWithInstantResearch(baseItem);
 }
+
