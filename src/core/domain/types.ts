@@ -336,7 +336,7 @@ export const FeedItemSchema = z.object({
   didacticTransfer: z.string().optional(),
   isEvergreenGem: z.boolean().optional(),
   evergreenContext: z.string().optional(),
-  upvotesCount: z.number().int().default(42),
+  upvotesCount: z.number().int().default(0),
   comments: z.array(CommunityCommentSchema).default([]),
 
   // Specialized Content Metadata

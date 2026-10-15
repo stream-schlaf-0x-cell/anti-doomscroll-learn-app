@@ -164,7 +164,7 @@ export class TrendRadarService {
       flair: '⚡ Trend-Antithese',
       keyInsight: trend.synthesis.slice(0, 140),
       challengePrompt: `Welche Prämisse dieser These erscheint dir am angreifbarsten?`,
-      upvotesCount: 96,
+      upvotesCount: 0,
       awardsCount: { gold: 0, brain: 0, spark: 0 },
       sourceTrustLevel: 'verified_creator',
       isTeachingRelated: false,

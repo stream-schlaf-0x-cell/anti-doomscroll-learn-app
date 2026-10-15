@@ -18,6 +18,8 @@ import { defaultSpaceRepository } from '../spaces/spaceRepository';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 import { optimizeImageUrl } from '../utils/imageQuality';
 import { enrichItemWithInstantResearch } from './backgroundResearchPipeline';
+import { TOPIC_DIALECTICS, DialecticTemplate } from './dialecticTemplates';
+export { TOPIC_DIALECTICS, DialecticTemplate };
 
 let pipelineNewsItems: FeedItem[] = [];
 try {
@@ -105,25 +107,26 @@ export class OnTheFlyStreamService {
     };
     items.push(researchItem);
 
-    // 2. Optional: Dialectical AI synthesis with explicit transparency banner (only when requested)
+    // 2. Optional: Dialectical AI synthesis with explicit transparency banner & topic-specific nerve
     if (options.includeAiSynthesis !== false) {
-      options.onProgress?.(55, 'Epistemischen Kontrapunkt aufbereiten…');
+      options.onProgress?.(55, 'Gegenstimme & Kontrapunkt aufbereiten…');
+      const dialectic = TOPIC_DIALECTICS[primaryTopic] || TOPIC_DIALECTICS.philosophy_ethics;
       items.push({
         id: `pocket-ai-${spaceHandle.replace(/[^a-z0-9]/gi, '_')}-counterpoint`,
         type: 'perspective',
         format: 'perspective_disagreement',
-        title: `Dialektischer Kontrapunkt: Die Grenzen von ${spaceHandle.replace(/^c\//, '')}`,
-        subtitle: `🤖 KI-Synthese • Epistemischer Kontrapunkt & Reibungsfläche`,
-        feedText: `Welche verborgenen Widersprüche übersehen wir in ${spaceHandle}? Ein algorithmisch synthetisierter dialektischer Einwand zur Schärfung des eigenen Urteilsvermögens.`,
-        articleBody: `> [!NOTE]\n> **🤖 Transparenz-Banner:** Dieser Beitrag wurde durch das KI-Master-Interface synthetisiert, um eine intellektuelle Reibungsfläche zu bieten. Er spiegelt eine gezielte Gegenperspektive wider.\n\n### These: Die unhinterfragte Prämisse\nDie Mehrheit der Annahmen in diesem Feld geht davon aus, dass mehr Optimierung und feinere Modelle zwingend zu besseren Resultaten führen.\n\n### Antithese: Der systematische blinde Fleck\nDoch jede Steigerung von Effizienz in ${spaceHandle} verengt zugleich das Spektrum zufälliger Durchbrüche (Serendipität). Wir optimieren uns in ein lokales Maximum, aus dem kein deterministischer Pfad mehr herausführt.\n\n### Synthese für den Master-Kanon\nNutze die Werkzeuge dieses Subchannels, aber behalte stets einen epistemischen Rettungsanker im scheinbar Chaotischen.`,
-        body: `Dialektische KI-Synthese mit explizitem Transparenz-Banner für ${spaceHandle}.`,
+        title: dialectic.title,
+        subtitle: dialectic.subtitle,
+        feedText: dialectic.feedText,
+        articleBody: dialectic.articleBody,
+        body: dialectic.feedText,
         topics: [primaryTopic],
         primaryTopic,
         sourceReferences: [
           {
-            title: 'atmen Dialectic Lab',
-            publisher: 'atmen Sokratik-Engine',
-            author: 'KI-Sparring (Gemini)',
+            title: `atmen Sparring: ${spaceHandle}`,
+            publisher: 'atmen Sparring-Desk',
+            author: 'atmen Redaktion (KI-gestützt)',
             originalUrl: 'https://atmen.app',
             retrievalTimestamp: now,
             isVerified: true
@@ -131,29 +134,29 @@ export class OnTheFlyStreamService {
         ],
         publishedAt: now,
         generatedAt: now,
-        estimatedReadingMinutes: 5,
-        relevanceExplanation: `KI-generierter Denk-Impuls zur Vermeidung von Echokammern in ${spaceHandle}.`,
-        contentStatus: 'scientific_analysis',
+        estimatedReadingMinutes: 4,
+        relevanceExplanation: `Gezielte Gegenstimme zur Schärfung des eigenen Urteilsvermögens in ${spaceHandle}.`,
+        contentStatus: 'philosophical_perspective',
         isDailyEdition: false,
         editionDate: today,
         isDemonstration: false,
         aiAssisted: true,
-        factReviewStatus: 'scientific_paper',
-        provenanceSummary: `Synthetische Antithese via atmen (${spaceHandle})`,
-        wordCount: 520,
+        factReviewStatus: 'philosophical_discourse',
+        provenanceSummary: `Synthetisches Sparring via atmen (${spaceHandle})`,
+        wordCount: 420,
         evidenceTier: 'publisher_excerpt',
         contentOrigin: 'enriched_ai',
         contentHash: `pocket-hash-ai-${spaceHandle}`,
         canonicalUrl: 'https://atmen.app',
         imageUrl: optimizeImageUrl('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1400&q=85'),
         space: spaceHandle,
-        flair: '🤖 KI-Synthese',
-        keyInsight: `Effizienzsteigerung in ${spaceHandle} führt ohne bewusste Störung zu epistemischer Verengung.`,
-        challengePrompt: `Wo siehst du die größte Schwachstelle in dieser antithetischen Argumentation?`,
+        flair: '🤖 KI-Sparring',
+        keyInsight: dialectic.keyInsight,
+        challengePrompt: dialectic.challengePrompt,
         upvotesCount: 0,
         awardsCount: { gold: 0, brain: 0, spark: 0 },
-        sourceTrustLevel: 'deep_essay',
-        isTeachingRelated: false,
+        sourceTrustLevel: 'community_curated',
+        isTeachingRelated: primaryTopic === 'german_didactics',
         isChallengingPerspective: true,
         comments: []
       });
@@ -187,7 +190,7 @@ export class OnTheFlyStreamService {
         generatedAt: now,
         estimatedReadingMinutes: 2,
         relevanceExplanation: `Entlastende Selbstironie zur mentalen Auflockerung.`,
-        contentStatus: 'scientific_analysis',
+        contentStatus: 'editorial_briefing',
         isDailyEdition: false,
         editionDate: today,
         isDemonstration: false,

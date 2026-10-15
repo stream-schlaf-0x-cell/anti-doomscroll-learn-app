@@ -22,6 +22,10 @@ import { RaindropService } from '../../core/raindrop/raindropService';
 interface FeedCardProps {
   item: ScoredFeedItem;
   isHero?: boolean;
+  isFocused?: boolean;
+  isExpanded?: boolean;
+  onToggleKurzCheck?: () => void;
+  onInvestigateTopic?: (topic: TopicTag) => void;
 }
 
 function formatRelativeTime(isoString?: string): string {
@@ -40,8 +44,25 @@ function formatRelativeTime(isoString?: string): string {
   }
 }
 
-export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
+export const FeedCard: React.FC<FeedCardProps> = ({
+  item,
+  isHero = false,
+  isFocused = false,
+  isExpanded,
+  onToggleKurzCheck,
+  onInvestigateTopic
+}) => {
   const { colors, interactions, toggleSaveItem, openArticle, openWhyModal, voteItem, addNote } = useApp();
+
+  const [localKurzCheckOpen, setLocalKurzCheckOpen] = useState(false);
+  const isKurzCheckOpen = isExpanded !== undefined ? isExpanded : localKurzCheckOpen;
+  const toggleKurzCheck = () => {
+    if (onToggleKurzCheck) {
+      onToggleKurzCheck();
+    } else {
+      setLocalKurzCheckOpen(prev => !prev);
+    }
+  };
 
   const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [isDiscussionOpen, setIsDiscussionOpen] = useState(false);
@@ -101,7 +122,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
   const timeAgo = formatRelativeTime(item.publishedAt);
 
   // Score calculation
-  const baseUpvotes = item.upvotesCount || 42;
+  const baseUpvotes = item.upvotesCount ?? 0;
   const displayScore = baseUpvotes + voteScore;
 
   const handleCardPress = () => {
@@ -180,7 +201,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
         styles.card,
         {
           backgroundColor: isHero ? colors.cardHighlight : colors.surface,
-          borderColor: isHero ? colors.accent : colors.borderSubtle
+          borderColor: isFocused ? colors.accent : (isHero ? colors.accent : colors.borderSubtle),
+          borderWidth: isFocused ? 2 : (isHero ? 1.5 : 1)
         },
         isHero && styles.heroCard
       ]}
@@ -347,6 +369,67 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
       <Text style={[styles.feedText, { color: colors.textPrimary }]} numberOfLines={isHero ? 7 : 5}>
         {displayFeedText}
       </Text>
+
+      {/* 5.1 Inline Kurz-Check Expando (Ebene 2 Peek) */}
+      {isKurzCheckOpen && (
+        <View style={[styles.kurzCheckBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <View style={styles.kurzCheckHeader}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="flash" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+              <Text style={[styles.kurzCheckHeaderTitle, { color: colors.accent }]}>⚡ Kurz-Check (Ebene 2)</Text>
+            </View>
+            <TouchableOpacity onPress={toggleKurzCheck} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close-circle-outline" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          {item.keyInsight ? (
+            <View style={styles.kurzCheckSection}>
+              <Text style={[styles.kurzCheckLabel, { color: colors.accent }]}>💡 Kernpunkt</Text>
+              <Text style={[styles.kurzCheckText, { color: colors.textPrimary }]}>{item.keyInsight}</Text>
+            </View>
+          ) : null}
+
+          {(item.perspectiveDetails?.counterPerspective || item.deepeningOptions?.counterArgument) ? (
+            <View style={styles.kurzCheckSection}>
+              <Text style={[styles.kurzCheckLabel, { color: '#8B5CF6' }]}>⚖️ Gegenstimme</Text>
+              <Text style={[styles.kurzCheckText, { color: colors.textSecondary }]}>
+                {item.perspectiveDetails?.counterPerspective || item.deepeningOptions?.counterArgument}
+              </Text>
+            </View>
+          ) : null}
+
+          {(item.challengePrompt || item.didacticSeed) ? (
+            <View style={styles.kurzCheckSection}>
+              <Text style={[styles.kurzCheckLabel, { color: '#10B981' }]}>🎯 Impuls & Praxis-Idee</Text>
+              <Text style={[styles.kurzCheckText, { color: colors.textPrimary }]}>
+                {item.challengePrompt || item.didacticSeed}
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={styles.kurzCheckFooterRow}>
+            <TouchableOpacity
+              onPress={() => onInvestigateTopic ? onInvestigateTopic(item.primaryTopic) : openArticle(item.id)}
+              style={[styles.tieferGrabenBtn, { backgroundColor: colors.accent }]}
+              accessibilityRole="button"
+              accessibilityLabel="Tiefer graben zu diesem Thema"
+            >
+              <Ionicons name="compass-outline" size={13} color="#FFFFFF" style={{ marginRight: 5 }} />
+              <Text style={styles.tieferGrabenBtnText}>🔍 Tiefer graben ({spaceName})</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleCardPress}
+              style={[styles.fullReaderBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+              accessibilityRole="button"
+              accessibilityLabel="Volltext und Sokratik im Reader öffnen"
+            >
+              <Text style={[styles.fullReaderBtnText, { color: colors.textPrimary }]}>Im Thread lesen →</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* 6. Key Insight Box (if present) */}
       {item.keyInsight && (
@@ -842,6 +925,30 @@ export const FeedCard: React.FC<FeedCardProps> = ({ item, isHero = false }) => {
             />
           </TouchableOpacity>
         </View>
+
+        {/* Reddit-style Kurz-Check Inline Expando Button */}
+        <TouchableOpacity
+          onPress={toggleKurzCheck}
+          style={[
+            styles.kurzCheckPill,
+            {
+              backgroundColor: isKurzCheckOpen ? colors.accentSubtle : colors.surfaceSecondary,
+              borderColor: isKurzCheckOpen ? colors.accent : colors.borderSubtle
+            }
+          ]}
+          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          accessibilityLabel="Kurz-Check (Ebene 2) ein- oder ausblenden"
+        >
+          <Ionicons
+            name={isKurzCheckOpen ? 'flash' : 'flash-outline'}
+            size={13}
+            color={isKurzCheckOpen ? colors.accent : colors.textMuted}
+            style={{ marginRight: 4 }}
+          />
+          <Text style={[styles.kurzCheckPillText, { color: isKurzCheckOpen ? colors.accent : colors.textPrimary }]}>
+            Kurz-Check
+          </Text>
+        </TouchableOpacity>
 
         {/* Reddit-style Comments & Sparring Toggle */}
         <TouchableOpacity
@@ -2154,5 +2261,79 @@ const styles = StyleSheet.create({
   awardBadgeText: {
     fontSize: 11,
     fontWeight: '800'
+  },
+  kurzCheckBox: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  kurzCheckHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  kurzCheckHeaderTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  kurzCheckSection: {
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  kurzCheckLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  kurzCheckText: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  kurzCheckFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+    gap: 8,
+  },
+  tieferGrabenBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+  },
+  tieferGrabenBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  fullReaderBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  fullReaderBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  kurzCheckPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    marginRight: 6,
+  },
+  kurzCheckPillText: {
+    fontSize: 11,
+    fontWeight: '600',
   }
 });

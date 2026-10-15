@@ -9,7 +9,8 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
   useWindowDimensions,
-  ActivityIndicator
+  ActivityIndicator,
+  Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, FeedItem, DayEditionType, DAY_EDITIONS_META } from '../../core/domain/types';
@@ -45,7 +46,9 @@ export const FeedScreen: React.FC = () => {
     selectedFilter,
     setSelectedFilter,
     searchQuery,
-    setSearchQuery
+    setSearchQuery,
+    openArticle,
+    toggleSaveItem
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -241,8 +244,8 @@ export const FeedScreen: React.FC = () => {
         return list.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
       case 'top':
         return list.sort((a, b) => {
-          const scoreA = (a.upvotesCount || 42) + ((a.awardsCount?.gold || 0) * 5) + ((a.awardsCount?.brain || 0) * 3);
-          const scoreB = (b.upvotesCount || 42) + ((b.awardsCount?.gold || 0) * 5) + ((b.awardsCount?.brain || 0) * 3);
+          const scoreA = (a.upvotesCount ?? 0) + ((a.awardsCount?.gold || 0) * 5) + ((a.awardsCount?.brain || 0) * 3);
+          const scoreB = (b.upvotesCount ?? 0) + ((b.awardsCount?.gold || 0) * 5) + ((b.awardsCount?.brain || 0) * 3);
           return scoreB - scoreA;
         });
       case 'gems':
@@ -256,8 +259,8 @@ export const FeedScreen: React.FC = () => {
       case 'hot':
       default:
         return list.sort((a, b) => {
-          const hotA = (a.score || 0) * 10 + (a.upvotesCount || 42) + (a.comments?.length || 0) * 4;
-          const hotB = (b.score || 0) * 10 + (b.upvotesCount || 42) + (b.comments?.length || 0) * 4;
+          const hotA = (a.score || 0) * 10 + (a.upvotesCount ?? 0) + (a.comments?.length || 0) * 4;
+          const hotB = (b.score || 0) * 10 + (b.upvotesCount ?? 0) + (b.comments?.length || 0) * 4;
           return hotB - hotA;
         });
     }
@@ -305,6 +308,67 @@ export const FeedScreen: React.FC = () => {
   const allStreamItems = useMemo(() => {
     return [...sortedDaily, ...renderedDiscovery];
   }, [sortedDaily, renderedDiscovery]);
+
+  // Active items array depending on selected feed option
+  const currentFeedItems = useMemo(() => {
+    if (activeFeedOption === 'live_news') return scoredLiveItems;
+    if (activeFeedOption === 'classics') return scoredClassicsItems;
+    return allStreamItems;
+  }, [activeFeedOption, scoredLiveItems, scoredClassicsItems, allStreamItems]);
+
+  const [activeCardIndex, setActiveCardIndex] = useState<number>(0);
+  const [expandedCardIds, setExpandedCardIds] = useState<Record<string, boolean>>({});
+
+  // Reddit Web Keyboard Navigation: j/k to navigate, x for Kurz-Check, Enter to read, s to bookmark
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.key === 'j' || e.key === 'J') {
+        e.preventDefault();
+        setActiveCardIndex(prev => Math.min(prev + 1, Math.max(0, currentFeedItems.length - 1)));
+      } else if (e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        setActiveCardIndex(prev => Math.max(prev - 1, 0));
+      } else if (e.key === 'x' || e.key === 'X') {
+        e.preventDefault();
+        const activeItem = currentFeedItems[activeCardIndex];
+        if (activeItem) {
+          setExpandedCardIds(prev => ({
+            ...prev,
+            [activeItem.id]: !prev[activeItem.id]
+          }));
+        }
+      } else if (e.key === 'Enter') {
+        const activeItem = currentFeedItems[activeCardIndex];
+        if (activeItem) {
+          e.preventDefault();
+          openArticle(activeItem.id);
+        }
+      } else if (e.key === 's' || e.key === 'S') {
+        const activeItem = currentFeedItems[activeCardIndex];
+        if (activeItem) {
+          e.preventDefault();
+          toggleSaveItem(activeItem.id);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [currentFeedItems, activeCardIndex, openArticle, toggleSaveItem]);
 
   const activeSpaceName = selectedFilter === 'all'
     ? 'Alle Spaces'
@@ -597,6 +661,15 @@ export const FeedScreen: React.FC = () => {
                         key={item.id}
                         item={item}
                         isHero={index === 0 && !searchQuery}
+                        isFocused={index === activeCardIndex}
+                        isExpanded={Boolean(expandedCardIds[item.id])}
+                        onToggleKurzCheck={() => {
+                          setExpandedCardIds(prev => ({
+                            ...prev,
+                            [item.id]: !prev[item.id]
+                          }));
+                        }}
+                        onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                       />
                     ))}
 
@@ -635,6 +708,15 @@ export const FeedScreen: React.FC = () => {
                     key={item.id}
                     item={item}
                     isHero={index === 0}
+                    isFocused={index === activeCardIndex}
+                    isExpanded={Boolean(expandedCardIds[item.id])}
+                    onToggleKurzCheck={() => {
+                      setExpandedCardIds(prev => ({
+                        ...prev,
+                        [item.id]: !prev[item.id]
+                      }));
+                    }}
+                    onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                   />
                 ))}
               </View>
@@ -886,6 +968,15 @@ export const FeedScreen: React.FC = () => {
                     <FeedCard
                       item={item}
                       isHero={index === 0 && selectedFilter === 'all' && !searchQuery}
+                      isFocused={index === activeCardIndex}
+                      isExpanded={Boolean(expandedCardIds[item.id])}
+                      onToggleKurzCheck={() => {
+                        setExpandedCardIds(prev => ({
+                          ...prev,
+                          [item.id]: !prev[item.id]
+                        }));
+                      }}
+                      onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                     />
 
                     {/* Mindfulness Milestone after item 5 in daily edition */}
@@ -939,9 +1030,23 @@ export const FeedScreen: React.FC = () => {
                 )}
 
                 {/* Appended Discovery Items */}
-                {renderedDiscovery.map((item, index) => (
-                  <React.Fragment key={item.id}>
-                    <FeedCard item={item} isHero={false} />
+                {renderedDiscovery.map((item, index) => {
+                  const globalIndex = sortedDaily.length + index;
+                  return (
+                    <React.Fragment key={item.id}>
+                      <FeedCard
+                        item={item}
+                        isHero={false}
+                        isFocused={globalIndex === activeCardIndex}
+                        isExpanded={Boolean(expandedCardIds[item.id])}
+                        onToggleKurzCheck={() => {
+                          setExpandedCardIds(prev => ({
+                            ...prev,
+                            [item.id]: !prev[item.id]
+                          }));
+                        }}
+                        onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                      />
 
                     {/* Periodic Mindfulness Milestone every 8 discovery cards */}
                     {(index + 1) % 8 === 0 && (
@@ -976,9 +1081,10 @@ export const FeedScreen: React.FC = () => {
                       </View>
                     )}
                   </React.Fragment>
-                ))}
+                );
+              })}
 
-                {/* End of Section / Conscious Discovery Trigger */}
+              {/* End of Section / Conscious Discovery Trigger */}
                 {visibleDiscoveryCount < allStreamItems.length ? (
                   <TouchableOpacity
                     onPress={handleLoadMoreDiscovery}
