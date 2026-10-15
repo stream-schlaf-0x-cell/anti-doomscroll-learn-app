@@ -3,6 +3,11 @@ import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
 import { optimizeImageUrl } from '../utils/imageQuality';
 import { defaultSourceRepository } from './sourceRepository';
+import { fetchFeedXml } from '../ingestion/feedFetcher';
+import { parseFeedXml } from '../ingestion/rssParser';
+import { normalizeFeedEntry } from '../ingestion/normalizer';
+import { deduplicateFeedItems } from '../ingestion/deduplicator';
+import { RawFeedSource } from '../ingestion/types';
 
 // Safely load real-world ingested pipeline items
 let rawPipelineItems: FeedItem[] = [];
@@ -23,6 +28,7 @@ export interface ContinuousNewsOptions {
   topic?: TopicTag;
   limit?: number;
   offset?: number;
+  forceRefresh?: boolean;
 }
 
 /**
@@ -32,22 +38,105 @@ export interface ContinuousNewsOptions {
  * public broadcasters and established science/tech publications (Tagesschau,
  * Deutschlandfunk, Ars Technica, Quanta Magazine, Heise, Stanford SEP, etc.).
  * 
- * Every article is elevated into an active learning moment:
- * - 💡 Distilled Key Insight (Kern-Erkenntnis)
- * - 🎓 Didactic & Learning Partner Transfer (Lern-Partner & Didaktik-Labor)
- * - ⚡️ Socratic Challenge Prompt (Sokratischer Denkimpuls)
- * - 🏛 Evergreen Internet Gem cross-reference
- * - High-definition visual hero imagery & in-app live preview
+ * Features:
+ * - Real live RSS/Atom fetching with strict 3000ms timeout via AbortController
+ * - In-memory 5-minute cache for instant tab switching and zero UI lag
+ * - Instant graceful fallback to bundled pipeline items if offline or on network failure
+ * - Every article is enriched with Kernpunkt, Gegenstimme, Praxis-Impuls & Deep Reader
  */
 export class ContinuousLiveNewsService {
+  private static liveCache: { items: FeedItem[]; timestamp: number } | null = null;
+  public static readonly LIVE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+  /**
+   * Fetches real live RSS feeds from enabled sources with a strict 3-second timeout.
+   * Caches results in memory for 5 minutes.
+   */
+  public static async refreshLiveFeeds(force = false): Promise<FeedItem[]> {
+    const now = Date.now();
+    if (!force && this.liveCache && (now - this.liveCache.timestamp < this.LIVE_CACHE_TTL_MS)) {
+      return this.liveCache.items;
+    }
+
+    try {
+      const allSources = await defaultSourceRepository.getAllSources();
+      // Pick top enabled sources (up to 8) with valid HTTP URLs
+      const activeSources = allSources
+        .filter(s => s.enabled && s.url && (s.url.startsWith('http://') || s.url.startsWith('https://')))
+        .slice(0, 8);
+
+      if (activeSources.length === 0) {
+        return this.liveCache?.items || [];
+      }
+
+      const fetchPromises = activeSources.map(async source => {
+        try {
+          const res = await fetchFeedXml(source.url, { timeoutMs: 3000, retries: 0 });
+          if (res.notModified || !res.content) return [];
+          const rawEntries = parseFeedXml(res.content, source.id);
+          const rawSource: RawFeedSource = {
+            id: source.id,
+            name: source.name,
+            url: source.url,
+            primaryTopic: source.primaryTopic,
+            topics: source.topics,
+            defaultEvidenceTier: 'publisher_excerpt',
+            defaultAuthor: source.defaultAuthor,
+            language: source.language,
+            isTeachingRelated: source.category === 'education' || source.primaryTopic === 'german_didactics',
+            isChallengingPerspective: false
+          };
+          return rawEntries.slice(0, 6).map(entry => normalizeFeedEntry(entry, rawSource));
+        } catch {
+          // Timeout or fetch error for this single source is non-fatal
+          return [];
+        }
+      });
+
+      const settled = await Promise.allSettled(fetchPromises);
+      const fetchedItems: FeedItem[] = [];
+      for (const result of settled) {
+        if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+          fetchedItems.push(...result.value);
+        }
+      }
+
+      if (fetchedItems.length > 0) {
+        const { uniqueItems } = deduplicateFeedItems(fetchedItems, rawPipelineItems);
+        this.liveCache = {
+          items: uniqueItems,
+          timestamp: Date.now()
+        };
+        return uniqueItems;
+      }
+    } catch {
+      // Seamless fallback on any network or parsing error
+    }
+
+    return this.liveCache?.items || [];
+  }
+
   /**
    * Retrieves enriched, live real-world news stream.
+   * Merges live fetched items ahead of static pipeline items.
    */
   public static async getLiveStream(options: ContinuousNewsOptions = {}): Promise<FeedItem[]> {
-    const { category = 'all', query = '', limit = 30, offset = 0 } = options;
+    const { category = 'all', query = '', limit = 30, offset = 0, forceRefresh = false } = options;
 
-    // 1. Gather all authentic real-world news candidates
-    const pool = rawPipelineItems.length > 0 ? rawPipelineItems : REAL_KNOWLEDGE_VAULT;
+    // 1. Fetch or get cached live items with 3s timeout
+    const liveItems = await this.refreshLiveFeeds(forceRefresh);
+
+    // 2. Gather candidates: live items merged ahead of static pipeline / knowledge vault
+    const staticPool = rawPipelineItems.length > 0 ? rawPipelineItems : REAL_KNOWLEDGE_VAULT;
+    let combinedPool: FeedItem[];
+    if (liveItems.length > 0) {
+      const { uniqueItems } = deduplicateFeedItems(liveItems, staticPool);
+      combinedPool = [...uniqueItems, ...staticPool];
+    } else {
+      combinedPool = staticPool;
+    }
+
+    const pool = combinedPool;
 
     // Filter out disabled sources according to user settings in NewsHub
     const disabledDomains = new Set<string>();

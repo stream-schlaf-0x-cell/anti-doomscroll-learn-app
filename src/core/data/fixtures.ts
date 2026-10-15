@@ -79,10 +79,39 @@ export function getCuratedImageForTopic(topic: TopicTag, seed: string = ''): str
   return images[code % images.length];
 }
 
+function honestifyComments(rawComments: CommunityComment[]): CommunityComment[] {
+  return rawComments.map(c => {
+    let authorHandle = c.authorHandle;
+    if (c.commentType === 'dialectic_critique') {
+      authorHandle = '🤖 Gegenstimme';
+    } else if (c.commentType === 'didactic_transfer') {
+      authorHandle = '🏫 Praxis & Unterricht';
+    } else if (c.commentType === 'creative_synthesis') {
+      authorHandle = '🔗 Querverbindung';
+    } else {
+      authorHandle = '🤖 Gegenstimme';
+    }
+    return {
+      ...c,
+      authorHandle,
+      score: 0 // Zero fake upvotes
+    };
+  });
+}
+
 /**
  * Generates 3 simulated Reddit community comments tailored to the topic and content.
+ * Role-based sparring handles with honest 0 score (no fake upvotes or fabricated users).
  */
 export function getSimulatedCommentsForTopic(
+  topic: TopicTag,
+  title: string,
+  seed: string = ''
+): CommunityComment[] {
+  return honestifyComments(getRawCommentsForTopic(topic, title, seed));
+}
+
+function getRawCommentsForTopic(
   topic: TopicTag,
   title: string,
   seed: string = ''
@@ -449,8 +478,8 @@ export function generateSparringReply(
     case 'einwand':
       return {
         id: `reply_${Date.now()}`,
-        authorHandle: 'u/sokrates_2026',
-        authorBadge: 'Sokratischer Sparring-Partner',
+        authorHandle: '🤖 Gegenstimme',
+        authorBadge: 'Dialektischer Sparring-Partner',
         createdAt: new Date().toISOString(),
         text: `Scharfer Einwand! Du argumentierst: „${noteSnippet}“. Wenn wir diesen Faden zu Ende spinnen: Müsste man dann nicht konsequenterweise auch hinterfragen, ob die zugrundeliegende Prämisse überhaupt universell gilt? Wie würdest du auf den Vorwurf antworten, dass du hier die Ausnahme zum Maßstab machst?`
       };
@@ -458,7 +487,7 @@ export function generateSparringReply(
     case 'unterricht':
       return {
         id: `reply_${Date.now()}`,
-        authorHandle: 'u/didaktik_labor',
+        authorHandle: '🏫 Praxis & Unterricht',
         authorBadge: 'Fachdidaktik Sek II',
         createdAt: new Date().toISOString(),
         text: `Starker Praxistransfer! Du schlägst vor: „${noteSnippet}“. Für die didaktische Reduktion im 45-Minuten-Takt: Mit welchem konkreten Einstiegsimpuls bringst du die Lerngruppe dazu, das Problem sofort als ihr eigenes Erkenntnisproblem wahrzunehmen?`
@@ -467,8 +496,8 @@ export function generateSparringReply(
     case 'these':
       return {
         id: `reply_${Date.now()}`,
-        authorHandle: 'u/dialektik_dresden',
-        authorBadge: 'Dialektischer Sparring-Partner',
+        authorHandle: '🤖 Gegenstimme',
+        authorBadge: 'Thesen-Sparring',
         createdAt: new Date().toISOString(),
         text: `Mutige These: „${noteSnippet}“. Der dialektische Härtetest: Welches wäre das stärkste Argument eines philosophischen Skeptikers gegen diese Position – und wie würdest du den dialektischen Widerspruch auflösen?`
       };
@@ -477,7 +506,7 @@ export function generateSparringReply(
     default:
       return {
         id: `reply_${Date.now()}`,
-        authorHandle: 'u/atem_curator',
+        authorHandle: '🔗 Querverbindung',
         authorBadge: 'Erkenntnis-Begleiter',
         createdAt: new Date().toISOString(),
         text: `Wesentliche Beobachtung zu diesem Text: „${noteSnippet}“. Dieser Gedanke berührt die fundamentale Frage nach kognitiver Souveränität: Wie bewahren wir eigenständige Urteilskraft in einer von Algorithmen getriebenen Aufmerksamkeitsökonomie?`
@@ -508,7 +537,6 @@ function createFixture(item: any): FeedItem {
   const topic = (item.primaryTopic as TopicTag) || 'philosophy_ethics';
   const topicMeta = TOPIC_SPACE_MAP[topic];
   const imageUrl = item.imageUrl ?? getCuratedImageForTopic(topic, item.id);
-  const baseUpvotes = 45 + ((item.id.charCodeAt(item.id.length - 1) * 7) % 65);
 
   return {
     format: item.format ?? (item.type === 'quick_insight' ? 'concise_insight' : item.type === 'perspective' ? 'perspective_disagreement' : item.type === 'deep_dive' ? 'long_invitation' : 'sourced_update'),
@@ -529,7 +557,7 @@ function createFixture(item: any): FeedItem {
     keyInsight: item.keyInsight ?? (item.deepeningOptions?.philosophicalContext || item.subtitle),
     challengePrompt: item.challengePrompt ?? (item.deepeningOptions?.reflectionPrompt || 'Welcher Einwand oder Praxistransfer fällt dir spontan ein?'),
     didacticSeed: item.didacticSeed ?? item.deepeningOptions?.didacticSeed,
-    upvotesCount: item.upvotesCount ?? baseUpvotes,
+    upvotesCount: 0,
     comments: item.comments ?? getSimulatedCommentsForTopic(topic, item.title, item.id),
     ...item,
     wordCount: item.wordCount ?? stats.wordCount,

@@ -1,5 +1,5 @@
 import { EnrichmentLedgerEntry, EnrichmentLedgerSummary } from './types';
-import { appStorage, AtemStorage, KeyLockManager } from '../data/storage';
+import { appStorage, AtemStorage, KeyLockManager, CorruptedDataError } from '../data/storage';
 
 // Grounded in official Google Gemini Flash pricing:
 // Input: $0.10 / 1M tokens ($0.00000010/token)
@@ -24,14 +24,24 @@ export function getCurrentMonthKey(): string {
   return `${year}-${month}`;
 }
 
+export interface ActiveReservation {
+  id: string;
+  amountEur: number;
+  monthKey: string;
+  createdAt: number;
+}
+
 export interface ILedgerStorage {
   load(): Promise<Record<string, EnrichmentLedgerSummary>>;
   save(data: Record<string, EnrichmentLedgerSummary>): Promise<void>;
   clear(): Promise<void>;
+  loadReservations?(): Promise<ActiveReservation[]>;
+  saveReservations?(reservations: ActiveReservation[]): Promise<void>;
 }
 
 export class MemoryLedgerStorage implements ILedgerStorage {
   private data: Record<string, EnrichmentLedgerSummary> = {};
+  private reservations: ActiveReservation[] = [];
 
   async load(): Promise<Record<string, EnrichmentLedgerSummary>> {
     return { ...this.data };
@@ -43,25 +53,36 @@ export class MemoryLedgerStorage implements ILedgerStorage {
 
   async clear(): Promise<void> {
     this.data = {};
+    this.reservations = [];
+  }
+
+  async loadReservations(): Promise<ActiveReservation[]> {
+    return [...this.reservations];
+  }
+
+  async saveReservations(reservations: ActiveReservation[]): Promise<void> {
+    this.reservations = [...reservations];
   }
 }
 
 export class StorageDriverLedgerStorage implements ILedgerStorage {
   private static STORAGE_KEY = '@atem:usage_ledger:v1';
+  private static RESERVATIONS_KEY = '@atem:usage_ledger_reservations:v1';
 
   constructor(private readonly storage: AtemStorage = appStorage) {}
 
   async load(): Promise<Record<string, EnrichmentLedgerSummary>> {
+    const raw = await this.storage.getItem(StorageDriverLedgerStorage.STORAGE_KEY);
+    if (!raw) return {};
     try {
-      const raw = await this.storage.getItem(StorageDriverLedgerStorage.STORAGE_KEY);
-      if (!raw) return {};
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return parsed;
       }
-      return {};
-    } catch {
-      return {};
+      throw new CorruptedDataError('Ledger-Daten sind fehlerhaft (kein Objekt).', raw);
+    } catch (err) {
+      if (err instanceof CorruptedDataError) throw err;
+      throw new CorruptedDataError('Ledger-JSON ist beschädigt.', raw, err);
     }
   }
 
@@ -76,17 +97,30 @@ export class StorageDriverLedgerStorage implements ILedgerStorage {
   async clear(): Promise<void> {
     try {
       await this.storage.removeItem(StorageDriverLedgerStorage.STORAGE_KEY);
+      await this.storage.removeItem(StorageDriverLedgerStorage.RESERVATIONS_KEY);
     } catch {
       // Non-fatal fallback
     }
   }
-}
 
-interface ActiveReservation {
-  id: string;
-  amountEur: number;
-  monthKey: string;
-  createdAt: number;
+  async loadReservations(): Promise<ActiveReservation[]> {
+    try {
+      const raw = await this.storage.getItem(StorageDriverLedgerStorage.RESERVATIONS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async saveReservations(reservations: ActiveReservation[]): Promise<void> {
+    try {
+      await this.storage.setItem(StorageDriverLedgerStorage.RESERVATIONS_KEY, JSON.stringify(reservations));
+    } catch {
+      // Non-fatal
+    }
+  }
 }
 
 export class EnrichmentUsageLedger {
@@ -94,6 +128,7 @@ export class EnrichmentUsageLedger {
   private activeReservations: Map<string, ActiveReservation> = new Map();
   private lockManager: KeyLockManager = new KeyLockManager();
   private storage: ILedgerStorage;
+  private isStorageCorrupted: boolean = false;
 
   constructor(
     _filePathOrStorage?: string | ILedgerStorage,
@@ -114,11 +149,16 @@ export class EnrichmentUsageLedger {
   private async loadLedger(): Promise<Record<string, EnrichmentLedgerSummary>> {
     try {
       const loaded = await this.storage.load();
+      this.isStorageCorrupted = false;
       if (loaded && Object.keys(loaded).length > 0) {
         this.inMemorySummary = loaded;
       }
       return this.inMemorySummary;
-    } catch {
+    } catch (err) {
+      if (err instanceof CorruptedDataError) {
+        // FAIL-SAFE CLOSED: corrupt stored data strictly locks budget to prevent spending
+        this.isStorageCorrupted = true;
+      }
       return this.inMemorySummary;
     }
   }
@@ -131,7 +171,35 @@ export class EnrichmentUsageLedger {
     }
   }
 
-  private getReservedAmountForMonth(monthKey: string): number {
+  private async syncReservations(): Promise<void> {
+    if (this.storage.loadReservations) {
+      try {
+        const stored = await this.storage.loadReservations();
+        const now = Date.now();
+        for (const r of stored) {
+          if (now - r.createdAt <= 60000 && !this.activeReservations.has(r.id)) {
+            this.activeReservations.set(r.id, r);
+          }
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+  }
+
+  private async persistReservations(): Promise<void> {
+    if (this.storage.saveReservations) {
+      try {
+        const active = Array.from(this.activeReservations.values());
+        await this.storage.saveReservations(active);
+      } catch {
+        // Non-fatal
+      }
+    }
+  }
+
+  private async getReservedAmountForMonth(monthKey: string): Promise<number> {
+    await this.syncReservations();
     let reserved = 0;
     const now = Date.now();
     // Reservations expire after 60 seconds if abandoned
@@ -148,6 +216,18 @@ export class EnrichmentUsageLedger {
   async getSummary(monthKey: string = getCurrentMonthKey()): Promise<EnrichmentLedgerSummary> {
     return this.lockManager.acquire(monthKey, async () => {
       const all = await this.loadLedger();
+      if (this.isStorageCorrupted) {
+        return {
+          monthKey,
+          totalCalls: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalCostEur: MONTHLY_BUDGET_CEILING_EUR,
+          budgetLimitEur: MONTHLY_BUDGET_CEILING_EUR,
+          isBudgetExceeded: true,
+          entries: []
+        };
+      }
       const summary = all[monthKey] ?? {
         monthKey,
         totalCalls: 0,
@@ -164,10 +244,16 @@ export class EnrichmentUsageLedger {
 
   async canSpend(estimatedEur: number = 0.001, monthKey: string = getCurrentMonthKey()): Promise<boolean> {
     return this.lockManager.acquire(monthKey, async () => {
+      if (this.isStorageCorrupted) {
+        return false;
+      }
       const all = await this.loadLedger();
+      if (this.isStorageCorrupted) {
+        return false;
+      }
       const summary = all[monthKey];
       const committed = summary ? summary.totalCostEur : 0;
-      const reserved = this.getReservedAmountForMonth(monthKey);
+      const reserved = await this.getReservedAmountForMonth(monthKey);
       return committed + reserved + estimatedEur <= MONTHLY_BUDGET_CEILING_EUR;
     });
   }
@@ -178,10 +264,16 @@ export class EnrichmentUsageLedger {
    */
   async reserveSpend(estimatedEur: number, monthKey: string = getCurrentMonthKey()): Promise<string | null> {
     return this.lockManager.acquire(monthKey, async () => {
+      if (this.isStorageCorrupted) {
+        return null;
+      }
       const all = await this.loadLedger();
+      if (this.isStorageCorrupted) {
+        return null;
+      }
       const summary = all[monthKey];
       const committed = summary ? summary.totalCostEur : 0;
-      const reserved = this.getReservedAmountForMonth(monthKey);
+      const reserved = await this.getReservedAmountForMonth(monthKey);
 
       if (committed + reserved + estimatedEur > MONTHLY_BUDGET_CEILING_EUR) {
         return null; // Budget exceeded or unknown status, reject reservation
@@ -194,6 +286,7 @@ export class EnrichmentUsageLedger {
         monthKey,
         createdAt: Date.now()
       });
+      await this.persistReservations();
       return reservationId;
     });
   }
@@ -206,6 +299,7 @@ export class EnrichmentUsageLedger {
     if (!res) return;
     await this.lockManager.acquire(res.monthKey, async () => {
       this.activeReservations.delete(reservationId);
+      await this.persistReservations();
     });
   }
 
@@ -219,6 +313,7 @@ export class EnrichmentUsageLedger {
   ): Promise<EnrichmentLedgerSummary> {
     return this.lockManager.acquire(monthKey, async () => {
       this.activeReservations.delete(reservationId);
+      await this.persistReservations();
       return this.recordUsageInternal(entry, monthKey);
     });
   }

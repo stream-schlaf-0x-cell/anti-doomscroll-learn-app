@@ -1,5 +1,6 @@
 import { FeedItem, TopicTag, EditorialAbstract } from '../domain/types';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
+import { TOPIC_DIALECTICS } from './dialecticTemplates';
 
 /**
  * Background Research & Epistemic Synthesis Pipeline
@@ -210,11 +211,64 @@ export function synthesizeEditorialAbstract(item: FeedItem): EditorialAbstract {
 }
 
 /**
+ * Synthesizes an engaging, multi-paragraph Level 3 Deep Reader article
+ * when the original RSS/feed source only delivers a brief 2-3 sentence summary.
+ * 
+ * Uses natural, curiosity-driven Reddit/community language with 4 clear subheadings:
+ * 1. ### Worum es geht
+ * 2. ### Warum das wichtig ist
+ * 3. ### Die Gegenperspektive
+ * 4. ### Zum Weiterdenken & Ausprobieren
+ */
+export function synthesizeDeepeningArticle(options: {
+  title: string;
+  summary: string;
+  topic: TopicTag;
+  sourceName: string;
+  author?: string;
+  isTeachingRelated?: boolean;
+  keyInsight?: string;
+  counterPerspective?: string;
+  challengePrompt?: string;
+}): string {
+  const { title, summary, topic, sourceName, author, keyInsight, counterPerspective, challengePrompt } = options;
+  const dialectic = TOPIC_DIALECTICS[topic] || TOPIC_DIALECTICS.philosophy_ethics;
+  const authorCitation = author ? `${author} (${sourceName})` : sourceName;
+  const cleanedSummary = summary.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  const effectiveInsight = keyInsight || dialectic.keyInsight;
+  const effectiveCounter = counterPerspective || dialectic.counterPerspective;
+  const effectivePrompt = challengePrompt || dialectic.challengePrompt;
+
+  return [
+    `### Worum es geht`,
+    `${cleanedSummary}`,
+    ``,
+    `Die Berichterstattung von **${authorCitation}** zu „${title}“ greift eine Entwicklung auf, die über die unmittelbare Tagesmeldung hinausreicht. Im Kern geht es um die Frage, wie sich bestehende Annahmen verändern, wenn neue Beobachtungen oder methodische Ansätze das gewohnte Bild herausfordern.`,
+    ``,
+    `### Warum das wichtig ist`,
+    `Die Relevanz dieses Beitrags liegt vor allem in den Folgewirkungen: ${effectiveInsight}`,
+    ``,
+    `Die Quelle **${sourceName}** gilt in diesem Themenfeld als fundierter Indikator für Verschiebungen im Diskurs. Anstatt bei der oberflächlichen Schlagzeile stehenzubleiben, lohnt sich der Blick auf die Mechanismen dahinter: Wie belastbar sind die zugrundeliegenden Daten und welche systemischen Trends zeichnen sich hier ab?`,
+    ``,
+    `### Die Gegenperspektive`,
+    `${effectiveCounter}`,
+    ``,
+    `Kritische Stimmen mahnen zu Recht zur Vorsicht: Wer zu schnell eindeutige Schlüsse zieht, übersieht oft gegenläufige Effekte oder institutionelle Trägheit. Erst im Abgleich mit widersprüchlichen Erfahrungen zeigt sich, wo die Grenzen dieser Perspektive verlaufen.`,
+    ``,
+    `### Zum Weiterdenken & Ausprobieren`,
+    `**Impuls für die eigene Praxis:** ${dialectic.actionableTransfer}`,
+    ``,
+    `**Die Leitfrage zum Weiterforschen:** *„${effectivePrompt}“*`
+  ].join('\n');
+}
+
+/**
  * Enriches any raw feed item with the complete, pristine Atem quality standard:
  * - 💡 Key Insight
  * - 🎓 Didactic / Learning Partner Transfer
  * - ⚡️ Socratic Challenge Prompt
  * - 📑 Ebene 2 Editorial Abstract
+ * - 📖 Ebene 3 Substantive Deep Reader Article (auto-expanded when brief)
  * - High-contrast domain branding and metadata
  */
 export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
@@ -250,8 +304,34 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
     'editorial_deepening'
   );
 
+  // Ebene 3 Substantive Deep Reader expansion:
+  // Detect if articleBody/body is short (< 550 chars) or identical to the brief feedText preview
+  const rawBody = item.articleBody || item.body || '';
+  const isShortOrDuplicate = rawBody.length < 550 || rawBody.trim() === (item.feedText || '').trim();
+
+  let articleBody = item.articleBody;
+  let expandedBody = item.body;
+
+  if (isShortOrDuplicate) {
+    const synthesized = synthesizeDeepeningArticle({
+      title: item.title,
+      summary: item.feedText || item.subtitle || item.title,
+      topic: primaryTopic,
+      sourceName: item.sourceReferences?.[0]?.publisher || 'Redaktioneller Feed',
+      author: item.sourceReferences?.[0]?.author,
+      isTeachingRelated: item.isTeachingRelated,
+      keyInsight,
+      counterPerspective: item.perspectiveDetails?.counterPerspective || TOPIC_DIALECTICS[primaryTopic]?.counterPerspective,
+      challengePrompt
+    });
+    articleBody = synthesized;
+    expandedBody = item.body && item.body.length > synthesized.length ? item.body : synthesized;
+  }
+
   return {
     ...item,
+    articleBody,
+    body: expandedBody,
     keyInsight,
     didacticTransfer,
     didacticSeed: didacticTransfer,

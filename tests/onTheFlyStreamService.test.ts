@@ -21,11 +21,11 @@ describe('OnTheFlyStreamService (Empty Pocket & Stream Generation)', () => {
     assert.equal(researchItem?.sourceTrustLevel, 'peer_reviewed');
 
     // 2. Check AI synthesis item with explicit AI banner
-    const aiItem = stream.find(i => i.flair === '🤖 KI-Synthese');
+    const aiItem = stream.find(i => i.flair === '🤖 KI-Sparring' || i.flair === '🤖 KI-Synthese');
     assert.ok(aiItem);
     assert.equal(aiItem?.aiAssisted, true);
-    assert.ok(aiItem?.subtitle.includes('KI-Synthese'));
-    assert.ok(aiItem?.articleBody?.includes('🤖 Transparenz-Banner'));
+    assert.ok(aiItem?.subtitle.includes('KI-Sparring') || aiItem?.subtitle.includes('KI-Synthese'));
+    assert.ok(aiItem?.articleBody?.includes('Sparring-Transparenz') || aiItem?.articleBody?.includes('Transparenz-Banner'));
 
     // 3. Check human meme item
     const memeItem = stream.find(i => i.flair === '🎭 Menschliches Meme');
@@ -54,7 +54,7 @@ describe('OnTheFlyStreamService (Empty Pocket & Stream Generation)', () => {
     });
 
     assert.ok(researchOnly.some(i => i.flair === '🔬 Fundierte Forschung'));
-    assert.ok(!researchOnly.some(i => i.flair === '🤖 KI-Synthese'));
+    assert.ok(!researchOnly.some(i => i.flair === '🤖 KI-Sparring' || i.flair === '🤖 KI-Synthese'));
     assert.ok(!researchOnly.some(i => i.flair === '🎭 Menschliches Meme'));
   });
 });

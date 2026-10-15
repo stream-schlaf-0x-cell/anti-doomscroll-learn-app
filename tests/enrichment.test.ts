@@ -3,7 +3,8 @@ import assert from 'node:assert';
 import {
   calculateCostEur,
   EnrichmentUsageLedger,
-  MONTHLY_BUDGET_CEILING_EUR
+  MONTHLY_BUDGET_CEILING_EUR,
+  StorageDriverLedgerStorage
 } from '../src/core/enrichment/ledger';
 import { EnrichmentCache } from '../src/core/enrichment/cache';
 import {
@@ -13,6 +14,7 @@ import {
   CURRENT_PROMPT_VERSION
 } from '../src/core/enrichment/enricher';
 import { INITIAL_FIXTURES } from '../src/core/data/fixtures';
+import { MemoryStorageDriver, AtemStorage } from '../src/core/data/storage';
 
 describe('Provider-Independent Enrichment & €5 Budget Enforcement', () => {
   it('1. Calculates token costs accurately using grounded Gemini Flash pricing', () => {
@@ -181,8 +183,8 @@ describe('Provider-Independent Enrichment & €5 Budget Enforcement', () => {
 
     // Test sparring reply generation
     const sparring = await enricher.generateLiveSparring('Das ist ein zu starker Anspruch an die Vernunft.', 'einwand', item.title);
-    assert.strictEqual(sparring.authorHandle, 'u/sokrates_2026');
-    assert.strictEqual(sparring.authorBadge, 'Sokratischer Sparring-Partner');
+    assert.strictEqual(sparring.authorHandle, '🤖 Gegenstimme');
+    assert.strictEqual(sparring.authorBadge, 'Dialektischer Sparring-Partner');
     assert.ok(sparring.text.length > 30);
   });
 
@@ -216,6 +218,25 @@ describe('Provider-Independent Enrichment & €5 Budget Enforcement', () => {
     const summary = await ledger.getSummary();
     assert.strictEqual(summary.totalCalls, 1);
     assert.ok(summary.totalCostEur > 0);
+  });
+
+  it('11. Fail-Safe Closed: Corrupted ledger storage locks budget and prevents further spend', async () => {
+    const memoryDriver = new MemoryStorageDriver();
+    // Simulate corrupt JSON in stored ledger
+    await memoryDriver.setItem('@atem:usage_ledger:v1', '{invalid-json-bytes: corrupt!');
+    const storage = new StorageDriverLedgerStorage(new AtemStorage(memoryDriver));
+    const ledger = new EnrichmentUsageLedger(storage);
+
+    // Summary must report budget exceeded / locked
+    const summary = await ledger.getSummary();
+    assert.strictEqual(summary.isBudgetExceeded, true, 'Corrupted ledger must report isBudgetExceeded = true');
+
+    // canSpend and reserveSpend must fail-safe closed
+    const canSpend = await ledger.canSpend(0.001);
+    assert.strictEqual(canSpend, false, 'canSpend must return false on corrupted storage');
+
+    const reservation = await ledger.reserveSpend(0.001);
+    assert.strictEqual(reservation, null, 'reserveSpend must be rejected on corrupted storage');
   });
 });
 

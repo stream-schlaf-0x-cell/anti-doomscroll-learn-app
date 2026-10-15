@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,10 @@ import {
   Linking,
   NativeSyntheticEvent,
   NativeScrollEvent,
-  Image
+  Image,
+  Platform,
+  useWindowDimensions,
+  TextInput
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +24,7 @@ import { typography, radius, spacing } from '../../ui/theme';
 import { LinkPreviewModal } from '../../ui/components/LinkPreviewModal';
 import { optimizeImageUrl } from '../../core/utils/imageQuality';
 import { RaindropService } from '../../core/raindrop/raindropService';
+import { copyToClipboard } from '../../core/export/craftExport';
 
 export const ReaderScreen: React.FC = () => {
   const {
@@ -36,14 +40,22 @@ export const ReaderScreen: React.FC = () => {
     toggleSaveItem,
     updateReadingProgress,
     flushReadingProgress,
-    setFeedback
+    setFeedback,
+    addNote
   } = useApp();
+
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 1024;
 
   const [scrollPercent, setScrollPercent] = useState<number>(0);
   const [contentHeight, setContentHeight] = useState<number>(0);
   const [isRaindropSaved, setIsRaindropSaved] = useState<boolean>(false);
+  const [craftCopied, setCraftCopied] = useState<boolean>(false);
   const [layoutHeight, setLayoutHeight] = useState<number>(0);
   const [previewTarget, setPreviewTarget] = useState<{ visible: boolean; url: string; title: string; publisher: string } | null>(null);
+  const [noteText, setNoteText] = useState<string>('');
+  const [selectedTag, setSelectedTag] = useState<'einwand' | 'unterricht' | 'these' | 'notiz'>('einwand');
+  const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
   const scrollViewRef = useRef<ScrollView>(null);
 
   // Flush throttled progress on unmount
@@ -53,10 +65,42 @@ export const ReaderScreen: React.FC = () => {
     };
   }, [flushReadingProgress]);
 
-  const handleClose = async () => {
+  const handleClose = useCallback(async () => {
     await flushReadingProgress();
     closeArticle();
-  };
+  }, [flushReadingProgress, closeArticle]);
+
+  // Web Keyboard Shortcuts: Escape to close, s to save/bookmark
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        void handleClose();
+      } else if (e.key === 's' || e.key === 'S') {
+        if (selectedArticle) {
+          e.preventDefault();
+          toggleSaveItem(selectedArticle.id);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedArticle, toggleSaveItem, handleClose]);
 
   if (!selectedArticle) {
     return (
@@ -174,6 +218,329 @@ export const ReaderScreen: React.FC = () => {
 
   const remainingMinutes = Math.max(1, Math.round((1 - scrollPercent / 100) * selectedArticle.estimatedReadingMinutes));
 
+  const handleCopyToCraft = async () => {
+    if (!selectedArticle) return;
+    const publisher = selectedArticle.sourceReferences[0]?.publisher || 'Fachpublikation';
+    const author = selectedArticle.sourceReferences[0]?.author || selectedArticle.sourceBroadcasterName || 'Redaktion atmen';
+    const originalUrl = selectedArticle.sourceReferences[0]?.originalUrl || selectedArticle.canonicalUrl || '';
+    const dateStr = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+    let md = `# ${selectedArticle.title}\n`;
+    if (selectedArticle.subtitle) {
+      md += `*${selectedArticle.subtitle}*\n\n`;
+    }
+    md += `**Quelle**: [${publisher}](${originalUrl}) • **Autor**: ${author} • **Thema**: ${selectedArticle.primaryTopic || 'allgemein'} • **Gelesen**: ${dateStr}\n\n`;
+
+    if (selectedArticle.keyInsight) {
+      md += `> **💡 Kernpunkt**: „${selectedArticle.keyInsight}“\n\n`;
+    }
+
+    if (selectedArticle.feedText) {
+      md += `## ⚡ Kurz-Check\n${selectedArticle.feedText}\n\n`;
+    }
+
+    md += `## 📖 Ausführliche Lektüre\n${fullArticleText}\n\n`;
+
+    if (selectedArticle.deepeningOptions?.counterArgument) {
+      md += `> **⚖️ Dialektische Gegenposition**: ${selectedArticle.deepeningOptions.counterArgument}\n\n`;
+    }
+
+    if (selectedArticle.deepeningOptions?.didacticSeed) {
+      md += `> **🏫 Unterrichts-Impuls**: ${selectedArticle.deepeningOptions.didacticSeed}\n\n`;
+    }
+
+    const userNotes = currentInteraction?.userNotes || [];
+    if (userNotes.length > 0) {
+      md += `## ✍️ Eigene Reflexionen & Sparring\n\n`;
+      for (const note of userNotes) {
+        const tagLabel = note.tag === 'einwand'
+          ? '⚡ Einwand'
+          : note.tag === 'unterricht'
+          ? '🏫 Unterricht'
+          : note.tag === 'these'
+          ? '💡 Eigene These'
+          : '📝 Notiz';
+        const noteDate = new Date(note.createdAt).toLocaleDateString('de-DE', {
+          hour: '2-digit',
+          minute: '2-digit',
+          day: '2-digit',
+          month: '2-digit'
+        });
+        md += `### [${tagLabel}] (${noteDate})\n${note.text}\n\n`;
+        if (note.sparringReply) {
+          md += `> **${note.sparringReply.authorHandle}** (${note.sparringReply.authorBadge || 'Sparring'}):\n> ${note.sparringReply.text}\n\n`;
+        }
+      }
+    }
+
+    md += `---\n*Exportiert aus [atmen](https://atmen.app) — Anti-Doomscroll Knowledge Environment*\n`;
+
+    const ok = await copyToClipboard(md);
+    if (ok) {
+      setCraftCopied(true);
+      setTimeout(() => setCraftCopied(false), 2500);
+    }
+  };
+
+  const handleSaveNote = async () => {
+    if (!noteText.trim() || !selectedArticle) return;
+    setIsSubmittingNote(true);
+    try {
+      await addNote(selectedArticle.id, noteText.trim(), selectedTag);
+      setNoteText('');
+    } finally {
+      setIsSubmittingNote(false);
+    }
+  };
+
+  const userNotes = currentInteraction?.userNotes || [];
+
+  const renderDiscussionThread = () => {
+    const comments = selectedArticle.comments || [];
+    if (comments.length === 0) return null;
+
+    return (
+      <View style={[styles.discussionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <View style={styles.discussionHeaderRow}>
+          <Ionicons name="chatbubbles-outline" size={17} color={colors.accent} style={{ marginRight: 8 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.discussionTitle, { color: colors.textPrimary }]}>
+              Dialektischer Diskurs & Sparring ({comments.length})
+            </Text>
+            <Text style={[styles.discussionSubtitle, { color: colors.textMuted }]}>
+              Transparente Sparring-Beiträge aus unterschiedlichen Fachperspektiven (ohne künstliche Upvotes).
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.commentsList}>
+          {comments.map((comment) => (
+            <View
+              key={comment.id}
+              style={[styles.commentCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+            >
+              <View style={styles.commentHeader}>
+                <View style={styles.commentAuthorRow}>
+                  <Text style={[styles.commentAuthor, { color: colors.textPrimary }]}>
+                    {comment.authorHandle}
+                  </Text>
+                  {comment.authorBadge && (
+                    <View style={[styles.commentBadge, { backgroundColor: colors.accentSubtle }]}>
+                      <Text style={[styles.commentBadgeText, { color: colors.accent }]}>
+                        {comment.authorBadge}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.commentMetaRight}>
+                  <Text style={[styles.commentScore, { color: colors.textMuted }]}>
+                    ▲ {comment.score}
+                  </Text>
+                  <Text style={[styles.commentTime, { color: colors.textMuted }]}>
+                    {comment.timeAgo}
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.commentText, { color: colors.textSecondary }]}>
+                {comment.text}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
+  const renderNotesAndCraftSidebar = () => {
+    return (
+      <View style={styles.sidebarStickyWrapper}>
+        {/* Craft 1-Click Export Card */}
+        <View style={[styles.craftExportCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+          <View style={styles.craftExportHeader}>
+            <View style={[styles.craftExportIconBox, { backgroundColor: craftCopied ? '#10B98120' : colors.accentSubtle }]}>
+              <Ionicons
+                name={craftCopied ? 'checkmark-circle' : 'clipboard-outline'}
+                size={18}
+                color={craftCopied ? '#10B981' : colors.accent}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.craftExportTitle, { color: colors.textPrimary }]}>
+                Wissen für Craft & PKM
+              </Text>
+              <Text style={[styles.craftExportSubtitle, { color: colors.textMuted }]}>
+                Sauberes Markdown inkl. Thesen & Sparring
+              </Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            onPress={handleCopyToCraft}
+            style={[
+              styles.craftExportBtn,
+              {
+                backgroundColor: craftCopied ? '#10B981' : colors.accent,
+                borderColor: craftCopied ? '#10B981' : colors.accent
+              }
+            ]}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Artikel strukturiert für Craft in die Zwischenablage kopieren"
+          >
+            <Ionicons
+              name={craftCopied ? 'checkmark' : 'copy-outline'}
+              size={15}
+              color="#FFFFFF"
+              style={{ marginRight: 6 }}
+            />
+            <Text style={styles.craftExportBtnText}>
+              {craftCopied ? 'In Zwischenablage kopiert!' : '📋 Für Craft kopieren'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Quick Note Composer */}
+        <View style={[styles.composerCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+          <View style={styles.composerHeader}>
+            <Ionicons name="pencil-outline" size={17} color={colors.accent} style={{ marginRight: 6 }} />
+            <Text style={[styles.composerTitle, { color: colors.textPrimary }]}>
+              Reflexion & Sparring
+            </Text>
+          </View>
+          <Text style={[styles.composerSubtitle, { color: colors.textMuted }]}>
+            Formuliere einen Einwand oder Unterrichtsimpuls. Das Sparring-Modell antwortet sokratisch.
+          </Text>
+
+          {/* Tag Selector */}
+          <View style={styles.tagSelectorRow}>
+            {(
+              [
+                { id: 'einwand', label: '⚡ Einwand' },
+                { id: 'unterricht', label: '🏫 Unterricht' },
+                { id: 'these', label: '💡 These' },
+                { id: 'notiz', label: '📝 Notiz' }
+              ] as const
+            ).map((t) => {
+              const isSelected = selectedTag === t.id;
+              return (
+                <TouchableOpacity
+                  key={t.id}
+                  onPress={() => setSelectedTag(t.id)}
+                  style={[
+                    styles.tagSelectorPill,
+                    {
+                      backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
+                      borderColor: isSelected ? colors.accent : colors.borderSubtle
+                    }
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.tagSelectorText,
+                      { color: isSelected ? '#FFFFFF' : colors.textSecondary }
+                    ]}
+                  >
+                    {t.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Note Input */}
+          <TextInput
+            style={[
+              styles.composerInput,
+              {
+                color: colors.textPrimary,
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: colors.borderSubtle
+              }
+            ]}
+            placeholder="Kritischer Gedanke, These oder Praxisbezug…"
+            placeholderTextColor={colors.textMuted}
+            value={noteText}
+            onChangeText={setNoteText}
+            multiline
+            numberOfLines={4}
+          />
+
+          <TouchableOpacity
+            onPress={handleSaveNote}
+            disabled={!noteText.trim() || isSubmittingNote}
+            style={[
+              styles.composerSubmitBtn,
+              {
+                backgroundColor: !noteText.trim() || isSubmittingNote ? colors.surfaceSecondary : colors.accent,
+                opacity: !noteText.trim() || isSubmittingNote ? 0.6 : 1
+              }
+            ]}
+          >
+            <Text
+              style={[
+                styles.composerSubmitText,
+                { color: !noteText.trim() || isSubmittingNote ? colors.textMuted : '#FFFFFF' }
+              ]}
+            >
+              {isSubmittingNote ? 'Generiere Sparring…' : 'Speichern & Sparring anfordern'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* User Notes & Sparring Replies List */}
+        {userNotes.length > 0 && (
+          <View style={[styles.savedNotesCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            <Text style={[styles.savedNotesHeader, { color: colors.textPrimary }]}>
+              Gespeicherte Notizen ({userNotes.length})
+            </Text>
+            {userNotes.map((note) => {
+              const tagLabel = note.tag === 'einwand'
+                ? '⚡ Einwand'
+                : note.tag === 'unterricht'
+                ? '🏫 Unterricht'
+                : note.tag === 'these'
+                ? '💡 Eigene These'
+                : '📝 Notiz';
+              return (
+                <View
+                  key={note.id}
+                  style={[styles.userNoteItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                >
+                  <View style={styles.userNoteTop}>
+                    <View style={[styles.userNoteTag, { backgroundColor: colors.accentSubtle }]}>
+                      <Text style={[styles.userNoteTagText, { color: colors.accent }]}>{tagLabel}</Text>
+                    </View>
+                    <Text style={[styles.userNoteDate, { color: colors.textMuted }]}>
+                      {new Date(note.createdAt).toLocaleDateString('de-DE', { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  </View>
+                  <Text style={[styles.userNoteText, { color: colors.textPrimary }]}>{note.text}</Text>
+
+                  {/* AI Sparring Reply Callout */}
+                  {note.sparringReply && (
+                    <View style={[styles.sparringReplyBox, { borderLeftColor: colors.accent, backgroundColor: colors.surface }]}>
+                      <View style={styles.sparringAuthorRow}>
+                        <Text style={[styles.sparringAuthor, { color: colors.accent }]}>
+                          {note.sparringReply.authorHandle}
+                        </Text>
+                        <Text style={[styles.sparringBadge, { color: colors.textMuted }]}>
+                          • {note.sparringReply.authorBadge || 'Sparring'}
+                        </Text>
+                      </View>
+                      <Text style={[styles.sparringReplyText, { color: colors.textSecondary }]}>
+                        {note.sparringReply.text}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
       {/* Pinned Reading Progress Bar */}
@@ -183,7 +550,7 @@ export const ReaderScreen: React.FC = () => {
 
       {/* Magazine Editorial Top Action Bar */}
       <View style={[styles.navBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
-        <View style={styles.navBarInner}>
+        <View style={[styles.navBarInner, isDesktop && styles.desktopNavBarInner]}>
           {/* Back Pill with originating Space */}
           <TouchableOpacity
             onPress={handleClose}
@@ -273,6 +640,31 @@ export const ReaderScreen: React.FC = () => {
               />
             </TouchableOpacity>
 
+            {/* Craft 1-Click Export Pill Button */}
+            <TouchableOpacity
+              onPress={handleCopyToCraft}
+              style={[
+                styles.navCraftBtn,
+                {
+                  backgroundColor: craftCopied ? '#10B98122' : colors.surfaceSecondary,
+                  borderColor: craftCopied ? '#10B981' : colors.borderSubtle
+                }
+              ]}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel="In Zwischenablage für Craft kopieren"
+            >
+              <Ionicons
+                name={craftCopied ? 'checkmark' : 'clipboard-outline'}
+                size={13}
+                color={craftCopied ? '#10B981' : colors.accent}
+                style={{ marginRight: 4 }}
+              />
+              <Text style={[styles.navCraftBtnText, { color: craftCopied ? '#10B981' : colors.textPrimary }]}>
+                {craftCopied ? 'Kopiert!' : 'Craft'}
+              </Text>
+            </TouchableOpacity>
+
             {/* Raindrop.io 1-Click Export Button */}
             <TouchableOpacity
               onPress={handleSaveToRaindrop}
@@ -301,9 +693,11 @@ export const ReaderScreen: React.FC = () => {
         onContentSizeChange={(_w, h) => setContentHeight(h)}
         onLayout={(e) => setLayoutHeight(e.nativeEvent.layout.height)}
       >
-        <View style={styles.scrollInner}>
-          {/* Magazine Kicker Header */}
-          <View style={styles.kickerRow}>
+        <View style={[styles.scrollInner, isDesktop && styles.desktopScrollInner]}>
+          <View style={isDesktop ? styles.desktopTwoColContainer : undefined}>
+            <View style={isDesktop ? styles.desktopLeftCol : undefined}>
+              {/* Magazine Kicker Header */}
+              <View style={styles.kickerRow}>
             <Text style={[styles.kickerText, { color: colors.accent }]}>
               {(selectedArticle.space || 'C/RECHERCHE').toUpperCase()} • ESSAY & ANALYSE
             </Text>
@@ -496,6 +890,9 @@ export const ReaderScreen: React.FC = () => {
 
           {/* Interactive Socratic Sparring Salon (Vertiefung & Didaktik) */}
           <DeepeningCard options={selectedArticle.deepeningOptions} />
+
+          {/* Socratic Discussion & Sparring Thread */}
+          {renderDiscussionThread()}
 
           {/* Honest Source Provenance Box */}
           <View style={[styles.provenanceBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
@@ -735,6 +1132,22 @@ export const ReaderScreen: React.FC = () => {
               </View>
             </View>
           </View>
+            </View>
+
+            {/* Desktop Sticky Right Sidebar */}
+            {isDesktop && (
+              <View style={styles.desktopRightCol}>
+                {renderNotesAndCraftSidebar()}
+              </View>
+            )}
+          </View>
+
+          {/* Mobile Notes & Craft Section below Article */}
+          {!isDesktop && (
+            <View style={styles.mobileNotesContainer}>
+              {renderNotesAndCraftSidebar()}
+            </View>
+          )}
         </View>
       </ScrollView>
 
@@ -1263,5 +1676,283 @@ const styles = StyleSheet.create({
   feedbackMiniPillText: {
     fontSize: 11,
     fontWeight: '600'
+  },
+  desktopNavBarInner: {
+    maxWidth: 1160
+  },
+  desktopScrollInner: {
+    maxWidth: 1160
+  },
+  desktopTwoColContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xl,
+    width: '100%'
+  },
+  desktopLeftCol: {
+    flex: 1,
+    maxWidth: 720
+  },
+  desktopRightCol: {
+    width: 360,
+    maxWidth: 380
+  },
+  sidebarStickyWrapper: {
+    gap: spacing.lg,
+    width: '100%'
+  },
+  mobileNotesContainer: {
+    marginTop: spacing.xl,
+    gap: spacing.lg,
+    width: '100%'
+  },
+  navCraftBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  navCraftBtnText: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  craftExportCard: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  craftExportHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm
+  },
+  craftExportIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10
+  },
+  craftExportTitle: {
+    fontSize: 14,
+    fontWeight: '800'
+  },
+  craftExportSubtitle: {
+    fontSize: 11,
+    marginTop: 1
+  },
+  craftExportBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    marginTop: 4
+  },
+  craftExportBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  composerCard: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  composerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4
+  },
+  composerTitle: {
+    fontSize: 14,
+    fontWeight: '800'
+  },
+  composerSubtitle: {
+    fontSize: 11,
+    lineHeight: 15,
+    marginBottom: spacing.sm
+  },
+  tagSelectorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: spacing.sm
+  },
+  tagSelectorPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  tagSelectorText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  composerInput: {
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    fontSize: 13,
+    minHeight: 80,
+    textAlignVertical: 'top',
+    marginBottom: spacing.sm
+  },
+  composerSubmitBtn: {
+    paddingVertical: 9,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  composerSubmitText: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  savedNotesCard: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  savedNotesHeader: {
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: spacing.sm
+  },
+  userNoteItem: {
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    marginBottom: spacing.sm
+  },
+  userNoteTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4
+  },
+  userNoteTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.xs
+  },
+  userNoteTagText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  userNoteDate: {
+    fontSize: 10
+  },
+  userNoteText: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 6
+  },
+  sparringReplyBox: {
+    borderLeftWidth: 2.5,
+    paddingLeft: 8,
+    paddingVertical: 4,
+    marginTop: 4,
+    borderRadius: radius.xs
+  },
+  sparringAuthorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2
+  },
+  sparringAuthor: {
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  sparringBadge: {
+    fontSize: 10,
+    marginLeft: 4
+  },
+  sparringReplyText: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontStyle: 'italic'
+  },
+  discussionBox: {
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  discussionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: spacing.md
+  },
+  discussionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    marginBottom: 2
+  },
+  discussionSubtitle: {
+    fontSize: 11,
+    lineHeight: 15
+  },
+  commentsList: {
+    gap: spacing.sm
+  },
+  commentCard: {
+    padding: spacing.md,
+    borderRadius: radius.sm,
+    borderWidth: 1
+  },
+  commentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  commentAuthorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  commentAuthor: {
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  commentBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.xs
+  },
+  commentBadgeText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  commentMetaRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  commentScore: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  commentTime: {
+    fontSize: 11
+  },
+  commentText: {
+    fontSize: 13,
+    lineHeight: 19
+  },
+  repliesList: {
+    marginTop: spacing.sm,
+    paddingLeft: spacing.md,
+    gap: spacing.xs
+  },
+  replyCard: {
+    padding: spacing.sm,
+    borderRadius: radius.xs,
+    borderWidth: 0.5
   }
 });

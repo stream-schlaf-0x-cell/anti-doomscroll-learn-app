@@ -25,10 +25,13 @@ function enrichSocialFeedItem(rawItem: FeedItem): FeedItem {
   const space = item.space || topicMeta?.space || `c/${topic}`;
   const flair = item.flair || topicMeta?.flair || '◈ Recherche';
   const imageUrl = item.imageUrl || getCuratedImageForTopic(topic, item.id);
-  // Grounded: No simulated upvotes or artificial community numbers. Personal voting is tracked locally.
-  const upvotesCount = item.upvotesCount ?? 0;
-  // Grounded: Only retain authentic comments with origin/link, zero synthetic comments.
-  const comments = item.comments ?? [];
+  // Grounded: Zero fake upvotes. Starts at 0; personal user votes are tracked locally via interactions.
+  const upvotesCount = 0;
+  // Grounded: Retain authentic comments and ensure zero fake scores
+  const comments = (item.comments ?? []).map(c => ({
+    ...c,
+    score: 0
+  }));
 
   return {
     ...item,

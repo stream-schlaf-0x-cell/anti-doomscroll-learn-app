@@ -22,7 +22,8 @@ export interface LearningTelemetryEvent {
 export interface LearningEngineState {
   events: LearningTelemetryEvent[];
   domainTrustScores: Record<string, number>; // Domain -> trust multiplier (e.g. 1.25)
-  processedInteractions: Record<string, string>; // itemId -> eventType (idempotency key)
+  processedInteractions: Record<string, string>; // Legacy compatibility: itemId -> last eventType
+  appliedInteractions: Record<string, boolean>; // Composite idempotency key: `${itemId}:${eventType}` -> true
   totalLearningCycles: number;
   lastTunedAt: string;
 }
@@ -51,6 +52,7 @@ export class RecursiveLearningEngine {
             'cdm.link': 1.15
           },
           processedInteractions: {},
+          appliedInteractions: {},
           totalLearningCycles: 0,
           lastTunedAt: new Date().toISOString()
         };
@@ -59,12 +61,21 @@ export class RecursiveLearningEngine {
       if (!parsed.processedInteractions) {
         parsed.processedInteractions = {};
       }
+      if (!parsed.appliedInteractions) {
+        parsed.appliedInteractions = {};
+        for (const [itemId, evt] of Object.entries(parsed.processedInteractions)) {
+          if (typeof evt === 'string') {
+            parsed.appliedInteractions[`${itemId}:${evt}`] = true;
+          }
+        }
+      }
       return parsed;
     } catch {
       return {
         events: [],
         domainTrustScores: {},
         processedInteractions: {},
+        appliedInteractions: {},
         totalLearningCycles: 0,
         lastTunedAt: new Date().toISOString()
       };
@@ -84,8 +95,10 @@ export class RecursiveLearningEngine {
     const state = await this.getEngineState();
     const primaryTopic = item.primaryTopic || 'philosophy_ethics';
 
-    // Idempotency check: if this specific interaction was already applied to this item, return without re-applying delta
-    if (state.processedInteractions[item.id] === eventType) {
+    // Idempotency check: composite key ensures the same event type cannot be re-applied to the same item,
+    // even if interleaving interactions (e.g. upvote -> note -> upvote) occur.
+    const interactionKey = `${item.id}:${eventType}`;
+    if (state.appliedInteractions?.[interactionKey]) {
       return { updatedProfile: profile, event: null };
     }
 
@@ -152,7 +165,14 @@ export class RecursiveLearningEngine {
       state.domainTrustScores[domain] = Math.max(0.5, Math.min(2.0, currentTrust + trustDelta));
     }
 
-    // Record idempotency token
+    // Record idempotency tokens
+    if (!state.appliedInteractions) {
+      state.appliedInteractions = {};
+    }
+    state.appliedInteractions[interactionKey] = true;
+    if (!state.processedInteractions) {
+      state.processedInteractions = {};
+    }
     state.processedInteractions[item.id] = eventType;
 
     state.events.unshift(event);
