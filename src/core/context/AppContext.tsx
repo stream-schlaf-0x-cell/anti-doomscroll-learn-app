@@ -20,11 +20,15 @@ import { WeatherService, WeatherData } from '../weather/weatherService';
 import { DailyGenerationService } from '../daily/dailyGenerationService';
 import { ContinuousLiveNewsService } from '../data/continuousLiveNewsService';
 import { ThemeColors, ThemePalette, getThemeColors } from '../../ui/theme';
+import { OpenWebHarvester } from '../ingestion/openWebHarvester';
+import { appearanceHistoryService, AppearanceRecord } from '../data/appearanceHistoryService';
 
 export type StartupState =
   | { status: 'loading' }
   | { status: 'ready' }
   | { status: 'error'; message: string; isCorrupt?: boolean; canReset?: boolean };
+
+export type FeedOption = 'infinite' | 'daily' | 'live_news' | 'classics' | 'history';
 
 interface AppContextValue {
   profile: UserProfile;
@@ -40,8 +44,15 @@ interface AppContextValue {
   palette: ThemePalette;
   activeTab: 'feed' | 'library' | 'settings';
   setActiveTab: (tab: 'feed' | 'library' | 'settings') => void;
-  activeFeedOption: 'daily' | 'live_news' | 'classics';
-  setActiveFeedOption: (option: 'daily' | 'live_news' | 'classics') => void;
+  activeFeedOption: FeedOption;
+  setActiveFeedOption: (option: FeedOption) => void;
+  openWebItems: FeedItem[];
+  historyItems: { item: FeedItem; record: AppearanceRecord }[];
+  historySortOrder: 'recent' | 'chronological';
+  setHistorySortOrder: (order: 'recent' | 'chronological') => void;
+  refreshHistory: (customOrder?: 'recent' | 'chronological') => Promise<void>;
+  clearAppearanceHistory: () => Promise<void>;
+  recordCardAppearances: (itemIds: string[]) => Promise<void>;
   selectedEditionType: DayEditionType;
   currentEditionType: DayEditionType;
   setSelectedEditionType: (edition: DayEditionType) => void;
@@ -98,7 +109,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [startupState, setStartupState] = useState<StartupState>({ status: 'loading' });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'feed' | 'library' | 'settings'>('feed');
-  const [activeFeedOption, setActiveFeedOption] = useState<'daily' | 'live_news' | 'classics'>('daily');
+  const [activeFeedOption, setActiveFeedOption] = useState<FeedOption>('infinite');
+  const [openWebItems, setOpenWebItems] = useState<FeedItem[]>([]);
+  const [historyItems, setHistoryItems] = useState<{ item: FeedItem; record: AppearanceRecord }[]>([]);
+  const [historySortOrder, setHistorySortOrder] = useState<'recent' | 'chronological'>('recent');
   const [selectedFilter, setSelectedFilter] = useState<string | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
@@ -167,13 +181,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const edition = targetEdition ?? selectedEditionTypeRef.current;
       const seed = customDateSeed ?? activeDateSeedRef.current;
       const offset = customShuffleOffset ?? shuffleSeedRef.current;
-      const [daily, disc] = await Promise.all([
+      const [daily, disc, openWeb] = await Promise.all([
         feedRepository.getEditionFeed(edition, prof, inter, seed, offset),
-        feedRepository.getDiscoveryItems(prof, inter)
+        feedRepository.getDiscoveryItems(prof, inter),
+        OpenWebHarvester.harvestAllOpenWeb()
       ]);
       if (currentVersion === feedRecomputeVersion.current) {
         setDailyEdition(daily);
         setDiscoveryItems(disc);
+        setOpenWebItems(openWeb.allHarvested);
       }
 
       if (edition === 'morning' && prof.editionPreferences?.weatherEnabled !== false) {
@@ -227,6 +243,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     selectedEditionTypeRef.current = edition;
     void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, edition);
   }, [scheduleFeedRecompute]);
+
+  const refreshHistory = useCallback(async (customOrder?: 'recent' | 'chronological') => {
+    try {
+      const allPool = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+      const combinedPool = [...allPool, ...openWebItems];
+      const order = customOrder ?? historySortOrder;
+      const history = await appearanceHistoryService.getHistoryOrderedItems(combinedPool, order);
+      setHistoryItems(history);
+    } catch (err) {
+      console.warn('Fehler beim Laden der Chronik:', err);
+    }
+  }, [historySortOrder, openWebItems]);
+
+  const recordCardAppearances = useCallback(async (itemIds: string[]) => {
+    try {
+      await appearanceHistoryService.recordAppearances(itemIds);
+    } catch {
+      // Ignored
+    }
+  }, []);
+
+  const clearAppearanceHistory = useCallback(async () => {
+    try {
+      await appearanceHistoryService.clearHistory();
+      setHistoryItems([]);
+    } catch {
+      setErrorMessage('Chronik konnte nicht gelöscht werden.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeFeedOption === 'history') {
+      void refreshHistory();
+    }
+  }, [activeFeedOption, refreshHistory]);
 
   // Flush pending reading progress immediately to persistent storage
   const flushReadingProgress = useCallback(async () => {
@@ -854,6 +905,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveTab,
         activeFeedOption,
         setActiveFeedOption,
+        openWebItems,
+        historyItems,
+        historySortOrder,
+        setHistorySortOrder,
+        refreshHistory,
+        clearAppearanceHistory,
+        recordCardAppearances,
         selectedEditionType,
         currentEditionType,
         setSelectedEditionType,

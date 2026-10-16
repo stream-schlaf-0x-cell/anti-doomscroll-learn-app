@@ -121,5 +121,15 @@ export const TOPIC_DIALECTICS: Record<TopicTag, DialecticTemplate> = {
     counterPerspective: 'Ein Übermaß an Hebeln führt oft zur Entfremdung von den tatsächlichen Bedürfnissen der Menschen, für die man arbeitet.',
     challengePrompt: 'An welcher Fertigkeit arbeitest du aus reiner Freude am Können, nicht für schnelles Skalieren?',
     actionableTransfer: 'Widme heute 20 Minuten einer analogen Grundfertigkeit, ohne dabei an Skalierbarkeit zu denken.'
+  },
+  art_aesthetics: {
+    title: 'Gegenstimme: Reine Bildflut vs. auratischer Schock',
+    subtitle: '🎨 Ästhetik-Sparring • Kontrapunkt: Digitale Bildflut vs. echtes Innehalten',
+    feedText: 'Wir konsumieren täglich tausende Bilder im Sekundentakt. Doch verliert das Kunstwerk durch die digitale Reproduzierbarkeit seine Aura – oder öffnet der freie Zugang erst das demokratische Staunen?',
+    articleBody: '> [!NOTE]\n> **🎨 Ästhetik-Transparenz:** Ein kunstphilosophischer Kontrapunkt über Walter Benjamins Aura, Wahrnehmung und die Entschleunigung des Blicks.\n\n### Worum es geht\nOpen-Access-Initiativen großer Museen stellen Meisterwerke gemeinfrei in Gigabit-Auflösung ins Netz. Jeder Pinselstrich von Vermeer oder Hokusai ist auf dem Smartphone-Display zum Greifen nah.\n\n### Warum das wichtig ist\nEin Bild im Scrollen zu überfliegen ist das Gegenteil ästhetischer Erfahrung. Walter Benjamin warnte schon 1935: Die technische Reproduktion nimmt dem Kunstwerk seine Einmaligkeit im Hier und Jetzt – seine Aura. Theodor W. Adorno mahnte, dass Kunst zum bloßen Konsumgut degeneriert, wenn ihr Widerstand gegen die Verwertung verloren geht.\n\n### Die Gegenperspektive\nErst wenn wir vor einem Werk verharren, seine Proportionen auf uns wirken lassen und den Dialog mit der Epoche wagen, wird aus einem Bild ein Erkenntnisakt. Das digitale Archiv ist kein Ersatz für den Museumsbesuch, sondern eine Einladung zur Kontemplation im Alltag.\n\n### Zum Weiterdenken & Ausprobieren\nBetrachte das Kunstwerk heute drei volle Minuten, ohne weiterzuscrollen. Welche Nuance im Schatten oder in der Pinselführung fällt dir erst nach sechzig Sekunden auf?',
+    keyInsight: 'Ästhetische Erkenntnis verlangt Zeit: Erst das beharrliche Verweilen verwandelt eine Bilddatei in eine transformative Kunsterfahrung.',
+    counterPerspective: 'Die endlose digitale Verfügbarkeit von Meisterwerken birgt das Risiko, Kunst auf dekorativen Bildschirm-Hintergrund zu reduzieren und ihren existentiellen Widerstand zu neutralisieren.',
+    challengePrompt: 'Wann hat dich ein Bild oder architektonisches Detail zuletzt wirklich sprachlos innehalten lassen?',
+    actionableTransfer: 'Wähle ein Gemälde aus der Kunst-Galerie, zoome in ein unscheinbares Randdetail und formuliere eine Frage, die der Künstler damit an den Betrachter stellt.'
   }
 };

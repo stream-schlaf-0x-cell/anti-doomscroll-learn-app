@@ -4,7 +4,7 @@
  * and news outlets to serve crisp, high-resolution assets on retina displays.
  */
 
-export function optimizeImageUrl(url?: string): string | undefined {
+export function optimizeImageUrl(url?: string, targetWidth = 1400): string | undefined {
   if (!url || typeof url !== 'string') return undefined;
 
   const trimmed = url.trim();
@@ -13,12 +13,12 @@ export function optimizeImageUrl(url?: string): string | undefined {
   }
 
   try {
-    // 1. Unsplash: Upgrade to high-density 1400px width with 85% quality
+    // 1. Unsplash: Upgrade to high-density targetWidth with 85% quality
     if (trimmed.includes('images.unsplash.com')) {
       const u = new URL(trimmed);
       u.searchParams.set('auto', 'format');
       u.searchParams.set('fit', 'crop');
-      u.searchParams.set('w', '1400');
+      u.searchParams.set('w', String(targetWidth));
       u.searchParams.set('q', '85');
       return u.toString();
     }

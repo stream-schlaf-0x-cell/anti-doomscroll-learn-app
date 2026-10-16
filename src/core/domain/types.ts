@@ -22,7 +22,8 @@ export const TopicTagSchema = z.enum([
   'youtube_gems',        // Kuratierte Video-Essays & Deep Dives
   'book_mastery',        // Buch-Empfehlungen & Erkenntnis-Kompression
   'health_biohacking',   // Schlaf, Neuroplastizität, Fokus & Longevity
-  'opportunities_growth' // Karriere-Hebel, Open-Source & Stipendien
+  'opportunities_growth', // Karriere-Hebel, Open-Source & Stipendien
+  'art_aesthetics'       // Malerei, Fotografie, Architektur & visuelle Kultur
 ]);
 export type TopicTag = z.infer<typeof TopicTagSchema>;
 
@@ -81,6 +82,11 @@ export const TOPIC_METADATA: Record<TopicTag, { label: string; icon: string; des
     label: 'Chancen & Hebel',
     icon: 'trending-up-outline',
     description: 'Stipendien, AI Builder Grants, Open Source Projekte & Hebelpotenziale'
+  },
+  art_aesthetics: {
+    label: 'Kunst & Ästhetik',
+    icon: 'color-palette-outline',
+    description: 'Malerei, Fotografie, Architektur & visuelle Philosophie aus offenen Museumssammlungen'
   }
 };
 
@@ -144,25 +150,31 @@ export const FeedItemFormatSchema = z.enum([
   'meme',                     // High-IQ Meme & Satire
   'youtube_gem',              // Kuratierter YouTube Video-Essay
   'book_masterpiece',         // Buch-Empfehlung & Kern-These
-  'opportunity_radar'         // Chancen-, Gesundheits- & Hebel-Radar
+  'opportunity_radar',        // Chancen-, Gesundheits- & Hebel-Radar
+  'art_showcase'              // Meisterwerke, Gemälde, Fotografie & Bildende Kunst
 ]);
 export type FeedItemFormat = z.infer<typeof FeedItemFormatSchema>;
 
+export const FORMAT_BADGE_MAP: Record<FeedItemFormat, { label: string; icon: string }> = {
+  concise_insight: { label: '⚡︎ Kompaktimpuls', icon: 'flash-outline' },
+  sourced_update: { label: '◈ Recherche & Update', icon: 'newspaper-outline' },
+  creative_idea: { label: '💡 Kreativer Impuls', icon: 'bulb-outline' },
+  intriguing_question: { label: '❓ Denkfrage', icon: 'help-circle-outline' },
+  surprising_connection: { label: '☍ Interdisziplinäre Brücke', icon: 'git-network-outline' },
+  perspective_disagreement: { label: '✦ Philosophische Gegenposition', icon: 'compass-outline' },
+  long_invitation: { label: '📖 Vertiefender Essay', icon: 'book-outline' },
+  meme: { label: '🎭 High-IQ Satire & Meme', icon: 'happy-outline' },
+  youtube_gem: { label: '📺 YouTube Gem & Video-Essay', icon: 'play-circle-outline' },
+  book_masterpiece: { label: '📚 Meisterwerk-Empfehlung', icon: 'library-outline' },
+  opportunity_radar: { label: '🚀 Chancen- & Hebel-Radar', icon: 'trending-up-outline' },
+  art_showcase: { label: '🎨 Kunst & Visuelles', icon: 'color-palette-outline' }
+};
+
 export function formatFeedItemFormat(format?: FeedItemFormat): string {
-  switch (format) {
-    case 'concise_insight': return '⚡︎ Kompaktimpuls';
-    case 'sourced_update': return '◈ Recherche & Update';
-    case 'creative_idea': return '💡 Kreativer Impuls';
-    case 'intriguing_question': return '❓ Denkfrage';
-    case 'surprising_connection': return '☍ Interdisziplinäre Brücke';
-    case 'perspective_disagreement': return '✦ Philosophische Gegenposition';
-    case 'long_invitation': return '📖 Vertiefender Essay';
-    case 'meme': return '🎭 High-IQ Satire & Meme';
-    case 'youtube_gem': return '📺 YouTube Gem & Video-Essay';
-    case 'book_masterpiece': return '📚 Meisterwerk-Empfehlung';
-    case 'opportunity_radar': return '🚀 Chancen- & Hebel-Radar';
-    default: return '✦ Lese-Entdeckung';
+  if (format && format in FORMAT_BADGE_MAP) {
+    return FORMAT_BADGE_MAP[format].label;
   }
+  return '✦ Lese-Entdeckung';
 }
 
 // Phase 2 Evidence Tiers
@@ -380,6 +392,16 @@ export const FeedItemSchema = z.object({
     actionStep: z.string()
   }).optional(),
 
+  artMeta: z.object({
+    artist: z.string(),
+    year: z.string().optional(),
+    medium: z.string().optional(),
+    museum: z.string(),
+    highResImageUrl: z.string(),
+    styleMovement: z.string().optional(),
+    aestheticImpulse: z.string()
+  }).optional(),
+
   awardsCount: z.object({
     gold: z.number().int().default(0),
     brain: z.number().int().default(0),
@@ -401,6 +423,17 @@ export const FeedItemSchema = z.object({
   imageCredit: z.string().optional(),
   relatedCrossReferences: z.array(RelatedCrossReferenceSchema).optional()
 });
+export const ArtMetaSchema = z.object({
+  artist: z.string(),
+  year: z.string().optional(),
+  medium: z.string().optional(),
+  museum: z.string(),
+  highResImageUrl: z.string(),
+  styleMovement: z.string().optional(),
+  aestheticImpulse: z.string()
+});
+export type ArtMeta = z.infer<typeof ArtMetaSchema>;
+
 export type FeedItem = z.infer<typeof FeedItemSchema>;
 
 export const TOPIC_SPACE_MAP: Record<TopicTag, {
@@ -498,6 +531,14 @@ export const TOPIC_SPACE_MAP: Record<TopicTag, {
     icon: 'trending-up-outline',
     color: '#06B6D4',
     bgTint: 'rgba(6, 182, 212, 0.12)'
+  },
+  art_aesthetics: {
+    space: 'c/kunst_galerie',
+    name: 'Kunst, Ästhetik & Visuelle Kultur',
+    flair: '🎨 Meisterwerk',
+    icon: 'color-palette-outline',
+    color: '#D97706',
+    bgTint: 'rgba(217, 119, 6, 0.12)'
   }
 };
 

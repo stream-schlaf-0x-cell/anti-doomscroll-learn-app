@@ -83,7 +83,8 @@ describe('Feed Batching & Discovery Partitioning Invariants', () => {
       meme: '🎭 High-IQ Satire & Meme',
       youtube_gem: '📺 YouTube Gem & Video-Essay',
       book_masterpiece: '📚 Meisterwerk-Empfehlung',
-      opportunity_radar: '🚀 Chancen- & Hebel-Radar'
+      opportunity_radar: '🚀 Chancen- & Hebel-Radar',
+      art_showcase: '🎨 Kunst & Visuelles'
     };
 
     for (const [format, expectedLabel] of Object.entries(formats)) {

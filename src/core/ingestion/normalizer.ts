@@ -99,7 +99,7 @@ export function pureJsSha256(ascii: string): string {
  * Pure JavaScript implementation with zero Node.js dependencies for cross-platform Expo Web & iOS compatibility.
  */
 export function generateContentHash(canonicalUrl: string, title: string, text: string): string {
-  const normalizedPayload = `${canonicalUrl.toLowerCase().trim()}|${title.toLowerCase().trim()}|${text.slice(0, 300).trim()}`;
+  const normalizedPayload = `${(canonicalUrl || '').toLowerCase().trim()}|${(title || '').toLowerCase().trim()}|${(text || '').slice(0, 300).trim()}`;
   return pureJsSha256(normalizedPayload);
 }
 
@@ -129,12 +129,29 @@ export function normalizeFeedEntry(entry: RawFeedEntry, source: RawFeedSource): 
 
   const contentHash = generateContentHash(canonicalUrl, entry.title, entry.summary);
 
-  // Standalone feed reading: use summary or first two paragraphs
-  const summaryParagraphs = entry.summary.split('\n\n').filter(Boolean);
-  const feedText = summaryParagraphs.slice(0, 2).join('\n\n') || entry.title;
-  const subtitle = entry.summary.trim().length > 0
-    ? (entry.summary.slice(0, 140) + (entry.summary.length > 140 ? '…' : ''))
-    : `Aktueller Beitrag aus ${source.name}`;
+  // Standalone feed reading: generate distinct subtitle and feedText so they never duplicate
+  const summaryParagraphs = entry.summary.split('\n\n').map(p => p.trim()).filter(Boolean);
+
+  let subtitle: string;
+  let feedText: string;
+
+  if (summaryParagraphs.length >= 2) {
+    subtitle = summaryParagraphs[0].slice(0, 140) + (summaryParagraphs[0].length > 140 ? '…' : '');
+    feedText = summaryParagraphs.slice(1, 3).join('\n\n');
+  } else if (summaryParagraphs.length === 1) {
+    const rawSum = summaryParagraphs[0];
+    const sentences = rawSum.split(/(?<=[.!?])\s+/).filter(Boolean);
+    if (sentences.length >= 2) {
+      subtitle = sentences[0].slice(0, 140) + (sentences[0].length > 140 ? '…' : '');
+      feedText = sentences.slice(1).join(' ');
+    } else {
+      subtitle = `Aktueller Beitrag aus ${source.name}`;
+      feedText = rawSum;
+    }
+  } else {
+    subtitle = `Aktueller Beitrag aus ${source.name}`;
+    feedText = entry.title;
+  }
 
   const author = entry.author || source.defaultAuthor || source.name;
   const isChallenging = source.isChallengingPerspective ?? false;

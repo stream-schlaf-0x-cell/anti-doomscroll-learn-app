@@ -153,6 +153,21 @@ export const DEFAULT_SUBCHANNELS: Subchannel[] = [
     pinned: false,
     antithesisPrompt: 'Welche reale Absurdität wird durch diese Pointe auf den Punkt gebracht?',
     memberCount: 2150
+  },
+  {
+    id: 'space-art',
+    handle: 'c/kunst_galerie',
+    title: 'Kunst, Ästhetik & Visuelle Kultur',
+    description: 'Malerei, Fotografie, Architektur & visuelle Philosophie aus offenen Museumssammlungen.',
+    icon: 'color-palette-outline',
+    flair: '🎨 Meisterwerk',
+    primaryTopic: 'art_aesthetics',
+    accentColor: '#D97706',
+    isCustom: false,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    pinned: true,
+    antithesisPrompt: 'Inwiefern transformiert diese ästhetische Form unsere Wahrnehmung der Wirklichkeit?',
+    memberCount: 1680
   }
 ];
 

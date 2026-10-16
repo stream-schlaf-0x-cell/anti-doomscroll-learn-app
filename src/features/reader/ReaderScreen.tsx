@@ -759,23 +759,85 @@ export const ReaderScreen: React.FC = () => {
             </View>
           </View>
 
-          {/* Hero Visual Image */}
-          {selectedArticle.imageUrl && (
-            <View style={[styles.readerImageContainer, { borderColor: colors.borderSubtle }]}>
-              <Image
-                source={{ uri: optimizeImageUrl(selectedArticle.imageUrl) || selectedArticle.imageUrl }}
-                style={styles.readerHeroImage}
-                resizeMode="cover"
-              />
-              <View style={[styles.imageCaptionBar, { backgroundColor: colors.surfaceSecondary }]}>
-                <Ionicons name="camera-outline" size={12} color={colors.textMuted} style={{ marginRight: 6 }} />
-                <Text style={[styles.imageCaptionText, { color: colors.textMuted }]} numberOfLines={1}>
-                  {selectedArticle.imageCredit
-                    ? `Bildnachweis: ${selectedArticle.imageCredit} • Quelle: ${publisherDisplay}`
-                    : `Titel-Illustration • Quelle: ${publisherDisplay}`}
-                </Text>
+          {/* Museum-Grade Artwork Showcase Header */}
+          {(selectedArticle.primaryTopic === 'art_aesthetics' || !!selectedArticle.artMeta) ? (
+            <View style={[styles.readerArtShowcaseContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+              <View style={[styles.readerArtImageWrapper, { height: isDesktop ? 520 : 380 }]}>
+                <Image
+                  source={{ uri: optimizeImageUrl(selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl || '', 1600) }}
+                  style={styles.readerArtFullImage}
+                  resizeMode="contain"
+                />
+              </View>
+
+              <View style={[styles.readerArtCuratorialPlaque, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.borderSubtle }]}>
+                <View style={styles.readerArtPlaqueHeader}>
+                  <Ionicons name="color-palette" size={18} color="#D97706" style={{ marginRight: 8 }} />
+                  <Text style={[styles.readerArtPlaqueArtist, { color: colors.textPrimary }]}>
+                    {selectedArticle.artMeta?.artist || authorDisplay}
+                  </Text>
+                  {selectedArticle.artMeta?.year && (
+                    <Text style={[styles.readerArtPlaqueYear, { color: colors.textMuted }]}>
+                      • {selectedArticle.artMeta.year}
+                    </Text>
+                  )}
+                </View>
+
+                <View style={styles.readerArtDetailsGrid}>
+                  <View style={styles.readerArtDetailCol}>
+                    <Text style={[styles.readerArtDetailLabel, { color: colors.textMuted }]}>SAMMLUNG</Text>
+                    <Text style={[styles.readerArtDetailVal, { color: colors.textPrimary }]}>
+                      {selectedArticle.artMeta?.museum || publisherDisplay}
+                    </Text>
+                  </View>
+                  {selectedArticle.artMeta?.medium && (
+                    <View style={styles.readerArtDetailCol}>
+                      <Text style={[styles.readerArtDetailLabel, { color: colors.textMuted }]}>MEDIUM / TECHNIK</Text>
+                      <Text style={[styles.readerArtDetailVal, { color: colors.textPrimary }]}>
+                        {selectedArticle.artMeta.medium}
+                      </Text>
+                    </View>
+                  )}
+                  {selectedArticle.artMeta?.styleMovement && (
+                    <View style={styles.readerArtDetailCol}>
+                      <Text style={[styles.readerArtDetailLabel, { color: colors.textMuted }]}>EPOCHE / STIL</Text>
+                      <Text style={[styles.readerArtDetailVal, { color: colors.textPrimary }]}>
+                        {selectedArticle.artMeta.styleMovement}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {selectedArticle.artMeta?.aestheticImpulse && (
+                  <View style={[styles.readerArtImpulseBox, { backgroundColor: colors.surface, borderLeftColor: '#D97706' }]}>
+                    <Text style={[styles.readerArtImpulseLabel, { color: '#D97706' }]}>
+                      ÄSTHETISCHER IMPULS & KONTEMPLATION
+                    </Text>
+                    <Text style={[styles.readerArtImpulseText, { color: colors.textPrimary }]}>
+                      {selectedArticle.artMeta.aestheticImpulse}
+                    </Text>
+                  </View>
+                )}
               </View>
             </View>
+          ) : (
+            selectedArticle.imageUrl && (
+              <View style={[styles.readerImageContainer, { borderColor: colors.borderSubtle }]}>
+                <Image
+                  source={{ uri: optimizeImageUrl(selectedArticle.imageUrl) || selectedArticle.imageUrl }}
+                  style={styles.readerHeroImage}
+                  resizeMode="cover"
+                />
+                <View style={[styles.imageCaptionBar, { backgroundColor: colors.surfaceSecondary }]}>
+                  <Ionicons name="camera-outline" size={12} color={colors.textMuted} style={{ marginRight: 6 }} />
+                  <Text style={[styles.imageCaptionText, { color: colors.textMuted }]} numberOfLines={1}>
+                    {selectedArticle.imageCredit
+                      ? `Bildnachweis: ${selectedArticle.imageCredit} • Quelle: ${publisherDisplay}`
+                      : `Titel-Illustration • Quelle: ${publisherDisplay}`}
+                  </Text>
+                </View>
+              </View>
+            )
           )}
 
           {/* Key Insight Pull Quote (Aeon style) */}
@@ -2195,5 +2257,74 @@ const styles = StyleSheet.create({
   crossRefActionText: {
     fontSize: 11,
     fontWeight: '700'
+  },
+  readerArtShowcaseContainer: {
+    marginVertical: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: 'hidden'
+  },
+  readerArtImageWrapper: {
+    width: '100%',
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  readerArtFullImage: {
+    width: '100%',
+    height: '100%'
+  },
+  readerArtCuratorialPlaque: {
+    padding: spacing.lg,
+    borderTopWidth: 1
+  },
+  readerArtPlaqueHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm
+  },
+  readerArtPlaqueArtist: {
+    fontSize: 18,
+    fontWeight: '800'
+  },
+  readerArtPlaqueYear: {
+    fontSize: 14,
+    marginLeft: 6
+  },
+  readerArtDetailsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+    marginVertical: spacing.sm
+  },
+  readerArtDetailCol: {
+    marginRight: spacing.md
+  },
+  readerArtDetailLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 2
+  },
+  readerArtDetailVal: {
+    fontSize: 13,
+    fontWeight: '600'
+  },
+  readerArtImpulseBox: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.xs,
+    borderLeftWidth: 3
+  },
+  readerArtImpulseLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 4
+  },
+  readerArtImpulseText: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontStyle: 'italic'
   }
 });

@@ -109,3 +109,22 @@ export async function fetchFeedXml(
 
   throw new Error(`Feed-Abruf für ${url} fehlgeschlagen nach ${attempt} Versuchen: ${lastError?.message}`);
 }
+
+/**
+ * Fetches RSS/Atom XML with automatic CORS proxy fallback for Web browser execution.
+ * 1. First attempts direct fetch (1800ms timeout)
+ * 2. On error (CORS restriction in web browser or network failure), falls back to CORS proxy
+ */
+export async function fetchRssWithCorsFallback(
+  url: string,
+  options: FetchOptions = {}
+): Promise<FetchResult> {
+  const directTimeout = options.timeoutMs ?? 1800;
+  try {
+    return await fetchFeedXml(url, { ...options, timeoutMs: directTimeout, retries: 0 });
+  } catch {
+    // Web CORS fallback via open proxy
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+    return await fetchFeedXml(proxyUrl, { ...options, timeoutMs: 3500, retries: 0 });
+  }
+}

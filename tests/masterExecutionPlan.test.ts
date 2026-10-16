@@ -10,9 +10,9 @@ import { INITIAL_FIXTURES } from '../src/core/data/fixtures';
 import { feedRepository } from '../src/core/data/feedRepository';
 
 describe('Master Execution Plan: Editorial Depth, Authentic Community & Provenance', () => {
-  it('1. TOPIC_DIALECTICS covers all 11 topics with unique, domain-specific arguments', () => {
+  it('1. TOPIC_DIALECTICS covers all 12 topics with unique, domain-specific arguments', () => {
     const allTopics = Object.keys(TOPIC_SPACE_MAP) as TopicTag[];
-    assert.strictEqual(allTopics.length, 11);
+    assert.strictEqual(allTopics.length, 12);
 
     const seenInsights = new Set<string>();
     const seenCounters = new Set<string>();

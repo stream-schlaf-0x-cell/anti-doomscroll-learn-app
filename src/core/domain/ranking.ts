@@ -31,7 +31,8 @@ const TOPIC_GOAL_MAP: Record<TopicTag, PersonalGoal> = {
   youtube_gems: 'society_and_ethics',
   book_mastery: 'philosophical_clarity',
   health_biohacking: 'deepen_attention',
-  opportunities_growth: 'understand_tech'
+  opportunities_growth: 'understand_tech',
+  art_aesthetics: 'creative_music'
 };
 
 export function getEffectiveTopicWeight(profile: UserProfile, topic: TopicTag): number {
@@ -279,6 +280,7 @@ function getTopicLabel(topic: TopicTag): string {
     case 'book_mastery': return 'Buch-Meisterwerke';
     case 'health_biohacking': return 'Gesundheit & Biohacking';
     case 'opportunities_growth': return 'Chancen & Hebel';
+    case 'art_aesthetics': return 'Kunst & Ästhetik';
   }
 }
 
@@ -499,3 +501,59 @@ export function rankEditionFeed(
   const allocations = allocateDailyEditions(items, profile, interactions, dateSeed, shuffleOffset);
   return allocations[editionType];
 }
+
+/**
+ * Variable-Reward Interleaver for Endless Learning & Curiosity
+ * 
+ * Prevents monotonous blocks of text-only cards by pacing the feed in 5-card waves:
+ * 1. High-impact Discovery / Tech / Science ('ai_apple', 'science_society')
+ * 2. Visual Art / Museum Masterpiece or Video ('art_aesthetics', 'youtube_gems')
+ * 3. Deep Thought / Philosophy / Didactics ('philosophy_ethics', 'german_didactics', 'contemplation_mind')
+ * 4. High-IQ Meme / Satire or Quick Insight ('memes_satire', format 'meme', format 'concise_insight')
+ * 5. Book Masterpiece / Health / Sound / Opportunity ('book_mastery', 'sound_synthesis', 'health_biohacking', 'opportunities_growth')
+ */
+export function interleaveForAddictiveLearning<T extends FeedItem>(items: T[]): T[] {
+  if (items.length <= 2) return [...items];
+
+  const pool = [...items];
+  const wavePicks: ((item: T) => boolean)[] = [
+    // Slot 1: Tech / Science
+    (i) => i.primaryTopic === 'ai_apple' || i.primaryTopic === 'science_society' || i.topics.includes('ai_apple'),
+    // Slot 2: Visual Art / Video
+    (i) => i.primaryTopic === 'art_aesthetics' || i.format === 'art_showcase' || i.primaryTopic === 'youtube_gems' || i.format === 'youtube_gem' || !!i.artMeta || !!i.youtubeMeta,
+    // Slot 3: Philosophy / Didactics / Mind
+    (i) => i.primaryTopic === 'philosophy_ethics' || i.primaryTopic === 'german_didactics' || i.primaryTopic === 'contemplation_mind',
+    // Slot 4: Meme / Satire / Quick Insight
+    (i) => i.primaryTopic === 'memes_satire' || i.format === 'meme' || i.format === 'concise_insight' || !!i.memeMeta,
+    // Slot 5: Books / Health / Sound / Opportunity
+    (i) => i.primaryTopic === 'book_mastery' || i.format === 'book_masterpiece' || i.primaryTopic === 'health_biohacking' || i.primaryTopic === 'sound_synthesis' || i.primaryTopic === 'opportunities_growth' || !!i.bookMeta || !!i.opportunityMeta
+  ];
+
+  const result: T[] = [];
+
+  while (pool.length > 0) {
+    let matchedInCycle = false;
+
+    for (let slot = 0; slot < wavePicks.length && pool.length > 0; slot++) {
+      const predicate = wavePicks[slot];
+      const matchIdx = pool.findIndex(predicate);
+      if (matchIdx !== -1) {
+        const [chosen] = pool.splice(matchIdx, 1);
+        result.push(chosen);
+        matchedInCycle = true;
+      }
+    }
+
+    // If no candidate matched the cycle predicates, take next item avoiding duplicate adjacent primaryTopic
+    if (!matchedInCycle && pool.length > 0) {
+      const lastTopic = result.length > 0 ? result[result.length - 1].primaryTopic : null;
+      let nextIdx = pool.findIndex(i => i.primaryTopic !== lastTopic);
+      if (nextIdx === -1) nextIdx = 0;
+      const [chosen] = pool.splice(nextIdx, 1);
+      result.push(chosen);
+    }
+  }
+
+  return result;
+}
+

@@ -69,6 +69,12 @@ export const TOPIC_CURATED_IMAGES: Record<TopicTag, string[]> = {
     'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=80',
     'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=1200&q=80',
     'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=1200&q=80'
+  ],
+  art_aesthetics: [
+    'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1582561424760-0321d75e81fa?auto=format&fit=crop&w=1200&q=80',
+    'https://images.unsplash.com/photo-1578328819058-b69f3a3b0f6b?auto=format&fit=crop&w=1200&q=80'
   ]
 };
 
@@ -1118,7 +1124,8 @@ export const DEFAULT_STARTER_INTERESTS: Record<TopicTag, number> = {
   youtube_gems: 0.85,
   book_mastery: 0.90,
   health_biohacking: 0.85,
-  opportunities_growth: 0.80
+  opportunities_growth: 0.80,
+  art_aesthetics: 0.85
 };
 
 /**

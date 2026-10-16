@@ -20,7 +20,7 @@ import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
 import { DesktopSidebar } from '../../ui/components/DesktopSidebar';
 import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
-import { ScoredFeedItem, scoreFeedItem } from '../../core/domain/ranking';
+import { ScoredFeedItem, scoreFeedItem, interleaveForAddictiveLearning } from '../../core/domain/ranking';
 import { Subchannel, defaultSpaceRepository } from '../../core/spaces/spaceRepository';
 import { UltraMasterModal } from '../../ui/components/UltraMasterModal';
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
@@ -33,6 +33,12 @@ export const FeedScreen: React.FC = () => {
   const {
     dailyEdition,
     discoveryItems,
+    openWebItems,
+    historyItems,
+    historySortOrder,
+    setHistorySortOrder,
+    clearAppearanceHistory,
+    recordCardAppearances,
     colors,
     refreshFeed,
     activeFeedOption,
@@ -59,6 +65,7 @@ export const FeedScreen: React.FC = () => {
   type SortMode = 'hot' | 'new' | 'top' | 'gems';
   const [sortMode, setSortMode] = useState<SortMode>('hot');
   const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
+  const [visibleInfiniteCount, setVisibleInfiniteCount] = useState<number>(12);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [simulatingDay, setSimulatingDay] = useState<boolean>(false);
   const [simToast, setSimToast] = useState<string | null>(null);
@@ -78,18 +85,21 @@ export const FeedScreen: React.FC = () => {
   const [liveNewsItems, setLiveNewsItems] = useState<FeedItem[]>([]);
   const [liveNewsLoading, setLiveNewsLoading] = useState<boolean>(false);
   const [liveNewsLimit, setLiveNewsLimit] = useState<number>(25);
+  const [liveNewsLastUpdated, setLiveNewsLastUpdated] = useState<string>('Live');
   const [showNewsHubSettingsModal, setShowNewsHubSettingsModal] = useState<boolean>(false);
   const [classicsItems, setClassicsItems] = useState<FeedItem[]>([]);
 
-  const loadLiveNews = useCallback(async () => {
+  const loadLiveNews = useCallback(async (forceRefresh = false) => {
     setLiveNewsLoading(true);
     try {
       const items = await ContinuousLiveNewsService.getLiveStream({
         category: liveNewsCategory,
         query: searchQuery,
-        limit: liveNewsLimit
+        limit: liveNewsLimit,
+        forceRefresh
       });
       setLiveNewsItems(items);
+      setLiveNewsLastUpdated(ContinuousLiveNewsService.getLastUpdatedTime());
     } catch {
       // Non-fatal
     } finally {
@@ -328,6 +338,69 @@ export const FeedScreen: React.FC = () => {
   const sortedDaily = useMemo(() => applySort(filteredDaily, sortMode), [filteredDaily, sortMode, applySort]);
   const sortedDiscovery = useMemo(() => applySort(filteredDiscovery, sortMode), [filteredDiscovery, sortMode, applySort]);
 
+  // OpenWeb harvested candidates scored and filtered
+  const scoredOpenWebItems = useMemo(() => {
+    return openWebItems.map(item => scoreFeedItem(item, profile, interactions));
+  }, [openWebItems, profile, interactions]);
+
+  const filteredOpenWeb = useMemo(() => {
+    const spaceFiltered = selectedFilter === 'all'
+      ? scoredOpenWebItems
+      : scoredOpenWebItems.filter(item => {
+          if (selectedFilter.startsWith('c/')) {
+            const raw = selectedFilter.slice(2).toLowerCase();
+            return item.space?.toLowerCase() === selectedFilter.toLowerCase() ||
+                   item.primaryTopic?.toLowerCase().includes(raw) ||
+                   item.topics.some(t => t.toLowerCase().includes(raw));
+          }
+          return item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter as TopicTag);
+        });
+    return filterByQuery(spaceFiltered);
+  }, [scoredOpenWebItems, selectedFilter, filterByQuery]);
+
+  // Combined endless stream with 5-card wave interleaving
+  const infiniteInterleavedBase = useMemo(() => {
+    const combined = [...sortedDaily, ...filteredOpenWeb, ...sortedDiscovery];
+    const seen = new Set<string>();
+    const unique = combined.filter(item => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+    return interleaveForAddictiveLearning(unique);
+  }, [sortedDaily, filteredOpenWeb, sortedDiscovery]);
+
+  const renderedInfiniteItems = useMemo(() => {
+    if (infiniteInterleavedBase.length === 0) return [];
+    if (visibleInfiniteCount <= infiniteInterleavedBase.length) {
+      return infiniteInterleavedBase.slice(0, visibleInfiniteCount);
+    }
+    const result: ScoredFeedItem[] = [...infiniteInterleavedBase];
+    let cycle = 1;
+    while (result.length < visibleInfiniteCount && cycle < 20) {
+      for (const item of infiniteInterleavedBase) {
+        if (result.length >= visibleInfiniteCount) break;
+        result.push({
+          ...item,
+          id: `${item.id}-inf-${cycle}`
+        });
+      }
+      cycle++;
+    }
+    return result;
+  }, [infiniteInterleavedBase, visibleInfiniteCount]);
+
+  // Record appearance history for visible cards
+  React.useEffect(() => {
+    if (activeFeedOption === 'infinite' && renderedInfiniteItems.length > 0) {
+      const idsToRecord = renderedInfiniteItems.map(i => i.id.replace(/-inf-\d+$/, ''));
+      void recordCardAppearances(idsToRecord);
+    } else if (activeFeedOption === 'daily' && sortedDaily.length > 0) {
+      const idsToRecord = sortedDaily.map(i => i.id);
+      void recordCardAppearances(idsToRecord);
+    }
+  }, [activeFeedOption, renderedInfiniteItems, sortedDaily, recordCardAppearances]);
+
   // Appended discovery items for smooth infinite mind-scroll (cycles infinitely)
   const renderedDiscovery = useMemo(() => {
     if (sortedDiscovery.length === 0) return [];
@@ -355,12 +428,20 @@ export const FeedScreen: React.FC = () => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
     const paddingToBottom = 800;
     if (layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom) {
-      setVisibleDiscoveryCount(prev => prev + 6);
+      if (activeFeedOption === 'infinite') {
+        setVisibleInfiniteCount(prev => prev + 6);
+      } else {
+        setVisibleDiscoveryCount(prev => prev + 6);
+      }
     }
-  }, []);
+  }, [activeFeedOption]);
 
   const handleLoadMoreDiscovery = () => {
     setVisibleDiscoveryCount(prev => prev + 10);
+  };
+
+  const handleLoadMoreInfinite = () => {
+    setVisibleInfiniteCount(prev => prev + 12);
   };
 
   // Combine items into a seamless stream
@@ -369,11 +450,16 @@ export const FeedScreen: React.FC = () => {
   }, [sortedDaily, renderedDiscovery]);
 
   // Active items array depending on selected feed option
-  const currentFeedItems = useMemo(() => {
+  const currentFeedItems = useMemo((): ScoredFeedItem[] => {
+    if (activeFeedOption === 'infinite') return renderedInfiniteItems;
+    if (activeFeedOption === 'daily') return allStreamItems;
     if (activeFeedOption === 'live_news') return scoredLiveItems;
     if (activeFeedOption === 'classics') return scoredClassicsItems;
-    return allStreamItems;
-  }, [activeFeedOption, scoredLiveItems, scoredClassicsItems, allStreamItems]);
+    if (activeFeedOption === 'history') {
+      return historyItems.map(h => scoreFeedItem(h.item, profile, interactions));
+    }
+    return renderedInfiniteItems;
+  }, [activeFeedOption, renderedInfiniteItems, allStreamItems, scoredLiveItems, scoredClassicsItems, historyItems, profile, interactions]);
 
   const [activeCardIndex, setActiveCardIndex] = useState<number>(0);
   const [expandedCardIds, setExpandedCardIds] = useState<Record<string, boolean>>({});
@@ -567,91 +653,391 @@ export const FeedScreen: React.FC = () => {
           {/* Feed Column (Center) */}
           <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn]}>
             {/* 1. Primary Feed Mode Segmented Switcher */}
-            <View style={[styles.feedModeSwitcher, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-              <TouchableOpacity
-                onPress={() => setActiveFeedOption('daily')}
-                style={[
-                  styles.feedModeBtn,
-                  activeFeedOption === 'daily' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                ]}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: activeFeedOption === 'daily' }}
-              >
-                <Ionicons
-                  name="newspaper-outline"
-                  size={15}
-                  color={activeFeedOption === 'daily' ? colors.accent : colors.textSecondary}
-                  style={{ marginRight: 6 }}
-                />
-                <Text
+            <View style={[styles.feedModeSwitcherWrapper, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.feedModeSwitcher}>
+                <TouchableOpacity
+                  onPress={() => setActiveFeedOption('infinite')}
                   style={[
-                    styles.feedModeText,
-                    {
-                      color: activeFeedOption === 'daily' ? colors.accent : colors.textPrimary,
-                      fontWeight: activeFeedOption === 'daily' ? '700' : '600'
-                    }
+                    styles.feedModeBtn,
+                    activeFeedOption === 'infinite' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                   ]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeFeedOption === 'infinite' }}
                 >
-                  📰 Tagesausgabe
-                </Text>
-              </TouchableOpacity>
+                  <Ionicons
+                    name="infinite"
+                    size={15}
+                    color={activeFeedOption === 'infinite' ? colors.accent : colors.textSecondary}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    style={[
+                      styles.feedModeText,
+                      {
+                        color: activeFeedOption === 'infinite' ? colors.accent : colors.textPrimary,
+                        fontWeight: activeFeedOption === 'infinite' ? '700' : '600'
+                      }
+                    ]}
+                  >
+                    ♾️ Endlos-Stream
+                  </Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                onPress={() => setActiveFeedOption('live_news')}
-                style={[
-                  styles.feedModeBtn,
-                  activeFeedOption === 'live_news' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                ]}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: activeFeedOption === 'live_news' }}
-              >
-                <View style={styles.livePulseDot} />
-                <Text
+                <TouchableOpacity
+                  onPress={() => setActiveFeedOption('daily')}
                   style={[
-                    styles.feedModeText,
-                    {
-                      color: activeFeedOption === 'live_news' ? colors.accent : colors.textPrimary,
-                      fontWeight: activeFeedOption === 'live_news' ? '700' : '600'
-                    }
+                    styles.feedModeBtn,
+                    activeFeedOption === 'daily' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                   ]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeFeedOption === 'daily' }}
                 >
-                  ⚡ Live News Hub
-                </Text>
-              </TouchableOpacity>
+                  <Ionicons
+                    name="newspaper-outline"
+                    size={15}
+                    color={activeFeedOption === 'daily' ? colors.accent : colors.textSecondary}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    style={[
+                      styles.feedModeText,
+                      {
+                        color: activeFeedOption === 'daily' ? colors.accent : colors.textPrimary,
+                        fontWeight: activeFeedOption === 'daily' ? '700' : '600'
+                      }
+                    ]}
+                  >
+                    🌅 Tagesausgaben
+                  </Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                onPress={() => setActiveFeedOption('classics')}
-                style={[
-                  styles.feedModeBtn,
-                  activeFeedOption === 'classics' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                ]}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: activeFeedOption === 'classics' }}
-              >
-                <Ionicons
-                  name="library-outline"
-                  size={15}
-                  color={activeFeedOption === 'classics' ? colors.accent : colors.textSecondary}
-                  style={{ marginRight: 6 }}
-                />
-                <Text
+                <TouchableOpacity
+                  onPress={() => setActiveFeedOption('history')}
                   style={[
-                    styles.feedModeText,
-                    {
-                      color: activeFeedOption === 'classics' ? colors.accent : colors.textPrimary,
-                      fontWeight: activeFeedOption === 'classics' ? '700' : '600'
-                    }
+                    styles.feedModeBtn,
+                    activeFeedOption === 'history' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                   ]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeFeedOption === 'history' }}
                 >
-                  🏛 Klassiker
-                </Text>
-              </TouchableOpacity>
+                  <Ionicons
+                    name="time-outline"
+                    size={15}
+                    color={activeFeedOption === 'history' ? colors.accent : colors.textSecondary}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    style={[
+                      styles.feedModeText,
+                      {
+                        color: activeFeedOption === 'history' ? colors.accent : colors.textPrimary,
+                        fontWeight: activeFeedOption === 'history' ? '700' : '600'
+                      }
+                    ]}
+                  >
+                    🕓 Chronik
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setActiveFeedOption('live_news')}
+                  style={[
+                    styles.feedModeBtn,
+                    activeFeedOption === 'live_news' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeFeedOption === 'live_news' }}
+                >
+                  <View style={styles.livePulseDot} />
+                  <Text
+                    style={[
+                      styles.feedModeText,
+                      {
+                        color: activeFeedOption === 'live_news' ? colors.accent : colors.textPrimary,
+                        fontWeight: activeFeedOption === 'live_news' ? '700' : '600'
+                      }
+                    ]}
+                  >
+                    ⚡ Live News Hub
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setActiveFeedOption('classics')}
+                  style={[
+                    styles.feedModeBtn,
+                    activeFeedOption === 'classics' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeFeedOption === 'classics' }}
+                >
+                  <Ionicons
+                    name="library-outline"
+                    size={15}
+                    color={activeFeedOption === 'classics' ? colors.accent : colors.textSecondary}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text
+                    style={[
+                      styles.feedModeText,
+                      {
+                        color: activeFeedOption === 'classics' ? colors.accent : colors.textPrimary,
+                        fontWeight: activeFeedOption === 'classics' ? '700' : '600'
+                      }
+                    ]}
+                  >
+                    🏛 Klassiker
+                  </Text>
+                </TouchableOpacity>
+              </ScrollView>
             </View>
+
+            {/* MODE: ENDLESS DISCOVERY STREAM */}
+            {activeFeedOption === 'infinite' && (
+              <>
+                {/* Desktop Spaces Selector Bar */}
+                {isDesktop && (
+                  <View style={[styles.desktopSpaceCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                    {renderSpacePills()}
+                  </View>
+                )}
+
+                {searchQuery.trim().length > 0 && (
+                  <View style={[styles.searchNoticeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                    <Ionicons name="search" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+                    <Text style={[styles.searchNoticeText, { color: colors.textPrimary }]}>
+                      Ergebnisse für „{searchQuery}“ ({renderedInfiniteItems.length} Treffer)
+                    </Text>
+                    <TouchableOpacity onPress={() => setSearchQuery('')} style={{ marginLeft: 'auto' }}>
+                      <Text style={[styles.searchNoticeClear, { color: colors.accent }]}>Filter aufheben</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Reddit Sort Filter Bar: Hot, New, Top, Gems */}
+                <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                  <TouchableOpacity
+                    onPress={() => setSortMode('hot')}
+                    style={[
+                      styles.sortTab,
+                      sortMode === 'hot' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                  >
+                    <Text style={styles.sortEmoji}>🔥</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'hot' ? colors.accent : colors.textSecondary }]}>
+                      Heiß
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setSortMode('new')}
+                    style={[
+                      styles.sortTab,
+                      sortMode === 'new' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                  >
+                    <Text style={styles.sortEmoji}>⚡</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'new' ? colors.accent : colors.textSecondary }]}>
+                      Neu
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setSortMode('top')}
+                    style={[
+                      styles.sortTab,
+                      sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                  >
+                    <Text style={styles.sortEmoji}>🏆</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
+                      Top
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setSortMode('gems')}
+                    style={[
+                      styles.sortTab,
+                      sortMode === 'gems' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                  >
+                    <Text style={styles.sortEmoji}>💎</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'gems' ? colors.accent : colors.textSecondary }]}>
+                      Perlen & Kunst
+                    </Text>
+                  </TouchableOpacity>
+
+                  <View style={styles.sortRightInfo}>
+                    <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                    <Text style={[styles.sortInfoText, { color: colors.textMuted }]}>
+                      5-Phasen-Rhythmus
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Subchannel Quick Tuning Header */}
+                {selectedFilter !== 'all' && activeTopic && (
+                  <View style={[styles.subchannelTuningHeader, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="funnel-outline" size={14} color={colors.accent} />
+                        <Text style={[styles.subchannelTuningTitle, { color: colors.textPrimary }]}>
+                          Kanal {selectedFilter}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                        Relevanz in deinem Feed: {Math.round((profile.derivedWeights?.[activeTopic] ?? profile.explicitInterests[activeTopic] ?? 0.5) * 100)}%
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const curr = profile.explicitInterests[activeTopic] ?? 0.5;
+                          updateTopicWeight(activeTopic, Math.min(1.0, Math.round((curr + 0.15) * 100) / 100));
+                          setSimToast(`✓ Fokus auf ${selectedFilter} erhöht!`);
+                          setTimeout(() => setSimToast(null), 2000);
+                        }}
+                        style={[styles.tuningBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Fokus für dieses Thema erhöhen"
+                      >
+                        <Ionicons name="arrow-up" size={13} color={colors.accent} style={{ marginRight: 3 }} />
+                        <Text style={[styles.tuningBtnText, { color: colors.accent, fontWeight: '700' }]}>+ Fokus</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => {
+                          const curr = profile.explicitInterests[activeTopic] ?? 0.5;
+                          updateTopicWeight(activeTopic, Math.max(0.1, Math.round((curr - 0.15) * 100) / 100));
+                          setSimToast(`✓ Fokus auf ${selectedFilter} verringert.`);
+                          setTimeout(() => setSimToast(null), 2000);
+                        }}
+                        style={[styles.tuningBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Fokus für dieses Thema verringern"
+                      >
+                        <Ionicons name="arrow-down" size={13} color={colors.textMuted} style={{ marginRight: 3 }} />
+                        <Text style={[styles.tuningBtnText, { color: colors.textSecondary }]}>- Weniger</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
+                {renderedInfiniteItems.length === 0 ? (
+                  <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                    <Ionicons name="compass-outline" size={32} color={colors.accent} style={{ marginBottom: 8 }} />
+                    <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                      Keine Beiträge im Stream gefunden
+                    </Text>
+                    <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+                      Setze den Filter zurück oder suche nach einem anderen Thema.
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    {renderedInfiniteItems.map((item, index) => (
+                      <React.Fragment key={item.id}>
+                        <FeedCard
+                          item={item}
+                          isHero={index === 0 && selectedFilter === 'all' && !searchQuery}
+                          isFocused={index === activeCardIndex}
+                          isExpanded={Boolean(expandedCardIds[item.id])}
+                          onToggleKurzCheck={() => {
+                            setExpandedCardIds(prev => ({
+                              ...prev,
+                              [item.id]: !prev[item.id]
+                            }));
+                          }}
+                          onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                        />
+
+                        {/* Mindfulness Milestone after item 5 */}
+                        {index === 4 && (
+                          <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                            <Ionicons name="leaf-outline" size={20} color="#10B981" style={{ marginRight: 10, marginTop: 2 }} />
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
+                                Kognitive Atempause
+                              </Text>
+                              <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
+                                5 Gedanken aufgenommen. Nimm dir 3 tiefe Atemzüge, um das Gelesene kognitiv zu verarbeiten.
+                              </Text>
+                              <TouchableOpacity
+                                onPress={() => setShowBreathingModal(true)}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  alignSelf: 'flex-start',
+                                  marginTop: 8,
+                                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                                  paddingHorizontal: 12,
+                                  paddingVertical: 6,
+                                  borderRadius: radius.full
+                                }}
+                              >
+                                <Ionicons name="leaf-outline" size={13} color="#10B981" style={{ marginRight: 5 }} />
+                                <Text style={{ fontSize: 12, fontWeight: '600', color: '#10B981' }}>
+                                  Atem-Simulator starten (4-4-4-4)
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        )}
+
+                        {/* Periodic Mindfulness Milestone every 10 items */}
+                        {index > 4 && (index + 1) % 10 === 0 && (
+                          <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                            <Ionicons name="water-outline" size={20} color="#06B6D4" style={{ marginRight: 10, marginTop: 2 }} />
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
+                                Kognitive Weite & Atempause
+                              </Text>
+                              <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
+                                {index + 1} Erkenntnisse gesammelt. Atme durch, um das Rauschen der Welt loszulassen.
+                              </Text>
+                              <TouchableOpacity
+                                onPress={() => setShowBreathingModal(true)}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  alignSelf: 'flex-start',
+                                  marginTop: 8,
+                                  backgroundColor: 'rgba(6, 182, 212, 0.15)',
+                                  paddingHorizontal: 12,
+                                  paddingVertical: 6,
+                                  borderRadius: radius.full
+                                }}
+                              >
+                                <Ionicons name="leaf-outline" size={13} color="#06B6D4" style={{ marginRight: 5 }} />
+                                <Text style={{ fontSize: 12, fontWeight: '600', color: '#06B6D4' }}>
+                                  Atempause nehmen (4-4-4-4)
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        )}
+                      </React.Fragment>
+                    ))}
+
+                    <TouchableOpacity
+                      onPress={handleLoadMoreInfinite}
+                      style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
+                    >
+                      <Ionicons name="compass-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
+                      <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
+                        Weiter entdecken (+12 Beiträge)
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </>
+            )}
 
             {/* 2. MODE: LIVE NEWS HUB */}
             {activeFeedOption === 'live_news' && (
               <View style={styles.modeSectionContainer}>
-                {/* News Hub Sub-Bar: Ticker headline & Settings button */}
+                {/* News Hub Sub-Bar: Ticker headline, refresh button & Settings button */}
                 <View style={[styles.liveNewsSubBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                   <View style={styles.liveNewsTopRow}>
                     <View style={styles.liveNewsTitleRow}>
@@ -659,18 +1045,41 @@ export const FeedScreen: React.FC = () => {
                       <Text style={[styles.liveNewsTitle, { color: colors.textPrimary }]}>
                         Echtzeit-Ticker ({scoredLiveItems.length} verifizierte Meldungen)
                       </Text>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => setShowNewsHubSettingsModal(true)}
-                      style={[styles.hubSettingsBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Quellen- und Scraper-Setup öffnen"
-                    >
-                      <Ionicons name="options-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-                      <Text style={[styles.hubSettingsBtnText, { color: colors.textPrimary }]}>
-                        ⚙️ Quellen & Setup
+                      <Text style={[styles.liveNewsLastUpdatedText, { color: colors.textMuted }]}>
+                        • {liveNewsLastUpdated}
                       </Text>
-                    </TouchableOpacity>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <TouchableOpacity
+                        onPress={() => void loadLiveNews(true)}
+                        disabled={liveNewsLoading}
+                        style={[styles.hubRefreshBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Live-Feeds jetzt aktualisieren"
+                      >
+                        <Ionicons
+                          name={liveNewsLoading ? 'hourglass-outline' : 'refresh'}
+                          size={13}
+                          color={colors.accent}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text style={[styles.hubRefreshBtnText, { color: colors.accent }]}>
+                          {liveNewsLoading ? 'Lädt…' : '🔄 Jetzt aktualisieren'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => setShowNewsHubSettingsModal(true)}
+                        style={[styles.hubSettingsBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Quellen- und Scraper-Setup öffnen"
+                      >
+                        <Ionicons name="options-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                        <Text style={[styles.hubSettingsBtnText, { color: colors.textPrimary }]}>
+                          ⚙️ Setup
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
 
                   {/* Filter Chips for Live News */}
@@ -778,6 +1187,108 @@ export const FeedScreen: React.FC = () => {
                     onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                   />
                 ))}
+              </View>
+            )}
+
+            {/* MODE: CHRONIK (HISTORY) */}
+            {activeFeedOption === 'history' && (
+              <View style={styles.modeSectionContainer}>
+                <View style={[styles.historyHeaderCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                  <View style={styles.historyTopRow}>
+                    <View style={styles.historyTitleRow}>
+                      <Ionicons name="time" size={20} color={colors.accent} style={{ marginRight: 8 }} />
+                      <Text style={[styles.historyMainTitle, { color: colors.textPrimary }]}>
+                        Deine Lesereise & Chronik
+                      </Text>
+                    </View>
+                    <View style={styles.historyActionsRow}>
+                      <TouchableOpacity
+                        onPress={() => setHistorySortOrder(historySortOrder === 'recent' ? 'chronological' : 'recent')}
+                        style={[styles.historySortBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Sortierung der Chronik ändern"
+                      >
+                        <Ionicons
+                          name={historySortOrder === 'recent' ? 'arrow-down' : 'arrow-up'}
+                          size={13}
+                          color={colors.accent}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text style={[styles.historySortBtnText, { color: colors.textPrimary }]}>
+                          {historySortOrder === 'recent' ? 'Zuletzt gesehen ⬇️' : 'Chronologisch ⬆️'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {historyItems.length > 0 && (
+                        <TouchableOpacity
+                          onPress={async () => {
+                            await clearAppearanceHistory();
+                          }}
+                          style={[styles.historyClearBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Chronik leeren"
+                        >
+                          <Ionicons name="trash-outline" size={13} color={colors.textMuted} style={{ marginRight: 4 }} />
+                          <Text style={[styles.historyClearBtnText, { color: colors.textMuted }]}>
+                            Leeren
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                  <Text style={[styles.historySubText, { color: colors.textSecondary }]}>
+                    Jeder Beitrag, den du je gesehen hast, bleibt hier dauerhaft erhalten – ohne algorithmische Manipulation ({historyItems.length} gespeicherte Wegmarken).
+                  </Text>
+                </View>
+
+                {historyItems.length === 0 ? (
+                  <View style={[styles.emptyBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                    <Ionicons name="compass-outline" size={36} color={colors.textMuted} style={{ marginBottom: 12 }} />
+                    <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                      Noch keine Chronik-Einträge
+                    </Text>
+                    <Text style={[styles.emptySubtitle, { color: colors.textMuted, textAlign: 'center', marginBottom: 16 }]}>
+                      Scrolle durch den Endlos-Stream oder die Tagesausgaben, um deine persönliche Lesereise aufzuzeichnen.
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setActiveFeedOption('infinite')}
+                      style={[styles.generatePocketButton, { backgroundColor: colors.accent }]}
+                    >
+                      <Ionicons name="infinite" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.generatePocketButtonText}>Zum Endlos-Stream</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  historyItems.map(({ item, record }, index) => {
+                    const seenDate = new Date(record.lastSeenAt || record.firstSeenAt);
+                    const formattedDate = seenDate.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                    const formattedTime = seenDate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+                    const scoredItem = scoreFeedItem(item, profile, interactions);
+                    return (
+                      <View key={`${item.id}-hist-${index}`} style={styles.historyItemWrapper}>
+                        <View style={[styles.historyItemBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                          <Ionicons name="checkmark-circle-outline" size={12} color={colors.accent} style={{ marginRight: 5 }} />
+                          <Text style={[styles.historyItemBadgeText, { color: colors.textMuted }]}>
+                            Gesehen {formattedDate}, {formattedTime} Uhr • #{record.sequenceNumber} deiner Lesereise
+                          </Text>
+                        </View>
+                        <FeedCard
+                          item={scoredItem}
+                          isHero={false}
+                          isFocused={index === activeCardIndex}
+                          isExpanded={Boolean(expandedCardIds[item.id])}
+                          onToggleKurzCheck={() => {
+                            setExpandedCardIds(prev => ({
+                              ...prev,
+                              [item.id]: !prev[item.id]
+                            }));
+                          }}
+                          onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                        />
+                      </View>
+                    );
+                  })
+                )}
               </View>
             )}
 
@@ -1618,22 +2129,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '500'
   },
+  feedModeSwitcherWrapper: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: spacing.md,
+    overflow: 'hidden'
+  },
   feedModeSwitcher: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 4,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginBottom: spacing.md,
     gap: 4
   },
   feedModeBtn: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
     borderRadius: radius.sm,
     borderWidth: 1,
     borderColor: 'transparent'
@@ -1668,7 +2181,9 @@ const styles = StyleSheet.create({
   liveNewsTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between'
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8
   },
   liveNewsTitleRow: {
     flexDirection: 'row',
@@ -1677,6 +2192,95 @@ const styles = StyleSheet.create({
   liveNewsTitle: {
     fontSize: 14,
     fontWeight: '700'
+  },
+  liveNewsLastUpdatedText: {
+    fontSize: 11,
+    marginLeft: 6
+  },
+  hubRefreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  hubRefreshBtnText: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  historyHeaderCard: {
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: spacing.xs
+  },
+  historyTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  historyTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  historyMainTitle: {
+    fontSize: 16,
+    fontWeight: '700'
+  },
+  historyActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  historySortBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  historySortBtnText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  historyClearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  historyClearBtnText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  historySubText: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4
+  },
+  historyItemWrapper: {
+    marginBottom: spacing.sm
+  },
+  historyItemBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 0.5,
+    marginBottom: 6,
+    marginLeft: 4
+  },
+  historyItemBadgeText: {
+    fontSize: 11,
+    fontWeight: '600'
   },
   hubSettingsBtn: {
     flexDirection: 'row',

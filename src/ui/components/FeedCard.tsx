@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, TextInput, Linking, Modal } from 'react-native';
+import React, { useState, useMemo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image, TextInput, Linking, Modal, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ScoredFeedItem } from '../../core/domain/ranking';
 import {
@@ -18,6 +18,7 @@ import { MusicTrackCard } from './MusicTrackCard';
 import { CURATED_SOUND_MASTERS, MusicTrackItem } from '../../core/music/musicRecommendationService';
 import { optimizeImageUrl } from '../../core/utils/imageQuality';
 import { RaindropService } from '../../core/raindrop/raindropService';
+import { getCuratedImageForTopic } from '../../core/data/fixtures';
 
 interface FeedCardProps {
   item: ScoredFeedItem;
@@ -52,6 +53,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   onToggleKurzCheck,
   onInvestigateTopic
 }) => {
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 960;
   const { colors, interactions, toggleSaveItem, openArticle, openWhyModal, voteItem, addNote } = useApp();
 
   const [localKurzCheckOpen, setLocalKurzCheckOpen] = useState(false);
@@ -194,6 +197,16 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   // Dialectic counter-argument or claim
   const counterClaim = item.perspectiveDetails?.claim || (item.isChallengingPerspective ? item.subtitle : null);
   const didacticTransfer = item.didacticTransfer || item.didacticSeed || (item.isTeachingRelated ? item.relevanceExplanation : null);
+
+  // Defensive check: hide subtitle if feedText starts with identical opening words
+  const isSubtitleRedundant = useMemo(() => {
+    if (!item.subtitle || !displayFeedText) return false;
+    const cleanSub = item.subtitle.replace(/[.…\s]+$/, '').trim().toLowerCase();
+    const cleanFeed = displayFeedText.trim().toLowerCase();
+    const prefixLen = Math.min(40, cleanSub.length);
+    if (prefixLen < 15) return false;
+    return cleanFeed.startsWith(cleanSub.slice(0, prefixLen));
+  }, [item.subtitle, displayFeedText]);
 
   return (
     <View
@@ -382,7 +395,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
           {item.title}
         </Text>
 
-        {item.subtitle && item.subtitle.trim().length > 0 && (
+        {item.subtitle && item.subtitle.trim().length > 0 && !isSubtitleRedundant && (
           <Text style={[styles.subtitle, { color: colors.textSecondary }]} numberOfLines={2}>
             {item.subtitle}
           </Text>
@@ -699,7 +712,43 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         </View>
       )}
 
-      {/* 8.5 Music & Synthesis Gem from iTunes & Spotify (c/klang) */}
+      {/* 8.5 Museum-Grade Visual Art & Aesthetics Showcase */}
+      {(item.primaryTopic === 'art_aesthetics' || item.format === 'art_showcase' || !!item.artMeta) && (
+        <View style={[styles.artContainer, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <TouchableOpacity
+            activeOpacity={0.95}
+            onPress={handleCardPress}
+            style={[styles.artImageWrapper, { height: isDesktop ? 440 : 360 }]}
+          >
+            <Image
+              source={{ uri: optimizeImageUrl(item.artMeta?.highResImageUrl || item.imageUrl || getCuratedImageForTopic('art_aesthetics', item.id), 1200) }}
+              style={styles.artImage}
+              resizeMode="cover"
+            />
+            <View style={styles.artImageOverlay} />
+            <View style={styles.artMuseumPlaque}>
+              <Ionicons name="color-palette" size={14} color="#F59E0B" style={{ marginRight: 6 }} />
+              <Text style={styles.artMuseumPlaqueText} numberOfLines={1}>
+                {item.artMeta?.artist || authorName} {item.artMeta?.year ? `(${item.artMeta.year})` : ''} • {item.artMeta?.museum || 'Museums-Sammlung'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {(item.artMeta?.aestheticImpulse || item.keyInsight) && (
+            <View style={[styles.artImpulseBox, { backgroundColor: colors.surface, borderLeftColor: '#F59E0B' }]}>
+              <View style={styles.artImpulseHeader}>
+                <Ionicons name="sparkles" size={13} color="#F59E0B" style={{ marginRight: 5 }} />
+                <Text style={[styles.artImpulseLabel, { color: '#F59E0B' }]}>Ästhetischer Impuls & Kontemplation:</Text>
+              </View>
+              <Text style={[styles.artImpulseText, { color: colors.textPrimary }]}>
+                {item.artMeta?.aestheticImpulse || item.keyInsight}
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* 8.6 Music & Synthesis Gem from iTunes & Spotify (c/klang) */}
       {matchedMusicTrack && (
         <MusicTrackCard track={matchedMusicTrack} />
       )}
@@ -2199,6 +2248,68 @@ const styles = StyleSheet.create({
   oppActionText: {
     fontSize: 12,
     lineHeight: 17
+  },
+
+  // Museum-Grade Visual Art & Aesthetics Showcase
+  artContainer: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginVertical: spacing.sm
+  },
+  artImageWrapper: {
+    width: '100%',
+    position: 'relative',
+    backgroundColor: '#0F172A',
+    overflow: 'hidden'
+  },
+  artImage: {
+    width: '100%',
+    height: '100%'
+  },
+  artImageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.12)'
+  },
+  artMuseumPlaque: {
+    position: 'absolute',
+    bottom: 10,
+    left: 10,
+    right: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    borderRadius: radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  artMuseumPlaqueText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+    flex: 1
+  },
+  artImpulseBox: {
+    borderLeftWidth: 3,
+    padding: 10,
+    borderRadius: radius.sm,
+    margin: 10
+  },
+  artImpulseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4
+  },
+  artImpulseLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase'
+  },
+  artImpulseText: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontStyle: 'italic'
   },
 
   // Social Footer Extra Buttons
