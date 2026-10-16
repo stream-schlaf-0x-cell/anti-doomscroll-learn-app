@@ -190,9 +190,9 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 6
           disabled={isRefreshing}
           style={[styles.refreshSidebarBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
         >
-          <Ionicons name="reload-outline" size={13} color={colors.accent} style={{ marginRight: 6 }} />
+          <Ionicons name="sync-outline" size={13} color={colors.accent} style={{ marginRight: 6 }} />
           <Text style={[styles.refreshSidebarBtnText, { color: colors.accent }]}>
-            {isRefreshing ? 'Feeds werden synchronisiert…' : '29 Live-Feeds synchronisieren'}
+            {isRefreshing ? 'Feeds werden synchronisiert…' : '🔄 29 Live-Feeds synchronisieren'}
           </Text>
         </TouchableOpacity>
 
@@ -201,9 +201,9 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 6
           disabled={isRefreshing}
           style={[styles.refreshSidebarBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent, marginTop: 6 }]}
         >
-          <Ionicons name="flask-outline" size={13} color={colors.accent} style={{ marginRight: 6 }} />
+          <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 6 }} />
           <Text style={[styles.refreshSidebarBtnText, { color: colors.accent, fontWeight: '700' }]}>
-            🧪 Nächsten Tag simulieren (+1 Tag)
+            🔄 Feed-Kurator (+1 Tag kuratieren)
           </Text>
         </TouchableOpacity>
       </View>

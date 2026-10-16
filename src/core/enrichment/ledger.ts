@@ -87,39 +87,29 @@ export class StorageDriverLedgerStorage implements ILedgerStorage {
   }
 
   async save(data: Record<string, EnrichmentLedgerSummary>): Promise<void> {
-    try {
-      await this.storage.setItem(StorageDriverLedgerStorage.STORAGE_KEY, JSON.stringify(data));
-    } catch {
-      // Non-fatal fallback
-    }
+    await this.storage.setItem(StorageDriverLedgerStorage.STORAGE_KEY, JSON.stringify(data));
   }
 
   async clear(): Promise<void> {
-    try {
-      await this.storage.removeItem(StorageDriverLedgerStorage.STORAGE_KEY);
-      await this.storage.removeItem(StorageDriverLedgerStorage.RESERVATIONS_KEY);
-    } catch {
-      // Non-fatal fallback
-    }
+    await this.storage.removeItem(StorageDriverLedgerStorage.STORAGE_KEY);
+    await this.storage.removeItem(StorageDriverLedgerStorage.RESERVATIONS_KEY);
   }
 
   async loadReservations(): Promise<ActiveReservation[]> {
+    const raw = await this.storage.getItem(StorageDriverLedgerStorage.RESERVATIONS_KEY);
+    if (!raw) return [];
     try {
-      const raw = await this.storage.getItem(StorageDriverLedgerStorage.RESERVATIONS_KEY);
-      if (!raw) return [];
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
+      if (Array.isArray(parsed)) return parsed;
+      throw new CorruptedDataError('Reservierungs-Daten sind fehlerhaft (kein Array).', raw);
+    } catch (err) {
+      if (err instanceof CorruptedDataError) throw err;
+      throw new CorruptedDataError('Reservierungs-JSON ist beschädigt.', raw, err);
     }
   }
 
   async saveReservations(reservations: ActiveReservation[]): Promise<void> {
-    try {
-      await this.storage.setItem(StorageDriverLedgerStorage.RESERVATIONS_KEY, JSON.stringify(reservations));
-    } catch {
-      // Non-fatal
-    }
+    await this.storage.setItem(StorageDriverLedgerStorage.RESERVATIONS_KEY, JSON.stringify(reservations));
   }
 }
 
@@ -129,6 +119,7 @@ export class EnrichmentUsageLedger {
   private lockManager: KeyLockManager = new KeyLockManager();
   private storage: ILedgerStorage;
   private isStorageCorrupted: boolean = false;
+  private storageHealthy: boolean = true;
 
   constructor(
     _filePathOrStorage?: string | ILedgerStorage,
@@ -146,19 +137,23 @@ export class EnrichmentUsageLedger {
     }
   }
 
+  isHealthy(): boolean {
+    return this.storageHealthy && !this.isStorageCorrupted;
+  }
+
   private async loadLedger(): Promise<Record<string, EnrichmentLedgerSummary>> {
     try {
       const loaded = await this.storage.load();
       this.isStorageCorrupted = false;
+      this.storageHealthy = true;
       if (loaded && Object.keys(loaded).length > 0) {
         this.inMemorySummary = loaded;
       }
       return this.inMemorySummary;
-    } catch (err) {
-      if (err instanceof CorruptedDataError) {
-        // FAIL-SAFE CLOSED: corrupt stored data strictly locks budget to prevent spending
-        this.isStorageCorrupted = true;
-      }
+    } catch {
+      // FAIL-SAFE CLOSED: corrupt stored data or storage IO error strictly locks budget to prevent spending
+      this.isStorageCorrupted = true;
+      this.storageHealthy = false;
       return this.inMemorySummary;
     }
   }
@@ -166,8 +161,11 @@ export class EnrichmentUsageLedger {
   private async saveLedger(): Promise<void> {
     try {
       await this.storage.save(this.inMemorySummary);
-    } catch {
-      // Non-fatal
+      this.storageHealthy = true;
+    } catch (err) {
+      this.isStorageCorrupted = true;
+      this.storageHealthy = false;
+      throw err;
     }
   }
 
@@ -181,20 +179,18 @@ export class EnrichmentUsageLedger {
             this.activeReservations.set(r.id, r);
           }
         }
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        this.isStorageCorrupted = true;
+        this.storageHealthy = false;
+        throw err;
       }
     }
   }
 
   private async persistReservations(): Promise<void> {
     if (this.storage.saveReservations) {
-      try {
-        const active = Array.from(this.activeReservations.values());
-        await this.storage.saveReservations(active);
-      } catch {
-        // Non-fatal
-      }
+      const active = Array.from(this.activeReservations.values());
+      await this.storage.saveReservations(active);
     }
   }
 
@@ -216,7 +212,7 @@ export class EnrichmentUsageLedger {
   async getSummary(monthKey: string = getCurrentMonthKey()): Promise<EnrichmentLedgerSummary> {
     return this.lockManager.acquire(monthKey, async () => {
       const all = await this.loadLedger();
-      if (this.isStorageCorrupted) {
+      if (this.isStorageCorrupted || !this.storageHealthy) {
         return {
           monthKey,
           totalCalls: 0,
@@ -244,16 +240,23 @@ export class EnrichmentUsageLedger {
 
   async canSpend(estimatedEur: number = 0.001, monthKey: string = getCurrentMonthKey()): Promise<boolean> {
     return this.lockManager.acquire(monthKey, async () => {
-      if (this.isStorageCorrupted) {
+      if (this.isStorageCorrupted || !this.storageHealthy) {
         return false;
       }
       const all = await this.loadLedger();
-      if (this.isStorageCorrupted) {
+      if (this.isStorageCorrupted || !this.storageHealthy) {
         return false;
       }
       const summary = all[monthKey];
       const committed = summary ? summary.totalCostEur : 0;
-      const reserved = await this.getReservedAmountForMonth(monthKey);
+      let reserved = 0;
+      try {
+        reserved = await this.getReservedAmountForMonth(monthKey);
+      } catch {
+        this.isStorageCorrupted = true;
+        this.storageHealthy = false;
+        return false;
+      }
       return committed + reserved + estimatedEur <= MONTHLY_BUDGET_CEILING_EUR;
     });
   }
@@ -264,16 +267,23 @@ export class EnrichmentUsageLedger {
    */
   async reserveSpend(estimatedEur: number, monthKey: string = getCurrentMonthKey()): Promise<string | null> {
     return this.lockManager.acquire(monthKey, async () => {
-      if (this.isStorageCorrupted) {
+      if (this.isStorageCorrupted || !this.storageHealthy) {
         return null;
       }
       const all = await this.loadLedger();
-      if (this.isStorageCorrupted) {
+      if (this.isStorageCorrupted || !this.storageHealthy) {
         return null;
       }
       const summary = all[monthKey];
       const committed = summary ? summary.totalCostEur : 0;
-      const reserved = await this.getReservedAmountForMonth(monthKey);
+      let reserved = 0;
+      try {
+        reserved = await this.getReservedAmountForMonth(monthKey);
+      } catch {
+        this.isStorageCorrupted = true;
+        this.storageHealthy = false;
+        return null;
+      }
 
       if (committed + reserved + estimatedEur > MONTHLY_BUDGET_CEILING_EUR) {
         return null; // Budget exceeded or unknown status, reject reservation
@@ -286,7 +296,17 @@ export class EnrichmentUsageLedger {
         monthKey,
         createdAt: Date.now()
       });
-      await this.persistReservations();
+
+      // Persist reservation BEFORE returning ID. If storage fails, revert and fail-safe closed!
+      try {
+        await this.persistReservations();
+      } catch {
+        this.activeReservations.delete(reservationId);
+        this.isStorageCorrupted = true;
+        this.storageHealthy = false;
+        return null;
+      }
+
       return reservationId;
     });
   }
@@ -374,6 +394,8 @@ export class EnrichmentUsageLedger {
   async resetLedger(): Promise<void> {
     this.inMemorySummary = {};
     this.activeReservations.clear();
+    this.isStorageCorrupted = false;
+    this.storageHealthy = true;
     await this.storage.clear();
   }
 }

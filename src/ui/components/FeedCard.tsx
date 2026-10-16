@@ -303,8 +303,32 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         )}
       </View>
 
-      {/* 2. Flairs & Evidence Row */}
+      {/* 2. Flairs & Archetype Row */}
       <View style={styles.flairsRow}>
+        {/* Archetype 2: Magazine Full Text */}
+        {(item.evidenceTier === 'permitted_full_text' || item.format === 'long_invitation') && (
+          <View style={[styles.flairBadge, { backgroundColor: 'rgba(59, 130, 246, 0.15)', borderColor: '#3B82F6', borderWidth: 0.5 }]}>
+            <Text style={[styles.flairBadgeText, { color: '#3B82F6', fontWeight: '700' }]}>
+              📖 Volltext • {item.estimatedReadingMinutes} Min.
+            </Text>
+          </View>
+        )}
+        {/* Archetype 1: Publisher Excerpt */}
+        {(item.evidenceTier === 'publisher_excerpt' || item.evidenceTier === 'metadata_only') && (
+          <View style={[styles.flairBadge, { backgroundColor: 'rgba(234, 88, 12, 0.12)', borderColor: '#EA580C', borderWidth: 0.5 }]}>
+            <Text style={[styles.flairBadgeText, { color: '#EA580C', fontWeight: '600' }]}>
+              📰 Auszug • {item.sourceDomain || 'Original'}
+            </Text>
+          </View>
+        )}
+        {/* Archetype 3: Dialectic Impuls */}
+        {(item.type === 'perspective' || item.isChallengingPerspective || Boolean(item.perspectiveDetails?.counterPerspective)) && (
+          <View style={[styles.flairBadge, { backgroundColor: 'rgba(139, 92, 246, 0.15)', borderColor: '#8B5CF6', borderWidth: 0.5 }]}>
+            <Text style={[styles.flairBadgeText, { color: '#8B5CF6', fontWeight: '700' }]}>
+              💬 Gegenstimme & Diskurs
+            </Text>
+          </View>
+        )}
         {item.isEvergreenGem && (
           <View style={[styles.flairBadge, { backgroundColor: 'rgba(217, 119, 6, 0.15)', borderColor: '#D97706', borderWidth: 0.5 }]}>
             <Text style={[styles.flairBadgeText, { color: '#D97706', fontWeight: '700' }]}>
@@ -312,7 +336,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             </Text>
           </View>
         )}
-        {formatText && (
+        {formatText && !item.isEvergreenGem && (
           <View style={[styles.flairBadge, { backgroundColor: colors.accentSubtle }]}>
             <Text style={[styles.flairBadgeText, { color: colors.accent }]}>
               {formatText}
@@ -369,6 +393,34 @@ export const FeedCard: React.FC<FeedCardProps> = ({
       <Text style={[styles.feedText, { color: colors.textPrimary }]} numberOfLines={isHero ? 7 : 5}>
         {displayFeedText}
       </Text>
+
+      {/* Archetype 1 Compact Excerpt Pill Bar */}
+      {(item.evidenceTier === 'publisher_excerpt' || item.evidenceTier === 'metadata_only') && !isKurzCheckOpen && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, marginBottom: 8, flexWrap: 'wrap' }}>
+          <TouchableOpacity
+            onPress={toggleKurzCheck}
+            style={[styles.sourcePreviewChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+            accessibilityRole="button"
+            accessibilityLabel="Kurz-Check einblenden"
+          >
+            <Ionicons name="flash-outline" size={11} color={colors.accent} style={{ marginRight: 4 }} />
+            <Text style={[styles.sourcePreviewChipText, { color: colors.accent }]}>⚡ Kurz-Check</Text>
+          </TouchableOpacity>
+          {originalUrl && (
+            <TouchableOpacity
+              onPress={handleOpenOriginalSource}
+              style={[styles.openSourceBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+              accessibilityRole="link"
+              accessibilityLabel="Originalartikel öffnen"
+            >
+              <Ionicons name="open-outline" size={10} color={colors.accent} style={{ marginRight: 4 }} />
+              <Text style={[styles.openSourceBtnText, { color: colors.accent }]}>
+                {item.sourceDomain || 'Quelle'} ↗
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* 5.1 Inline Kurz-Check Expando (Ebene 2 Peek) */}
       {isKurzCheckOpen && (
@@ -444,16 +496,21 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         </View>
       )}
 
-      {/* 7. Dialectic Skeptic's Counter-Argument (if present) */}
-      {item.isChallengingPerspective && counterClaim && (
+      {/* 7. Archetype 3: Dialectic Central Thesis & Thread Counter-Argument */}
+      {(item.isChallengingPerspective || item.type === 'perspective' || Boolean(item.perspectiveDetails?.counterPerspective)) && (
         <View style={[styles.dialecticBox, { backgroundColor: colors.surfaceSecondary, borderLeftColor: '#8B5CF6' }]}>
           <View style={styles.dialecticHeader}>
-            <Ionicons name="git-compare-outline" size={14} color="#8B5CF6" style={{ marginRight: 5 }} />
+            <Ionicons name="chatbubbles-outline" size={14} color="#8B5CF6" style={{ marginRight: 5 }} />
             <Text style={[styles.dialecticLabel, { color: '#8B5CF6' }]}>Streitfrage & Skeptiker-Einwand</Text>
           </View>
-          <Text style={[styles.dialecticText, { color: colors.textSecondary }]}>
-            {counterClaim}
+          <Text style={[styles.dialecticText, { color: colors.textPrimary, fontWeight: '600', marginBottom: 4 }]}>
+            „{counterClaim || item.title}“
           </Text>
+          {item.perspectiveDetails?.counterPerspective && (
+            <Text style={{ fontSize: 12, color: colors.textSecondary, fontStyle: 'italic', marginTop: 2 }}>
+              ↳ Gegenstimme: {item.perspectiveDetails.counterPerspective}
+            </Text>
+          )}
         </View>
       )}
 

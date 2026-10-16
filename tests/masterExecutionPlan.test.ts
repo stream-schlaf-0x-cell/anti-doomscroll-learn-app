@@ -67,12 +67,12 @@ describe('Master Execution Plan: Editorial Depth, Authentic Community & Provenan
     assert.notStrictEqual(hash, hash3);
   });
 
-  it('4. normalizeFeedEntry generates substantive articleBody exceeding raw preview text', () => {
+  it('4. normalizeFeedEntry preserves faithful source text without fake boilerplate inflation', () => {
     const raw: RawFeedEntry = {
       id: 'entry-test-01',
       title: 'Neuer Durchbruch in der Fusionsforschung',
       link: 'https://science.example.com/fusion-breakthrough',
-      summary: 'Wissenschaftler erreichen Netto-Energiegewinn im Plasma.',
+      summary: 'Wissenschaftler am National Ignition Facility erreichen einen Netto-Energiegewinn im Plasma. Die Laserfusion erzeugte mehr Fusionsenergie als die eingestrahlte Energie.',
       publishedAt: '2026-10-15T12:00:00Z',
       sourceId: 'science-source'
     };
@@ -89,9 +89,19 @@ describe('Master Execution Plan: Editorial Depth, Authentic Community & Provenan
 
     const item = normalizeFeedEntry(raw, source);
     assert.ok(item.articleBody);
-    assert.ok(item.articleBody.length > item.feedText.length);
-    assert.ok(item.articleBody.includes('### Worum es geht'));
+    // Verbatim fidelity: articleBody contains the exact honest source text without fake boilerplate
+    assert.strictEqual(item.articleBody, raw.summary);
+    assert.strictEqual(item.evidenceTier, 'publisher_excerpt');
     assert.strictEqual(item.factReviewStatus, 'curated_illustrative');
+    // Knowledge cross-references are attached separately, not injected into articleBody
+    assert.ok(Array.isArray(item.relatedCrossReferences));
+    assert.ok(item.relatedCrossReferences.length > 0);
+
+    // Ultra-short snippet (< 120 chars) accurately classified as metadata_only
+    const shortRaw: RawFeedEntry = { ...raw, summary: 'Kurzer Ticker-Satz.' };
+    const shortItem = normalizeFeedEntry(shortRaw, source);
+    assert.strictEqual(shortItem.evidenceTier, 'metadata_only');
+    assert.strictEqual(shortItem.articleBody, 'Kurzer Ticker-Satz.');
   });
 
   it('5. ContinuousLiveNewsService fetches live feeds with timeout safety and fallback', async () => {

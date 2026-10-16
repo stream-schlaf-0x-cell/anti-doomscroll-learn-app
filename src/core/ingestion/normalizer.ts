@@ -1,7 +1,7 @@
 import { RawFeedEntry, RawFeedSource } from './types';
 import { FeedItem, FeedItemFormat, SourceReference, TOPIC_SPACE_MAP } from '../domain/types';
 import { calculateReadingStats, getCuratedImageForTopic, getSimulatedCommentsForTopic } from '../data/fixtures';
-import { enrichItemWithInstantResearch, synthesizeDeepeningArticle } from '../synthesis/backgroundResearchPipeline';
+import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
 
 /**
  * Removes tracking parameters (utm_*, fbclid, etc.) and normalizes URLs.
@@ -139,21 +139,17 @@ export function normalizeFeedEntry(entry: RawFeedEntry, source: RawFeedSource): 
   const author = entry.author || source.defaultAuthor || source.name;
   const isChallenging = source.isChallengingPerspective ?? false;
 
-  // Level 3 Progressive Deep Reader:
-  // If the raw feed only provided a brief 2-sentence snippet (< 550 chars),
-  // synthesize a rich multi-paragraph deep-dive with intuitive subheadings.
-  let articleBody = bodyText;
-  if (bodyText.length < 550 || bodyText.trim() === feedText.trim()) {
-    articleBody = synthesizeDeepeningArticle({
-      title: entry.title,
-      summary: feedText,
-      topic: source.primaryTopic,
-      sourceName: source.name,
-      author,
-      isTeachingRelated: source.isTeachingRelated,
-      counterPerspective: isChallenging ? entry.summary.slice(0, 200) : undefined
-    });
+  // Honest Source Fidelity & Evidence Tier Assignment:
+  // Never inflate articleBody or feedText with synthetic template boilerplate.
+  // Keep articleBody as the authentic, verbatim source excerpt or text.
+  let evidenceTier = source.defaultEvidenceTier;
+  const rawLength = bodyText.trim().length;
+  if (rawLength < 120) {
+    evidenceTier = 'metadata_only';
+  } else if (rawLength < 400 && evidenceTier === 'permitted_full_text') {
+    evidenceTier = 'publisher_excerpt';
   }
+  const articleBody = bodyText;
 
   const stats = calculateReadingStats(articleBody);
   const wordCount = Math.max(1, stats.wordCount);
@@ -200,7 +196,7 @@ export function normalizeFeedEntry(entry: RawFeedEntry, source: RawFeedSource): 
     wordCount: stats.wordCount,
 
     // Phase 2 Pipeline Properties
-    evidenceTier: source.defaultEvidenceTier,
+    evidenceTier,
     contentOrigin: 'live_ingested',
     contentHash,
     canonicalUrl,

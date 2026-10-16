@@ -25,11 +25,13 @@ import { LinkPreviewModal } from '../../ui/components/LinkPreviewModal';
 import { optimizeImageUrl } from '../../core/utils/imageQuality';
 import { RaindropService } from '../../core/raindrop/raindropService';
 import { copyToClipboard } from '../../core/export/craftExport';
+import { TOPIC_DIALECTICS } from '../../core/synthesis/dialecticTemplates';
 
 export const ReaderScreen: React.FC = () => {
   const {
     selectedArticle,
     closeArticle,
+    openArticle,
     goHome,
     colors,
     isDark,
@@ -135,6 +137,8 @@ export const ReaderScreen: React.FC = () => {
   const fullArticleText = (selectedArticle.articleBody && selectedArticle.articleBody.trim().length > 60)
     ? selectedArticle.articleBody
     : selectedArticle.body;
+  const originalUrl = selectedArticle.canonicalUrl || selectedArticle.sourceReferences?.[0]?.originalUrl;
+  const isExcerpt = selectedArticle.evidenceTier === 'publisher_excerpt' || selectedArticle.evidenceTier === 'metadata_only';
 
   // Magazine Font sizing calculations: generous leading & golden measure
   const fontPref = profile.readingPreferences.fontSize;
@@ -840,15 +844,24 @@ export const ReaderScreen: React.FC = () => {
             </View>
           )}
 
-          {/* Ebene 3: Redaktionell aufbereiteter Artikel */}
+          {/* Ebene 3: Authentischer Primärtext / Herausgeber-Auszug */}
           <View style={styles.ebene3Header}>
             <View style={styles.ebene3BadgeRow}>
               <View style={[styles.ebeneTag, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.ebeneTagText, { color: colors.textSecondary }]}>EBENE 3 • AUSFÜHRLICHE LEKTÜRE</Text>
+                <Text style={[styles.ebeneTagText, { color: colors.textSecondary }]}>EBENE 3 • LEKTÜRE</Text>
               </View>
-              <View style={[styles.synthesisTypeBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                <Text style={[styles.synthesisTypeBadgeText, { color: colors.textMuted }]}>
-                  {formatEditorialSynthesisType(selectedArticle.editorialSynthesisType || 'editorial_deepening')}
+              <View style={[styles.synthesisTypeBadge, { backgroundColor: isExcerpt ? colors.accentSubtle : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                <Ionicons
+                  name={isExcerpt ? 'newspaper-outline' : 'book-outline'}
+                  size={12}
+                  color={isExcerpt ? colors.accent : colors.textPrimary}
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={[styles.synthesisTypeBadgeText, { color: isExcerpt ? colors.accent : colors.textPrimary, fontWeight: '700' }]}>
+                  {selectedArticle.evidenceTier === 'permitted_full_text' ? '📖 Volltext verfügbar' :
+                   selectedArticle.evidenceTier === 'publisher_excerpt' ? '📰 Original-Auszug des Herausgebers' :
+                   selectedArticle.evidenceTier === 'metadata_only' ? '📑 Quellnotiz' :
+                   formatEditorialSynthesisType(selectedArticle.editorialSynthesisType || 'editorial_deepening')}
                 </Text>
               </View>
             </View>
@@ -877,6 +890,110 @@ export const ReaderScreen: React.FC = () => {
                 </Text>
               );
             })}
+
+            {/* Prominent External Source Button for Excerpts */}
+            {isExcerpt && originalUrl && (
+              <TouchableOpacity
+                onPress={() => handleOpenSource(originalUrl)}
+                style={[styles.openFullArticleButton, { backgroundColor: colors.accent }]}
+                activeOpacity={0.85}
+                accessibilityRole="link"
+                accessibilityLabel={`Originalartikel bei ${publisherDisplay} öffnen`}
+              >
+                <Ionicons name="open-outline" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.openFullArticleButtonText}>
+                  🔗 Originalartikel bei {publisherDisplay} öffnen
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* 🧭 Einordnung & Querverbindungen in deinem Netzwerk */}
+          <View style={[styles.networkContextBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            <View style={styles.networkContextHeaderRow}>
+              <View style={[styles.networkIconBox, { backgroundColor: colors.accentSubtle }]}>
+                <Ionicons name="compass-outline" size={18} color={colors.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.networkContextTitle, { color: colors.textPrimary }]}>
+                  🧭 Einordnung & Querverbindungen in deinem Netzwerk
+                </Text>
+                <Text style={[styles.networkContextSubtitle, { color: colors.textMuted }]}>
+                  Souveräne Einbettung im persönlichen Wissenskanon
+                </Text>
+              </View>
+            </View>
+
+            {/* 1. Core Thesis / Key Insight */}
+            {selectedArticle.keyInsight && (
+              <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                <View style={styles.networkCardBadgeRow}>
+                  <Text style={{ fontSize: 13, marginRight: 5 }}>💡</Text>
+                  <Text style={[styles.networkCardLabel, { color: colors.accent }]}>Kern-These & Relevanz</Text>
+                </View>
+                <Text style={[styles.networkCardText, { color: colors.textPrimary }]}>
+                  {selectedArticle.keyInsight}
+                </Text>
+              </View>
+            )}
+
+            {/* 2. Domain-Specific Counter-Perspective badged as KI-Gegenstimme */}
+            {(selectedArticle.perspectiveDetails?.counterPerspective || TOPIC_DIALECTICS[selectedArticle.primaryTopic]?.counterPerspective) && (
+              <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: '#8B5CF6' + '40', borderLeftColor: '#8B5CF6', borderLeftWidth: 3 }]}>
+                <View style={styles.networkCardBadgeRow}>
+                  <View style={styles.counterBadgePill}>
+                    <Ionicons name="hardware-chip-outline" size={12} color="#8B5CF6" style={{ marginRight: 4 }} />
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#8B5CF6' }}>🤖 KI-Gegenstimme</Text>
+                  </View>
+                  <Text style={[styles.counterBadgeSub, { color: colors.textMuted }]}>Dialektischer Kontrapunkt</Text>
+                </View>
+                <Text style={[styles.networkCardText, { color: colors.textSecondary }]}>
+                  {selectedArticle.perspectiveDetails?.counterPerspective || TOPIC_DIALECTICS[selectedArticle.primaryTopic]?.counterPerspective}
+                </Text>
+              </View>
+            )}
+
+            {/* 3. Clickable Related Cross-References */}
+            {selectedArticle.relatedCrossReferences && selectedArticle.relatedCrossReferences.length > 0 && (
+              <View style={{ marginTop: 14 }}>
+                <Text style={[styles.crossRefSectionTitle, { color: colors.textPrimary }]}>
+                  Querverbindungen im Netzwerk zum Weiterlesen:
+                </Text>
+                <View style={{ gap: 8, marginTop: 8 }}>
+                  {selectedArticle.relatedCrossReferences.map((ref) => (
+                    <TouchableOpacity
+                      key={ref.id}
+                      onPress={() => openArticle(ref.id)}
+                      style={[styles.crossRefCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Verwandten Artikel öffnen: ${ref.title}`}
+                    >
+                      <View style={styles.crossRefTopRow}>
+                        <View style={[styles.crossRefPill, { backgroundColor: colors.accentSubtle }]}>
+                          <Ionicons name="git-network-outline" size={11} color={colors.accent} style={{ marginRight: 4 }} />
+                          <Text style={[styles.crossRefPillText, { color: colors.accent }]}>{ref.publisher}</Text>
+                        </View>
+                        <Text style={[styles.crossRefReason, { color: colors.textMuted }]} numberOfLines={1}>
+                          {ref.connectionReason}
+                        </Text>
+                      </View>
+                      <Text style={[styles.crossRefTitle, { color: colors.textPrimary }]}>
+                        {ref.title}
+                      </Text>
+                      <Text style={[styles.crossRefInsight, { color: colors.textSecondary }]} numberOfLines={2}>
+                        {ref.insight}
+                      </Text>
+                      <View style={styles.crossRefActionRow}>
+                        <Text style={[styles.crossRefActionText, { color: colors.accent }]}>
+                          Artikel im Reader vertiefen →
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
           </View>
 
           {/* Breath Rhythm & Intellectual Pause Ornament */}
@@ -1954,5 +2071,129 @@ const styles = StyleSheet.create({
     padding: spacing.sm,
     borderRadius: radius.xs,
     borderWidth: 0.5
+  },
+  openFullArticleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: radius.md,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs
+  },
+  openFullArticleButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  networkContextBox: {
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  networkContextHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+    gap: 10
+  },
+  networkIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  networkContextTitle: {
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  networkContextSubtitle: {
+    fontSize: 11,
+    marginTop: 2
+  },
+  networkCardSection: {
+    padding: spacing.md,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    marginBottom: spacing.sm
+  },
+  networkCardBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  networkCardLabel: {
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  networkCardText: {
+    fontSize: 13,
+    lineHeight: 19
+  },
+  counterBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    marginRight: 6
+  },
+  counterBadgeSub: {
+    fontSize: 10
+  },
+  crossRefSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4
+  },
+  crossRefCard: {
+    padding: spacing.md,
+    borderRadius: radius.sm,
+    borderWidth: 1
+  },
+  crossRefTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4
+  },
+  crossRefPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.xs
+  },
+  crossRefPillText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  crossRefReason: {
+    fontSize: 10,
+    flex: 1,
+    textAlign: 'right',
+    marginLeft: 8
+  },
+  crossRefTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4
+  },
+  crossRefInsight: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginBottom: 6
+  },
+  crossRefActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end'
+  },
+  crossRefActionText: {
+    fontSize: 11,
+    fontWeight: '700'
   }
 });

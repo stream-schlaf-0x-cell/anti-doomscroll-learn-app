@@ -48,6 +48,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     savedArticles,
     interactions,
     refreshFeed,
+    shuffleFeed,
     simulateDailyGeneration,
     activeDateSeed
   } = useApp();
@@ -166,6 +167,19 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
       setShowDevSimModal(false);
     } catch (e: any) {
       showToast(`Fehler bei Simulation: ${e?.message || 'Unbekannt'}`);
+    } finally {
+      setIsSimulating(false);
+    }
+  };
+
+  const handleShuffle = async () => {
+    setIsSimulating(true);
+    try {
+      await shuffleFeed();
+      showToast('✓ Frischer Wind: Ausgabe neu rotiert!');
+      setShowDevSimModal(false);
+    } catch (e: any) {
+      showToast(`Fehler beim Mischen: ${e?.message || 'Unbekannt'}`);
     } finally {
       setIsSimulating(false);
     }
@@ -318,17 +332,17 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               </Text>
             </TouchableOpacity>
 
-            {/* Dev Content Simulator Button */}
+            {/* Feed-Kurator & Live-Sync Button */}
             <TouchableOpacity
               onPress={() => setShowDevSimModal(true)}
               style={[styles.devSimBadge, { backgroundColor: '#8B5CF6' + '22', borderColor: '#8B5CF6' }]}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel="Dev Content Generation Simulator öffnen"
+              accessibilityLabel="Feed-Kurator & Live-Sync öffnen"
             >
-              <Ionicons name="flask-outline" size={13} color="#8B5CF6" style={{ marginRight: 4 }} />
+              <Ionicons name="sync-outline" size={13} color="#8B5CF6" style={{ marginRight: 4 }} />
               <Text style={[styles.devSimBadgeText, { color: '#8B5CF6' }]}>
-                🧪 Content-Sim
+                🔄 Feed-Kurator
               </Text>
             </TouchableOpacity>
 
@@ -839,7 +853,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         onClose={() => setShowNewsHubModal(false)}
       />
 
-      {/* Dev Content Generation Simulation Modal */}
+      {/* Feed-Kurator & Live-Sync Modal */}
       <Modal
         visible={showDevSimModal}
         transparent={true}
@@ -853,15 +867,15 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         >
           <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, maxWidth: 520 }]}>
             <View style={styles.modalHeader}>
-              <Ionicons name="flask" size={22} color="#8B5CF6" style={{ marginRight: 8 }} />
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Tägliche Content-Generation simulieren</Text>
+              <Ionicons name="sync-circle" size={24} color="#8B5CF6" style={{ marginRight: 8 }} />
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>🔄 Feed-Kurator & Live-Sync</Text>
               <TouchableOpacity onPress={() => setShowDevSimModal(false)}>
                 <Ionicons name="close" size={20} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
 
             <Text style={[styles.modalSubHeader, { color: colors.textMuted }]}>
-              Entwickler-Werkzeug: Durchbricht repetitive Feeds durch Live-RSS-Recherche und autonome 24h-Generierungsläufe mit neuen Datum-Seeds.
+              Souveränes Wissensnetzwerk: Zieht 29 Live-RSS-Feeds ein, verbindet sie mit 117 kuratierten Wissensartikeln und rotiert die Tagesausgaben (€0.00 Modus, 100% lokal & privat).
             </Text>
 
             <View style={[styles.karmaHeroBox, { backgroundColor: colors.surfaceSecondary, marginTop: 8 }]}>
@@ -870,27 +884,43 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 📅 {activeDateSeed}
               </Text>
               <Text style={[styles.karmaHeroDesc, { color: colors.textMuted, marginTop: 4 }]}>
-                Aktives KI-Modell: <Text style={{ color: colors.accent, fontWeight: '700' }}>{aiModel}</Text>
+                29 Live-Feeds • 117 Wissensquellen • <Text style={{ color: colors.accent, fontWeight: '700' }}>€0.00 Modus</Text>
               </Text>
             </View>
 
             <View style={{ gap: 10, marginTop: 14 }}>
               <TouchableOpacity
-                onPress={() => handleSimulateDay(0)}
+                onPress={handleShuffle}
                 disabled={isSimulating}
                 style={[styles.simActionButton, { backgroundColor: colors.accent }]}
               >
                 {isSimulating ? (
                   <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
                 ) : (
-                  <Ionicons name="refresh" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Ionicons name="shuffle" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
                 )}
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
-                    ⚡️ Heute neu durchmischen & generieren
+                    🔄 Frischer Wind (Sofort neu würfeln)
                   </Text>
                   <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 11 }}>
-                    Zieht Live-RSS-Feeds ein & ordnet die heutige Ausgabe mit dialektischen Trends neu an.
+                    Rotiert ungesehene Artikel aus dem Wissenspool in den Vordergrund.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => handleSimulateDay(0)}
+                disabled={isSimulating}
+                style={[styles.simActionButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+              >
+                <Ionicons name="refresh" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 13 }}>
+                    ⚡ Live-Sync & Kuratieren (Stand: {activeDateSeed})
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>
+                    Zieht 29 Live-RSS-Feeds ein & ordnet die heutige Ausgabe mit dialektischen Trends neu an.
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -900,13 +930,13 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 disabled={isSimulating}
                 style={[styles.simActionButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
               >
-                <Ionicons name="sunny-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                <Ionicons name="sunny-outline" size={18} color="#8B5CF6" style={{ marginRight: 8 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 13 }}>
-                    🌅 Nächsten Tag simulieren (+1 Tag)
+                    🌅 Nächsten Tag kuratieren (+1 Tag)
                   </Text>
                   <Text style={{ color: colors.textMuted, fontSize: 11 }}>
-                    Simuliert den autonomen 24h-Turnus für morgen mit frischem Hash-Seed.
+                    Rotiert auf den nächsten 24h-Turnus mit frischem Seed.
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -919,7 +949,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 <Ionicons name="play-forward-outline" size={18} color="#8B5CF6" style={{ marginRight: 8 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 13 }}>
-                    ⏩ 3 Tage vorspulen (+3 Tage)
+                    ⏩ 3 Tage vorrotieren (+3 Tage)
                   </Text>
                   <Text style={{ color: colors.textMuted, fontSize: 11 }}>
                     Stresstest für Feed-Rotation & Entdeckung ungesehener Klassiker.

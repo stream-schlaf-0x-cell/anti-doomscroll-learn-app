@@ -1,6 +1,16 @@
-import { FeedItem, TopicTag, EditorialAbstract } from '../domain/types';
+import { FeedItem, TopicTag, EditorialAbstract, RelatedCrossReference } from '../domain/types';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
+import { INITIAL_FIXTURES } from '../data/fixtures';
 import { TOPIC_DIALECTICS } from './dialecticTemplates';
+
+// Safely access pipeline output items if available
+let cachedPipelineItems: FeedItem[] = [];
+try {
+  const p = require('../data/pipeline-output.json');
+  if (Array.isArray(p)) cachedPipelineItems = p as FeedItem[];
+} catch {
+  cachedPipelineItems = [];
+}
 
 /**
  * Background Research & Epistemic Synthesis Pipeline
@@ -273,12 +283,12 @@ export function synthesizeDeepeningArticle(options: {
  */
 export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
   const primaryTopic = item.primaryTopic || 'philosophy_ethics';
-  const body = item.articleBody || item.feedText || item.body || item.title;
+  const rawContent = item.articleBody || item.feedText || item.body || item.title;
 
-  const keyInsight = item.keyInsight || synthesizeKeyInsight(item.title, body, primaryTopic);
+  const keyInsight = item.keyInsight || synthesizeKeyInsight(item.title, rawContent, primaryTopic);
   const didacticTransfer = item.didacticTransfer || item.didacticSeed || synthesizeDidacticTransfer(
     item.title,
-    body,
+    rawContent,
     primaryTopic,
     item.isTeachingRelated
   );
@@ -304,34 +314,22 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
     'editorial_deepening'
   );
 
-  // Ebene 3 Substantive Deep Reader expansion:
-  // Detect if articleBody/body is short (< 550 chars) or identical to the brief feedText preview
-  const rawBody = item.articleBody || item.body || '';
-  const isShortOrDuplicate = rawBody.length < 550 || rawBody.trim() === (item.feedText || '').trim();
+  // Honest Source Fidelity:
+  // Do NOT artificially pad articleBody or body with template essays.
+  // Preserve 100% faithful source text.
+  const articleBody = item.articleBody || item.body || item.feedText || item.title;
+  const body = item.body || articleBody;
 
-  let articleBody = item.articleBody;
-  let expandedBody = item.body;
-
-  if (isShortOrDuplicate) {
-    const synthesized = synthesizeDeepeningArticle({
-      title: item.title,
-      summary: item.feedText || item.subtitle || item.title,
-      topic: primaryTopic,
-      sourceName: item.sourceReferences?.[0]?.publisher || 'Redaktioneller Feed',
-      author: item.sourceReferences?.[0]?.author,
-      isTeachingRelated: item.isTeachingRelated,
-      keyInsight,
-      counterPerspective: item.perspectiveDetails?.counterPerspective || TOPIC_DIALECTICS[primaryTopic]?.counterPerspective,
-      challengePrompt
-    });
-    articleBody = synthesized;
-    expandedBody = item.body && item.body.length > synthesized.length ? item.body : synthesized;
-  }
+  // Real Knowledge Cross-Linking: 2-3 genuine related items from local knowledge pool
+  const relatedCrossReferences = item.relatedCrossReferences && item.relatedCrossReferences.length > 0
+    ? item.relatedCrossReferences
+    : findRelatedNetworkPosts(item);
 
   return {
     ...item,
     articleBody,
-    body: expandedBody,
+    body,
+    relatedCrossReferences,
     keyInsight,
     didacticTransfer,
     didacticSeed: didacticTransfer,
@@ -342,4 +340,49 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
     // Only mark as teaching-related if it genuinely belongs to didactics/pedagogy
     isTeachingRelated: Boolean(item.isTeachingRelated || primaryTopic === 'german_didactics' || item.topics?.includes('german_didactics'))
   };
+}
+
+/**
+ * Discovers up to 2-3 genuine cross-reference connections in the sovereign knowledge network.
+ * Connects articles through topical synergy, shared spaces, and philosophical resonances.
+ */
+export function findRelatedNetworkPosts(item: FeedItem, customPool?: FeedItem[]): RelatedCrossReference[] {
+  const pool = customPool && customPool.length > 0
+    ? customPool
+    : [...REAL_KNOWLEDGE_VAULT, ...INITIAL_FIXTURES, ...cachedPipelineItems];
+
+  const topic = item.primaryTopic || 'philosophy_ethics';
+  const titleWords = item.title.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
+
+  const seenIds = new Set<string>([item.id]);
+  const results: RelatedCrossReference[] = [];
+
+  for (const candidate of pool) {
+    if (seenIds.has(candidate.id)) continue;
+
+    const sharesTopic = candidate.primaryTopic === topic || candidate.topics?.includes(topic);
+    const candidateText = `${candidate.title} ${candidate.subtitle || ''}`.toLowerCase();
+    const wordMatches = titleWords.filter(w => candidateText.includes(w)).length;
+
+    if (sharesTopic || wordMatches > 0) {
+      seenIds.add(candidate.id);
+      const publisher = candidate.sourceReferences?.[0]?.publisher || 'Kanon-Archiv';
+      const insight = candidate.keyInsight || candidate.subtitle || candidate.feedText?.slice(0, 120) || candidate.title;
+      const connectionReason = wordMatches > 0
+        ? `Thematische Begriffsnähe zu „${titleWords[0]}“ & Resonanz in c/${candidate.space ? candidate.space.replace('c/', '') : candidate.primaryTopic}`
+        : `Gemeinsamer Schwerpunkt im Space c/${candidate.space ? candidate.space.replace('c/', '') : candidate.primaryTopic}`;
+
+      results.push({
+        id: candidate.id,
+        title: candidate.title,
+        publisher,
+        insight,
+        connectionReason
+      });
+
+      if (results.length >= 3) break;
+    }
+  }
+
+  return results;
 }

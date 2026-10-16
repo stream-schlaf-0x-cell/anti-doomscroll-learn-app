@@ -26,6 +26,7 @@ export const SettingsScreen: React.FC = () => {
     setThemePreference,
     repeatOnboarding,
     clearAllLocalData,
+    updateEditionPreferences,
     colors,
     setActiveTab
   } = useApp();
@@ -254,6 +255,102 @@ export const SettingsScreen: React.FC = () => {
                 </Text>
               </TouchableOpacity>
             ))}
+          </View>
+        </View>
+
+        {/* Section: Daily Editions & Weather Location */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            🌅 Tagesausgaben & Wetter-Ort
+          </Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Honeste Wetterlage (Open-Meteo & DWD) für deinen morgendlichen Fokus-Start ohne Standort-Tracking.
+          </Text>
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            {/* Weather Toggle */}
+            <View style={styles.settingItemRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
+                  Morgenwetter anzeigen
+                </Text>
+                <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, marginTop: 2 }}>
+                  Echtes WMO-Wetter in der Guten-Morgen-Ausgabe
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => updateEditionPreferences({
+                  weatherEnabled: profile.editionPreferences?.weatherEnabled === false ? true : false
+                })}
+                style={[
+                  styles.smallPill,
+                  {
+                    backgroundColor: profile.editionPreferences?.weatherEnabled !== false ? colors.accent : colors.surfaceSecondary
+                  }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Wetteranzeige umschalten"
+              >
+                <Text
+                  style={[
+                    styles.smallPillText,
+                    { color: profile.editionPreferences?.weatherEnabled !== false ? '#FFFFFF' : colors.textPrimary }
+                  ]}
+                >
+                  {profile.editionPreferences?.weatherEnabled !== false ? 'Aktiv' : 'Aus'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* City Selector */}
+            <View style={[styles.settingItemRow, { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle, flexDirection: 'column', alignItems: 'flex-start', gap: 8 }]}>
+              <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
+                Wetter-Stadt:
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, width: '100%' }}>
+                {[
+                  { id: 'dresden', label: 'Dresden' },
+                  { id: 'leipzig', label: 'Leipzig' },
+                  { id: 'berlin', label: 'Berlin' },
+                  { id: 'muenchen', label: 'München' },
+                  { id: 'hamburg', label: 'Hamburg' },
+                  { id: 'wien', label: 'Wien' },
+                  { id: 'zuerich', label: 'Zürich' }
+                ].map(c => {
+                  const currentCity = (profile.editionPreferences?.weatherCity || 'dresden').toLowerCase();
+                  const isSelected = currentCity === c.id;
+                  return (
+                    <TouchableOpacity
+                      key={c.id}
+                      onPress={() => updateEditionPreferences({ weatherCity: c.id })}
+                      style={[
+                        styles.smallPill,
+                        {
+                          backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
+                          borderColor: isSelected ? colors.accent : colors.borderSubtle,
+                          borderWidth: 1,
+                          paddingHorizontal: 12,
+                          paddingVertical: 6
+                        }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Stadt ${c.label} wählen`}
+                    >
+                      <Text
+                        style={[
+                          styles.smallPillText,
+                          {
+                            color: isSelected ? '#FFFFFF' : colors.textPrimary,
+                            fontWeight: isSelected ? '700' : '500'
+                          }
+                        ]}
+                      >
+                        {isSelected ? `✓ ${c.label}` : c.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
           </View>
         </View>
 

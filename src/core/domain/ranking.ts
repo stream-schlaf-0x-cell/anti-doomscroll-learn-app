@@ -337,122 +337,165 @@ export function determineCurrentEditionType(
  * Applies edition-specific affinities, batch sizes (6-8 for morning, 4-6 for midday/evening),
  * soft editorial quotas, interleaving, and reproducible variation based on dateSeed.
  */
+function scoreForEdition(
+  item: FeedItem,
+  editionType: DayEditionType,
+  profile: UserProfile,
+  interactions: Record<string, ReadingInteraction>,
+  seed: string,
+  shuffleOffset: number = 0
+): ScoredFeedItem {
+  const base = scoreFeedItem(item, profile, interactions);
+
+  // Deterministic pseudo-random variation based on seed + shuffleOffset + editionType + item.id
+  let hash = 0;
+  const str = `${seed}_s${shuffleOffset}_${editionType}_${item.id}`;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  const variationFactor = 0.92 + (Math.abs(hash) % 160) / 1000;
+
+  let editionMultiplier = 1.0;
+
+  // Distinct Edition Character Profiles:
+  if (editionType === 'morning') {
+    // Orienting news (oerr / public broadcaster / sourced_update), science, tech (ai_apple), quick insights (<= 3 min)
+    if (item.sourceTrustLevel === 'public_broadcaster' || item.format === 'sourced_update') editionMultiplier += 0.35;
+    if (item.primaryTopic === 'science_society') editionMultiplier += 0.30;
+    if (item.primaryTopic === 'ai_apple') editionMultiplier += 0.25;
+    if (item.estimatedReadingMinutes <= 3) editionMultiplier += 0.20;
+    if (item.primaryTopic === 'opportunities_growth') editionMultiplier += 0.15;
+  } else if (editionType === 'midday') {
+    // Actionable didactics, practical tools/opportunities, health/biohacking, satire, youtube gems
+    if (item.isTeachingRelated || item.primaryTopic === 'german_didactics') editionMultiplier += 0.35;
+    if (item.primaryTopic === 'opportunities_growth' || item.primaryTopic === 'health_biohacking') editionMultiplier += 0.30;
+    if (item.primaryTopic === 'memes_satire' || item.format === 'meme') editionMultiplier += 0.30;
+    if (item.primaryTopic === 'youtube_gems' || item.format === 'youtube_gem') editionMultiplier += 0.25;
+    if (item.format === 'creative_idea' || item.format === 'concise_insight') editionMultiplier += 0.15;
+  } else if (editionType === 'evening') {
+    // Deep essays (long_invitation, >= 4 min), philosophy & contemplation, book masterpieces, sound synthesis, evergreen gems
+    if (item.format === 'long_invitation' || item.estimatedReadingMinutes >= 4) editionMultiplier += 0.35;
+    if (item.primaryTopic === 'philosophy_ethics' || item.primaryTopic === 'contemplation_mind') editionMultiplier += 0.30;
+    if (item.primaryTopic === 'book_mastery' || item.format === 'book_masterpiece') editionMultiplier += 0.30;
+    if (item.primaryTopic === 'sound_synthesis') editionMultiplier += 0.25;
+    if (item.isEvergreenGem) editionMultiplier += 0.25;
+  }
+
+  // Explicit item targetEditions matching
+  if (item.targetEditions && item.targetEditions.length > 0) {
+    if (item.targetEditions.includes(editionType)) {
+      editionMultiplier += 0.20;
+    } else {
+      editionMultiplier -= 0.30;
+    }
+  }
+
+  const adjustedScore = Math.round(base.score * variationFactor * Math.max(0.1, editionMultiplier) * 1000) / 1000;
+  return {
+    ...base,
+    score: adjustedScore
+  };
+}
+
+/**
+ * Unified Daily Cross-Edition Allocator:
+ * Allocates disjoint, zero-repetition batches for morning, midday, and evening.
+ * 
+ * Strict Invariant:
+ * Across morning (8), midday (8), and evening (8), once an item ID is assigned,
+ * it is excluded from later editions. If pool has >= 24 items, exactly 24 distinct items
+ * are returned across all three editions (0% overlap!).
+ */
+export function allocateDailyEditions(
+  pool: FeedItem[],
+  profile: UserProfile,
+  interactions: Record<string, ReadingInteraction> = {},
+  dateSeed?: string,
+  shuffleOffset: number = 0
+): Record<DayEditionType, ScoredFeedItem[]> {
+  const seed = dateSeed || new Date().toISOString().slice(0, 10);
+  const targetPerEdition = 8;
+  const assignedIds = new Set<string>();
+
+  const editions: DayEditionType[] = ['morning', 'midday', 'evening'];
+  const allocations: Record<DayEditionType, ScoredFeedItem[]> = {
+    morning: [],
+    midday: [],
+    evening: []
+  };
+
+  for (const edition of editions) {
+    // 1. Available candidate pool strictly excluding already assigned items
+    const availablePool = pool.filter(item => !assignedIds.has(item.id));
+
+    // 2. Score items with edition-specific character profile
+    const scored = availablePool.map(item => scoreForEdition(item, edition, profile, interactions, seed, shuffleOffset));
+    scored.sort((a, b) => b.score - a.score);
+
+    // 3. Select target count with soft quotas
+    const count = Math.min(targetPerEdition, scored.length);
+    const topBatch = scored.slice(0, count);
+    const remainder = scored.slice(count);
+
+    // Quota 1: Teaching related (~10% across editions, at least 1 in morning/midday if available)
+    if ((edition === 'morning' || edition === 'midday') && !topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics')) {
+      const tIdx = remainder.findIndex(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics');
+      if (tIdx !== -1) {
+        const [elevated] = remainder.splice(tIdx, 1);
+        const repIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
+        if (repIdx !== -1) {
+          remainder.push(topBatch[repIdx]);
+          topBatch.splice(repIdx, 1, elevated);
+        }
+      }
+    }
+
+    // Quota 2: Challenging perspective (~10% across editions)
+    if (!topBatch.some(i => i.isChallengingPerspective || i.type === 'perspective')) {
+      const cIdx = remainder.findIndex(i => i.isChallengingPerspective || i.type === 'perspective');
+      if (cIdx !== -1) {
+        const [elevated] = remainder.splice(cIdx, 1);
+        const repIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
+        if (repIdx !== -1) {
+          remainder.push(topBatch[repIdx]);
+          topBatch.splice(repIdx, 1, elevated);
+        }
+      }
+    }
+
+    // 4. Interleave topics to prevent clumping
+    const interleaved: ScoredFeedItem[] = [];
+    const selectionPool = [...topBatch];
+    while (selectionPool.length > 0) {
+      const lastTopic = interleaved.length > 0 ? interleaved[interleaved.length - 1].primaryTopic : null;
+      let nextIndex = selectionPool.findIndex(item => item.primaryTopic !== lastTopic);
+      if (nextIndex === -1) {
+        nextIndex = 0;
+      }
+      const [chosen] = selectionPool.splice(nextIndex, 1);
+      interleaved.push(chosen);
+      assignedIds.add(chosen.id);
+    }
+
+    allocations[edition] = interleaved;
+  }
+
+  return allocations;
+}
+
+/**
+ * Ranks items for a specific edition (Guten Morgen, Mittendrin, Guten Abend).
+ * Leverages the unified cross-edition allocator ensuring zero ID collision across editions.
+ */
 export function rankEditionFeed(
   items: FeedItem[],
   editionType: DayEditionType,
   profile: UserProfile,
   interactions: Record<string, ReadingInteraction> = {},
-  dateSeed?: string
+  dateSeed?: string,
+  shuffleOffset: number = 0
 ): ScoredFeedItem[] {
-  const seed = dateSeed || new Date().toISOString().slice(0, 10);
-  const targetCount = editionType === 'morning' ? 7 : 5;
-
-  // Compute reproducible hash variation factor per item
-  const scored = items.map(item => {
-    const base = scoreFeedItem(item, profile, interactions);
-
-    // Deterministic pseudo-random variation [0.94, 1.06] based on seed + item.id + editionType
-    let hash = 0;
-    const str = `${seed}_${editionType}_${item.id}`;
-    for (let i = 0; i < str.length; i++) {
-      hash = (hash << 5) - hash + str.charCodeAt(i);
-      hash |= 0;
-    }
-    const variationFactor = 0.94 + (Math.abs(hash) % 120) / 1000;
-
-    // Edition-specific affinity boosts
-    let editionMultiplier = 1.0;
-    if (editionType === 'morning') {
-      if (
-        item.primaryTopic === 'science_society' ||
-        item.primaryTopic === 'opportunities_growth' ||
-        item.format === 'sourced_update' ||
-        item.format === 'intriguing_question'
-      ) {
-        editionMultiplier = 1.15;
-      }
-    } else if (editionType === 'midday') {
-      if (
-        item.primaryTopic === 'memes_satire' ||
-        item.primaryTopic === 'health_biohacking' ||
-        item.format === 'creative_idea' ||
-        item.format === 'concise_insight'
-      ) {
-        editionMultiplier = 1.18;
-      }
-    } else if (editionType === 'evening') {
-      if (
-        item.primaryTopic === 'sound_synthesis' ||
-        item.primaryTopic === 'book_mastery' ||
-        item.primaryTopic === 'contemplation_mind' ||
-        item.isEvergreenGem ||
-        item.format === 'long_invitation'
-      ) {
-        editionMultiplier = 1.20;
-      }
-    }
-
-    // Explicit item targetEditions matching
-    if (item.targetEditions && item.targetEditions.length > 0) {
-      if (item.targetEditions.includes(editionType)) {
-        editionMultiplier += 0.10;
-      } else {
-        editionMultiplier -= 0.15;
-      }
-    }
-
-    const adjustedScore = Math.round(base.score * variationFactor * editionMultiplier * 1000) / 1000;
-    return {
-      ...base,
-      score: adjustedScore
-    };
-  });
-
-  scored.sort((a, b) => b.score - a.score);
-
-  // Soft quotas according to edition
-  const topBatch = scored.slice(0, targetCount);
-  const remainder = scored.slice(targetCount);
-
-  // Quota 1: Teaching related (~10% across editions, at least 1 in morning if available)
-  if (editionType === 'morning' && !topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics')) {
-    const tIdx = remainder.findIndex(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics');
-    if (tIdx !== -1) {
-      const [elevated] = remainder.splice(tIdx, 1);
-      const repIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
-      if (repIdx !== -1) {
-        remainder.push(topBatch[repIdx]);
-        topBatch.splice(repIdx, 1, elevated);
-      }
-    }
-  }
-
-  // Quota 2: Challenging perspective (~10% across editions)
-  if (!topBatch.some(i => i.isChallengingPerspective || i.type === 'perspective')) {
-    const cIdx = remainder.findIndex(i => i.isChallengingPerspective || i.type === 'perspective');
-    if (cIdx !== -1) {
-      const [elevated] = remainder.splice(cIdx, 1);
-      const repIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
-      if (repIdx !== -1) {
-        remainder.push(topBatch[repIdx]);
-        topBatch.splice(repIdx, 1, elevated);
-      }
-    }
-  }
-
-  // Interleave topics to prevent clumping
-  const result: ScoredFeedItem[] = [];
-  const pool = [...topBatch];
-
-  while (pool.length > 0) {
-    const lastTopic = result.length > 0 ? result[result.length - 1].primaryTopic : null;
-    let nextIndex = pool.findIndex(item => item.primaryTopic !== lastTopic);
-    if (nextIndex === -1) {
-      nextIndex = 0;
-    }
-    const [chosen] = pool.splice(nextIndex, 1);
-    result.push(chosen);
-  }
-
-  return result;
+  const allocations = allocateDailyEditions(items, profile, interactions, dateSeed, shuffleOffset);
+  return allocations[editionType];
 }

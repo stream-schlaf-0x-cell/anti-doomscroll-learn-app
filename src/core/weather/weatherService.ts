@@ -21,12 +21,13 @@ export interface WeatherLocation {
 }
 
 export const SUPPORTED_WEATHER_LOCATIONS: Record<string, WeatherLocation> = {
+  dresden: { id: 'dresden', name: 'Dresden', lat: 51.0504, lon: 13.7373, country: 'DE' },
+  leipzig: { id: 'leipzig', name: 'Leipzig', lat: 51.3397, lon: 12.3731, country: 'DE' },
   berlin: { id: 'berlin', name: 'Berlin', lat: 52.52, lon: 13.405, country: 'DE' },
   hamburg: { id: 'hamburg', name: 'Hamburg', lat: 53.551, lon: 9.993, country: 'DE' },
   muenchen: { id: 'muenchen', name: 'München', lat: 48.135, lon: 11.582, country: 'DE' },
   koeln: { id: 'koeln', name: 'Köln', lat: 50.937, lon: 6.96, country: 'DE' },
   frankfurt: { id: 'frankfurt', name: 'Frankfurt a.M.', lat: 50.11, lon: 8.682, country: 'DE' },
-  leipzig: { id: 'leipzig', name: 'Leipzig', lat: 51.339, lon: 12.373, country: 'DE' },
   stuttgart: { id: 'stuttgart', name: 'Stuttgart', lat: 48.775, lon: 9.182, country: 'DE' },
   wien: { id: 'wien', name: 'Wien', lat: 48.208, lon: 16.373, country: 'AT' },
   zuerich: { id: 'zuerich', name: 'Zürich', lat: 47.376, lon: 8.541, country: 'CH' }
@@ -140,9 +141,9 @@ export class WeatherService {
    * Fetches real weather data for a given city ID or lat/lon coordinates.
    * Returns null if offline, failed, or disabled. Never throws.
    */
-  public static async getWeatherForCity(cityIdOrName: string = 'berlin'): Promise<WeatherData | null> {
+  public static async getWeatherForCity(cityIdOrName: string = 'dresden'): Promise<WeatherData | null> {
     const key = cityIdOrName.toLowerCase().trim();
-    const location = SUPPORTED_WEATHER_LOCATIONS[key] || SUPPORTED_WEATHER_LOCATIONS['berlin'];
+    const location = SUPPORTED_WEATHER_LOCATIONS[key] || SUPPORTED_WEATHER_LOCATIONS['dresden'];
 
     // Check cache
     const cached = memoryCache.get(location.id);

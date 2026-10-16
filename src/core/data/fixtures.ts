@@ -1165,7 +1165,7 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
     middayStartHour: 12,
     eveningStartHour: 18,
     weatherEnabled: true,
-    weatherCity: 'berlin'
+    weatherCity: 'dresden'
   },
   isOnboarded: false,
   lastActiveDate: '2026-10-14'

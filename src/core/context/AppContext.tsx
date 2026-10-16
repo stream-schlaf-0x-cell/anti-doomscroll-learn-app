@@ -6,7 +6,8 @@ import {
   TopicTag,
   ReadingPreferenceDuration,
   FeedItem,
-  DayEditionType
+  DayEditionType,
+  EditionPreferences
 } from '../domain/types';
 import { ScoredFeedItem, determineCurrentEditionType } from '../domain/ranking';
 import { feedRepository } from '../data/feedRepository';
@@ -76,6 +77,9 @@ interface AppContextValue {
   repeatOnboarding: () => Promise<void>;
   clearAllLocalData: () => Promise<void>;
   refreshFeed: () => Promise<void>;
+  shuffleSeed: number;
+  shuffleFeed: () => Promise<void>;
+  updateEditionPreferences: (prefs: Partial<EditionPreferences>) => Promise<void>;
   simulateDailyGeneration: (daysOffset?: number, customDate?: string) => Promise<{ simulatedDate: string; itemCount: number }>;
   activeDateSeed: string;
   retryStartup: () => Promise<void>;
@@ -105,12 +109,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
   const [activeDateSeed, setActiveDateSeed] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [shuffleSeed, setShuffleSeed] = useState<number>(0);
 
   const selectedEditionTypeRef = useRef<DayEditionType>(selectedEditionType);
   selectedEditionTypeRef.current = selectedEditionType;
 
   const activeDateSeedRef = useRef<string>(activeDateSeed);
   activeDateSeedRef.current = activeDateSeed;
+
+  const shuffleSeedRef = useRef<number>(0);
+  shuffleSeedRef.current = shuffleSeed;
 
   // References to track latest committed state and prevent stale closures
   const latestProfileRef = useRef<UserProfile>(profile);
@@ -151,14 +159,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     prof: UserProfile,
     inter: Record<string, ReadingInteraction>,
     targetEdition?: DayEditionType,
-    customDateSeed?: string
+    customDateSeed?: string,
+    customShuffleOffset?: number
   ) => {
     const currentVersion = ++feedRecomputeVersion.current;
     try {
       const edition = targetEdition ?? selectedEditionTypeRef.current;
       const seed = customDateSeed ?? activeDateSeedRef.current;
+      const offset = customShuffleOffset ?? shuffleSeedRef.current;
       const [daily, disc] = await Promise.all([
-        feedRepository.getEditionFeed(edition, prof, inter, seed),
+        feedRepository.getEditionFeed(edition, prof, inter, seed, offset),
         feedRepository.getDiscoveryItems(prof, inter)
       ]);
       if (currentVersion === feedRecomputeVersion.current) {
@@ -167,7 +177,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       if (edition === 'morning' && prof.editionPreferences?.weatherEnabled !== false) {
-        const city = prof.editionPreferences?.weatherCity || 'Berlin';
+        const city = prof.editionPreferences?.weatherCity || 'dresden';
         const weather = await WeatherService.getWeatherForCity(city);
         if (currentVersion === feedRecomputeVersion.current) {
           setWeatherData(weather);
@@ -181,6 +191,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Feed-Berechnung fehlgeschlagen:', err);
     }
   }, []);
+
+  const shuffleFeed = useCallback(async () => {
+    const nextOffset = shuffleSeedRef.current + 1;
+    setShuffleSeed(nextOffset);
+    shuffleSeedRef.current = nextOffset;
+    await scheduleFeedRecompute(
+      latestProfileRef.current,
+      latestInteractionsRef.current,
+      selectedEditionTypeRef.current,
+      `${activeDateSeedRef.current}-shuffle-${nextOffset}`,
+      nextOffset
+    );
+  }, [scheduleFeedRecompute]);
+
+  const updateEditionPreferences = useCallback(async (prefs: Partial<EditionPreferences>) => {
+    try {
+      const committed = await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        editionPreferences: {
+          ...curr.editionPreferences,
+          ...prefs
+        }
+      }));
+      latestProfileRef.current = committed;
+      setProfile(committed);
+      await scheduleFeedRecompute(committed, latestInteractionsRef.current);
+    } catch {
+      setErrorMessage('Ausgaben-Einstellungen konnten nicht gespeichert werden.');
+    }
+  }, [scheduleFeedRecompute]);
 
   const setSelectedEditionType = useCallback((edition: DayEditionType) => {
     setSelectedEditionTypeState(edition);
@@ -845,6 +885,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         repeatOnboarding,
         clearAllLocalData,
         refreshFeed,
+        shuffleSeed,
+        shuffleFeed,
+        updateEditionPreferences,
         simulateDailyGeneration,
         activeDateSeed,
         retryStartup: loadInitialData,

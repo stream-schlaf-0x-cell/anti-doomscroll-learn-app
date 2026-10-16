@@ -266,6 +266,16 @@ export const EditorialAbstractSchema = z.object({
 });
 export type EditorialAbstract = z.infer<typeof EditorialAbstractSchema>;
 
+// Querverbindungen & Einordnung im lokalen Wissensnetzwerk
+export const RelatedCrossReferenceSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  publisher: z.string(),
+  insight: z.string(),
+  connectionReason: z.string()
+});
+export type RelatedCrossReference = z.infer<typeof RelatedCrossReferenceSchema>;
+
 // Ebene 3: Art der redaktionellen Aufbereitung
 export const EditorialSynthesisTypeSchema = z.enum([
   'original_text',            // Ungekürzter Primärtext / Autorenaufsatz
@@ -388,7 +398,8 @@ export const FeedItemSchema = z.object({
   editorialAbstract: EditorialAbstractSchema.optional(),
   editorialSynthesisType: EditorialSynthesisTypeSchema.optional(),
   targetEditions: z.array(DayEditionTypeSchema).optional(),
-  imageCredit: z.string().optional()
+  imageCredit: z.string().optional(),
+  relatedCrossReferences: z.array(RelatedCrossReferenceSchema).optional()
 });
 export type FeedItem = z.infer<typeof FeedItemSchema>;
 
@@ -590,19 +601,20 @@ export const UserProfileSchema = z.object({
     middayStartHour: z.number().default(12),
     eveningStartHour: z.number().default(18),
     weatherEnabled: z.boolean().default(true),
-    weatherCity: z.string().default('berlin')
+    weatherCity: z.string().default('dresden')
   }).default({
     timezone: 'Europe/Berlin',
     morningStartHour: 5,
     middayStartHour: 12,
     eveningStartHour: 18,
     weatherEnabled: true,
-    weatherCity: 'berlin'
+    weatherCity: 'dresden'
   }),
   isOnboarded: z.boolean().default(false),
   lastActiveDate: z.string().optional()
 });
 export type UserProfile = z.infer<typeof UserProfileSchema>;
+export type EditionPreferences = UserProfile['editionPreferences'];
 
 export const SparringReplySchema = z.object({
   id: z.string(),

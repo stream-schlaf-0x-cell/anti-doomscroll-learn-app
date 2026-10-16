@@ -49,7 +49,8 @@ export interface IFeedRepository {
     editionType: DayEditionType,
     profile: UserProfile,
     interactions?: Record<string, ReadingInteraction>,
-    dateSeed?: string
+    dateSeed?: string,
+    shuffleOffset?: number
   ): Promise<ScoredFeedItem[]>;
   getDiscoveryItems(profile: UserProfile, interactions?: Record<string, ReadingInteraction>, excludedIds?: Set<string>): Promise<ScoredFeedItem[]>;
   getItemById(id: string): Promise<FeedItem | null>;
@@ -177,9 +178,10 @@ export class LocalFeedRepository implements IFeedRepository {
     editionType: DayEditionType,
     profile: UserProfile,
     interactions: Record<string, ReadingInteraction> = {},
-    dateSeed?: string
+    dateSeed?: string,
+    shuffleOffset?: number
   ): Promise<ScoredFeedItem[]> {
-    return rankEditionFeed(this.items, editionType, profile, interactions, dateSeed);
+    return rankEditionFeed(this.items, editionType, profile, interactions, dateSeed, shuffleOffset);
   }
 
   async getDiscoveryItems(

@@ -14,6 +14,7 @@ import {
   UserProfile
 } from '../src/core/domain/types';
 import { REAL_KNOWLEDGE_VAULT } from '../src/core/data/realKnowledgeVault';
+import { LocalFeedRepository } from '../src/core/data/feedRepository';
 import { WeatherService } from '../src/core/weather/weatherService';
 import { synthesizeEditorialAbstract } from '../src/core/synthesis/backgroundResearchPipeline';
 import { RecursiveLearningEngine } from '../src/core/recommendations/recursiveLearningEngine';
@@ -56,14 +57,16 @@ describe('Three Daily Editions & Editorial Depth', () => {
   });
 
   it('ranks edition feeds with target counts and editorial quotas', () => {
-    const morningFeed = rankEditionFeed(REAL_KNOWLEDGE_VAULT, 'morning', DEFAULT_USER_PROFILE, {}, '2026-10-15');
-    assert.ok(morningFeed.length >= 6 && morningFeed.length <= 8, `Morning feed should have 6-8 items, got ${morningFeed.length}`);
+    const repository = new LocalFeedRepository();
+    const items = repository.getAllItems();
+    const morningFeed = rankEditionFeed(items, 'morning', DEFAULT_USER_PROFILE, {}, '2026-10-15');
+    assert.strictEqual(morningFeed.length, 8, `Morning feed should have 8 items, got ${morningFeed.length}`);
 
-    const middayFeed = rankEditionFeed(REAL_KNOWLEDGE_VAULT, 'midday', DEFAULT_USER_PROFILE, {}, '2026-10-15');
-    assert.ok(middayFeed.length >= 4 && middayFeed.length <= 6, `Midday feed should have 4-6 items, got ${middayFeed.length}`);
+    const middayFeed = rankEditionFeed(items, 'midday', DEFAULT_USER_PROFILE, {}, '2026-10-15');
+    assert.strictEqual(middayFeed.length, 8, `Midday feed should have 8 items, got ${middayFeed.length}`);
 
-    const eveningFeed = rankEditionFeed(REAL_KNOWLEDGE_VAULT, 'evening', DEFAULT_USER_PROFILE, {}, '2026-10-15');
-    assert.ok(eveningFeed.length >= 4 && eveningFeed.length <= 6, `Evening feed should have 4-6 items, got ${eveningFeed.length}`);
+    const eveningFeed = rankEditionFeed(items, 'evening', DEFAULT_USER_PROFILE, {}, '2026-10-15');
+    assert.strictEqual(eveningFeed.length, 8, `Evening feed should have 8 items, got ${eveningFeed.length}`);
 
     // Verify soft quotas (at least 1 teaching and 1 challenging perspective in morning feed)
     const hasTeaching = morningFeed.some(item => item.isTeachingRelated || item.primaryTopic === 'german_didactics');
@@ -77,6 +80,32 @@ describe('Three Daily Editions & Editorial Depth', () => {
       t === 'contemplation_mind' || t === 'sound_synthesis' || t === 'philosophy_ethics' || t === 'book_mastery'
     );
     assert.ok(hasEveningFocus, 'Evening feed should feature calming, philosophical or sound topics');
+  });
+
+  it('guarantees 0% article overlap across morning, midday, and evening editions', async () => {
+    const repository = new LocalFeedRepository();
+    const morning = await repository.getEditionFeed('morning', DEFAULT_USER_PROFILE, {}, '2026-10-15');
+    const midday = await repository.getEditionFeed('midday', DEFAULT_USER_PROFILE, {}, '2026-10-15');
+    const evening = await repository.getEditionFeed('evening', DEFAULT_USER_PROFILE, {}, '2026-10-15');
+
+    assert.strictEqual(morning.length, 8);
+    assert.strictEqual(midday.length, 8);
+    assert.strictEqual(evening.length, 8);
+
+    const morningIds = new Set(morning.map(item => item.id));
+    const middayIds = new Set(midday.map(item => item.id));
+    const eveningIds = new Set(evening.map(item => item.id));
+
+    const morningMiddayOverlap = [...morningIds].filter(id => middayIds.has(id));
+    const morningEveningOverlap = [...morningIds].filter(id => eveningIds.has(id));
+    const middayEveningOverlap = [...middayIds].filter(id => eveningIds.has(id));
+
+    assert.deepStrictEqual(morningMiddayOverlap, [], 'Morning and midday editions must have 0% overlap');
+    assert.deepStrictEqual(morningEveningOverlap, [], 'Morning and evening editions must have 0% overlap');
+    assert.deepStrictEqual(middayEveningOverlap, [], 'Midday and evening editions must have 0% overlap');
+
+    const totalUnique = new Set([...morningIds, ...middayIds, ...eveningIds]).size;
+    assert.strictEqual(totalUnique, 24, 'All 24 daily edition items must be unique');
   });
 
   it('synthesizes Ebene 2 Editorial Abstract conforming to schema', () => {

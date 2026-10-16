@@ -238,5 +238,37 @@ describe('Provider-Independent Enrichment & €5 Budget Enforcement', () => {
     const reservation = await ledger.reserveSpend(0.001);
     assert.strictEqual(reservation, null, 'reserveSpend must be rejected on corrupted storage');
   });
+
+  it('12. Fail-Safe Closed on ALL Storage Errors: Storage unavailable or write error locks budget and falls back to SourceOnlyEnricher', async () => {
+    const memoryDriver = new MemoryStorageDriver();
+    // 1. Simulate read failure (StorageUnavailableError)
+    memoryDriver.shouldFailReads = true;
+    const storage = new StorageDriverLedgerStorage(new AtemStorage(memoryDriver));
+    const ledger = new EnrichmentUsageLedger(storage);
+
+    assert.strictEqual(await ledger.canSpend(0.001), false, 'canSpend must return false on read failure');
+    assert.strictEqual(await ledger.reserveSpend(0.001), null, 'reserveSpend must return null on read failure');
+    assert.strictEqual(ledger.isHealthy(), false, 'ledger must report unhealthy');
+
+    const cache = new EnrichmentCache('', false);
+    const mockProvider = new MockEnricher();
+    const enricherWithFailingStorage = new ProviderEnricher(ledger, cache, mockProvider);
+
+    const fallbackResult = await enricherWithFailingStorage.enrich({ item: INITIAL_FIXTURES[0] });
+    assert.strictEqual(fallbackResult.isFallback, true, 'Enricher must fallback to SourceOnlyEnricher on storage read failure');
+
+    // 2. Simulate write failure (StorageWriteError)
+    const writeFailingDriver = new MemoryStorageDriver();
+    writeFailingDriver.shouldFailWrites = true;
+    const writeFailingStorage = new StorageDriverLedgerStorage(new AtemStorage(writeFailingDriver));
+    const writeFailingLedger = new EnrichmentUsageLedger(writeFailingStorage);
+
+    assert.strictEqual(await writeFailingLedger.reserveSpend(0.001), null, 'reserveSpend must return null when reservation write fails');
+    assert.strictEqual(writeFailingLedger.isHealthy(), false, 'writeFailingLedger must report unhealthy');
+
+    const enricherWithWriteFailure = new ProviderEnricher(writeFailingLedger, cache, mockProvider);
+    const writeFallbackResult = await enricherWithWriteFailure.enrich({ item: INITIAL_FIXTURES[1] });
+    assert.strictEqual(writeFallbackResult.isFallback, true, 'Enricher must fallback to SourceOnlyEnricher on storage write failure');
+  });
 });
 

@@ -13,7 +13,7 @@ import {
   Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { TopicTag, FeedItem, DayEditionType, DAY_EDITIONS_META } from '../../core/domain/types';
+import { TopicTag, FeedItem, DayEditionType, DAY_EDITIONS_META, TOPIC_SPACE_MAP } from '../../core/domain/types';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
 import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
@@ -50,7 +50,8 @@ export const FeedScreen: React.FC = () => {
     openArticle,
     toggleSaveItem,
     simulateDailyGeneration,
-    activeDateSeed
+    shuffleFeed,
+    updateTopicWeight
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -162,6 +163,32 @@ export const FeedScreen: React.FC = () => {
       setSimulatingDay(false);
     }
   };
+
+  const handleShuffle = async () => {
+    setSimulatingDay(true);
+    try {
+      await shuffleFeed();
+      setSimToast('✓ Frischer Wind: Ausgabe neu rotiert!');
+      setTimeout(() => setSimToast(null), 2500);
+    } catch {
+      setSimToast('Mischen fehlgeschlagen.');
+      setTimeout(() => setSimToast(null), 2500);
+    } finally {
+      setSimulatingDay(false);
+    }
+  };
+
+  const activeTopic: TopicTag | undefined = useMemo(() => {
+    if (selectedFilter === 'all') return undefined;
+    const sub = subchannels.find(s => s.handle === selectedFilter || s.primaryTopic === selectedFilter);
+    if (sub?.primaryTopic) return sub.primaryTopic;
+    const entry = (Object.entries(TOPIC_SPACE_MAP) as [TopicTag, (typeof TOPIC_SPACE_MAP)[TopicTag]][]).find(
+      ([_, meta]) => meta.space.toLowerCase() === selectedFilter.toLowerCase()
+    );
+    if (entry) return entry[0] as TopicTag;
+    if (selectedFilter in profile.explicitInterests) return selectedFilter as TopicTag;
+    return undefined;
+  }, [selectedFilter, subchannels, profile.explicitInterests]);
 
   const handleGenerateEmptyPocket = async () => {
     const targetSpace = selectedFilter === 'all'
@@ -830,26 +857,42 @@ export const FeedScreen: React.FC = () => {
                     })}
                   </View>
 
-                  {/* Dev Content Generation Simulation Bar */}
+                  {/* Feed-Kurator & Live-Sync Bar */}
                   <View style={[styles.devSimRow, { borderTopColor: colors.borderSubtle }]}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name="calendar-outline" size={13} color={colors.textMuted} style={{ marginRight: 4 }} />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+                      <Ionicons name="sync-outline" size={13} color={colors.accent} style={{ marginRight: 2 }} />
+                      <Text style={[styles.devSimDateText, { color: colors.textPrimary, fontWeight: '700' }]}>
+                        Feed-Kurator:
+                      </Text>
                       <Text style={[styles.devSimDateText, { color: colors.textMuted }]}>
-                        Stand: {activeDateSeed}
+                        29 Feeds • 117 Quellen • €0.00
                       </Text>
                     </View>
 
-                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                    <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                      <TouchableOpacity
+                        onPress={handleShuffle}
+                        disabled={simulatingDay}
+                        style={[styles.devSimPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Frischen Wind würfeln (Shuffle)"
+                      >
+                        <Ionicons name="shuffle" size={11} color={colors.accent} style={{ marginRight: 3 }} />
+                        <Text style={[styles.devSimPillText, { color: colors.textPrimary }]}>
+                          {simulatingDay ? 'Lädt…' : '🔄 Frischer Wind'}
+                        </Text>
+                      </TouchableOpacity>
+
                       <TouchableOpacity
                         onPress={handleSimulateToday}
                         disabled={simulatingDay}
                         style={[styles.devSimPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
                         accessibilityRole="button"
-                        accessibilityLabel="Heutigen Tag neu würfeln"
+                        accessibilityLabel="Live-Sync & Feeds aktualisieren"
                       >
                         <Ionicons name="refresh" size={11} color={colors.accent} style={{ marginRight: 3 }} />
                         <Text style={[styles.devSimPillText, { color: colors.textPrimary }]}>
-                          {simulatingDay ? 'Lädt…' : 'Neu würfeln'}
+                          Live-Sync
                         </Text>
                       </TouchableOpacity>
 
@@ -858,11 +901,11 @@ export const FeedScreen: React.FC = () => {
                         disabled={simulatingDay}
                         style={[styles.devSimPill, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
                         accessibilityRole="button"
-                        accessibilityLabel="Nächsten Tag simulieren"
+                        accessibilityLabel="Nächsten Tag kuratieren"
                       >
-                        <Ionicons name="flask" size={11} color={colors.accent} style={{ marginRight: 3 }} />
+                        <Ionicons name="calendar-outline" size={11} color={colors.accent} style={{ marginRight: 3 }} />
                         <Text style={[styles.devSimPillText, { color: colors.accent, fontWeight: '700' }]}>
-                          +1 Tag (Simulieren)
+                          +1 Tag
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -966,6 +1009,54 @@ export const FeedScreen: React.FC = () => {
                     </Text>
                   </View>
                 </View>
+
+                {/* Subchannel Quick Tuning Header */}
+                {selectedFilter !== 'all' && activeTopic && (
+                  <View style={[styles.subchannelTuningHeader, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="funnel-outline" size={14} color={colors.accent} />
+                        <Text style={[styles.subchannelTuningTitle, { color: colors.textPrimary }]}>
+                          Kanal {selectedFilter}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                        Relevanz in deinem Feed: {Math.round((profile.derivedWeights?.[activeTopic] ?? profile.explicitInterests[activeTopic] ?? 0.5) * 100)}%
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const curr = profile.explicitInterests[activeTopic] ?? 0.5;
+                          updateTopicWeight(activeTopic, Math.min(1.0, Math.round((curr + 0.15) * 100) / 100));
+                          setSimToast(`✓ Fokus auf ${selectedFilter} erhöht!`);
+                          setTimeout(() => setSimToast(null), 2000);
+                        }}
+                        style={[styles.tuningBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Fokus für dieses Thema erhöhen"
+                      >
+                        <Ionicons name="arrow-up" size={13} color={colors.accent} style={{ marginRight: 3 }} />
+                        <Text style={[styles.tuningBtnText, { color: colors.accent, fontWeight: '700' }]}>+ Fokus</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => {
+                          const curr = profile.explicitInterests[activeTopic] ?? 0.5;
+                          updateTopicWeight(activeTopic, Math.max(0.1, Math.round((curr - 0.15) * 100) / 100));
+                          setSimToast(`✓ Fokus auf ${selectedFilter} verringert.`);
+                          setTimeout(() => setSimToast(null), 2000);
+                        }}
+                        style={[styles.tuningBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Fokus für dieses Thema verringern"
+                      >
+                        <Ionicons name="arrow-down" size={13} color={colors.textMuted} style={{ marginRight: 3 }} />
+                        <Text style={[styles.tuningBtnText, { color: colors.textSecondary }]}>- Weniger</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
 
             {allStreamItems.length === 0 ? (
               <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
@@ -1774,5 +1865,29 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '700'
+  },
+  subchannelTuningHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: 10
+  },
+  subchannelTuningTitle: {
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  tuningBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  tuningBtnText: {
+    fontSize: 11
   }
 });
