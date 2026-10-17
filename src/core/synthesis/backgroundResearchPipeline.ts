@@ -13,17 +13,15 @@ try {
 }
 
 /**
- * Background Research & Epistemic Synthesis Pipeline
- * 
- * Automatically analyses raw ingested articles, RSS feeds, or on-the-fly streams
- * and synthesizes the exact high-caliber educational framing requested by the user:
- * 1. 💡 Kern-Erkenntnis (Key Insight): A distilled, non-trivial conceptual summary.
- * 2. 🎓 Lern-Partner & Didaktik-Transfer: Pedagogical & cognitive transfer for learning.
- * 3. ⚡️ Sokratischer Denkimpuls (Challenge Prompt): Critical inquiry question.
- * 4. 🏛 Evergreen Gem Alignment: Cross-references timeless classics of the internet.
+ * Background Research & Content-Specific Contextualization Pipeline
+ *
+ * Provides concrete, content-specific orientation without generic template padding:
+ * 1. Originalauszug (`articleBody` / `feedText`) remains 100% faithful to the source.
+ * 2. `atmen-Abstract` (`editorialAbstract`) distills concrete sentences from the item.
+ * 3. `Eigene Einordnung` (`keyInsight`, `didacticTransfer`, `challengePrompt`) illuminates the specific topic and text.
+ * 4. Cross-references (`relatedCrossReferences`) link genuinely related network items.
  */
 
-// Heuristic keyword patterns for extracting high-value sentences
 const KEY_INSIGHT_PATTERNS = [
   /erweist sich als/i,
   /entscheidend ist/i,
@@ -34,36 +32,37 @@ const KEY_INSIGHT_PATTERNS = [
   /bedeutet/i,
   /verdeutlicht/i,
   /die ursache/i,
-  /das problem/i
+  /das problem/i,
+  /shows that/i,
+  /demonstrates/i,
+  /reveals/i,
+  /key finding/i,
+  /suggests that/i
 ];
 
 /**
- * Extracts or synthesizes a profound, sharp 1-2 sentence Key Insight from article content.
+ * Extracts a concrete 1-2 sentence insight directly from the article's actual text.
  */
 export function synthesizeKeyInsight(title: string, bodyText: string, topic: TopicTag): string {
-  if (!bodyText || bodyText.trim().length === 0) {
-    return generateFallbackInsight(title, topic);
+  const cleaned = (bodyText || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  if (cleaned.length < 30) {
+    return `${title} — Quell-Fundstück im Bereich ${TOPIC_DIALECTICS[topic]?.title || topic}.`;
   }
 
-  // Clean and split text into sentences
-  const cleaned = bodyText.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ');
   const sentences = cleaned
     .split(/(?<=[.!?])\s+/)
     .map(s => s.trim())
-    .filter(s => s.length >= 35 && s.length <= 220);
+    .filter(s => s.length >= 35 && s.length <= 240);
 
-  // 1. Look for sentences matching insight indicators
   for (const sentence of sentences) {
     if (KEY_INSIGHT_PATTERNS.some(pat => pat.test(sentence))) {
-      // Ensure sentence doesn't start with raw pronoun or junk
       if (!/^(und|oder|aber|denn|weil|er|sie|es|wir)\s/i.test(sentence)) {
         return sentence;
       }
     }
   }
 
-  // 2. Select the most substantive sentence from the first three paragraphs
-  const candidates = sentences.slice(0, 5).filter(s => 
+  const candidates = sentences.slice(0, 5).filter(s =>
     !s.toLowerCase().includes('foto:') &&
     !s.toLowerCase().includes('dpa') &&
     !s.toLowerCase().includes('quelle:') &&
@@ -71,46 +70,18 @@ export function synthesizeKeyInsight(title: string, bodyText: string, topic: Top
     !s.toLowerCase().includes('newsletter')
   );
 
-  if (candidates.length > 0) {
-    // Pick the candidate with the highest information density (longer, distinct words)
-    const sorted = [...candidates].sort((a, b) => b.length - a.length);
-    return sorted[0];
+  if (candidates.length > 1) {
+    return candidates[1];
+  }
+  if (candidates.length === 1) {
+    return candidates[0];
   }
 
-  return generateFallbackInsight(title, topic);
-}
-
-function generateFallbackInsight(title: string, topic: TopicTag): string {
-  switch (topic) {
-    case 'german_didactics':
-      return `Effektive Didaktik setzt auf aktive Konstruktion und sokratische Reibung statt passivem Konsum: „${title}“ eröffnet neue Handlungspfade für den Unterricht.`;
-    case 'ai_apple':
-      return `Technologischer Fortschritt misst sich nicht an theoretischen Benchmarks, sondern an der physischen Beherrschbarkeit und der Souveränität des Nutzers über seine Werkzeuge.`;
-    case 'philosophy_ethics':
-      return `Wahre Erkenntnis verlangt das gedankliche Durchdringen von Widersprüchen: Erst wer die Gegenposition präzise formulieren kann, besitzt ein echtes Urteil.`;
-    case 'sound_synthesis':
-      return `Klangformung ist kybernetische Kommunikation: Die Struktur des Instruments und die Modulationsmatrix bestimmen den kognitiven Gestaltungsraum.`;
-    case 'science_society':
-      return `Wissenschaftlicher Erkenntnisfortschritt vollzieht sich an den Schnittstellen etablierter Disziplinen, wo bestehende Dogmen durch neue Messverfahren herausgefordert werden.`;
-    case 'book_mastery':
-      return `Ein Buch entfaltet seinen wahren Wert nicht im reinen Überfliegen, sondern als lebenslanger Resonanzkörper für die eigene Urteilsbildung.`;
-    case 'youtube_gems':
-      return `Komplexe Ideen verlangen visuelle Eleganz und methodische Reduktion: Wahres Verstehen beginnt, wo abstrakte Formeln in greifbare Zusammenhänge übergehen.`;
-    case 'memes_satire':
-      return `Satire ist das schärfste Skalpell der Aufklärung: Sie entlarvt die Absurditäten technologischer und gesellschaftlicher Moden durch treffsichere Zuspitzung.`;
-    case 'contemplation_mind':
-      return `Aufmerksamkeit ist die knappste Ressource des 21. Jahrhunderts: Wer seinen Fokus nicht selbst kultiviert, wird zum Spielball fremder Algorithmen.`;
-    case 'health_biohacking':
-      return `Körperliche und geistige Resilienz beruht auf biologischen Rhythmen und gezielten Reizen, nicht auf kurzfristigen Heilsversprechen.`;
-    case 'opportunities_growth':
-      return `Echte Hebelwirkung entsteht dort, wo individuelles Können mit autonomen Werkzeugen und offenen Standards multipliziert wird.`;
-    default:
-      return `Zentraler Impuls: „${title}“ liefert eine fundamentale Perspektive für selbstbestimmtes Denken und Handeln.`;
-  }
+  return cleaned.length > 200 ? cleaned.slice(0, 197).trim() + '…' : cleaned;
 }
 
 /**
- * Synthesizes the 🎓 Lern-Partner & Didaktik-Transfer reflection box.
+ * Synthesizes a content-anchored contextual thought ("Eigene Einordnung") that references the specific item.
  */
 export function synthesizeDidacticTransfer(
   title: string,
@@ -118,99 +89,104 @@ export function synthesizeDidacticTransfer(
   topic: TopicTag,
   isTeachingRelated?: boolean
 ): string {
+  const cleaned = (bodyText || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  const sentences = cleaned.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length >= 30);
+  const coreDetail = sentences.length > 2
+    ? sentences[sentences.length - 1]
+    : (sentences[0] || title);
+  const shortDetail = coreDetail.length > 160 ? coreDetail.slice(0, 157) + '…' : coreDetail;
+
   if (isTeachingRelated || topic === 'german_didactics') {
-    return `Didaktischer Praxistransfer: Wie lässt sich die Kernfrage aus „${title}“ als sokratische Kontroverse oder forschendes Lernen im Unterricht und Seminar verankern?`;
+    return `Bezug für Schule & Unterricht zu „${title}“: ${shortDetail} — Prüfe, welche konkrete Frage daraus als Diskussions- oder Schreibanlass im Unterricht taugt.`;
   }
 
   switch (topic) {
     case 'ai_apple':
-      return `Lern-Partner & Transfer: Reflektiere, an welcher Stelle du generative Systeme als passiven Ersatz nutzt – und wie du sie stattdessen als Sparringspartner für eigene Thesen einsetzen kannst.`;
+      return `Technologische Einordnung zu „${title}“: ${shortDetail} — Entscheidend ist, ob hier echte Werkzeug-Qualität entsteht oder lediglich kurzfristige Aufmerksamkeit gebunden wird.`;
     case 'philosophy_ethics':
-      return `Lern-Partner & Transfer: Baue den stärksten denkbaren „Steel Man“ für die hier vertretene Position auf: Welcher Einwand würde dein eigenes Urteil am stärksten herausfordern?`;
+      return `Philosophische Einordnung zu „${title}“: ${shortDetail} — Welche unausgesprochene Grundannahme trägt dieses Argument, und wo liegt sein stärkster Einwand?`;
     case 'sound_synthesis':
-      return `Kreativer Praxistransfer: Erprobe, wie sich die hier beschriebene Signalarchitektur oder Modulationsmethode in deinem eigenen Arbeitsablauf oder Klangkonzept übersetzen lässt.`;
-    case 'science_society':
-      return `Erkenntnistheoretischer Transfer: Welche stillschweigende Prämisse liegt dieser Argumentation zugrunde, und wie ließe sie sich empirisch überprüfen?`;
-    case 'book_mastery':
-      return `Lern-Partner & Transfer: Welche konkrete Verhaltensänderung oder welches Denkmodell aus diesem Klassiker lässt sich direkt auf ein aktuelles Projekt anwenden?`;
+      return `Klang- & Praxisbezug zu „${title}“: ${shortDetail} — Überlege, welche klangliche oder kompositorische Idee du daraus direkt im eigenen Setup ausprobieren kannst.`;
     case 'contemplation_mind':
-      return `Atem & Achtsamkeits-Transfer: Nimm diesen Gedanken als Anlass für einen 60-Sekunden-Atemraum: Was verändert sich im Körpergefühl, wenn du das Tempo bewusst drosselst?`;
+      return `Kontemplative Einordnung zu „${title}“: ${shortDetail} — Ein Impuls, um Geistesklarheit und wache Aufmerksamkeit im eigenen Alltag zu schärfen.`;
+    case 'art_aesthetics':
+      return `Ästhetische Betrachtung zu „${title}“: ${shortDetail} — Nimm dir einen ruhigen Moment für Komposition, Lichtführung und handwerkliche Details.`;
+    case 'memes_satire':
+      return `Spielerischer Perspektivwechsel zu „${title}“: ${shortDetail} — Humor legt oft genau jene blinden Flecken frei, die in ernsten Fachdebatten übersehen werden.`;
     default:
-      return `Lern-Partner & Transfer: Welcher Gedanke aus diesem Beitrag widersteht einer schnellen Einordnung und verdient eine bewusste Vertiefung in deiner persönlichen Bibliothek?`;
+      return `Inhaltliche Einordnung zu „${title}“: ${shortDetail} — Prüfe die genannte Primärquelle und gleichen den Befund mit deinem bisherigen Weltbild ab.`;
   }
 }
 
 /**
- * Synthesizes a challenging Socratic sparring prompt.
+ * Synthesizes a concrete reflection question anchored in the item's title and domain.
  */
 export function synthesizeChallengePrompt(title: string, topic: TopicTag): string {
   switch (topic) {
     case 'german_didactics':
-      return 'Welche strukturelle Hürde im Schulalltag verhindert die Umsetzung dieses didaktischen Ansatzes am stärksten?';
+      return `Welche Beobachtung aus deinem eigenen Unterricht stützt oder widerspricht dem Ansatz in „${title}“?`;
     case 'ai_apple':
-      return 'Wo übersieht der gegenwärtige KI-Hype die unumstößlichen Grenzen von Hardware, Energie und menschlicher Urteilskraft?';
+      return `Was ändert sich konkret in deinem Arbeits- oder Denkalltag, wenn sich die Entwicklung aus „${title}“ durchsetzt?`;
     case 'philosophy_ethics':
-      return 'Welcher historische Denker hätte dieser Argumentation am radikalsten widersprochen – und mit welcher Begründung?';
+      return `Welches Gegenargument würde die zentrale These von „${title}“ am stärksten auf die Probe stellen?`;
     case 'sound_synthesis':
-      return 'Ist Klangästhetik rein subjektiver Geschmack oder gibt es physikalisch-harmonische Gesetzmäßigkeiten für wahrhaft berührenden Klang?';
-    case 'science_society':
-      return 'Welches Risiko besteht, wenn diese wissenschaftliche Erkenntnis unkritisch auf politische Entscheidungen übertragen wird?';
+      return `Wie ließe sich der Ansatz aus „${title}“ in ein konkretes musikalisches Experiment übersetzen?`;
+    case 'contemplation_mind':
+      return `Welche Gewohnheit im Alltag wird durch den Gedanken aus „${title}“ hinterfragt?`;
     default:
-      return 'Welches Gegenargument aus deiner eigenen Lebenserfahrung stellt diese Perspektive auf die Probe?';
+      return `Welche weiterführende Frage wirft „${title}“ für deine eigene Einschätzung auf?`;
   }
 }
 
 /**
- * Finds a related "Old Gem of the Internet" (timeless classic) from the vault.
+ * Finds a related timeless classic ONLY when there is a genuine keyword match (never random fallback).
  */
 export function findRelatedEvergreenGem(topic: TopicTag, title: string): FeedItem | undefined {
-  // Only consider genuinely timeless classics that share this topic
-  const candidates = REAL_KNOWLEDGE_VAULT.filter(item => 
+  const candidates = REAL_KNOWLEDGE_VAULT.filter(item =>
     item.isEvergreenGem === true && (item.primaryTopic === topic || item.topics.includes(topic))
   );
+  if (candidates.length === 0) return undefined;
 
-  if (candidates.length === 0) {
-    return undefined;
-  }
+  const stopWords = new Set(['über', 'unter', 'einer', 'einem', 'einen', 'nicht', 'warum', 'wieso', 'durch', 'gegen', 'about', 'under', 'their', 'where', 'which']);
+  const titleWords = title
+    .toLowerCase()
+    .replace(/[^a-zäöüß0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 5 && !stopWords.has(w));
 
-  // Find candidate with topical/semantic keyword relevance
-  const titleWords = title.toLowerCase().split(/\s+/).filter(w => w.length > 4);
-  const matched = candidates.find(c => {
-    const text = `${c.title} ${c.feedText}`.toLowerCase();
+  if (titleWords.length === 0) return undefined;
+
+  return candidates.find(c => {
+    const text = `${c.title} ${c.subtitle} ${c.feedText}`.toLowerCase();
     return titleWords.some(w => text.includes(w));
   });
-
-  return matched || candidates[0];
 }
 
 /**
- * Synthesizes an Ebene 2 Editorial Abstract for items that do not yet have one:
- * - overview: Worum geht es? (ca. 25-45 Wörter)
- * - keyFinding: Was ist die zentrale Aussage / neue Entwicklung? (ca. 30-50 Wörter)
- * - relevanceWhy: Warum könnte das für mich interessant sein? (ca. 25-45 Wörter)
- * - limitation: Wichtige Einschränkung / Caveat / Gültigkeitsgrenze (ca. 15-30 Wörter)
+ * Synthesizes an honest, content-derived Editorial Abstract for the Reader view.
  */
 export function synthesizeEditorialAbstract(item: FeedItem): EditorialAbstract {
   const primaryTopic = item.primaryTopic || 'philosophy_ethics';
-  const subtitle = item.subtitle || '';
-  const feedText = item.feedText || item.body || '';
-  const insight = item.keyInsight || synthesizeKeyInsight(item.title, feedText, primaryTopic);
+  const rawText = (item.articleBody || item.feedText || item.body || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  const sentences = rawText.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
 
-  const overview = subtitle.trim().length > 20
-    ? `${item.title}: ${subtitle}`
-    : `Eine quellengestützte Untersuchung zu „${item.title}“, die den aktuellen Sachverhalt und nötigen Hintergrund beleuchtet.`;
+  const overview = sentences[0] && sentences[0].length >= 25
+    ? sentences[0]
+    : `${item.title} (${item.sourceReferences[0]?.publisher || 'Originalquelle'}).`;
 
-  const keyFinding = insight.length > 25
-    ? insight
-    : `Die Analyse verdeutlicht, dass die Tragweite dieser Entwicklung vor allem in den zugrundeliegenden methodischen und strukturellen Bedingungen liegt.`;
+  const keyFinding = sentences.length > 1
+    ? sentences.slice(1, 3).join(' ')
+    : (item.keyInsight || synthesizeKeyInsight(item.title, rawText, primaryTopic));
 
-  const relevanceWhy = item.relevanceExplanation && item.relevanceExplanation.length > 20
+  const relevanceWhy = item.relevanceExplanation && item.relevanceExplanation.length > 15
     ? item.relevanceExplanation
-    : `Eröffnet eine differenzierte Orientierung jenseits oberflächlicher Schlagzeilen und verbindet theoretischen Hintergrund mit persönlicher Urteilskraft.`;
+    : `Beitrag aus ${item.sourceReferences[0]?.publisher || 'verifizierter Quelle'} im Themenraum ${item.space || primaryTopic}.`;
 
-  const limitation = item.isChallengingPerspective
-    ? `Formuliert eine pointierte Gegenposition; methodische Unsicherheiten und alternative Interpretationen müssen im Diskurs sorgfältig abgewogen werden.`
-    : `Gültig im Rahmen der untersuchten Datenbasis; weitergehende Schlüsse verlangen eine fortlaufende Prüfung künftiger Evidenz.`;
+  const limitation = item.evidenceTier === 'metadata_only'
+    ? 'Kompakter Quell-Hinweis (Metadaten / Kurznotiz). Für den vollständigen Beitrag bitte direkt die Originalquelle öffnen.'
+    : item.evidenceTier === 'publisher_excerpt'
+    ? 'Autorisierter Herausgeber-Auszug (RSS/API). Der vollständige Artikel ist über den Direktlink bei der Quelle abrufbar.'
+    : undefined;
 
   return {
     overview,
@@ -221,14 +197,51 @@ export function synthesizeEditorialAbstract(item: FeedItem): EditorialAbstract {
 }
 
 /**
- * Synthesizes an engaging, multi-paragraph Level 3 Deep Reader article
- * when the original RSS/feed source only delivers a brief 2-3 sentence summary.
- * 
- * Uses natural, curiosity-driven Reddit/community language with 4 clear subheadings:
- * 1. ### Worum es geht
- * 2. ### Warum das wichtig ist
- * 3. ### Die Gegenperspektive
- * 4. ### Zum Weiterdenken & Ausprobieren
+ * Builds structured knowledge context for a normalized feed entry without inflating articleBody.
+ */
+export function buildKnowledgeContextForEntry(options: {
+  title: string;
+  summary: string;
+  topic: TopicTag;
+  sourceName: string;
+  isTeachingRelated?: boolean;
+}): {
+  keyInsight: string;
+  challengePrompt: string;
+  actionableTransfer: string;
+  counterPerspective: string;
+  relatedCrossReferences: RelatedCrossReference[];
+} {
+  const { title, summary, topic, sourceName, isTeachingRelated } = options;
+  const dialectic = TOPIC_DIALECTICS[topic] || TOPIC_DIALECTICS.philosophy_ethics;
+  const keyInsight = synthesizeKeyInsight(title, summary, topic);
+  const challengePrompt = synthesizeChallengePrompt(title, topic);
+  const actionableTransfer = synthesizeDidacticTransfer(title, summary, topic, isTeachingRelated);
+  const counterPerspective = dialectic.counterPerspective;
+
+  const mockItemForCrossRef = {
+    id: `temp-${title.slice(0, 16)}`,
+    title,
+    subtitle: sourceName,
+    feedText: summary,
+    primaryTopic: topic,
+    topics: [topic]
+  } as unknown as FeedItem;
+
+  const relatedCrossReferences = findRelatedNetworkPosts(mockItemForCrossRef);
+
+  return {
+    keyInsight,
+    challengePrompt,
+    actionableTransfer,
+    counterPerspective,
+    relatedCrossReferences
+  };
+}
+
+/**
+ * Legacy helper kept for explicit on-demand deepening tests (`tests/masterExecutionPlan.test.ts`).
+ * Never used to inflate `articleBody` of ingested RSS items.
  */
 export function synthesizeDeepeningArticle(options: {
   title: string;
@@ -253,17 +266,13 @@ export function synthesizeDeepeningArticle(options: {
     `### Worum es geht`,
     `${cleanedSummary}`,
     ``,
-    `Die Berichterstattung von **${authorCitation}** zu „${title}“ greift eine Entwicklung auf, die über die unmittelbare Tagesmeldung hinausreicht. Im Kern geht es um die Frage, wie sich bestehende Annahmen verändern, wenn neue Beobachtungen oder methodische Ansätze das gewohnte Bild herausfordern.`,
+    `Die Berichterstattung von **${authorCitation}** zu „${title}“ greift eine Entwicklung auf, die über die unmittelbare Tagesmeldung hinausreicht.`,
     ``,
     `### Warum das wichtig ist`,
     `Die Relevanz dieses Beitrags liegt vor allem in den Folgewirkungen: ${effectiveInsight}`,
     ``,
-    `Die Quelle **${sourceName}** gilt in diesem Themenfeld als fundierter Indikator für Verschiebungen im Diskurs. Anstatt bei der oberflächlichen Schlagzeile stehenzubleiben, lohnt sich der Blick auf die Mechanismen dahinter: Wie belastbar sind die zugrundeliegenden Daten und welche systemischen Trends zeichnen sich hier ab?`,
-    ``,
     `### Die Gegenperspektive`,
     `${effectiveCounter}`,
-    ``,
-    `Kritische Stimmen mahnen zu Recht zur Vorsicht: Wer zu schnell eindeutige Schlüsse zieht, übersieht oft gegenläufige Effekte oder institutionelle Trägheit. Erst im Abgleich mit widersprüchlichen Erfahrungen zeigt sich, wo die Grenzen dieser Perspektive verlaufen.`,
     ``,
     `### Zum Weiterdenken & Ausprobieren`,
     `**Impuls für die eigene Praxis:** ${dialectic.actionableTransfer}`,
@@ -273,13 +282,7 @@ export function synthesizeDeepeningArticle(options: {
 }
 
 /**
- * Enriches any raw feed item with the complete, pristine Atem quality standard:
- * - 💡 Key Insight
- * - 🎓 Didactic / Learning Partner Transfer
- * - ⚡️ Socratic Challenge Prompt
- * - 📑 Ebene 2 Editorial Abstract
- * - 📖 Ebene 3 Substantive Deep Reader Article (auto-expanded when brief)
- * - High-contrast domain branding and metadata
+ * Enriches any raw feed item with content-specific orientation while preserving 100% honest source text.
  */
 export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
   const primaryTopic = item.primaryTopic || 'philosophy_ethics';
@@ -294,11 +297,11 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
   );
   const challengePrompt = item.challengePrompt || synthesizeChallengePrompt(item.title, primaryTopic);
 
-  // Cross-reference related evergreen gem context if available
+  // Only attach evergreenContext if there is a genuine keyword match (never a random fallback)
   const relatedGem = findRelatedEvergreenGem(primaryTopic, item.title);
   const evergreenContext = item.evergreenContext || (
     relatedGem && relatedGem.id !== item.id
-      ? `Historische Wurzel & Klassiker: „${relatedGem.title}“ (${relatedGem.sourceReferences[0]?.publisher || 'Kanon'})`
+      ? `Thematisch verwandter Klassiker: „${relatedGem.title}“ (${relatedGem.sourceReferences[0]?.publisher || 'Archiv'})`
       : undefined
   );
 
@@ -314,13 +317,9 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
     'editorial_deepening'
   );
 
-  // Honest Source Fidelity:
-  // Do NOT artificially pad articleBody or body with template essays.
-  // Preserve 100% faithful source text.
   const articleBody = item.articleBody || item.body || item.feedText || item.title;
   const body = item.body || articleBody;
 
-  // Real Knowledge Cross-Linking: 2-3 genuine related items from local knowledge pool
   const relatedCrossReferences = item.relatedCrossReferences && item.relatedCrossReferences.length > 0
     ? item.relatedCrossReferences
     : findRelatedNetworkPosts(item);
@@ -337,14 +336,13 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
     evergreenContext,
     editorialAbstract,
     editorialSynthesisType,
-    // Only mark as teaching-related if it genuinely belongs to didactics/pedagogy
     isTeachingRelated: Boolean(item.isTeachingRelated || primaryTopic === 'german_didactics' || item.topics?.includes('german_didactics'))
   };
 }
 
 /**
- * Discovers up to 2-3 genuine cross-reference connections in the sovereign knowledge network.
- * Connects articles through topical synergy, shared spaces, and philosophical resonances.
+ * Discovers up to 2-3 genuine cross-reference connections in the local knowledge pool.
+ * Prioritizes items that share concrete title keywords over generic topic matches.
  */
 export function findRelatedNetworkPosts(item: FeedItem, customPool?: FeedItem[]): RelatedCrossReference[] {
   const pool = customPool && customPool.length > 0
@@ -352,37 +350,46 @@ export function findRelatedNetworkPosts(item: FeedItem, customPool?: FeedItem[])
     : [...REAL_KNOWLEDGE_VAULT, ...INITIAL_FIXTURES, ...cachedPipelineItems];
 
   const topic = item.primaryTopic || 'philosophy_ethics';
-  const titleWords = item.title.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
+  const stopWords = new Set(['über', 'unter', 'einer', 'einem', 'einen', 'nicht', 'warum', 'wieso', 'durch', 'gegen', 'oder', 'und', 'der', 'die', 'das', 'with', 'from', 'that', 'this', 'what', 'when']);
+  const titleWords = item.title
+    .toLowerCase()
+    .replace(/[^a-zäöüß0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 4 && !stopWords.has(w));
 
   const seenIds = new Set<string>([item.id]);
-  const results: RelatedCrossReference[] = [];
+  const scoredCandidates: { ref: RelatedCrossReference; score: number }[] = [];
 
   for (const candidate of pool) {
-    if (seenIds.has(candidate.id)) continue;
+    if (seenIds.has(candidate.id) || candidate.title === item.title) continue;
 
-    const sharesTopic = candidate.primaryTopic === topic || candidate.topics?.includes(topic);
+    const sharesPrimary = candidate.primaryTopic === topic;
+    const sharesSecondary = candidate.topics?.includes(topic);
     const candidateText = `${candidate.title} ${candidate.subtitle || ''}`.toLowerCase();
-    const wordMatches = titleWords.filter(w => candidateText.includes(w)).length;
+    const matchedWords = titleWords.filter(w => candidateText.includes(w));
 
-    if (sharesTopic || wordMatches > 0) {
-      seenIds.add(candidate.id);
-      const publisher = candidate.sourceReferences?.[0]?.publisher || 'Kanon-Archiv';
-      const insight = candidate.keyInsight || candidate.subtitle || candidate.feedText?.slice(0, 120) || candidate.title;
-      const connectionReason = wordMatches > 0
-        ? `Thematische Begriffsnähe zu „${titleWords[0]}“ & Resonanz in c/${candidate.space ? candidate.space.replace('c/', '') : candidate.primaryTopic}`
-        : `Gemeinsamer Schwerpunkt im Space c/${candidate.space ? candidate.space.replace('c/', '') : candidate.primaryTopic}`;
+    if (!sharesPrimary && !sharesSecondary && matchedWords.length === 0) continue;
 
-      results.push({
+    seenIds.add(candidate.id);
+    const score = matchedWords.length * 3 + (sharesPrimary ? 2 : 0) + (sharesSecondary ? 1 : 0);
+    const publisher = candidate.sourceReferences?.[0]?.publisher || 'Archiv';
+    const insight = candidate.subtitle || candidate.keyInsight || candidate.feedText?.slice(0, 120) || candidate.title;
+    const connectionReason = matchedWords.length > 0
+      ? `Gemeinsamer Fokus auf „${matchedWords[0]}“ (${publisher})`
+      : `Verwandte Perspektive im Bereich ${candidate.space || topic}`;
+
+    scoredCandidates.push({
+      score,
+      ref: {
         id: candidate.id,
         title: candidate.title,
         publisher,
         insight,
         connectionReason
-      });
-
-      if (results.length >= 3) break;
-    }
+      }
+    });
   }
 
-  return results;
+  scoredCandidates.sort((a, b) => b.score - a.score);
+  return scoredCandidates.slice(0, 3).map(c => c.ref);
 }

@@ -8,7 +8,7 @@ import { FeedItem } from '../domain/types';
  * 
  * Zero placeholder text. Zero fake mad-libs templates.
  */
-export const REAL_KNOWLEDGE_VAULT: FeedItem[] = [
+const RAW_KNOWLEDGE_VAULT: FeedItem[] = [
   // ==========================================
   // 1. AI SINGULARITY, ACCELERATION & FRONTIER MODELS
   // ==========================================
@@ -1374,6 +1374,103 @@ Euklidische Geometrie kennt nur glatte Kreise, Kegel und Dreiecke. Doch Wolken s
       aestheticImpulse: 'Aus einer verblüffend einfachen iterativen Gleichung (z_{n+1} = z_n^2 + c) entspringt eine unendlich reiche Küstenlinie der Mathematik. Die Natur entfaltet sich in Fraktalen – vom Farnblatt bis zur Galaxie.'
     },
     comments: []
+  },
+  {
+    id: 'vault-wiki-001-noether-theorem',
+    type: 'deep_dive',
+    format: 'sourced_update',
+    title: 'Emmy Noether und das Noether-Theorem: Warum jede Symmetrie der Natur eine Erhaltungsgröße erzeugt',
+    subtitle: 'Wikipedia Exzellenter Artikel • Mathematische Physik & Erkenntnistheorie',
+    feedText: 'Im Jahr 1918 bewies die Göttinger Mathematikerin Emmy Noether eines der tiefsten Theoreme der modernen Physik: Jede kontinuierliche Symmetrie eines physikalischen Systems korrespondiert zwingend mit einer Erhaltungsgröße. Zeitinvarianz erzeugt Energieerhaltung, Verschiebungssymmetrie im Raum erzeugt Impulserhaltung.',
+    articleBody: `### Die verborgene Architektur der Naturgesetze
+
+Das **Noether-Theorem** (formuliert 1918 von Emmy Noether in Göttingen) verbindet zwei scheinbar getrennte Welten: die abstrakte Geometrie kontinuierlicher Symmetriegruppen (Lie-Gruppen) und die konkreten Erhaltungssätze der Experimentalphysik.
+
+#### 1. Drei Symmetrien, drei Erhaltungssätze
+- **Zeitinvarianz:** Weil die Naturgesetze heute genauso gelten wie gestern, bleibt die Gesamtenergie eines abgeschlossenen Systems erhalten.
+- **Translationsinvarianz:** Weil der Raum homogen ist (ein Experiment in Berlin verläuft wie in Tokio), bleibt der Gesamtimpuls erhalten.
+- **Rotationsinvarianz:** Weil der Raum isotrop ist (keine bevorzugte Himmelsrichtung besitzt), bleibt der Drehimpuls erhalten.
+
+#### 2. Bedeutung für Quantenfeldtheorie und Allgemeine Relativitätstheorie
+Albert Einstein nannte Noethers Beweis ein Denkmal „durchdringenden mathematischen Denkens“. Bis heute bildet das Prinzip der Eichsymmetrie das Fundament des Standardmodells der Teilchenphysik.`,
+    body: 'Enzyklopädischer Überblick über Emmy Noethers Symmetrie-Theorem.',
+    topics: ['science_society', 'philosophy_ethics'],
+    primaryTopic: 'science_society',
+    sourceReferences: [
+      {
+        title: 'Noether-Theorem – Wikipedia',
+        publisher: 'Wikipedia (Freie Enzyklopädie)',
+        author: 'Wikipedia-Autoren',
+        originalUrl: 'https://de.wikipedia.org/wiki/Noether-Theorem',
+        publicationTimestamp: '2026-10-15T08:00:00.000Z',
+        retrievalTimestamp: '2026-10-16T08:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-15T10:00:00.000Z',
+    generatedAt: '2026-10-16T06:00:00.000Z',
+    estimatedReadingMinutes: 4,
+    relevanceExplanation: 'Exzellenter enzyklopädischer Grundlagenartikel über Symmetrie und Erkenntnistheorie.',
+    contentStatus: 'scientific_analysis',
+    isDailyEdition: true,
+    editionDate: '2026-10-16',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'encyclopedia_entry',
+    provenanceSummary: 'Freie Enzyklopädie Wikipedia (de.wikipedia.org/wiki/Noether-Theorem).',
+    wordCount: 360,
+    evidenceTier: 'publisher_excerpt',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-wiki-noether-1918',
+    canonicalUrl: 'https://de.wikipedia.org/wiki/Noether-Theorem',
+    space: 'c/wissen_gesellschaft',
+    flair: '📖 Enzyklopädie',
+    isEvergreenGem: true,
+    keyInsight: 'Wo immer sich etwas im Wandel als unveränderlich erweist, liegt eine Symmetrie der Natur zugrunde.',
+    challengePrompt: 'Welche Invarianten bleiben in deinem eigenen Denken stabil, wenn sich äußere Umstände verschieben?',
+    upvotesCount: 0,
+    awardsCount: { gold: 0, brain: 0, spark: 0 },
+    sourceTrustLevel: 'encyclopedia',
+    sourceDomain: 'de.wikipedia.org',
+    sourceBroadcasterName: 'Wikipedia',
+    comments: []
   }
 ];
+
+export const REAL_KNOWLEDGE_VAULT: FeedItem[] = RAW_KNOWLEDGE_VAULT.map(item => {
+  const isGenericUnsplash = Boolean(
+    item.imageUrl &&
+    item.imageUrl.includes('images.unsplash.com') &&
+    item.format !== 'art_showcase'
+  );
+  const cleanImageUrl = isGenericUnsplash ? undefined : item.imageUrl;
+  const isArtShowcase = item.format === 'art_showcase';
+  const isWiki = Boolean(item.sourceDomain && item.sourceDomain.includes('wikipedia.org'));
+  return {
+    ...item,
+    imageUrl: cleanImageUrl,
+    hasAuthenticImage: Boolean(cleanImageUrl),
+    sourceTrustLevel: isArtShowcase
+      ? 'museum_collection'
+      : isWiki
+      ? 'encyclopedia'
+      : item.sourceTrustLevel,
+    factReviewStatus: isArtShowcase
+      ? 'historical_reference'
+      : isWiki
+      ? 'encyclopedia_entry'
+      : item.factReviewStatus,
+    upvotesCount: 0,
+    awardsCount: { gold: 0, brain: 0, spark: 0 },
+    comments: []
+  };
+});
+
+export const EVERGREEN_INTERNET_CLASSICS: FeedItem[] = REAL_KNOWLEDGE_VAULT.filter(
+  item => item.isEvergreenGem === true
+);
+
+
 

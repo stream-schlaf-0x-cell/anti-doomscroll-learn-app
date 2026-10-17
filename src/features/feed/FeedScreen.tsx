@@ -28,6 +28,7 @@ import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerat
 import { AtemBreathingModal } from '../../ui/components/AtemBreathingModal';
 import { ContinuousLiveNewsService, NewsHubFilterCategory } from '../../core/data/continuousLiveNewsService';
 import { NewsHubModal } from '../../ui/components/NewsHubModal';
+import { defaultSourceRepository } from '../../core/data/sourceRepository';
 
 export const FeedScreen: React.FC = () => {
   const {
@@ -313,25 +314,21 @@ export const FeedScreen: React.FC = () => {
         return list.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
       case 'top':
         return list.sort((a, b) => {
-          const scoreA = (a.upvotesCount ?? 0) + ((a.awardsCount?.gold || 0) * 5) + ((a.awardsCount?.brain || 0) * 3);
-          const scoreB = (b.upvotesCount ?? 0) + ((b.awardsCount?.gold || 0) * 5) + ((b.awardsCount?.brain || 0) * 3);
+          const scoreA = (a.externalCommunityScore?.points ?? 0) + (a.score || 0) * 100;
+          const scoreB = (b.externalCommunityScore?.points ?? 0) + (b.score || 0) * 100;
           return scoreB - scoreA;
         });
       case 'gems':
         return list.sort((a, b) => {
-          const isGemA = a.format === 'youtube_gem' || a.format === 'book_masterpiece' || a.format === 'meme' || a.format === 'opportunity_radar';
-          const isGemB = b.format === 'youtube_gem' || b.format === 'book_masterpiece' || b.format === 'meme' || b.format === 'opportunity_radar';
+          const isGemA = a.format === 'art_showcase' || a.format === 'youtube_gem' || a.format === 'book_masterpiece' || a.format === 'meme' || a.format === 'opportunity_radar';
+          const isGemB = b.format === 'art_showcase' || b.format === 'youtube_gem' || b.format === 'book_masterpiece' || b.format === 'meme' || b.format === 'opportunity_radar';
           if (isGemA && !isGemB) return -1;
           if (!isGemA && isGemB) return 1;
           return (b.score || 0) - (a.score || 0);
         });
       case 'hot':
       default:
-        return list.sort((a, b) => {
-          const hotA = (a.score || 0) * 10 + (a.upvotesCount ?? 0) + (a.comments?.length || 0) * 4;
-          const hotB = (b.score || 0) * 10 + (b.upvotesCount ?? 0) + (b.comments?.length || 0) * 4;
-          return hotB - hotA;
-        });
+        return list.sort((a, b) => (b.score || 0) - (a.score || 0));
     }
   }, []);
 
@@ -358,93 +355,63 @@ export const FeedScreen: React.FC = () => {
     return filterByQuery(spaceFiltered);
   }, [scoredOpenWebItems, selectedFilter, filterByQuery]);
 
-  // Combined endless stream with 5-card wave interleaving
+  // Combined endless stream with Sliding-Window Bloom-Ranking (never clones IDs)
   const infiniteInterleavedBase = useMemo(() => {
-    const combined = [...sortedDaily, ...filteredOpenWeb, ...sortedDiscovery];
+    const combined = [...filteredDaily, ...filteredOpenWeb, ...filteredDiscovery];
     const seen = new Set<string>();
     const unique = combined.filter(item => {
       if (seen.has(item.id)) return false;
       seen.add(item.id);
       return true;
     });
-    return interleaveForAddictiveLearning(unique);
-  }, [sortedDaily, filteredOpenWeb, sortedDiscovery]);
+    if (sortMode === 'hot') {
+      return interleaveForAddictiveLearning(unique);
+    }
+    return applySort(unique, sortMode);
+  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, sortMode, applySort]);
 
-  const renderedInfiniteItems = useMemo(() => {
-    if (infiniteInterleavedBase.length === 0) return [];
-    if (visibleInfiniteCount <= infiniteInterleavedBase.length) {
-      return infiniteInterleavedBase.slice(0, visibleInfiniteCount);
-    }
-    const result: ScoredFeedItem[] = [...infiniteInterleavedBase];
-    let cycle = 1;
-    while (result.length < visibleInfiniteCount && cycle < 20) {
-      for (const item of infiniteInterleavedBase) {
-        if (result.length >= visibleInfiniteCount) break;
-        result.push({
-          ...item,
-          id: `${item.id}-inf-${cycle}`
+  // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
+  const evergreenFallbackItems = useMemo(() => {
+    const freshIds = new Set(infiniteInterleavedBase.map(i => i.id));
+    const rawClassics = ContinuousLiveNewsService.getEvergreenClassics();
+    const scored = rawClassics
+      .filter(item => !freshIds.has(item.id))
+      .map(item => scoreFeedItem(item, profile, interactions));
+    const spaceFiltered = selectedFilter === 'all'
+      ? scored
+      : scored.filter(item => {
+          if (selectedFilter.startsWith('c/')) {
+            const raw = selectedFilter.slice(2).toLowerCase();
+            return item.space?.toLowerCase() === selectedFilter.toLowerCase() ||
+                   item.primaryTopic?.toLowerCase().includes(raw) ||
+                   item.topics.some(t => t.toLowerCase().includes(raw));
+          }
+          return item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter as TopicTag);
         });
-      }
-      cycle++;
-    }
-    return result;
+    return filterByQuery(spaceFiltered);
+  }, [infiniteInterleavedBase, profile, interactions, selectedFilter, filterByQuery]);
+
+  const renderedInfiniteFreshItems = useMemo(() => {
+    return infiniteInterleavedBase.slice(0, Math.min(visibleInfiniteCount, infiniteInterleavedBase.length));
   }, [infiniteInterleavedBase, visibleInfiniteCount]);
 
-  // Record appearance history for visible cards
-  React.useEffect(() => {
-    if (activeFeedOption === 'infinite' && renderedInfiniteItems.length > 0) {
-      const idsToRecord = renderedInfiniteItems.map(i => i.id.replace(/-inf-\d+$/, ''));
-      void recordCardAppearances(idsToRecord);
-    } else if (activeFeedOption === 'daily' && sortedDaily.length > 0) {
-      const idsToRecord = sortedDaily.map(i => i.id);
-      void recordCardAppearances(idsToRecord);
-    }
-  }, [activeFeedOption, renderedInfiniteItems, sortedDaily, recordCardAppearances]);
+  const renderedInfiniteEvergreenItems = useMemo(() => {
+    if (visibleInfiniteCount <= infiniteInterleavedBase.length) return [];
+    const needed = visibleInfiniteCount - infiniteInterleavedBase.length;
+    return evergreenFallbackItems.slice(0, needed);
+  }, [infiniteInterleavedBase.length, evergreenFallbackItems, visibleInfiniteCount]);
 
-  // Appended discovery items for smooth infinite mind-scroll (cycles infinitely)
+  const renderedInfiniteItems = useMemo(() => {
+    return [...renderedInfiniteFreshItems, ...renderedInfiniteEvergreenItems];
+  }, [renderedInfiniteFreshItems, renderedInfiniteEvergreenItems]);
+
+  // Appended discovery items in Daily mode (never clones IDs)
   const renderedDiscovery = useMemo(() => {
     if (sortedDiscovery.length === 0) return [];
-    if (visibleDiscoveryCount <= sortedDiscovery.length) {
-      return sortedDiscovery.slice(0, visibleDiscoveryCount);
-    }
-    // Infinite loop mode: cycle through items with cloned IDs so React keys remain unique
-    const result: ScoredFeedItem[] = [...sortedDiscovery];
-    let cycle = 1;
-    while (result.length < visibleDiscoveryCount && cycle < 15) {
-      for (const item of sortedDiscovery) {
-        if (result.length >= visibleDiscoveryCount) break;
-        result.push({
-          ...item,
-          id: `${item.id}-cycle-${cycle}`
-        });
-      }
-      cycle++;
-    }
-    return result;
+    return sortedDiscovery.slice(0, Math.min(visibleDiscoveryCount, sortedDiscovery.length));
   }, [sortedDiscovery, visibleDiscoveryCount]);
 
-  // Seamless infinite mind-scroll listener (triggers next items as user scrolls down)
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
-    const paddingToBottom = 800;
-    if (layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom) {
-      if (activeFeedOption === 'infinite') {
-        setVisibleInfiniteCount(prev => prev + 6);
-      } else {
-        setVisibleDiscoveryCount(prev => prev + 6);
-      }
-    }
-  }, [activeFeedOption]);
-
-  const handleLoadMoreDiscovery = () => {
-    setVisibleDiscoveryCount(prev => prev + 10);
-  };
-
-  const handleLoadMoreInfinite = () => {
-    setVisibleInfiniteCount(prev => prev + 12);
-  };
-
-  // Combine items into a seamless stream
+  // Combine items into a seamless stream for Daily mode
   const allStreamItems = useMemo(() => {
     return [...sortedDaily, ...renderedDiscovery];
   }, [sortedDaily, renderedDiscovery]);
@@ -460,6 +427,72 @@ export const FeedScreen: React.FC = () => {
     }
     return renderedInfiniteItems;
   }, [activeFeedOption, renderedInfiniteItems, allStreamItems, scoredLiveItems, scoredClassicsItems, historyItems, profile, interactions]);
+
+  // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
+  const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
+  const scrollYRef = React.useRef<number>(0);
+  const viewportHeightRef = React.useRef<number>(820);
+  const recordedViewportIdsRef = React.useRef<Set<string>>(new Set());
+
+  const flushVisibleCardsToChronik = useCallback(() => {
+    if (activeFeedOption === 'history') return;
+    const vTop = scrollYRef.current;
+    const vBottom = vTop + viewportHeightRef.current;
+    const newlyVisibleIds: string[] = [];
+
+    for (const item of currentFeedItems) {
+      if (recordedViewportIdsRef.current.has(item.id)) continue;
+      const layout = cardLayoutsRef.current[item.id];
+      if (!layout) continue;
+      // Card is visible if at least 45px of the card is inside the current viewport window
+      const cardTop = layout.y;
+      const cardBottom = layout.y + Math.max(layout.height, 80);
+      if (cardTop + 45 <= vBottom && cardBottom - 45 >= vTop) {
+        recordedViewportIdsRef.current.add(item.id);
+        newlyVisibleIds.push(item.id);
+      }
+    }
+
+    if (newlyVisibleIds.length > 0) {
+      void recordCardAppearances(newlyVisibleIds);
+    }
+  }, [activeFeedOption, currentFeedItems, recordCardAppearances]);
+
+  const handleCardLayout = useCallback((itemId: string, y: number, height: number) => {
+    cardLayoutsRef.current[itemId] = { y, height };
+    flushVisibleCardsToChronik();
+  }, [flushVisibleCardsToChronik]);
+
+  const totalInfiniteAvailable = infiniteInterleavedBase.length + evergreenFallbackItems.length;
+
+  // Seamless infinite mind-scroll listener (triggers next items & flushes viewport Chronik as user scrolls)
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    scrollYRef.current = contentOffset.y;
+    if (layoutMeasurement.height > 0) {
+      viewportHeightRef.current = layoutMeasurement.height;
+    }
+    flushVisibleCardsToChronik();
+
+    const paddingToBottom = 800;
+    if (layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom) {
+      if (activeFeedOption === 'infinite') {
+        setVisibleInfiniteCount(prev => Math.min(prev + 6, Math.max(12, totalInfiniteAvailable)));
+      } else {
+        setVisibleDiscoveryCount(prev => Math.min(prev + 6, Math.max(10, sortedDiscovery.length)));
+      }
+    }
+  }, [activeFeedOption, flushVisibleCardsToChronik, totalInfiniteAvailable, sortedDiscovery.length]);
+
+  const handleLoadMoreDiscovery = () => {
+    setVisibleDiscoveryCount(prev => Math.min(prev + 10, sortedDiscovery.length));
+  };
+
+  const handleLoadMoreInfinite = () => {
+    setVisibleInfiniteCount(prev => Math.min(prev + 12, totalInfiniteAvailable));
+  };
+
+  const healthOverview = useMemo(() => defaultSourceRepository.getHealthOverview(), []);
 
   const [activeCardIndex, setActiveCardIndex] = useState<number>(0);
   const [expandedCardIds, setExpandedCardIds] = useState<Record<string, boolean>>({});
@@ -795,13 +828,6 @@ export const FeedScreen: React.FC = () => {
             {/* MODE: ENDLESS DISCOVERY STREAM */}
             {activeFeedOption === 'infinite' && (
               <>
-                {/* Desktop Spaces Selector Bar */}
-                {isDesktop && (
-                  <View style={[styles.desktopSpaceCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                    {renderSpacePills()}
-                  </View>
-                )}
-
                 {searchQuery.trim().length > 0 && (
                   <View style={[styles.searchNoticeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                     <Ionicons name="search" size={14} color={colors.accent} style={{ marginRight: 6 }} />
@@ -825,7 +851,7 @@ export const FeedScreen: React.FC = () => {
                   >
                     <Text style={styles.sortEmoji}>🔥</Text>
                     <Text style={[styles.sortTabText, { color: sortMode === 'hot' ? colors.accent : colors.textSecondary }]}>
-                      Heiß
+                      Bloom
                     </Text>
                   </TouchableOpacity>
 
@@ -871,7 +897,7 @@ export const FeedScreen: React.FC = () => {
                   <View style={styles.sortRightInfo}>
                     <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
                     <Text style={[styles.sortInfoText, { color: colors.textMuted }]}>
-                      5-Phasen-Rhythmus
+                      {healthOverview.deliveringCount}/{healthOverview.totalSources} Quellen aktiv
                     </Text>
                   </View>
                 </View>
@@ -920,6 +946,15 @@ export const FeedScreen: React.FC = () => {
                         <Ionicons name="arrow-down" size={13} color={colors.textMuted} style={{ marginRight: 3 }} />
                         <Text style={[styles.tuningBtnText, { color: colors.textSecondary }]}>- Weniger</Text>
                       </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => handleFilterChange('all')}
+                        style={[styles.tuningBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Alle Spaces anzeigen"
+                      >
+                        <Text style={[styles.tuningBtnText, { color: colors.textMuted }]}>✕ Alle</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 )}
@@ -936,8 +971,11 @@ export const FeedScreen: React.FC = () => {
                   </View>
                 ) : (
                   <>
-                    {renderedInfiniteItems.map((item, index) => (
-                      <React.Fragment key={item.id}>
+                    {renderedInfiniteFreshItems.map((item, index) => (
+                      <View
+                        key={item.id}
+                        onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+                      >
                         <FeedCard
                           item={item}
                           isHero={index === 0 && selectedFilter === 'all' && !searchQuery}
@@ -952,8 +990,8 @@ export const FeedScreen: React.FC = () => {
                           onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                         />
 
-                        {/* Mindfulness Milestone after item 5 */}
-                        {index === 4 && (
+                        {/* Mindfulness Milestone after item 6 */}
+                        {index === 5 && (
                           <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                             <Ionicons name="leaf-outline" size={20} color="#10B981" style={{ marginRight: 10, marginTop: 2 }} />
                             <View style={{ flex: 1 }}>
@@ -961,7 +999,7 @@ export const FeedScreen: React.FC = () => {
                                 Kognitive Atempause
                               </Text>
                               <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
-                                5 Gedanken aufgenommen. Nimm dir 3 tiefe Atemzüge, um das Gelesene kognitiv zu verarbeiten.
+                                6 Gedanken aufgenommen. Nimm dir 3 tiefe Atemzüge, um das Gelesene kognitiv zu verarbeiten.
                               </Text>
                               <TouchableOpacity
                                 onPress={() => setShowBreathingModal(true)}
@@ -984,51 +1022,68 @@ export const FeedScreen: React.FC = () => {
                             </View>
                           </View>
                         )}
-
-                        {/* Periodic Mindfulness Milestone every 10 items */}
-                        {index > 4 && (index + 1) % 10 === 0 && (
-                          <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                            <Ionicons name="water-outline" size={20} color="#06B6D4" style={{ marginRight: 10, marginTop: 2 }} />
-                            <View style={{ flex: 1 }}>
-                              <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
-                                Kognitive Weite & Atempause
-                              </Text>
-                              <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
-                                {index + 1} Erkenntnisse gesammelt. Atme durch, um das Rauschen der Welt loszulassen.
-                              </Text>
-                              <TouchableOpacity
-                                onPress={() => setShowBreathingModal(true)}
-                                style={{
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  alignSelf: 'flex-start',
-                                  marginTop: 8,
-                                  backgroundColor: 'rgba(6, 182, 212, 0.15)',
-                                  paddingHorizontal: 12,
-                                  paddingVertical: 6,
-                                  borderRadius: radius.full
-                                }}
-                              >
-                                <Ionicons name="leaf-outline" size={13} color="#06B6D4" style={{ marginRight: 5 }} />
-                                <Text style={{ fontSize: 12, fontWeight: '600', color: '#06B6D4' }}>
-                                  Atempause nehmen (4-4-4-4)
-                                </Text>
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        )}
-                      </React.Fragment>
+                      </View>
                     ))}
 
-                    <TouchableOpacity
-                      onPress={handleLoadMoreInfinite}
-                      style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
-                    >
-                      <Ionicons name="compass-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
-                      <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
-                        Weiter entdecken (+12 Beiträge)
-                      </Text>
-                    </TouchableOpacity>
+                    {/* Clean Transition to Evergreen / Archive when fresh pool is exhausted */}
+                    {renderedInfiniteEvergreenItems.length > 0 && (
+                      <>
+                        <View style={[styles.streamDividerCard, { backgroundColor: colors.surface, borderColor: '#D97706' }]}>
+                          <View style={[styles.sparkleIconBox, { backgroundColor: 'rgba(217, 119, 6, 0.14)' }]}>
+                            <Ionicons name="library" size={20} color="#D97706" />
+                          </View>
+                          <Text style={[styles.streamDividerTitle, { color: colors.textPrimary }]}>
+                            Frische Beiträge gelesen • Zeitlose Klassiker & Archiv
+                          </Text>
+                          <Text style={[styles.streamDividerText, { color: colors.textSecondary }]}>
+                            Kein künstliches Recycling bereits gezeigter Karten: Hier geht es nahtlos weiter mit zeitlosen Ur-Essays und Archiv-Schätzen.
+                          </Text>
+                        </View>
+
+                        {renderedInfiniteEvergreenItems.map((item, idx) => {
+                          const globalIdx = renderedInfiniteFreshItems.length + idx;
+                          return (
+                            <View
+                              key={item.id}
+                              onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+                            >
+                              <FeedCard
+                                item={item}
+                                isHero={false}
+                                isFocused={globalIdx === activeCardIndex}
+                                isExpanded={Boolean(expandedCardIds[item.id])}
+                                onToggleKurzCheck={() => {
+                                  setExpandedCardIds(prev => ({
+                                    ...prev,
+                                    [item.id]: !prev[item.id]
+                                  }));
+                                }}
+                                onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                              />
+                            </View>
+                          );
+                        })}
+                      </>
+                    )}
+
+                    {visibleInfiniteCount < totalInfiniteAvailable ? (
+                      <TouchableOpacity
+                        onPress={handleLoadMoreInfinite}
+                        style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
+                      >
+                        <Ionicons name="compass-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
+                        <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
+                          Weiter entdecken (+12 Beiträge)
+                        </Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={[styles.loadMoreButton, { borderColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary, opacity: 0.85 }]}>
+                        <Ionicons name="checkmark-circle-outline" size={18} color={colors.textMuted} style={{ marginRight: 6 }} />
+                        <Text style={[styles.loadMoreButtonText, { color: colors.textMuted }]}>
+                          Alle {totalInfiniteAvailable} frischen Beiträge & Klassiker durchstöbert
+                        </Text>
+                      </View>
+                    )}
                   </>
                 )}
               </>
@@ -1295,13 +1350,6 @@ export const FeedScreen: React.FC = () => {
             {/* 4. MODE: DAILY FINITE EDITION (DEFAULT) */}
             {activeFeedOption === 'daily' && (
               <>
-                {/* Desktop Spaces Selector Bar */}
-                {isDesktop && (
-                  <View style={[styles.desktopSpaceCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                    {renderSpacePills()}
-                  </View>
-                )}
-
                 {searchQuery.trim().length > 0 && (
                   <View style={[styles.searchNoticeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                     <Ionicons name="search" size={14} color={colors.accent} style={{ marginRight: 6 }} />
@@ -1373,10 +1421,10 @@ export const FeedScreen: React.FC = () => {
                     <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
                       <Ionicons name="sync-outline" size={13} color={colors.accent} style={{ marginRight: 2 }} />
                       <Text style={[styles.devSimDateText, { color: colors.textPrimary, fontWeight: '700' }]}>
-                        Feed-Kurator:
+                        Quellen-Pool:
                       </Text>
                       <Text style={[styles.devSimDateText, { color: colors.textMuted }]}>
-                        29 Feeds • 117 Quellen • €0.00
+                        {healthOverview.deliveringCount}/{healthOverview.totalSources} aktiv • {healthOverview.totalItems} Beiträge • €0.00
                       </Text>
                     </View>
 
@@ -1470,7 +1518,7 @@ export const FeedScreen: React.FC = () => {
                   >
                     <Text style={styles.sortEmoji}>🔥</Text>
                     <Text style={[styles.sortTabText, { color: sortMode === 'hot' ? colors.accent : colors.textSecondary }]}>
-                      Heiß
+                      Bloom
                     </Text>
                   </TouchableOpacity>
 
@@ -1509,14 +1557,14 @@ export const FeedScreen: React.FC = () => {
                   >
                     <Text style={styles.sortEmoji}>💎</Text>
                     <Text style={[styles.sortTabText, { color: sortMode === 'gems' ? colors.accent : colors.textSecondary }]}>
-                      Perlen & Memes
+                      Perlen & Kunst
                     </Text>
                   </TouchableOpacity>
 
                   <View style={styles.sortRightInfo}>
                     <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
                     <Text style={[styles.sortInfoText, { color: colors.textMuted }]}>
-                      Kuratierte Entdeckung
+                      Kuratierte Ausgabe
                     </Text>
                   </View>
                 </View>
@@ -1564,6 +1612,15 @@ export const FeedScreen: React.FC = () => {
                       >
                         <Ionicons name="arrow-down" size={13} color={colors.textMuted} style={{ marginRight: 3 }} />
                         <Text style={[styles.tuningBtnText, { color: colors.textSecondary }]}>- Weniger</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => handleFilterChange('all')}
+                        style={[styles.tuningBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Alle Spaces anzeigen"
+                      >
+                        <Text style={[styles.tuningBtnText, { color: colors.textMuted }]}>✕ Alle</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1642,7 +1699,10 @@ export const FeedScreen: React.FC = () => {
               <>
                 {/* Daily Edition Primary Items */}
                 {sortedDaily.map((item, index) => (
-                  <React.Fragment key={item.id}>
+                  <View
+                    key={item.id}
+                    onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+                  >
                     <FeedCard
                       item={item}
                       isHero={index === 0 && selectedFilter === 'all' && !searchQuery}
@@ -1689,7 +1749,7 @@ export const FeedScreen: React.FC = () => {
                         </View>
                       </View>
                     )}
-                  </React.Fragment>
+                  </View>
                 ))}
 
                 {/* Transition Milestone between Daily Edition and Discovery Pool */}
@@ -1711,7 +1771,10 @@ export const FeedScreen: React.FC = () => {
                 {renderedDiscovery.map((item, index) => {
                   const globalIndex = sortedDaily.length + index;
                   return (
-                    <React.Fragment key={item.id}>
+                    <View
+                      key={item.id}
+                      onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+                    >
                       <FeedCard
                         item={item}
                         isHero={false}
@@ -1725,45 +1788,12 @@ export const FeedScreen: React.FC = () => {
                         }}
                         onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                       />
+                    </View>
+                  );
+                })}
 
-                    {/* Periodic Mindfulness Milestone every 8 discovery cards */}
-                    {(index + 1) % 8 === 0 && (
-                      <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                        <Ionicons name="water-outline" size={20} color="#06B6D4" style={{ marginRight: 10, marginTop: 2 }} />
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
-                            Kognitive Weite & Atempause
-                          </Text>
-                          <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
-                            {index + 1 + sortedDaily.length} Erkenntnisse gesammelt. Atme durch, um das Rauschen der Welt loszulassen.
-                          </Text>
-                          <TouchableOpacity
-                            onPress={() => setShowBreathingModal(true)}
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              alignSelf: 'flex-start',
-                              marginTop: 8,
-                              backgroundColor: 'rgba(6, 182, 212, 0.15)',
-                              paddingHorizontal: 12,
-                              paddingVertical: 6,
-                              borderRadius: radius.full
-                            }}
-                          >
-                            <Ionicons name="leaf-outline" size={13} color="#06B6D4" style={{ marginRight: 5 }} />
-                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#06B6D4' }}>
-                              Atempause nehmen (4-4-4-4)
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-
-              {/* End of Section / Conscious Discovery Trigger */}
-                {visibleDiscoveryCount < allStreamItems.length ? (
+                {/* End of Section / Conscious Discovery Trigger */}
+                {visibleDiscoveryCount < sortedDiscovery.length ? (
                   <TouchableOpacity
                     onPress={handleLoadMoreDiscovery}
                     style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
@@ -1790,7 +1820,11 @@ export const FeedScreen: React.FC = () => {
           {/* Right Column: Sticky Desktop Community Sidebar */}
           {isDesktop && (
             <View style={styles.desktopSidebarColumn}>
-              <DesktopSidebar articleCount={allStreamItems.length} />
+              <DesktopSidebar
+                articleCount={infiniteInterleavedBase.length}
+                selectedTopicFilter={selectedFilter}
+                onSelectTopicFilter={handleFilterChange}
+              />
             </View>
           )}
         </View>

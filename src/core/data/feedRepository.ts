@@ -1,5 +1,5 @@
 import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP, DayEditionType } from '../domain/types';
-import { INITIAL_FIXTURES, getCuratedImageForTopic } from './fixtures';
+import { INITIAL_FIXTURES } from './fixtures';
 import { rankAndInterleaveFeed, rankEditionFeed, ScoredFeedItem } from '../domain/ranking';
 import { AtemStorage, appStorage } from './storage';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
@@ -17,29 +17,52 @@ try {
 }
 
 function enrichSocialFeedItem(rawItem: FeedItem): FeedItem {
-  // 1. Run automated epistemic research & didactic synthesis
   const item = enrichItemWithInstantResearch(rawItem);
 
   const topic = item.primaryTopic || 'philosophy_ethics';
   const topicMeta = TOPIC_SPACE_MAP[topic];
   const space = item.space || topicMeta?.space || `c/${topic}`;
   const flair = item.flair || topicMeta?.flair || '◈ Recherche';
-  const imageUrl = item.imageUrl || getCuratedImageForTopic(topic, item.id);
-  // Grounded: Zero fake upvotes. Starts at 0; personal user votes are tracked locally via interactions.
-  const upvotesCount = 0;
-  // Grounded: Retain authentic comments and ensure zero fake scores
-  const comments = (item.comments ?? []).map(c => ({
-    ...c,
-    score: 0
-  }));
+
+  // Only keep imageUrl if it genuinely belongs to the item (no generic Unsplash stock photos on text articles)
+  const isGenericUnsplash = Boolean(
+    item.imageUrl &&
+    item.imageUrl.includes('images.unsplash.com') &&
+    item.format !== 'art_showcase'
+  );
+  const imageUrl = isGenericUnsplash ? undefined : item.imageUrl;
+  const hasAuthenticImage = Boolean(imageUrl);
+
+  // Honest provenance for encyclopedias and museum collections
+  const domain = (item.sourceDomain || item.canonicalUrl || '').toLowerCase();
+  const isWiki = domain.includes('wikipedia.org');
+  const isMuseum = domain.includes('artic.edu') || domain.includes('wikimedia.org');
+
+  const sourceTrustLevel = isWiki
+    ? 'encyclopedia'
+    : isMuseum
+    ? 'museum_collection'
+    : item.sourceTrustLevel;
+
+  const factReviewStatus = isWiki
+    ? 'encyclopedia_entry'
+    : item.factReviewStatus;
+
+  // Grounded: Zero fake upvotes, zero fake awards, zero simulated human comments
+  const safeFormat = item.format === 'art_showcase' && !hasAuthenticImage ? 'sourced_update' : item.format;
 
   return {
     ...item,
+    format: safeFormat,
     space,
     flair,
     imageUrl,
-    upvotesCount,
-    comments
+    hasAuthenticImage,
+    sourceTrustLevel,
+    factReviewStatus,
+    upvotesCount: 0,
+    awardsCount: { gold: 0, brain: 0, spark: 0 },
+    comments: []
   };
 }
 
@@ -72,13 +95,15 @@ export class LocalFeedRepository implements IFeedRepository {
     } else {
       const map = new Map<string, FeedItem>();
 
-      // 1. Prioritize Real Grounded Knowledge Vault & Timeless Classics
-      for (const item of REAL_KNOWLEDGE_VAULT) {
-        map.set(item.id, enrichSocialFeedItem(item));
+      // 1. Real Ingested Pipeline Items (50+ live verified feeds)
+      for (const item of pipelineItems) {
+        if (!map.has(item.id)) {
+          map.set(item.id, enrichSocialFeedItem(item));
+        }
       }
 
-      // 2. Real Ingested Pipeline Items
-      for (const item of pipelineItems) {
+      // 2. Real Grounded Knowledge Vault & Timeless Classics
+      for (const item of REAL_KNOWLEDGE_VAULT) {
         if (!map.has(item.id)) {
           map.set(item.id, enrichSocialFeedItem(item));
         }
@@ -92,7 +117,6 @@ export class LocalFeedRepository implements IFeedRepository {
       }
       this.items = Array.from(map.values());
     }
-    // Asynchronously re-hydrate dynamic items from local storage
     this.initDynamicItems();
   }
 
@@ -131,7 +155,11 @@ export class LocalFeedRepository implements IFeedRepository {
     for (const item of items) {
       map.set(item.id, enrichSocialFeedItem(item));
     }
-    // Always preserve dynamically generated pocket items!
+    for (const item of REAL_KNOWLEDGE_VAULT) {
+      if (!map.has(item.id)) {
+        map.set(item.id, enrichSocialFeedItem(item));
+      }
+    }
     for (const dyn of this.dynamicItems) {
       map.set(dyn.id, dyn);
     }
@@ -162,18 +190,11 @@ export class LocalFeedRepository implements IFeedRepository {
     profile: UserProfile,
     interactions: Record<string, ReadingInteraction> = {}
   ): Promise<ScoredFeedItem[]> {
-    // Curated daily items for the finite edition (top 10-12 items)
     const dailyPool = this.items.filter(item => item.isDailyEdition);
     const rankedDaily = rankAndInterleaveFeed(dailyPool, profile, interactions);
     return rankedDaily.slice(0, 12);
   }
 
-  /**
-   * Returns curated items for one of the three daily editions:
-   * - morning: 6-8 items, fresh, curious, orienting, science & society
-   * - midday: 4-6 items, lively, tools, ideas, biohacking & satire
-   * - evening: 4-6 items, calm, deep essays, ambient synthesis, classics
-   */
   async getEditionFeed(
     editionType: DayEditionType,
     profile: UserProfile,
@@ -189,7 +210,6 @@ export class LocalFeedRepository implements IFeedRepository {
     interactions: Record<string, ReadingInteraction> = {},
     excludedIds?: Set<string>
   ): Promise<ScoredFeedItem[]> {
-    // Discovery pool contains all remaining items beyond the active edition
     const excludeSet = excludedIds ?? (() => {
       const dailyPool = this.items.filter(item => item.isDailyEdition);
       const rankedDaily = rankAndInterleaveFeed(dailyPool, profile, interactions);

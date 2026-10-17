@@ -13,6 +13,27 @@ export type SourceCategory =
   | 'memes'
   | 'custom';
 
+export interface SourceHealthInfo {
+  sourceId: string;
+  name: string;
+  url: string;
+  fetchSuccess: boolean;
+  lastSuccessAt?: string;
+  lastError?: string;
+  itemCount: number;
+  durationMs?: number;
+}
+
+let bundledSourceHealth: Record<string, SourceHealthInfo> = {};
+try {
+  const loaded = require('./source-health.json');
+  if (loaded && typeof loaded === 'object') {
+    bundledSourceHealth = loaded as Record<string, SourceHealthInfo>;
+  }
+} catch {
+  bundledSourceHealth = {};
+}
+
 export interface FeedSourceItem {
   id: string;
   name: string;
@@ -28,6 +49,13 @@ export interface FeedSourceItem {
   articleCount?: number;
   lastSynced?: string;
   createdAt?: string;
+  // Per-source health telemetry
+  fetchSuccess?: boolean;
+  lastSuccessAt?: string;
+  lastError?: string;
+  isDelivering?: boolean;
+  itemCount?: number;
+  health?: SourceHealthInfo;
 }
 
 export const CATEGORY_METADATA: Record<SourceCategory, {
@@ -40,13 +68,13 @@ export const CATEGORY_METADATA: Record<SourceCategory, {
     label: 'Öffentlich-Rechtliche',
     icon: 'shield-checkmark',
     color: '#06B6D4',
-    description: 'Tagesschau, ZDFheute, Deutschlandfunk – werbefrei, staatsfern & verifiziert'
+    description: 'Tagesschau, ZDFheute, Deutschlandfunk, BR24 – werbefrei & redaktionell geprüft'
   },
   science: {
     label: 'Wissenschaft & Kognition',
     icon: 'flask',
     color: '#8B5CF6',
-    description: 'Spektrum, Gehirn & Geist, Quanta Magazine, Stanford SEP, arXiv'
+    description: 'Quanta Magazine, Nature, Spektrum, ScienceDaily, scinexx, arXiv'
   },
   youtube: {
     label: 'YouTube Meisterkurse',
@@ -55,28 +83,28 @@ export const CATEGORY_METADATA: Record<SourceCategory, {
     description: 'Veritasium, Kurzgesagt, 3Blue1Brown, Huberman Lab'
   },
   culture: {
-    label: 'Bücher & Kultur',
+    label: 'Philosophie, Essays & Kontemplation',
     icon: 'book',
     color: '#F59E0B',
-    description: 'Perlentaucher Kulturmagazin, DLF Büchermarkt, Aeon Essays'
+    description: 'Stanford SEP, Aeon, Psyche, Tricycle, Plum Village, Public Domain Review, Colossal'
   },
   education: {
     label: 'Didaktik & Schule',
     icon: 'school',
     color: '#10B981',
-    description: 'Deutsches Schulportal, Bildungsserver, Bundeszentrale für pol. Bildung'
+    description: 'Deutsches Schulportal, Bildungsserver, bpb, Edutopia'
   },
   tech: {
-    label: 'Tech & KI-Souveränität',
+    label: 'KI, Tech & Klangsynthese',
     icon: 'hardware-chip',
     color: '#3B82F6',
-    description: 'Simon Willison, Heise Developer, Hugging Face, CDM, Lines'
+    description: 'Simon Willison, Hugging Face, Heise, MIT Tech Review, Lobsters, CDM, Lines'
   },
   memes: {
-    label: 'Satire & Memes',
+    label: 'Spielerisches, Humor & Kurioses',
     icon: 'happy',
     color: '#EC4899',
-    description: 'xkcd Comics & intelligente Wissenschaftssatire'
+    description: 'xkcd, SMBC Comics & Futility Closet'
   },
   custom: {
     label: 'Eigene RSS-Feeds',
@@ -87,25 +115,77 @@ export const CATEGORY_METADATA: Record<SourceCategory, {
 };
 
 function categorizeVerifiedSource(source: RawFeedSource): { category: SourceCategory; trustBadge: string } {
-  if (source.id.startsWith('tagesschau') || source.id === 'zdf-heute' || source.id === 'deutschlandfunk-nachrichten' || source.id === 'bpb-themen') {
-    return { category: 'oerr', trustBadge: 'ÖRR Verifiziert' };
+  const id = source.id.toLowerCase();
+  if (
+    id.startsWith('tagesschau') ||
+    id === 'zdf-heute' ||
+    id.startsWith('deutschlandfunk') ||
+    id.startsWith('dlf-forschung') ||
+    id.startsWith('dlf-kultur') ||
+    id.startsWith('br24') ||
+    id.startsWith('dw-') ||
+    id === 'bpb-themen'
+  ) {
+    return { category: 'oerr', trustBadge: 'Öffentlich-Rechtlich' };
   }
-  if (source.id.startsWith('yt-')) {
-    return { category: 'youtube', trustBadge: 'Video-Masterclass' };
+  if (id.startsWith('yt-')) {
+    return { category: 'youtube', trustBadge: 'Video-Essay' };
   }
-  if (source.id.includes('spektrum') || source.id.includes('gehirn') || source.id === 'quanta-magazine' || source.id === 'sep-whats-new' || source.id === 'arxiv-cs-ai') {
-    return { category: 'science', trustBadge: 'Peer-Reviewed / Fachverlag' };
+  if (
+    id.includes('spektrum') ||
+    id.includes('gehirn') ||
+    id === 'quanta-magazine' ||
+    id === 'forschung-und-wissen' ||
+    id === 'idw-wissenschaft' ||
+    id === 'nautilus-magazine' ||
+    id === 'nature-news' ||
+    id.startsWith('sciencedaily') ||
+    id === 'mpg-forschung' ||
+    id === 'scinexx-wissen' ||
+    id.startsWith('arxiv-')
+  ) {
+    return { category: 'science', trustBadge: 'Wissenschaft & Forschung' };
   }
-  if (source.id === 'perlentaucher-magazin' || source.id === 'dlf-buechermarkt' || source.id === 'aeon-essays' || source.id === 'daily-nous') {
-    return { category: 'culture', trustBadge: 'Feuilleton & Essays' };
+  if (
+    id === 'sep-whats-new' ||
+    id === 'perlentaucher-magazin' ||
+    id === 'dlf-buechermarkt' ||
+    id === 'aeon-essays' ||
+    id === 'psyche-magazine' ||
+    id === 'daily-nous' ||
+    id === 'netzpolitik-org' ||
+    id === 'philosophy-now' ||
+    id === 'the-marginalian' ||
+    id === 'public-domain-review' ||
+    id === 'astral-codex-ten' ||
+    id === 'works-in-progress' ||
+    id === 'tricycle-buddhist' ||
+    id === 'lions-roar-buddhism' ||
+    id === 'plum-village-mindfulness' ||
+    id === 'zen-habits-focus' ||
+    id === 'colossal-art' ||
+    id === 'hyperallergic-art' ||
+    id === 'monopol-kunst' ||
+    id === '3quarksdaily' ||
+    id === 'geschichte-der-gegenwart' ||
+    id === 'praefaktisch-philosophie'
+  ) {
+    return { category: 'culture', trustBadge: 'Essay, Kunst & Kontemplation' };
   }
-  if (source.id === 'deutsches-schulportal' || source.id === 'deutscher-bildungsserver') {
-    return { category: 'education', trustBadge: 'Stiftung / Bildungsportal' };
+  if (id === 'deutsches-schulportal' || id === 'deutscher-bildungsserver' || id === 'edutopia-learning') {
+    return { category: 'education', trustBadge: 'Bildung & Didaktik' };
   }
-  if (source.id === 'xkcd-comics') {
-    return { category: 'memes', trustBadge: 'Kult-Satire' };
+  if (
+    id === 'xkcd-comics' ||
+    id === 'smbc-comics' ||
+    id === 'futility-closet' ||
+    id === 'existential-comics' ||
+    id === 'pbf-comics' ||
+    id === 'sketchplanations'
+  ) {
+    return { category: 'memes', trustBadge: 'Comics & Denkmodelle' };
   }
-  return { category: 'tech', trustBadge: 'Open Web & Tech' };
+  return { category: 'tech', trustBadge: 'KI, Tech & Klang' };
 }
 
 const SOURCES_STATE_KEY = '@atem:sources_state';
@@ -114,6 +194,7 @@ interface SourcesStatePayload {
   disabledIds: string[];
   customSources: FeedSourceItem[];
   lastSyncTimestamp?: string;
+  sourceHealthOverrides?: Record<string, SourceHealthInfo>;
 }
 
 export class SourceRepository {
@@ -127,13 +208,14 @@ export class SourceRepository {
         return {
           disabledIds: Array.isArray(parsed.disabledIds) ? parsed.disabledIds : [],
           customSources: Array.isArray(parsed.customSources) ? parsed.customSources : [],
-          lastSyncTimestamp: parsed.lastSyncTimestamp
+          lastSyncTimestamp: parsed.lastSyncTimestamp,
+          sourceHealthOverrides: parsed.sourceHealthOverrides || {}
         };
       }
     } catch (e) {
       console.warn('Could not read sources state:', e);
     }
-    return { disabledIds: [], customSources: [] };
+    return { disabledIds: [], customSources: [], sourceHealthOverrides: {} };
   }
 
   private async saveState(state: SourcesStatePayload): Promise<void> {
@@ -141,14 +223,63 @@ export class SourceRepository {
   }
 
   /**
-   * Retrieves all verified sources + custom user sources with live enabled/disabled status.
+   * Synchronous summary of candidate source health across the catalog.
+   */
+  getHealthOverview(): {
+    totalSources: number;
+    deliveringCount: number;
+    failingCount: number;
+    totalItems: number;
+    deliveringSources: number;
+    failingSources: number;
+    totalItemsHarvested: number;
+  } {
+    const totalSources = VERIFIED_FEED_SOURCES.length;
+    let deliveringCount = 0;
+    let failingCount = 0;
+    let totalItems = 0;
+
+    for (const s of VERIFIED_FEED_SOURCES) {
+      const h = bundledSourceHealth[s.id];
+      const ok = h ? (h.fetchSuccess && h.itemCount > 0) : true;
+      if (ok) {
+        deliveringCount++;
+        totalItems += h ? h.itemCount : 4;
+      } else {
+        failingCount++;
+      }
+    }
+
+    return {
+      totalSources,
+      deliveringCount,
+      failingCount,
+      totalItems,
+      deliveringSources: deliveringCount,
+      failingSources: failingCount,
+      totalItemsHarvested: totalItems
+    };
+  }
+
+  /**
+   * Retrieves all verified sources + custom user sources with live enabled/disabled status
+   * and per-source delivery health telemetry.
    */
   async getAllSources(): Promise<FeedSourceItem[]> {
     const state = await this.loadState();
     const disabledSet = new Set(state.disabledIds);
+    const overrides = state.sourceHealthOverrides || {};
 
     const verifiedItems: FeedSourceItem[] = VERIFIED_FEED_SOURCES.map(s => {
       const { category, trustBadge } = categorizeVerifiedSource(s);
+      const health = overrides[s.id] || bundledSourceHealth[s.id];
+      const fetchSuccess = health ? health.fetchSuccess : true;
+      const itemCount = health ? health.itemCount : 4;
+      const isDelivering = fetchSuccess && itemCount > 0;
+      const lastSuccessFormatted = health?.lastSuccessAt
+        ? new Date(health.lastSuccessAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : undefined;
+
       return {
         id: s.id,
         name: s.name,
@@ -161,21 +292,76 @@ export class SourceRepository {
         enabled: !disabledSet.has(s.id),
         isCustom: false,
         trustBadge,
-        articleCount: 4, // Average harvested articles per source in pipeline
-        lastSynced: state.lastSyncTimestamp || 'Heute, live'
+        articleCount: itemCount,
+        itemCount,
+        lastSynced: isDelivering
+          ? (lastSuccessFormatted || state.lastSyncTimestamp || 'Liefert aktiv')
+          : `Abruf-Fehler: ${health?.lastError || 'Nicht erreichbar'}`,
+        fetchSuccess,
+        lastSuccessAt: health?.lastSuccessAt,
+        lastError: health?.lastError,
+        isDelivering,
+        health
       };
     });
 
     const customItems: FeedSourceItem[] = state.customSources.map(c => ({
       ...c,
-      enabled: !disabledSet.has(c.id)
+      enabled: !disabledSet.has(c.id),
+      fetchSuccess: c.fetchSuccess ?? true,
+      isDelivering: c.isDelivering ?? true
     }));
 
     return [...verifiedItems, ...customItems];
   }
 
   /**
-   * Toggles a source on or off. Optional forceStatus allows explicitly enabling or disabling. Returns new enabled status.
+   * Returns only sources that are both enabled by the user AND actually delivering items.
+   */
+  async getActiveDeliveringSources(): Promise<FeedSourceItem[]> {
+    const all = await this.getAllSources();
+    return all.filter(s => s.enabled && s.isDelivering !== false);
+  }
+
+  /**
+   * Returns lowercase domain hostnames of currently disabled sources.
+   */
+  async getDisabledDomains(): Promise<string[]> {
+    const all = await this.getAllSources();
+    const disabled = all.filter(s => !s.enabled);
+    const domains = new Set<string>();
+    for (const s of disabled) {
+      try {
+        const host = new URL(s.url).hostname.replace(/^www\./, '').toLowerCase();
+        domains.add(host);
+      } catch {
+        // Ignore invalid URL
+      }
+    }
+    return Array.from(domains);
+  }
+
+  /**
+   * Returns lowercase names of currently disabled sources.
+   */
+  async getDisabledNames(): Promise<string[]> {
+    const all = await this.getAllSources();
+    return all.filter(s => !s.enabled).map(s => s.name.toLowerCase());
+  }
+
+  /**
+   * Updates health telemetry for a specific source after a fetch attempt.
+   */
+  async recordSourceHealth(info: SourceHealthInfo): Promise<void> {
+    const state = await this.loadState();
+    const overrides = state.sourceHealthOverrides || {};
+    overrides[info.sourceId] = info;
+    state.sourceHealthOverrides = overrides;
+    await this.saveState(state);
+  }
+
+  /**
+   * Toggles a source on or off.
    */
   async toggleSource(sourceId: string, forceStatus?: boolean): Promise<boolean> {
     const state = await this.loadState();
@@ -218,7 +404,6 @@ export class SourceRepository {
     const category = params.category || 'custom';
     const cleanUrl = params.url.trim();
 
-    // Prevent duplicate URLs
     const existing = state.customSources.find(s => s.url.toLowerCase() === cleanUrl.toLowerCase())
       || VERIFIED_FEED_SOURCES.find(s => s.url.toLowerCase() === cleanUrl.toLowerCase());
 
@@ -238,7 +423,9 @@ export class SourceRepository {
       enabled: true,
       isCustom: true,
       trustBadge: 'Eigene Quelle',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      fetchSuccess: true,
+      isDelivering: true
     };
 
     state.customSources.push(newSource);
@@ -269,7 +456,6 @@ export class SourceRepository {
     const added: FeedSourceItem[] = [];
     let skippedCount = 0;
 
-    // Standard regex to parse OPML outlines: <outline ... xmlUrl="..." ... />
     const outlineRegex = /<outline\b([^>]+)\/?>/gi;
     let match: RegExpExecArray | null;
 
@@ -284,7 +470,6 @@ export class SourceRepository {
         continue;
       }
 
-      // Title or text
       const titleMatch = attrsStr.match(/title=["']([^"']+)["']/i) || attrsStr.match(/text=["']([^"']+)["']/i);
       const name = titleMatch ? titleMatch[1].trim() : xmlUrl.replace(/^https?:\/\//i, '').split('/')[0];
 
@@ -300,7 +485,9 @@ export class SourceRepository {
         enabled: true,
         isCustom: true,
         trustBadge: 'OPML Import',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        fetchSuccess: true,
+        isDelivering: true
       };
 
       state.customSources.push(newSource);
@@ -322,7 +509,6 @@ export class SourceRepository {
     const timestamp = new Date().toUTCString();
     let bodyOutlines = '';
 
-    // Group by category
     const grouped = new Map<SourceCategory, FeedSourceItem[]>();
     for (const s of sources) {
       if (!grouped.has(s.category)) grouped.set(s.category, []);
@@ -354,7 +540,7 @@ ${bodyOutlines}  </body>
    * Applies a curated preset:
    * - 'oerr_only': Enables only ÖRR sources
    * - 'science_culture': Enables Science, Culture & Books
-   * - 'all': Enables all 29 verified sources
+   * - 'all': Enables all verified sources
    */
   async applyPreset(preset: 'all' | 'oerr_only' | 'science_culture'): Promise<void> {
     const state = await this.loadState();

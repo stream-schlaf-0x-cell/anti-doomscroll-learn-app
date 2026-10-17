@@ -111,11 +111,14 @@ export const ContentStatusSchema = z.enum([
 export type ContentStatus = z.infer<typeof ContentStatusSchema>;
 
 export const FactReviewStatusSchema = z.enum([
-  'curated_illustrative',     // Redaktionell kuratierte Beispieldaten
+  'curated_illustrative',     // Redaktionell kuratierte Beispieldaten / RSS-Auszug
   'historical_reference',     // Historisch belegte Quelle/Analyse
   'pedagogical_concept',      // Fachdidaktisches Unterrichtskonzept
   'philosophical_discourse',  // Philosophischer Diskurs/Primärtext
-  'scientific_paper'          // Wissenschaftliche Publikation
+  'scientific_paper',         // Wissenschaftliche Publikation
+  'encyclopedia_entry',       // Enzyklopädischer Artikel
+  'public_news',              // Öffentlich-rechtliche / journalistische Meldung
+  'community_discussion'      // Offene Fach- & Community-Diskussion
 ]);
 export type FactReviewStatus = z.infer<typeof FactReviewStatusSchema>;
 
@@ -125,8 +128,11 @@ export function formatFactReviewStatus(status?: FactReviewStatus): string {
     case 'scientific_paper': return 'Fachwissenschaftliche Publikation';
     case 'pedagogical_concept': return 'Fachdidaktisches Unterrichtskonzept';
     case 'historical_reference': return 'Historische Quelle & Kontext';
-    case 'curated_illustrative': return 'Redaktionelles Anschauungsbeispiel';
-    default: return 'Redaktionell geprüft';
+    case 'encyclopedia_entry': return 'Enzyklopädischer Überblick';
+    case 'public_news': return 'Journalistische Redaktionsmeldung';
+    case 'community_discussion': return 'Offene Fach- & Community-Debatte';
+    case 'curated_illustrative': return 'Autorisierter Herausgeber-Auszug';
+    default: return 'Verifizierte Quelle';
   }
 }
 
@@ -413,7 +419,9 @@ export const FeedItemSchema = z.object({
     'peer_reviewed',
     'verified_creator',
     'deep_essay',
-    'community_curated'
+    'community_curated',
+    'encyclopedia',
+    'museum_collection'
   ]).default('verified_creator'),
   sourceDomain: z.string().optional(),
   sourceBroadcasterName: z.string().optional(),
@@ -421,7 +429,14 @@ export const FeedItemSchema = z.object({
   editorialSynthesisType: EditorialSynthesisTypeSchema.optional(),
   targetEditions: z.array(DayEditionTypeSchema).optional(),
   imageCredit: z.string().optional(),
-  relatedCrossReferences: z.array(RelatedCrossReferenceSchema).optional()
+  relatedCrossReferences: z.array(RelatedCrossReferenceSchema).optional(),
+  hasAuthenticImage: z.boolean().optional(),
+  externalCommunityScore: z.object({
+    platform: z.string(),
+    points: z.number().int().nonnegative(),
+    commentsCount: z.number().int().nonnegative().optional(),
+    discussionUrl: z.string().url().optional()
+  }).optional()
 });
 export const ArtMetaSchema = z.object({
   artist: z.string(),
@@ -435,6 +450,53 @@ export const ArtMetaSchema = z.object({
 export type ArtMeta = z.infer<typeof ArtMetaSchema>;
 
 export type FeedItem = z.infer<typeof FeedItemSchema>;
+
+export function formatVerifiedProvenanceLabel(item: {
+  sourceTrustLevel?: FeedItem['sourceTrustLevel'];
+  evidenceTier?: EvidenceTier;
+  factReviewStatus?: FactReviewStatus;
+  format?: FeedItemFormat;
+  sourceDomain?: string;
+  externalCommunityScore?: FeedItem['externalCommunityScore'];
+}): string {
+  const domain = (item.sourceDomain || '').toLowerCase();
+  if (
+    item.sourceTrustLevel === 'museum_collection' ||
+    item.format === 'art_showcase' ||
+    domain.includes('artic.edu')
+  ) {
+    return 'Kunstsammlung';
+  }
+  if (domain.includes('wikimedia.org')) {
+    return 'Wikimedia Bildarchiv';
+  }
+  if (
+    item.sourceTrustLevel === 'encyclopedia' ||
+    domain.includes('wikipedia.org') ||
+    item.factReviewStatus === 'encyclopedia_entry'
+  ) {
+    return 'Enzyklopädie';
+  }
+  if (item.externalCommunityScore) {
+    return `${item.externalCommunityScore.points} ${item.externalCommunityScore.platform}-Punkte`;
+  }
+  if (item.sourceTrustLevel === 'community_curated' || item.factReviewStatus === 'community_discussion') {
+    return 'Community-Fundstück';
+  }
+  if (item.sourceTrustLevel === 'public_broadcaster') {
+    return 'Öffentlich-Rechtlich';
+  }
+  if (item.sourceTrustLevel === 'peer_reviewed' || item.factReviewStatus === 'scientific_paper') {
+    return 'Wissenschaft & Forschung';
+  }
+  if (item.sourceTrustLevel === 'deep_essay') {
+    return 'Essay & Feuilleton';
+  }
+  if (item.evidenceTier === 'metadata_only') {
+    return 'Quell-Fundstück';
+  }
+  return 'RSS-Originalauszug';
+}
 
 export const TOPIC_SPACE_MAP: Record<TopicTag, {
   space: string;

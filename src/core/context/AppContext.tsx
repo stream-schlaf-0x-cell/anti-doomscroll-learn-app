@@ -374,6 +374,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const initialEdition = determineCurrentEditionType(new Date(), loadedProfile);
       setSelectedEditionTypeState(initialEdition);
       selectedEditionTypeRef.current = initialEdition;
+      try {
+        await (feedRepository as any).hydrateFromPublicSnapshot?.();
+      } catch {
+        // Fallback to local snapshot/vault
+      }
       await scheduleFeedRecompute(loadedProfile, loadedInteractions, initialEdition);
       setStartupState({ status: 'ready' });
 
@@ -428,6 +433,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshFeed = useCallback(async () => {
     try {
       try {
+        await (feedRepository as any).hydrateFromPublicSnapshot?.();
+      } catch {
+        // Fallback
+      }
+      try {
         const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
         if (liveItems.length > 0 && (feedRepository as any).addItems) {
           (feedRepository as any).addItems(liveItems);
@@ -463,6 +473,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [scheduleFeedRecompute]);
 
   const openArticle = useCallback(async (id: string) => {
+    void appearanceHistoryService.recordAppearances([id]);
     let item = await feedRepository.getItemById(id);
     if (!item) {
       item = await libraryRepository.getSavedArticle(id);

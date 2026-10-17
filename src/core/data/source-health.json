@@ -1,0 +1,651 @@
+{
+  "tagesschau-inland": {
+    "sourceId": "tagesschau-inland",
+    "name": "ARD Tagesschau",
+    "url": "https://www.tagesschau.de/infoservices/alle-meldungen-100~rss2.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:18.493Z",
+    "itemCount": 4,
+    "durationMs": 380
+  },
+  "deutschlandfunk-nachrichten": {
+    "sourceId": "deutschlandfunk-nachrichten",
+    "name": "Deutschlandfunk Nachrichten",
+    "url": "https://www.deutschlandfunk.de/nachrichten-100.rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:18.494Z",
+    "itemCount": 4,
+    "durationMs": 386
+  },
+  "tagesschau-wissen": {
+    "sourceId": "tagesschau-wissen",
+    "name": "ARD Tagesschau Wissen",
+    "url": "https://www.tagesschau.de/wissen/index~rss2.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:18.437Z",
+    "itemCount": 4,
+    "durationMs": 456
+  },
+  "br24-wissen": {
+    "sourceId": "br24-wissen",
+    "name": "BR24 Wissen",
+    "url": "https://nachrichtenfeeds.br.de/rdf/boards/QXAPkQJ",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:18.499Z",
+    "itemCount": 4,
+    "durationMs": 457
+  },
+  "dw-wissenschaft": {
+    "sourceId": "dw-wissenschaft",
+    "name": "Deutsche Welle Wissenschaft",
+    "url": "https://rss.dw.com/xml/rss-de-wiss",
+    "fetchSuccess": false,
+    "lastError": "Response is not valid RSS/Atom XML",
+    "itemCount": 0,
+    "durationMs": 462
+  },
+  "dlf-forschung-aktuell": {
+    "sourceId": "dlf-forschung-aktuell",
+    "name": "Deutschlandfunk Forschung Aktuell",
+    "url": "https://www.deutschlandfunk.de/forschung-aktuell-100.rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:18.495Z",
+    "itemCount": 4,
+    "durationMs": 513
+  },
+  "zdf-heute": {
+    "sourceId": "zdf-heute",
+    "name": "ZDFheute Wissen & Politik",
+    "url": "https://www.zdf.de/rss/zdf/nachrichten",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:18.497Z",
+    "itemCount": 4,
+    "durationMs": 543
+  },
+  "spektrum-wissenschaft": {
+    "sourceId": "spektrum-wissenschaft",
+    "name": "Spektrum der Wissenschaft",
+    "url": "https://www.spektrum.de/alias/rss/spektrum-de-rss-feed/996406",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:18.893Z",
+    "itemCount": 4,
+    "durationMs": 161
+  },
+  "dlf-kultur-sein-und-streit": {
+    "sourceId": "dlf-kultur-sein-und-streit",
+    "name": "Deutschlandfunk Kultur",
+    "url": "https://www.deutschlandfunkkultur.de/sein-und-streit-100.rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:18.496Z",
+    "itemCount": 4,
+    "durationMs": 576
+  },
+  "gehirn-und-geist": {
+    "sourceId": "gehirn-und-geist",
+    "name": "Gehirn & Geist (Spektrum)",
+    "url": "https://www.spektrum.de/alias/rss/gehirn-und-geist-rss-feed/996408",
+    "fetchSuccess": false,
+    "lastError": "HTTP 404: Not Found",
+    "itemCount": 0,
+    "durationMs": 521
+  },
+  "bpb-themen": {
+    "sourceId": "bpb-themen",
+    "name": "Bundeszentrale für politische Bildung (bpb)",
+    "url": "https://www.bpb.de/rss-feed/230860.rss",
+    "fetchSuccess": false,
+    "lastError": "Response is not valid RSS/Atom XML",
+    "itemCount": 0,
+    "durationMs": 610
+  },
+  "arxiv-q-bio-nc": {
+    "sourceId": "arxiv-q-bio-nc",
+    "name": "arXiv Neurons & Cognition",
+    "url": "https://rss.arxiv.org/rss/q-bio.NC",
+    "fetchSuccess": false,
+    "lastSuccessAt": "2026-10-16T17:00:29.214Z",
+    "lastError": "Keine Einträge im Feed gefunden",
+    "itemCount": 0,
+    "durationMs": 578
+  },
+  "nature-news": {
+    "sourceId": "nature-news",
+    "name": "Nature News & Research",
+    "url": "https://www.nature.com/nature.rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:18.963Z",
+    "itemCount": 4,
+    "durationMs": 1144
+  },
+  "sciencedaily-mind-brain": {
+    "sourceId": "sciencedaily-mind-brain",
+    "name": "ScienceDaily Mind & Brain",
+    "url": "https://www.sciencedaily.com/rss/mind_brain.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:19.008Z",
+    "itemCount": 4,
+    "durationMs": 1334
+  },
+  "quanta-magazine": {
+    "sourceId": "quanta-magazine",
+    "name": "Quanta Magazine",
+    "url": "https://api.quantamagazine.org/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:18.880Z",
+    "itemCount": 4,
+    "durationMs": 1465
+  },
+  "simon-willison": {
+    "sourceId": "simon-willison",
+    "name": "Simon Willison Weblog",
+    "url": "https://simonwillison.net/atom/everything/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:19.483Z",
+    "itemCount": 4,
+    "durationMs": 875
+  },
+  "scinexx-wissen": {
+    "sourceId": "scinexx-wissen",
+    "name": "scinexx Das Wissensmagazin",
+    "url": "https://www.scinexx.de/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:19.054Z",
+    "itemCount": 4,
+    "durationMs": 1344
+  },
+  "ars-technica": {
+    "sourceId": "ars-technica",
+    "name": "Ars Technica Science & Tech",
+    "url": "https://feeds.arstechnica.com/arstechnica/index",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.342Z",
+    "itemCount": 4,
+    "durationMs": 146
+  },
+  "arxiv-cs-ai": {
+    "sourceId": "arxiv-cs-ai",
+    "name": "arXiv CS.AI & Computation",
+    "url": "https://rss.arxiv.org/rss/cs.AI",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:19.072Z",
+    "itemCount": 4,
+    "durationMs": 1499
+  },
+  "lilian-weng-lillog": {
+    "sourceId": "lilian-weng-lillog",
+    "name": "Lil'Log (Lilian Weng AI Research)",
+    "url": "https://lilianweng.github.io/index.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.358Z",
+    "itemCount": 4,
+    "durationMs": 234
+  },
+  "huggingface-blog": {
+    "sourceId": "huggingface-blog",
+    "name": "Hugging Face Open-Source AI",
+    "url": "https://huggingface.co/blog/feed.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.055Z",
+    "itemCount": 4,
+    "durationMs": 618
+  },
+  "mit-tech-review": {
+    "sourceId": "mit-tech-review",
+    "name": "MIT Technology Review",
+    "url": "https://www.technologyreview.com/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.345Z",
+    "itemCount": 4,
+    "durationMs": 337
+  },
+  "heise-developer": {
+    "sourceId": "heise-developer",
+    "name": "Heise Developer & KI",
+    "url": "https://www.heise.de/developer/rss/news-atom.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.107Z",
+    "itemCount": 4,
+    "durationMs": 581
+  },
+  "import-ai-clark": {
+    "sourceId": "import-ai-clark",
+    "name": "Import AI (Jack Clark)",
+    "url": "https://importai.substack.com/feed",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.398Z",
+    "itemCount": 4,
+    "durationMs": 324
+  },
+  "lobsters-community": {
+    "sourceId": "lobsters-community",
+    "name": "Lobsters Computing Community",
+    "url": "https://lobste.rs/rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.488Z",
+    "itemCount": 4,
+    "durationMs": 506
+  },
+  "aeon-essays": {
+    "sourceId": "aeon-essays",
+    "name": "Aeon Magazine",
+    "url": "https://aeon.co/feed.rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.682Z",
+    "itemCount": 4,
+    "durationMs": 319
+  },
+  "psyche-magazine": {
+    "sourceId": "psyche-magazine",
+    "name": "Psyche (by Aeon)",
+    "url": "https://psyche.co/feed.rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.688Z",
+    "itemCount": 4,
+    "durationMs": 385
+  },
+  "netzpolitik-org": {
+    "sourceId": "netzpolitik-org",
+    "name": "netzpolitik.org",
+    "url": "https://netzpolitik.org/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.722Z",
+    "itemCount": 4,
+    "durationMs": 388
+  },
+  "sep-whats-new": {
+    "sourceId": "sep-whats-new",
+    "name": "Stanford Encyclopedia of Philosophy",
+    "url": "https://plato.stanford.edu/rss/sep.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.592Z",
+    "itemCount": 4,
+    "durationMs": 804
+  },
+  "perlentaucher-magazin": {
+    "sourceId": "perlentaucher-magazin",
+    "name": "Perlentaucher Kulturmagazin",
+    "url": "https://www.perlentaucher.de/rss/feuilleton.xml",
+    "fetchSuccess": false,
+    "lastError": "HTTP 404: Not Found",
+    "itemCount": 0,
+    "durationMs": 398
+  },
+  "daily-nous": {
+    "sourceId": "daily-nous",
+    "name": "Daily Nous Philosophy",
+    "url": "https://dailynous.com/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.673Z",
+    "itemCount": 4,
+    "durationMs": 740
+  },
+  "dlf-buechermarkt": {
+    "sourceId": "dlf-buechermarkt",
+    "name": "Deutschlandfunk Büchermarkt",
+    "url": "https://www.deutschlandfunk.de/buechermarkt-100.rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.073Z",
+    "itemCount": 4,
+    "durationMs": 397
+  },
+  "mpg-forschung": {
+    "sourceId": "mpg-forschung",
+    "name": "Max-Planck-Gesellschaft Forschung",
+    "url": "https://www.mpg.de/podcasts.rss",
+    "fetchSuccess": false,
+    "lastError": "Response is not valid RSS/Atom XML",
+    "itemCount": 0,
+    "durationMs": 2434
+  },
+  "hn-frontpage-rss": {
+    "sourceId": "hn-frontpage-rss",
+    "name": "Hacker News Frontpage",
+    "url": "https://hnrss.org/frontpage",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.571Z",
+    "itemCount": 4,
+    "durationMs": 925
+  },
+  "public-domain-review": {
+    "sourceId": "public-domain-review",
+    "name": "The Public Domain Review",
+    "url": "https://publicdomainreview.org/rss.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.396Z",
+    "itemCount": 4,
+    "durationMs": 220
+  },
+  "astral-codex-ten": {
+    "sourceId": "astral-codex-ten",
+    "name": "Astral Codex Ten",
+    "url": "https://www.astralcodexten.com/feed",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.399Z",
+    "itemCount": 4,
+    "durationMs": 267
+  },
+  "works-in-progress": {
+    "sourceId": "works-in-progress",
+    "name": "Works in Progress Magazine",
+    "url": "https://worksinprogress.co/feed/",
+    "fetchSuccess": false,
+    "lastError": "HTTP 404: Not Found",
+    "itemCount": 0,
+    "durationMs": 489
+  },
+  "zen-habits-focus": {
+    "sourceId": "zen-habits-focus",
+    "name": "Zen Habits (Mindful Simplicity)",
+    "url": "https://zenhabits.net/feed/",
+    "fetchSuccess": false,
+    "lastError": "HTTP 404: Not Found",
+    "itemCount": 0,
+    "durationMs": 288
+  },
+  "philosophy-now": {
+    "sourceId": "philosophy-now",
+    "name": "Philosophy Now",
+    "url": "https://philosophynow.org/rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:20.994Z",
+    "itemCount": 4,
+    "durationMs": 917
+  },
+  "plum-village-mindfulness": {
+    "sourceId": "plum-village-mindfulness",
+    "name": "Plum Village (Thich Nhat Hanh Monastery)",
+    "url": "https://plumvillage.org/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.496Z",
+    "itemCount": 4,
+    "durationMs": 602
+  },
+  "lions-roar-buddhism": {
+    "sourceId": "lions-roar-buddhism",
+    "name": "Lion's Roar Buddhist Wisdom",
+    "url": "https://www.lionsroar.com/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.474Z",
+    "itemCount": 4,
+    "durationMs": 710
+  },
+  "synthtopia-modular": {
+    "sourceId": "synthtopia-modular",
+    "name": "Synthtopia Modular & Electronic Music",
+    "url": "https://www.synthtopia.com/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.904Z",
+    "itemCount": 4,
+    "durationMs": 524
+  },
+  "cdm-music": {
+    "sourceId": "cdm-music",
+    "name": "Create Digital Music (CDM)",
+    "url": "https://cdm.link/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.666Z",
+    "itemCount": 4,
+    "durationMs": 793
+  },
+  "colossal-art": {
+    "sourceId": "colossal-art",
+    "name": "Colossal Art, Design & Visual Culture",
+    "url": "https://www.thisiscolossal.com/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.098Z",
+    "itemCount": 4,
+    "durationMs": 429
+  },
+  "monopol-kunst": {
+    "sourceId": "monopol-kunst",
+    "name": "Monopol Magazin für Kunst und Leben",
+    "url": "https://www.monopol-magazin.de/rss.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.428Z",
+    "itemCount": 4,
+    "durationMs": 128
+  },
+  "bandcamp-daily": {
+    "sourceId": "bandcamp-daily",
+    "name": "Bandcamp Daily Music Essays",
+    "url": "https://daily.bandcamp.com/feed",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.911Z",
+    "itemCount": 4,
+    "durationMs": 655
+  },
+  "hyperallergic-art": {
+    "sourceId": "hyperallergic-art",
+    "name": "Hyperallergic Art & Perspectives",
+    "url": "https://hyperallergic.com/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.184Z",
+    "itemCount": 4,
+    "durationMs": 443
+  },
+  "the-marginalian": {
+    "sourceId": "the-marginalian",
+    "name": "The Marginalian (Maria Popova)",
+    "url": "https://www.themarginalian.org/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.110Z",
+    "itemCount": 4,
+    "durationMs": 1581
+  },
+  "deutscher-bildungsserver": {
+    "sourceId": "deutscher-bildungsserver",
+    "name": "Deutscher Bildungsserver (DIPF)",
+    "url": "https://www.bildungsserver.de/rss/aktuelles_de.xml",
+    "fetchSuccess": false,
+    "lastError": "HTTP 404: Not Found",
+    "itemCount": 0,
+    "durationMs": 311
+  },
+  "xkcd-comics": {
+    "sourceId": "xkcd-comics",
+    "name": "xkcd: Wissenschafts- & Tech-Satire",
+    "url": "https://xkcd.com/atom.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.566Z",
+    "itemCount": 1,
+    "durationMs": 285
+  },
+  "tricycle-buddhist": {
+    "sourceId": "tricycle-buddhist",
+    "name": "Tricycle: The Buddhist Review",
+    "url": "https://tricycle.org/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.470Z",
+    "itemCount": 4,
+    "durationMs": 1393
+  },
+  "edutopia-learning": {
+    "sourceId": "edutopia-learning",
+    "name": "Edutopia Learning Research",
+    "url": "https://www.edutopia.org/rss.xml",
+    "fetchSuccess": false,
+    "lastError": "Response is not valid RSS/Atom XML",
+    "itemCount": 0,
+    "durationMs": 394
+  },
+  "deutsches-schulportal": {
+    "sourceId": "deutsches-schulportal",
+    "name": "Das Deutsche Schulportal",
+    "url": "https://deutsches-schulportal.de/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.459Z",
+    "itemCount": 4,
+    "durationMs": 521
+  },
+  "smbc-comics": {
+    "sourceId": "smbc-comics",
+    "name": "Saturday Morning Breakfast Cereal (SMBC)",
+    "url": "https://www.smbc-comics.com/comic/rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.627Z",
+    "itemCount": 4,
+    "durationMs": 374
+  },
+  "yt-veritasium": {
+    "sourceId": "yt-veritasium",
+    "name": "Veritasium (Dr. Derek Muller)",
+    "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCHnyfMqiRRG1u-2MsSQLbXA",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.838Z",
+    "itemCount": 4,
+    "durationMs": 216
+  },
+  "yt-3blue1brown": {
+    "sourceId": "yt-3blue1brown",
+    "name": "3Blue1Brown",
+    "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCYO_jab_esuFRV4b17AJtAw",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.851Z",
+    "itemCount": 4,
+    "durationMs": 207
+  },
+  "yt-huberman-lab": {
+    "sourceId": "yt-huberman-lab",
+    "name": "Huberman Lab (Stanford Neurobiology)",
+    "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC2D2CMWXMOVWx7giW1n3LIg",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.950Z",
+    "itemCount": 4,
+    "durationMs": 111
+  },
+  "yt-kurzgesagt-de": {
+    "sourceId": "yt-kurzgesagt-de",
+    "name": "Kurzgesagt – Dinge Erklärt",
+    "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCwRH985XgMYXQ6NxXDo8npw",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.863Z",
+    "itemCount": 4,
+    "durationMs": 201
+  },
+  "idw-wissenschaft": {
+    "sourceId": "idw-wissenschaft",
+    "name": "Informationsdienst Wissenschaft (idw)",
+    "url": "https://idw-online.de/de/news.rss",
+    "fetchSuccess": false,
+    "lastError": "HTTP 404: Not Found",
+    "itemCount": 0,
+    "durationMs": 127
+  },
+  "lines-community": {
+    "sourceId": "lines-community",
+    "name": "Lines (llllllll.co) Sound Community",
+    "url": "https://llllllll.co/latest.rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:21.902Z",
+    "itemCount": 4,
+    "durationMs": 1581
+  },
+  "forschung-und-wissen": {
+    "sourceId": "forschung-und-wissen",
+    "name": "Forschung und Wissen",
+    "url": "https://www.forschung-und-wissen.de/feed.rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.980Z",
+    "itemCount": 4,
+    "durationMs": 512
+  },
+  "futility-closet": {
+    "sourceId": "futility-closet",
+    "name": "Futility Closet (Curiosities & Paradoxes)",
+    "url": "https://www.futilitycloset.com/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:22.691Z",
+    "itemCount": 1,
+    "durationMs": 873
+  },
+  "nautilus-magazine": {
+    "sourceId": "nautilus-magazine",
+    "name": "Nautilus Magazine (Science Connected)",
+    "url": "https://nautil.us/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:23.058Z",
+    "itemCount": 4,
+    "durationMs": 510
+  },
+  "rest-of-world-tech": {
+    "sourceId": "rest-of-world-tech",
+    "name": "Rest of World (Global Technology & Culture)",
+    "url": "https://restofworld.org/feed/latest/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:23.568Z",
+    "itemCount": 4,
+    "durationMs": 150
+  },
+  "existential-comics": {
+    "sourceId": "existential-comics",
+    "name": "Existential Comics (Philosophy Webcomic)",
+    "url": "https://existentialcomics.com/rss.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:23.061Z",
+    "itemCount": 3,
+    "durationMs": 663
+  },
+  "pbf-comics": {
+    "sourceId": "pbf-comics",
+    "name": "The Perry Bible Fellowship (PBF Comics)",
+    "url": "https://pbfcomics.com/feed/",
+    "fetchSuccess": false,
+    "lastError": "Keine validen Einträge nach Normalisierung",
+    "itemCount": 0,
+    "durationMs": 688
+  },
+  "sketchplanations": {
+    "sourceId": "sketchplanations",
+    "name": "Sketchplanations (Visual Mental Models)",
+    "url": "https://sketchplanations.com/rss",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:23.181Z",
+    "itemCount": 4,
+    "durationMs": 697
+  },
+  "techpresso-daily": {
+    "sourceId": "techpresso-daily",
+    "name": "Techpresso (Daily AI & Tech Digest)",
+    "url": "https://rss.beehiiv.com/feeds/ez2zQOMePQ.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:23.001Z",
+    "itemCount": 4,
+    "durationMs": 1097
+  },
+  "geschichte-der-gegenwart": {
+    "sourceId": "geschichte-der-gegenwart",
+    "name": "Geschichte der Gegenwart",
+    "url": "https://geschichtedergegenwart.ch/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:23.492Z",
+    "itemCount": 4,
+    "durationMs": 624
+  },
+  "low-tech-magazine": {
+    "sourceId": "low-tech-magazine",
+    "name": "Low-Tech Magazine (Critical Technology)",
+    "url": "https://solar.lowtechmagazine.com/feeds/all.atom.xml",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:23.718Z",
+    "itemCount": 3,
+    "durationMs": 961
+  },
+  "3quarksdaily": {
+    "sourceId": "3quarksdaily",
+    "name": "3 Quarks Daily (Science, Arts & Philosophy)",
+    "url": "https://www.3quarksdaily.com/feed",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:23.483Z",
+    "itemCount": 4,
+    "durationMs": 1586
+  },
+  "praefaktisch-philosophie": {
+    "sourceId": "praefaktisch-philosophie",
+    "name": "Praefaktisch – Ein Philosophieblog",
+    "url": "https://www.praefaktisch.de/feed/",
+    "fetchSuccess": true,
+    "lastSuccessAt": "2026-10-17T08:17:23.564Z",
+    "itemCount": 4,
+    "durationMs": 6349
+  }
+}

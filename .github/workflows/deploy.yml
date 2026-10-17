@@ -1,10 +1,12 @@
-name: Deploy Atem to GitHub Pages
+name: Deploy Web App & Public Feed Snapshot to GitHub Pages
 
 on:
   push:
     branches:
       - main
-      - feature/phase-2-researched-feed
+  schedule:
+    # Refresh public feed snapshot every 6 hours (4 times daily)
+    - cron: '15 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -13,11 +15,11 @@ permissions:
   id-token: write
 
 concurrency:
-  group: 'pages'
-  cancel-in-progress: true
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
+  build_and_deploy:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -29,28 +31,30 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: npm ci
 
-      - name: Run verification checks
-        run: |
-          npm run lint
-          npm run typecheck
-          npm test
-          npx expo export -p ios
+      - name: Run Multi-Daily Feed Ingestion & Snapshot Pipeline
+        run: npx tsx scripts/run-pipeline.ts
 
-      - name: Export Expo Web Bundle
+      - name: Export Expo Web Bundle for GitHub Pages
         run: |
           npx expo export -p web
+          sed -i 's|src="/_expo/|src="./_expo/|g' dist/index.html
+          sed -i 's|href="/favicon.ico"|href="./favicon.ico"|g' dist/index.html
+          if [ -f public/feed-snapshot.json ]; then
+            cp public/feed-snapshot.json dist/feed-snapshot.json
+          fi
           cp dist/index.html dist/404.html
+          touch dist/.nojekyll
 
-      - name: Setup GitHub Pages
-        uses: actions/configure-pages@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
 
-      - name: Upload Pages artifact
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: './dist'

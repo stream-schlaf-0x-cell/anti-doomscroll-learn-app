@@ -14,6 +14,7 @@ import { typography, radius, spacing, PALETTE_METADATA, ThemePalette } from '../
 import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
 import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
 import { defaultGeminiEnricher, AIProvider } from '../../core/enrichment/geminiEnricher';
+import { defaultSourceRepository } from '../../core/data/sourceRepository';
 import { NewsHubModal } from './NewsHubModal';
 import { UltraMasterModal } from './UltraMasterModal';
 import { MobilePublishModal } from './MobilePublishModal';
@@ -74,6 +75,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
   const [testResult, setTestResult] = useState<string | null>(null);
   const [isTestingAI, setIsTestingAI] = useState<boolean>(false);
 
+  const healthOverview = defaultSourceRepository.getHealthOverview();
+
   // Calculate dynamic Erkenntnis-Karma:
   const userNotesCount = Object.values(interactions).reduce(
     (acc, curr) => acc + (curr.userNotes?.length || 0),
@@ -114,7 +117,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     setIsRefreshing(true);
     try {
       await refreshFeed();
-      showToast('✓ 68 Artikel aus 18 Live-Quellen synchronisiert');
+      showToast(`✓ Inhaltspool aus ${healthOverview.deliveringSources} aktiven Quellen aktualisiert`);
     } finally {
       setIsRefreshing(false);
     }
@@ -280,152 +283,66 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
             </View>
           </View>
 
-          {/* Right: Live-Refresh, News-Hub, Karma, Budget, Tools Cluster & Nav Tabs */}
+          {/* Right: Clean Reddit-style Action Cluster (Quellen Status, Frischer Wind, Studio, Theme & Nav Tabs) */}
           <View style={styles.rightSection}>
-            {/* Live-Feed Status & Refresh Pill */}
+            {/* 1. Active Sources Pill -> Opens News-Hub & 60-Source Catalog */}
             <TouchableOpacity
-              onPress={handleRefresh}
-              disabled={isRefreshing}
+              onPress={() => setShowNewsHubModal(true)}
               style={[styles.liveStatusPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
               accessibilityRole="button"
-              accessibilityLabel="Live-Feeds synchronisieren"
+              accessibilityLabel="Quellen-Katalog und Abrufstatus öffnen"
             >
-              {isRefreshing ? (
+              <View style={styles.liveGreenDot} />
+              <Text style={[styles.liveStatusText, { color: colors.textPrimary }]}>
+                {healthOverview.deliveringSources}/{healthOverview.totalSources} Quellen aktiv
+              </Text>
+            </TouchableOpacity>
+
+            {/* 2. Instant Shuffle / Frischer Wind Button */}
+            <TouchableOpacity
+              onPress={handleShuffle}
+              disabled={isSimulating || isRefreshing}
+              style={[styles.newsHubBadge, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Frischer Wind: Feed neu mischen"
+            >
+              {isSimulating || isRefreshing ? (
                 <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 4 }} />
               ) : (
-                <View style={styles.liveGreenDot} />
+                <Ionicons name="shuffle-outline" size={14} color={colors.accent} style={{ marginRight: 4 }} />
               )}
-              <Text style={[styles.liveStatusText, { color: colors.textPrimary }]}>
-                {isRefreshing ? 'Lädt…' : '110 Live'}
+              <Text style={[styles.newsHubText, { color: colors.accent, fontWeight: '700' }]}>
+                Frischer Wind
               </Text>
             </TouchableOpacity>
 
-            {/* News-Hub & Quellen-Zentrale Pill Button */}
-            <TouchableOpacity
-              onPress={() => {
-                setActiveTab('feed');
-                setActiveFeedOption('live_news');
-              }}
-              style={[
-                styles.newsHubBadge,
-                activeTab === 'feed' && activeFeedOption === 'live_news'
-                  ? { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                  : { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
-              ]}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Zum Live News Hub Feed wechseln"
-            >
-              <Ionicons
-                name="radio-outline"
-                size={13}
-                color={activeTab === 'feed' && activeFeedOption === 'live_news' ? colors.accent : colors.textPrimary}
-                style={{ marginRight: 4 }}
-              />
-              <Text
-                style={[
-                  styles.newsHubText,
-                  { color: activeTab === 'feed' && activeFeedOption === 'live_news' ? colors.accent : colors.textPrimary, fontWeight: activeFeedOption === 'live_news' ? '700' : '600' }
-                ]}
-              >
-                ⚡ Live News Hub
-              </Text>
-            </TouchableOpacity>
-
-            {/* Feed-Kurator & Live-Sync Button */}
+            {/* 3. Studio & Tools Hub Button (consolidates Kurator, Master Studio, KI, Mobile QR & Karma) */}
             <TouchableOpacity
               onPress={() => setShowDevSimModal(true)}
-              style={[styles.devSimBadge, { backgroundColor: '#8B5CF6' + '22', borderColor: '#8B5CF6' }]}
+              style={[styles.devSimBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel="Feed-Kurator & Live-Sync öffnen"
+              accessibilityLabel="Studio, Kurator und Werkzeuge öffnen"
             >
-              <Ionicons name="sync-outline" size={13} color="#8B5CF6" style={{ marginRight: 4 }} />
-              <Text style={[styles.devSimBadgeText, { color: '#8B5CF6' }]}>
-                🔄 Feed-Kurator
+              <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+              <Text style={[styles.devSimBadgeText, { color: colors.textPrimary }]}>
+                Studio & Tools
               </Text>
             </TouchableOpacity>
 
-            {/* Ultra Master Studio Button */}
-            <TouchableOpacity
-              onPress={() => setShowUltraMasterModal(true)}
-              style={[styles.ultraMasterBadge, { backgroundColor: '#F59E0B' + '22', borderColor: '#F59E0B' }]}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Ultra Master Studio öffnen"
-            >
-              <Ionicons name="sparkles" size={13} color="#F59E0B" style={{ marginRight: 4 }} />
-              <Text style={[styles.ultraMasterText, { color: '#F59E0B' }]}>
-                ⚡ Master Studio
-              </Text>
-            </TouchableOpacity>
-
-            {/* Mobile / Smartphone QR Button */}
-            <TouchableOpacity
-              onPress={() => setShowMobilePublishModal(true)}
-              style={[styles.mobileBadge, { backgroundColor: '#06B6D4' + '20', borderColor: '#06B6D4' }]}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Auf Smartphone öffnen"
-            >
-              <Ionicons name="phone-portrait-outline" size={13} color="#06B6D4" style={{ marginRight: 4 }} />
-              <Text style={[styles.mobileBadgeText, { color: '#06B6D4' }]}>
-                📱 Aufs Handy
-              </Text>
-            </TouchableOpacity>
-
-            {/* Karma Badge Button */}
-            <TouchableOpacity
-              onPress={() => setShowKarmaModal(true)}
-              style={[styles.karmaBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel={`Erkenntnis-Karma: ${karmaScore} Punkte anzeigen`}
-            >
-              <Text style={styles.flameEmoji}>🔥</Text>
-              <Text style={[styles.karmaText, { color: colors.textPrimary }]}>
-                {karmaScore}
-              </Text>
-            </TouchableOpacity>
-
-            {/* AI Budget Status Pill Button */}
-            <TouchableOpacity
-              onPress={() => setShowAIModal(true)}
-              style={[styles.budgetBadge, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: '#10B981' }]}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="KI-Orchestrierung & Budget öffnen"
-            >
-              <View style={styles.greenDot} />
-              <Text style={styles.budgetText}>KI aktiv</Text>
-            </TouchableOpacity>
-
-            {/* Consolidated Tools Cluster: Palette, Craft & Theme */}
+            {/* 4. Compact Aesthetics Cluster: Palette & Theme Toggle */}
             <View style={[styles.toolCluster, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-              {/* Design-Palette Switcher */}
               <TouchableOpacity
                 onPress={() => setShowPaletteModal(true)}
                 style={styles.toolClusterBtn}
                 activeOpacity={0.8}
                 accessibilityRole="button"
-                accessibilityLabel="Design-Ästhetik & Farbpalette wählen"
+                accessibilityLabel="Farbpalette wählen"
               >
                 <Ionicons name="color-palette-outline" size={15} color={colors.accent} />
               </TouchableOpacity>
 
-              {/* 1-Click Craft Export (Copy & Download) */}
-              <TouchableOpacity
-                onPress={handleCopyCraft}
-                onLongPress={handleDownloadCraft}
-                style={styles.toolClusterBtn}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel="Craft Export in Zwischenablage kopieren (Halten für .md Datei)"
-              >
-                <Ionicons name="copy-outline" size={14} color={colors.textSecondary} />
-              </TouchableOpacity>
-
-              {/* Theme Toggle (Light / Dark) */}
               <TouchableOpacity
                 onPress={handleToggleTheme}
                 style={styles.toolClusterBtn}
@@ -437,14 +354,11 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* Quick Tab Switcher */}
+            {/* 5. Primary Tab Switcher */}
             <View style={[styles.tabGroup, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
               <TouchableOpacity
                 onPress={() => setActiveTab('feed')}
-                style={[
-                  styles.tabBtn,
-                  activeTab === 'feed' && { backgroundColor: colors.surface }
-                ]}
+                style={[styles.tabBtn, activeTab === 'feed' && { backgroundColor: colors.surface }]}
                 accessibilityRole="button"
                 accessibilityLabel="Feed öffnen"
               >
@@ -457,10 +371,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
 
               <TouchableOpacity
                 onPress={() => setActiveTab('library')}
-                style={[
-                  styles.tabBtn,
-                  activeTab === 'library' && { backgroundColor: colors.surface }
-                ]}
+                style={[styles.tabBtn, activeTab === 'library' && { backgroundColor: colors.surface }]}
                 accessibilityRole="button"
                 accessibilityLabel="Bibliothek öffnen"
               >
@@ -473,10 +384,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
 
               <TouchableOpacity
                 onPress={() => setActiveTab('settings')}
-                style={[
-                  styles.tabBtn,
-                  activeTab === 'settings' && { backgroundColor: colors.surface }
-                ]}
+                style={[styles.tabBtn, activeTab === 'settings' && { backgroundColor: colors.surface }]}
                 accessibilityRole="button"
                 accessibilityLabel="Einstellungen öffnen"
               >
@@ -867,25 +775,88 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         >
           <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, maxWidth: 520 }]}>
             <View style={styles.modalHeader}>
-              <Ionicons name="sync-circle" size={24} color="#8B5CF6" style={{ marginRight: 8 }} />
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>🔄 Feed-Kurator & Live-Sync</Text>
+              <Ionicons name="sparkles" size={22} color={colors.accent} style={{ marginRight: 8 }} />
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>⚡ Studio, Kurator & Werkzeuge</Text>
               <TouchableOpacity onPress={() => setShowDevSimModal(false)}>
                 <Ionicons name="close" size={20} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
 
             <Text style={[styles.modalSubHeader, { color: colors.textMuted }]}>
-              Souveränes Wissensnetzwerk: Zieht 29 Live-RSS-Feeds ein, verbindet sie mit 117 kuratierten Wissensartikeln und rotiert die Tagesausgaben (€0.00 Modus, 100% lokal & privat).
+              Souveränes Wissensnetzwerk: {healthOverview.deliveringSources} von {healthOverview.totalSources} geprüften Quellen liefern aktuell Beiträge. Persönliches Profil und Notizen bleiben lokal.
             </Text>
 
             <View style={[styles.karmaHeroBox, { backgroundColor: colors.surfaceSecondary, marginTop: 8 }]}>
-              <Text style={[styles.karmaHeroLabel, { color: '#8B5CF6' }]}>Aktiver Redaktionsstand:</Text>
+              <Text style={[styles.karmaHeroLabel, { color: colors.accent }]}>Aktiver Redaktionsstand:</Text>
               <Text style={[styles.karmaHeroNumber, { color: colors.textPrimary, fontSize: 18 }]}>
                 📅 {activeDateSeed}
               </Text>
               <Text style={[styles.karmaHeroDesc, { color: colors.textMuted, marginTop: 4 }]}>
-                29 Live-Feeds • 117 Wissensquellen • <Text style={{ color: colors.accent, fontWeight: '700' }}>€0.00 Modus</Text>
+                {healthOverview.deliveringSources} aktive Quellen • {healthOverview.totalItemsHarvested} Artikel im Snapshot • 🔥 {karmaScore} Erkenntnis-Karma
               </Text>
+            </View>
+
+            {/* Quick Tool Grid */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowDevSimModal(false);
+                  setShowNewsHubModal(true);
+                }}
+                style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
+                  📡 Quellen-Zentrale ({healthOverview.deliveringSources}/{healthOverview.totalSources})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  setShowDevSimModal(false);
+                  setShowUltraMasterModal(true);
+                }}
+                style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
+                  ⚡ Master Studio
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  setShowDevSimModal(false);
+                  setShowAIModal(true);
+                }}
+                style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
+                  🤖 KI & Budget
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  setShowDevSimModal(false);
+                  setShowMobilePublishModal(true);
+                }}
+                style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
+                  📱 Aufs Handy
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  setShowDevSimModal(false);
+                  void handleCopyCraft();
+                }}
+                style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
+                  📋 Craft-Export
+                </Text>
+              </TouchableOpacity>
             </View>
 
             <View style={{ gap: 10, marginTop: 14 }}>
@@ -901,10 +872,10 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 )}
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
-                    🔄 Frischer Wind (Sofort neu würfeln)
+                    🔄 Frischer Wind (Sofort neu mischen)
                   </Text>
                   <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 11 }}>
-                    Rotiert ungesehene Artikel aus dem Wissenspool in den Vordergrund.
+                    Rotiert ungesehene Beiträge aus dem Bloomscrolling-Pool in den Vordergrund.
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -920,7 +891,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                     ⚡ Live-Sync & Kuratieren (Stand: {activeDateSeed})
                   </Text>
                   <Text style={{ color: colors.textMuted, fontSize: 11 }}>
-                    Zieht 29 Live-RSS-Feeds ein & ordnet die heutige Ausgabe mit dialektischen Trends neu an.
+                    Aktualisiert den öffentlichen Feed-Snapshot und die Live-Quellen.
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -936,23 +907,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                     🌅 Nächsten Tag kuratieren (+1 Tag)
                   </Text>
                   <Text style={{ color: colors.textMuted, fontSize: 11 }}>
-                    Rotiert auf den nächsten 24h-Turnus mit frischem Seed.
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => handleSimulateDay(3)}
-                disabled={isSimulating}
-                style={[styles.simActionButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
-              >
-                <Ionicons name="play-forward-outline" size={18} color="#8B5CF6" style={{ marginRight: 8 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 13 }}>
-                    ⏩ 3 Tage vorrotieren (+3 Tage)
-                  </Text>
-                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>
-                    Stresstest für Feed-Rotation & Entdeckung ungesehener Klassiker.
+                    Rotiert auf den nächsten 24h-Turnus mit neuem Seed.
                   </Text>
                 </View>
               </TouchableOpacity>

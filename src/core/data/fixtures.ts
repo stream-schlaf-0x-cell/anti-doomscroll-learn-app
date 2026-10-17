@@ -542,7 +542,8 @@ function createFixture(item: any): FeedItem {
   const feedText = item.feedText ?? (item.body.split('\n\n').slice(0, 2).join('\n\n'));
   const topic = (item.primaryTopic as TopicTag) || 'philosophy_ethics';
   const topicMeta = TOPIC_SPACE_MAP[topic];
-  const imageUrl = item.imageUrl ?? getCuratedImageForTopic(topic, item.id);
+  const isStock = typeof item.imageUrl === 'string' && item.imageUrl.includes('images.unsplash.com') && item.format !== 'art_showcase';
+  const imageUrl = isStock ? undefined : item.imageUrl;
 
   return {
     format: item.format ?? (item.type === 'quick_insight' ? 'concise_insight' : item.type === 'perspective' ? 'perspective_disagreement' : item.type === 'deep_dive' ? 'long_invitation' : 'sourced_update'),
@@ -559,13 +560,15 @@ function createFixture(item: any): FeedItem {
     isChallengingPerspective: item.isChallengingPerspective ?? (item.type === 'perspective' || item.format === 'perspective_disagreement'),
     space: item.space ?? topicMeta?.space,
     flair: item.flair ?? topicMeta?.flair,
-    imageUrl,
     keyInsight: item.keyInsight ?? (item.deepeningOptions?.philosophicalContext || item.subtitle),
     challengePrompt: item.challengePrompt ?? (item.deepeningOptions?.reflectionPrompt || 'Welcher Einwand oder Praxistransfer fällt dir spontan ein?'),
     didacticSeed: item.didacticSeed ?? item.deepeningOptions?.didacticSeed,
-    upvotesCount: 0,
-    comments: item.comments ?? getSimulatedCommentsForTopic(topic, item.title, item.id),
     ...item,
+    imageUrl,
+    hasAuthenticImage: Boolean(imageUrl),
+    upvotesCount: 0,
+    awardsCount: { gold: 0, brain: 0, spark: 0 },
+    comments: [],
     wordCount: item.wordCount ?? stats.wordCount,
     estimatedReadingMinutes: item.estimatedReadingMinutes ?? stats.estimatedReadingMinutes
   };

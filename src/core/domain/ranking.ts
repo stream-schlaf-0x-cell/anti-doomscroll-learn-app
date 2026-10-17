@@ -1,47 +1,114 @@
 import {
   FeedItem,
   UserProfile,
-  ReadingInteraction,
   TopicTag,
+  ReadingInteraction,
   PersonalGoal,
-  DayEditionType
+  DayEditionType,
+  DAY_EDITIONS_META
 } from './types';
+
+export interface ScoreBreakdown {
+  topicMatch: number;
+  topicAffinity: number;
+  goalAlignment: number;
+  readingTimeFit: number;
+  durationMatch: number;
+  freshness: number;
+  editorialValue: number;
+  depthBonus: number;
+  serendipity: number;
+  feedbackAdjustment: number;
+  behavioralAdjustment: number;
+  authorBoost: number;
+  totalScore: number;
+  explanation: string;
+  primaryReason: string;
+  secondaryReason: string;
+  whyFactors: string[];
+}
 
 export interface ScoredFeedItem extends FeedItem {
   score: number;
-  scoreBreakdown: {
-    topicAffinity: number;
-    durationMatch: number;
-    depthBonus: number;
-    feedbackMultiplier: number;
-    goalAlignment: number;
-    authorBoost: number;
-    explanation: string;
-  };
+  scoreBreakdown: ScoreBreakdown;
 }
 
-const TOPIC_GOAL_MAP: Record<TopicTag, PersonalGoal> = {
+const GOAL_TOPIC_AFFINITY: Record<PersonalGoal, Partial<Record<TopicTag, number>>> = {
+  understand_tech: {
+    ai_apple: 1.0,
+    science_society: 0.75,
+    philosophy_ethics: 0.5
+  },
+  creative_music: {
+    sound_synthesis: 1.0,
+    ai_apple: 0.5,
+    contemplation_mind: 0.6,
+    art_aesthetics: 0.65
+  },
+  deepen_attention: {
+    contemplation_mind: 1.0,
+    german_didactics: 0.85,
+    philosophy_ethics: 0.65,
+    health_biohacking: 0.75
+  },
+  philosophical_clarity: {
+    philosophy_ethics: 1.0,
+    contemplation_mind: 0.8,
+    science_society: 0.65,
+    book_mastery: 0.75
+  },
+  society_and_ethics: {
+    science_society: 1.0,
+    philosophy_ethics: 0.9,
+    german_didactics: 0.75
+  }
+};
+
+const TOPIC_PRIMARY_GOAL: Record<TopicTag, PersonalGoal> = {
   ai_apple: 'understand_tech',
   sound_synthesis: 'creative_music',
   contemplation_mind: 'deepen_attention',
+  german_didactics: 'deepen_attention',
   philosophy_ethics: 'philosophical_clarity',
   science_society: 'society_and_ethics',
-  german_didactics: 'deepen_attention',
   memes_satire: 'philosophical_clarity',
-  youtube_gems: 'society_and_ethics',
+  youtube_gems: 'understand_tech',
   book_mastery: 'philosophical_clarity',
   health_biohacking: 'deepen_attention',
   opportunities_growth: 'understand_tech',
   art_aesthetics: 'creative_music'
 };
 
+/**
+ * Returns the effective weight for a topic, preferring learned derivedWeights over explicitInterests.
+ */
 export function getEffectiveTopicWeight(profile: UserProfile, topic: TopicTag): number {
-  return profile.derivedWeights?.[topic] ?? profile.explicitInterests[topic] ?? 0.5;
+  const derived = profile.derivedWeights?.[topic];
+  if (typeof derived === 'number') {
+    return derived;
+  }
+  return profile.explicitInterests[topic] ?? 0.5;
 }
 
 /**
- * Computes deterministic multi-dimensional score for a feed item based on user profile,
- * personal goals, explicit feedback memory, and past interactions.
+ * Normalizes a publisher or domain identifier for diversity tracking.
+ */
+export function getNormalizedPublisherKey(item: FeedItem): string {
+  const pub = item.sourceReferences?.[0]?.publisher || item.sourceBroadcasterName || item.sourceDomain || 'unknown';
+  const clean = pub.toLowerCase().trim();
+  if (clean.includes('tagesschau')) return 'ard tagesschau';
+  if (clean.includes('deutschlandfunk')) return 'deutschlandfunk';
+  if (clean.includes('wikipedia') || clean.includes('wikimedia')) return 'wikipedia / wikimedia';
+  if (clean.includes('arxiv')) return 'arxiv';
+  if (clean.includes('spektrum') || clean.includes('gehirn')) return 'spektrum';
+  if (clean.includes('aeon') || clean.includes('psyche')) return 'aeon / psyche';
+  return clean;
+}
+
+/**
+ * Transparent Personalized Scoring Formula (Bloomscrolling Edition):
+ * - Explicit Feedback (`more_like_this`, `less_like_this`, `voteScore`, `boostedTopics`/`penalizedTopics`)
+ *   weighs significantly stronger than passive behavioral signals (opening or dwell time).
  */
 export function scoreFeedItem(
   item: FeedItem,
@@ -50,221 +117,417 @@ export function scoreFeedItem(
 ): ScoredFeedItem {
   const interaction = interactions[item.id];
 
-  // 1. Topic Affinity Calculation (considering both explicit and learned adaptive weights)
+  // 1. Topic Match (Effective Weight)
   const primaryWeight = getEffectiveTopicWeight(profile, item.primaryTopic);
-  let secondaryBonus = 0;
-  for (const topic of item.topics) {
-    if (topic !== item.primaryTopic) {
-      const w = getEffectiveTopicWeight(profile, topic);
-      secondaryBonus += w * 0.2;
+
+  const secondaryWeights = item.topics
+    .filter(t => t !== item.primaryTopic)
+    .map(t => getEffectiveTopicWeight(profile, t));
+
+  const avgSecondary = secondaryWeights.length > 0
+    ? secondaryWeights.reduce((a, b) => a + b, 0) / secondaryWeights.length
+    : primaryWeight;
+
+  const topicMatch = Math.min(1, primaryWeight * 0.8 + avgSecondary * 0.2);
+
+  // 2. Goal Alignment
+  const primaryGoalKey = TOPIC_PRIMARY_GOAL[item.primaryTopic];
+  const goals = profile.explicitGoals || {};
+  let goalAlignment = 0.7;
+  if (primaryGoalKey && typeof goals[primaryGoalKey] === 'number') {
+    goalAlignment = goals[primaryGoalKey];
+  } else {
+    let goalScoreSum = 0;
+    let goalWeightSum = 0;
+    for (const [goalKey, goalWeight] of Object.entries(goals)) {
+      const affinities = GOAL_TOPIC_AFFINITY[goalKey as PersonalGoal];
+      if (affinities) {
+        const affinity = affinities[item.primaryTopic] ?? 0.3;
+        goalScoreSum += affinity * goalWeight;
+        goalWeightSum += goalWeight;
+      }
+    }
+    if (goalWeightSum > 0) {
+      goalAlignment = Math.min(1, goalScoreSum / goalWeightSum);
     }
   }
-  const topicAffinity = Math.min(1.0, primaryWeight + secondaryBonus);
 
-  // 2. Personal Goal Alignment
-  const targetGoal = TOPIC_GOAL_MAP[item.primaryTopic];
-  const goalAlignment = profile.explicitGoals?.[targetGoal] ?? 0.80;
-
-  // 3. Duration Matching
-  let durationMatch = 0.5;
+  // 3. Reading Time Fit (Duration Match)
+  let readingTimeFit = 0.85;
   const pref = profile.readingPreferences.preferredDuration;
   const mins = item.estimatedReadingMinutes;
 
   if (pref === 'quick') {
-    if (mins <= 2) durationMatch = 1.0;
-    else if (mins <= 4) durationMatch = 0.6;
-    else durationMatch = 0.2;
-  } else if (pref === 'deep') {
-    if (mins >= 4) durationMatch = 1.0;
-    else if (mins >= 3) durationMatch = 0.7;
-    else durationMatch = 0.3;
+    readingTimeFit = mins <= 2 ? 1.0 : mins <= 4 ? 0.65 : 0.30;
   } else if (pref === 'balanced') {
-    if (mins >= 2 && mins <= 5) durationMatch = 1.0;
-    else durationMatch = 0.7;
+    readingTimeFit = mins >= 1 && mins <= 5 ? 1.0 : 0.8;
+  } else if (pref === 'deep') {
+    readingTimeFit = mins >= 4 ? 1.0 : mins >= 2 ? 0.65 : 0.30;
+  }
+  const durationMatch = readingTimeFit;
+
+  // 4. Freshness Score (prioritizes genuinely current items)
+  const pubTime = new Date(item.publishedAt).getTime();
+  const nowTime = Date.now();
+  const hoursOld = isNaN(pubTime) ? 24 : Math.max(0, (nowTime - pubTime) / (1000 * 60 * 60));
+  let freshness = 0.75;
+  if (hoursOld <= 6) {
+    freshness = 1.0;
+  } else if (hoursOld <= 24) {
+    freshness = 0.94;
+  } else if (hoursOld <= 72) {
+    freshness = 0.84;
+  } else if (hoursOld <= 168) {
+    freshness = 0.72;
   } else {
-    durationMatch = 0.8;
+    freshness = item.isEvergreenGem ? 0.68 : 0.55;
   }
 
-  // 4. Intellectual Depth Bonus (encourage thought and perspective over quick consumption)
-  const depthBonus = (
-    item.type === 'perspective' ||
-    item.type === 'deep_dive' ||
-    item.type === 'connection' ||
-    item.isChallengingPerspective
-  ) ? 0.15 : 0;
+  // 5. Editorial & Source Value
+  let editorialValue = 0.82;
+  if (item.contentOrigin === 'live_ingested') editorialValue += 0.12;
+  if (item.evidenceTier === 'permitted_full_text' || item.evidenceTier === 'multiple_sources') {
+    editorialValue += 0.06;
+  }
+  editorialValue = Math.min(1, editorialValue);
 
-  // 4.1 Evergreen Classic Bonus (reward timeless masterpieces)
-  const evergreenBonus = item.isEvergreenGem ? 0.12 : 0;
+  // 6. Serendipity & Format Discovery
+  const serendipity = item.type === 'discovery' || item.format === 'surprising_connection' || item.format === 'meme'
+    ? 0.95
+    : 0.65;
 
-  // 5. Author and Topic Feedback Memory
+  // 7. EXPLICIT Feedback Memory (Strong Weight: +/- 0.45)
+  let feedbackAdjustment = 0.5;
   let authorBoost = 0;
-  const author = item.sourceReferences[0]?.author;
-  if (author && profile.feedbackMemory?.boostedAuthors?.[author]) {
-    authorBoost += 0.20;
+  const memory = profile.feedbackMemory;
+  if (memory) {
+    const boostT = memory.boostedTopics?.[item.primaryTopic] ?? 0;
+    const penT = memory.penalizedTopics?.[item.primaryTopic] ?? 0;
+    feedbackAdjustment += Math.min(0.35, boostT * 0.12) - Math.min(0.40, penT * 0.15);
+
+    const author = item.sourceReferences[0]?.author || item.sourceReferences[0]?.publisher || '';
+    if (author) {
+      const boostA = memory.boostedAuthors?.[author] ?? 0;
+      const penA = memory.penalizedAuthors?.[author] ?? 0;
+      authorBoost = Math.min(0.25, boostA * 0.12) - Math.min(0.30, penA * 0.15);
+      feedbackAdjustment += authorBoost;
+    }
   }
-  if (author && profile.feedbackMemory?.penalizedAuthors?.[author]) {
-    authorBoost -= 0.30;
+  if (interaction?.feedback === 'more_like_this') feedbackAdjustment += 0.40;
+  if (interaction?.feedback === 'less_like_this') feedbackAdjustment -= 0.50;
+  if (interaction?.voteScore === 1) feedbackAdjustment += 0.25;
+  if (interaction?.voteScore === -1) feedbackAdjustment -= 0.40;
+  feedbackAdjustment = Math.max(0, Math.min(1, feedbackAdjustment));
+
+  // 8. Passive Behavioral Signals ( deliberately lighter than explicit feedback )
+  let behavioralAdjustment = 0.5;
+  const signals = profile.behavioralSignals;
+  if (signals) {
+    if (signals.completedReadIds?.includes(item.id)) {
+      behavioralAdjustment -= 0.20; // Already finished reading
+    } else if (signals.recentOpenedIds?.includes(item.id)) {
+      behavioralAdjustment -= 0.05; // Gently deprioritize already opened items
+    }
+  }
+  behavioralAdjustment = Math.max(0, Math.min(1, behavioralAdjustment));
+
+  // Weighted Composite Score (Explicit feedback has 0.20 weight vs 0.04 for passive behavior; durationMatch 0.18)
+  let rawScore =
+    topicMatch * 0.24 +
+    goalAlignment * 0.14 +
+    freshness * 0.16 +
+    readingTimeFit * 0.18 +
+    editorialValue * 0.06 +
+    feedbackAdjustment * 0.18 +
+    behavioralAdjustment * 0.04;
+
+  // Direct explicit interaction overrides on the item itself
+  if (interaction?.feedback === 'less_like_this' || interaction?.voteScore === -1) {
+    rawScore *= 0.45;
+  } else if (interaction?.feedback === 'more_like_this' || interaction?.voteScore === 1) {
+    rawScore *= 1.22;
+  } else if (interaction?.completedAt) {
+    rawScore *= 0.72;
   }
 
-  let topicMemoryDelta = 0;
-  if (profile.feedbackMemory?.boostedTopics?.[item.primaryTopic]) {
-    topicMemoryDelta += 0.15;
-  }
-  if (profile.feedbackMemory?.penalizedTopics?.[item.primaryTopic]) {
-    topicMemoryDelta -= 0.25;
-  }
+  const totalScore = Math.round(rawScore * 1000) / 1000;
 
-  // 6. Explicit Feedback Multiplier
-  let feedbackMultiplier = 1.0;
-  if (interaction?.feedback === 'more_like_this') {
-    feedbackMultiplier = 1.30;
-  } else if (interaction?.feedback === 'less_like_this') {
-    feedbackMultiplier = 0.40;
-  }
+  const topicLabel = getTopicLabel(item.primaryTopic);
+  const publisherName = item.sourceReferences[0]?.publisher || 'Verifizierte Quelle';
+  const primaryReason = `Affinität zu ${topicLabel} (${Math.round(primaryWeight * 100)}%)`;
+  const secondaryReason = `${publisherName} • ~${mins} Min. Lesezeit`;
+  const explanation = `${primaryReason} • ${secondaryReason}`;
 
-  // 7. Behavioral signals & Freshness
-  let behaviorDelta = 0;
-  if (profile.behavioralSignals?.completedReadIds?.includes(item.id) || interaction?.completedAt) {
-    behaviorDelta -= 0.25;
-  } else if (profile.behavioralSignals?.recentSavedIds?.includes(item.id) || interaction?.saved) {
-    behaviorDelta += 0.15;
-  } else if (profile.behavioralSignals?.recentOpenedIds?.includes(item.id)) {
-    behaviorDelta -= 0.05;
-  }
-
-  // Composite score: topic (40%) + goal (20%) + duration (20%) + depth (10%) + evergreen & memory
-  const baseScore =
-    topicAffinity * 0.40 +
-    goalAlignment * 0.20 +
-    durationMatch * 0.20 +
-    depthBonus +
-    evergreenBonus +
-    topicMemoryDelta +
-    authorBoost +
-    behaviorDelta;
-
-  const finalScore = Math.max(
-    0.01,
-    Math.round((baseScore * feedbackMultiplier) * 1000) / 1000
-  );
-
-  // Human-readable German explanation
-  const affinityPercent = Math.round(topicAffinity * 100);
-  let reason = `Affinität zu ${getTopicLabel(item.primaryTopic)}: ${affinityPercent}% • Lesezeit: ${mins} Min.`;
-  if (item.isEvergreenGem) {
-    reason += ` • 🏛 Zeitloser Internet-Klassiker`;
-  }
-  if (item.isTeachingRelated) {
-    reason += ` • Didaktischer Impuls für Schule & Unterricht`;
-  }
-
-  if (item.isChallengingPerspective) {
-    reason += ` • Hinterfragt etablierte Sichtweisen`;
-  }
-  if (depthBonus > 0 && !item.isChallengingPerspective) {
-    reason += ` • Hohe inhaltliche Tiefe (${formatContentType(item.type)})`;
-  }
-  if (feedbackMultiplier > 1.0) {
-    reason += ` • Positives Feedback vermerkt`;
-  }
-  if (authorBoost > 0) {
-    reason += ` • Bevorzugte Quelle`;
-  }
+  const whyFactors: string[] = [
+    `Themen-Resonanz (${topicLabel}): ${Math.round(topicMatch * 100)}%`,
+    `Aktualität & Quelle (${publisherName}): ${Math.round(freshness * 100)}%`,
+    `Explizites Feedback-Signal: ${Math.round(feedbackAdjustment * 100)}%`,
+    `Format & Lesezeit (~${mins} Min.): ${Math.round(readingTimeFit * 100)}%`
+  ];
 
   return {
     ...item,
-    score: finalScore,
-    relevanceExplanation: reason,
+    relevanceExplanation: item.relevanceExplanation || explanation,
+    score: totalScore,
     scoreBreakdown: {
-      topicAffinity,
-      durationMatch,
-      depthBonus,
-      feedbackMultiplier,
+      topicMatch,
+      topicAffinity: topicMatch,
       goalAlignment,
+      readingTimeFit,
+      durationMatch,
+      freshness,
+      editorialValue,
+      depthBonus: Math.max(0, Math.round((editorialValue - 0.5) * 100) / 100),
+      serendipity,
+      feedbackAdjustment,
+      behavioralAdjustment,
       authorBoost,
-      explanation: reason
+      totalScore,
+      explanation,
+      primaryReason,
+      secondaryReason,
+      whyFactors
     }
   };
 }
 
+function getCardRhythmFormat(item: FeedItem): 'quick_20s' | 'visual_art' | 'deep_essay' | 'sourced_briefing' | 'community_pulse' {
+  if (item.format === 'art_showcase' || item.primaryTopic === 'art_aesthetics') {
+    return 'visual_art';
+  }
+  if (item.externalCommunityScore || item.sourceTrustLevel === 'community_curated') {
+    return 'community_pulse';
+  }
+  if (item.format === 'meme' || item.primaryTopic === 'memes_satire' || item.wordCount <= 90 || item.estimatedReadingMinutes <= 1) {
+    return 'quick_20s';
+  }
+  if (item.type === 'deep_dive' || item.format === 'long_invitation' || item.format === 'book_masterpiece' || item.estimatedReadingMinutes >= 4) {
+    return 'deep_essay';
+  }
+  return 'sourced_briefing';
+}
+
 /**
- * Re-ranks feed items with soft editorial quota enforcement and topic diversity interleaving.
- * Guarantees ~10% teaching-related items and ~10% challenging perspectives in the primary batch,
- * and prevents identical primary topics from clumping together consecutively.
+ * Sliding-Window Bloom-Ranking Algorithm (`rankBloomScrollFeed`):
+ *
+ * Replaces the rigid 5-slot cycle with a dynamic sliding-window selector over the candidate pool:
+ * - Publisher Diversity: Max 20% (<= 4 cards) per publisher in any 30-card window;
+ *   strong bonus for publishers not yet seen in the current 30-card window (guarantees >= 12+ publishers per 30 cards).
+ * - Topic Balance: AI/Acceleration (`ai_apple`) is important (~15-20%) but never dominates;
+ *   Teaching (`isTeachingRelated` / `german_didactics`) and Counter-Perspectives (`isChallengingPerspective`)
+ *   are each steered toward ~10% (~3 cards per 30).
+ * - Format Pacing: Smoothly alternates between 20-second quick insights, sourced briefings,
+ *   deep essays, visual artworks, contemplative thoughts, music/synthesis, and playful finds.
+ */
+export function rankBloomScrollFeed(items: ScoredFeedItem[]): ScoredFeedItem[] {
+  if (items.length <= 2) return [...items];
+
+  // Deduplicate input by canonicalUrl or id
+  const seenKeys = new Set<string>();
+  const remaining: ScoredFeedItem[] = [];
+  for (const item of items) {
+    const key = item.id;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    remaining.push(item);
+  }
+
+  // Sort initial candidates by personal score + freshness
+  remaining.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+  const selected: ScoredFeedItem[] = [];
+  const SLIDING_WINDOW = 6;
+  const DIVERSITY_WINDOW = 30;
+
+  while (remaining.length > 0) {
+    const pos = selected.length;
+    const recentWindow = selected.slice(Math.max(0, pos - SLIDING_WINDOW));
+    const window30 = selected.slice(Math.max(0, pos - DIVERSITY_WINDOW));
+    const lastCard = pos > 0 ? selected[pos - 1] : null;
+    const secondLastCard = pos > 1 ? selected[pos - 2] : null;
+
+    // Count publishers in the last 30 cards
+    const pubCounts30 = new Map<string, number>();
+    for (const s of window30) {
+      const pk = getNormalizedPublisherKey(s);
+      pubCounts30.set(pk, (pubCounts30.get(pk) || 0) + 1);
+    }
+
+    // Count topics in recent 6-card window & 30-card window
+    const topicCounts6 = new Map<TopicTag, number>();
+    for (const s of recentWindow) {
+      topicCounts6.set(s.primaryTopic, (topicCounts6.get(s.primaryTopic) || 0) + 1);
+    }
+    const topicCounts30 = new Map<TopicTag, number>();
+    let teachingCount30 = 0;
+    let challengingCount30 = 0;
+    for (const s of window30) {
+      topicCounts30.set(s.primaryTopic, (topicCounts30.get(s.primaryTopic) || 0) + 1);
+      if (s.isTeachingRelated || s.primaryTopic === 'german_didactics') teachingCount30++;
+      if (s.isChallengingPerspective) challengingCount30++;
+    }
+
+    const lastRhythm = lastCard ? getCardRhythmFormat(lastCard) : null;
+    const lastPub = lastCard ? getNormalizedPublisherKey(lastCard) : null;
+    const secondLastPub = secondLastCard ? getNormalizedPublisherKey(secondLastCard) : null;
+
+    let bestIdx = 0;
+    let bestWindowScore = -Infinity;
+
+    // Evaluate top candidates in remaining pool (up to 80 for speed & breadth)
+    const evalLimit = Math.min(remaining.length, 90);
+    for (let i = 0; i < evalLimit; i++) {
+      const cand = remaining[i];
+      const pubKey = getNormalizedPublisherKey(cand);
+      const pubCountIn30 = pubCounts30.get(pubKey) || 0;
+      const topicCountIn6 = topicCounts6.get(cand.primaryTopic) || 0;
+      const topicCountIn30 = topicCounts30.get(cand.primaryTopic) || 0;
+      const candRhythm = getCardRhythmFormat(cand);
+
+      let utility = cand.score || 0.7;
+
+      // 1. Publisher Diversity & 20% Cap Enforcement (max 4 per 30 cards, soft cap at 3)
+      if (pubKey === lastPub) {
+        utility -= 5.0; // Never repeat same publisher back-to-back if avoidable
+      } else if (pubKey === secondLastPub) {
+        utility -= 2.5;
+      }
+      if (pubCountIn30 === 0) {
+        utility += 0.52; // Strong bonus for bringing a fresh voice into the 30-card window
+      } else if (pubCountIn30 === 1) {
+        utility += 0.15;
+      } else if (pubCountIn30 === 2) {
+        utility -= 0.35;
+      } else if (pubCountIn30 === 3) {
+        utility -= 1.20;
+      } else if (pubCountIn30 >= 4) {
+        utility -= 6.0; // Hard cap: < 15% of 30-card window (strictly <= 20%)
+      }
+
+      // 2. Topic Transition & Anti-Dominance
+      if (lastCard && cand.primaryTopic === lastCard.primaryTopic) {
+        utility -= 25.0; // Strictly prevent consecutive identical primaryTopic whenever another topic exists
+      }
+      if (topicCountIn6 >= 2) {
+        utility -= 1.5;
+      }
+      // Keep AI/Acceleration ('ai_apple') vibrant (~16-20%) without dominating
+      if (cand.primaryTopic === 'ai_apple') {
+        if (topicCountIn6 >= 1) utility -= 1.1;
+        if (topicCountIn30 >= 6) utility -= 3.0;
+      }
+      // Keep Wikipedia / Encyclopedia & Artworks balanced
+      if (cand.sourceTrustLevel === 'encyclopedia' && pubCountIn30 >= 2) {
+        utility -= 2.5;
+      }
+      if (candRhythm === 'visual_art') {
+        const recentArtCount = recentWindow.filter(x => getCardRhythmFormat(x) === 'visual_art').length;
+        if (recentArtCount >= 1) utility -= 1.6;
+        else utility += 0.28; // Welcome visual relief when none in last 6 cards
+      }
+
+      // 3. ~10% Teaching & ~10% Counter-Perspective Target Steering
+      const isTeach = cand.isTeachingRelated || cand.primaryTopic === 'german_didactics';
+      const isChall = cand.isChallengingPerspective;
+      const targetTeachCount = Math.max(1, Math.round((window30.length + 1) * 0.10));
+      const targetChallCount = Math.max(1, Math.round((window30.length + 1) * 0.10));
+
+      if (isTeach) {
+        if (teachingCount30 < targetTeachCount && (pos % 9 === 3 || pos % 9 === 4)) {
+          utility += 0.85;
+        } else if (teachingCount30 > targetTeachCount + 1) {
+          utility -= 1.1;
+        }
+      }
+
+      if (isChall) {
+        if (challengingCount30 < targetChallCount && (pos % 8 === 5 || pos % 8 === 6)) {
+          utility += 0.75;
+        } else if (challengingCount30 > targetChallCount + 2) {
+          utility -= 0.75;
+        }
+      }
+
+      // 4. Broad Domain Coverage (Philosophy, Science, Contemplation, Music, Books, Playful Wit)
+      if (topicCountIn30 === 0) {
+        utility += 0.42; // Ensure underrepresented domains surface early
+      } else if (topicCountIn6 === 0) {
+        utility += 0.18;
+      }
+
+      // 5. Format Rhythm Transition (20s quick vs. briefing vs. deep essay vs. art vs. community)
+      if (lastRhythm && candRhythm !== lastRhythm) {
+        utility += 0.15;
+      }
+      if (candRhythm === 'quick_20s' && lastRhythm === 'deep_essay') {
+        utility += 0.15; // Reward a breezy 20-second card right after a deep read
+      }
+
+      if (utility > bestWindowScore) {
+        bestWindowScore = utility;
+        bestIdx = i;
+      }
+    }
+
+    const [chosen] = remaining.splice(bestIdx, 1);
+    selected.push(chosen);
+  }
+
+  return selected;
+}
+
+/**
+ * Alias kept for backward compatibility across components and tests.
+ * Uses the sliding-window Bloom-Ranking algorithm.
+ */
+export function interleaveForAddictiveLearning(items: ScoredFeedItem[]): ScoredFeedItem[] {
+  return rankBloomScrollFeed(items);
+}
+
+/**
+ * Scores and ranks a candidate pool using the sliding-window Bloom-Ranking algorithm.
  */
 export function rankAndInterleaveFeed(
   items: FeedItem[],
   profile: UserProfile,
   interactions: Record<string, ReadingInteraction> = {},
-  options?: { batchSize?: number; targetTeachingRatio?: number; targetChallengingRatio?: number }
+  options?: { batchSize?: number }
 ): ScoredFeedItem[] {
-  // Score all items
+  if (items.length === 0) return [];
   const scored = items.map(item => scoreFeedItem(item, profile, interactions));
-  scored.sort((a, b) => b.score - a.score);
+  const ranked = rankBloomScrollFeed(scored);
 
-  const batchSize = options?.batchSize ?? Math.min(12, scored.length);
-  const teachingTarget = options?.targetTeachingRatio ?? profile.editorialTargets?.teachingTargetRatio ?? 0.10;
-  const challengingTarget = options?.targetChallengingRatio ?? profile.editorialTargets?.challengingTargetRatio ?? 0.10;
+  const batchSize = options?.batchSize ?? 5;
+  if (ranked.length > batchSize) {
+    const topBatch = ranked.slice(0, batchSize);
+    const rest = ranked.slice(batchSize);
 
-  // Split into active candidate batch and overflow pool
-  const topBatch = scored.slice(0, batchSize);
-  const remainder = scored.slice(batchSize);
-
-  // Soft quota 1: Teaching related (~10% -> at least 1 item in batch of 10-12)
-  if (teachingTarget > 0 && !topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics')) {
-    const teachingIndex = remainder.findIndex(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics');
-    if (teachingIndex !== -1) {
-      const [elevated] = remainder.splice(teachingIndex, 1);
-      const replaceIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
-      if (replaceIdx !== -1) {
-        remainder.push(topBatch[replaceIdx]);
-        topBatch.splice(replaceIdx, 1, elevated);
+    if (!topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics')) {
+      const tIdx = rest.findIndex(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics');
+      if (tIdx !== -1) {
+        const [teachItem] = rest.splice(tIdx, 1);
+        const displaced = topBatch[batchSize - 1];
+        topBatch[batchSize - 1] = teachItem;
+        rest.unshift(displaced);
       }
     }
-  }
 
-  // Soft quota 2: Challenging perspective (~10% -> at least 1 item in batch of 10-12)
-  if (challengingTarget > 0 && !topBatch.some(i => i.isChallengingPerspective || i.type === 'perspective')) {
-    const challengingIndex = remainder.findIndex(i => i.isChallengingPerspective || i.type === 'perspective');
-    if (challengingIndex !== -1) {
-      const [elevated] = remainder.splice(challengingIndex, 1);
-      const replaceIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
-      if (replaceIdx !== -1) {
-        remainder.push(topBatch[replaceIdx]);
-        topBatch.splice(replaceIdx, 1, elevated);
+    if (!topBatch.some(i => i.isChallengingPerspective || i.type === 'perspective')) {
+      const cIdx = rest.findIndex(i => i.isChallengingPerspective || i.type === 'perspective');
+      if (cIdx !== -1 && batchSize >= 2) {
+        const [challItem] = rest.splice(cIdx, 1);
+        const replacePos = topBatch[batchSize - 2]?.isTeachingRelated ? batchSize - 3 : batchSize - 2;
+        const pos = Math.max(0, replacePos);
+        const displaced = topBatch[pos];
+        topBatch[pos] = challItem;
+        rest.unshift(displaced);
       }
     }
+
+    return [...topBatch, ...rest];
   }
 
-  // Soft quota 3: Evergreen Classics & Internet Gems (~10-15% -> at least 1 timeless gem in primary batch)
-  if (!topBatch.some(i => i.isEvergreenGem || i.format === 'book_masterpiece')) {
-    const gemIndex = remainder.findIndex(i => i.isEvergreenGem || i.format === 'book_masterpiece');
-    if (gemIndex !== -1) {
-      const [elevated] = remainder.splice(gemIndex, 1);
-      const replaceIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated && !i.isEvergreenGem);
-      if (replaceIdx !== -1) {
-        remainder.push(topBatch[replaceIdx]);
-        topBatch.splice(replaceIdx, 1, elevated);
-      }
-    }
-  }
-
-  // Interleave topics to prevent clumping
-  const combined = [...topBatch, ...remainder];
-  const result: ScoredFeedItem[] = [];
-  const pool = [...combined];
-
-  while (pool.length > 0) {
-    const lastTopic = result.length > 0 ? result[result.length - 1].primaryTopic : null;
-    let nextIndex = pool.findIndex(item => item.primaryTopic !== lastTopic);
-    if (nextIndex === -1) {
-      nextIndex = 0;
-    }
-    const [chosen] = pool.splice(nextIndex, 1);
-    result.push(chosen);
-  }
-
-  return result;
+  return ranked;
 }
 
 function getTopicLabel(topic: TopicTag): string {
@@ -275,30 +538,17 @@ function getTopicLabel(topic: TopicTag): string {
     case 'contemplation_mind': return 'Geist & Kontemplation';
     case 'science_society': return 'Wissenschaft & Ideen';
     case 'sound_synthesis': return 'Klang & Synthese';
-    case 'memes_satire': return 'High-IQ Memes & Satire';
+    case 'memes_satire': return 'Spielerisches & Satire';
     case 'youtube_gems': return 'YouTube Gems';
-    case 'book_mastery': return 'Buch-Meisterwerke';
-    case 'health_biohacking': return 'Gesundheit & Biohacking';
+    case 'book_mastery': return 'Essays & Bücher';
+    case 'health_biohacking': return 'Gesundheit & Fokus';
     case 'opportunities_growth': return 'Chancen & Hebel';
     case 'art_aesthetics': return 'Kunst & Ästhetik';
   }
 }
 
-function formatContentType(type: string): string {
-  switch (type) {
-    case 'quick_insight': return 'Kompakter Einblick';
-    case 'briefing': return 'Überblick';
-    case 'deep_dive': return 'Tiefgang';
-    case 'perspective': return 'Diskurs & Perspektiven';
-    case 'connection': return 'Interdisziplinär';
-    case 'personal_update': return 'Themen-Update';
-    default: return 'Entdeckung';
-  }
-}
-
 /**
  * Determines the appropriate daily edition (morning, midday, evening) based on current hour in user's timezone.
- * Defaults to Europe/Berlin.
  */
 export function determineCurrentEditionType(
   date: Date = new Date(),
@@ -334,11 +584,6 @@ export function determineCurrentEditionType(
   }
 }
 
-/**
- * Ranks items for a specific edition (Guten Morgen, Mittendrin, Guten Abend).
- * Applies edition-specific affinities, batch sizes (6-8 for morning, 4-6 for midday/evening),
- * soft editorial quotas, interleaving, and reproducible variation based on dateSeed.
- */
 function scoreForEdition(
   item: FeedItem,
   editionType: DayEditionType,
@@ -349,7 +594,6 @@ function scoreForEdition(
 ): ScoredFeedItem {
   const base = scoreFeedItem(item, profile, interactions);
 
-  // Deterministic pseudo-random variation based on seed + shuffleOffset + editionType + item.id
   let hash = 0;
   const str = `${seed}_s${shuffleOffset}_${editionType}_${item.id}`;
   for (let i = 0; i < str.length; i++) {
@@ -360,31 +604,24 @@ function scoreForEdition(
 
   let editionMultiplier = 1.0;
 
-  // Distinct Edition Character Profiles:
   if (editionType === 'morning') {
-    // Orienting news (oerr / public broadcaster / sourced_update), science, tech (ai_apple), quick insights (<= 3 min)
     if (item.sourceTrustLevel === 'public_broadcaster' || item.format === 'sourced_update') editionMultiplier += 0.35;
     if (item.primaryTopic === 'science_society') editionMultiplier += 0.30;
-    if (item.primaryTopic === 'ai_apple') editionMultiplier += 0.25;
+    if (item.primaryTopic === 'ai_apple') editionMultiplier += 0.20;
     if (item.estimatedReadingMinutes <= 3) editionMultiplier += 0.20;
-    if (item.primaryTopic === 'opportunities_growth') editionMultiplier += 0.15;
   } else if (editionType === 'midday') {
-    // Actionable didactics, practical tools/opportunities, health/biohacking, satire, youtube gems
     if (item.isTeachingRelated || item.primaryTopic === 'german_didactics') editionMultiplier += 0.35;
     if (item.primaryTopic === 'opportunities_growth' || item.primaryTopic === 'health_biohacking') editionMultiplier += 0.30;
     if (item.primaryTopic === 'memes_satire' || item.format === 'meme') editionMultiplier += 0.30;
     if (item.primaryTopic === 'youtube_gems' || item.format === 'youtube_gem') editionMultiplier += 0.25;
-    if (item.format === 'creative_idea' || item.format === 'concise_insight') editionMultiplier += 0.15;
   } else if (editionType === 'evening') {
-    // Deep essays (long_invitation, >= 4 min), philosophy & contemplation, book masterpieces, sound synthesis, evergreen gems
     if (item.format === 'long_invitation' || item.estimatedReadingMinutes >= 4) editionMultiplier += 0.35;
     if (item.primaryTopic === 'philosophy_ethics' || item.primaryTopic === 'contemplation_mind') editionMultiplier += 0.30;
     if (item.primaryTopic === 'book_mastery' || item.format === 'book_masterpiece') editionMultiplier += 0.30;
-    if (item.primaryTopic === 'sound_synthesis') editionMultiplier += 0.25;
+    if (item.primaryTopic === 'sound_synthesis' || item.primaryTopic === 'art_aesthetics') editionMultiplier += 0.25;
     if (item.isEvergreenGem) editionMultiplier += 0.25;
   }
 
-  // Explicit item targetEditions matching
   if (item.targetEditions && item.targetEditions.length > 0) {
     if (item.targetEditions.includes(editionType)) {
       editionMultiplier += 0.20;
@@ -401,13 +638,7 @@ function scoreForEdition(
 }
 
 /**
- * Unified Daily Cross-Edition Allocator:
  * Allocates disjoint, zero-repetition batches for morning, midday, and evening.
- * 
- * Strict Invariant:
- * Across morning (8), midday (8), and evening (8), once an item ID is assigned,
- * it is excluded from later editions. If pool has >= 24 items, exactly 24 distinct items
- * are returned across all three editions (0% overlap!).
  */
 export function allocateDailyEditions(
   pool: FeedItem[],
@@ -428,68 +659,42 @@ export function allocateDailyEditions(
   };
 
   for (const edition of editions) {
-    // 1. Available candidate pool strictly excluding already assigned items
     const availablePool = pool.filter(item => !assignedIds.has(item.id));
-
-    // 2. Score items with edition-specific character profile
     const scored = availablePool.map(item => scoreForEdition(item, edition, profile, interactions, seed, shuffleOffset));
-    scored.sort((a, b) => b.score - a.score);
+    const bloomRanked = rankBloomScrollFeed(scored);
 
-    // 3. Select target count with soft quotas
-    const count = Math.min(targetPerEdition, scored.length);
-    const topBatch = scored.slice(0, count);
-    const remainder = scored.slice(count);
+    const count = Math.min(targetPerEdition, bloomRanked.length);
+    const topBatch = bloomRanked.slice(0, count);
+    const remainder = bloomRanked.slice(count);
 
-    // Quota 1: Teaching related (~10% across editions, at least 1 in morning/midday if available)
+    // Ensure at least 1 teaching-related card in morning/midday if available
     if ((edition === 'morning' || edition === 'midday') && !topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics')) {
       const tIdx = remainder.findIndex(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics');
-      if (tIdx !== -1) {
+      if (tIdx !== -1 && topBatch.length > 0) {
         const [elevated] = remainder.splice(tIdx, 1);
-        const repIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
-        if (repIdx !== -1) {
-          remainder.push(topBatch[repIdx]);
-          topBatch.splice(repIdx, 1, elevated);
-        }
+        topBatch[topBatch.length - 1] = elevated;
       }
     }
 
-    // Quota 2: Challenging perspective (~10% across editions)
+    // Ensure at least 1 challenging perspective in each edition if available
     if (!topBatch.some(i => i.isChallengingPerspective || i.type === 'perspective')) {
       const cIdx = remainder.findIndex(i => i.isChallengingPerspective || i.type === 'perspective');
-      if (cIdx !== -1) {
+      if (cIdx !== -1 && topBatch.length > 1) {
         const [elevated] = remainder.splice(cIdx, 1);
-        const repIdx = topBatch.findIndex(i => !i.isChallengingPerspective && !i.isTeachingRelated);
-        if (repIdx !== -1) {
-          remainder.push(topBatch[repIdx]);
-          topBatch.splice(repIdx, 1, elevated);
-        }
+        topBatch[topBatch.length - 2] = elevated;
       }
     }
 
-    // 4. Interleave topics to prevent clumping
-    const interleaved: ScoredFeedItem[] = [];
-    const selectionPool = [...topBatch];
-    while (selectionPool.length > 0) {
-      const lastTopic = interleaved.length > 0 ? interleaved[interleaved.length - 1].primaryTopic : null;
-      let nextIndex = selectionPool.findIndex(item => item.primaryTopic !== lastTopic);
-      if (nextIndex === -1) {
-        nextIndex = 0;
-      }
-      const [chosen] = selectionPool.splice(nextIndex, 1);
-      interleaved.push(chosen);
-      assignedIds.add(chosen.id);
+    for (const item of topBatch) {
+      assignedIds.add(item.id);
     }
 
-    allocations[edition] = interleaved;
+    allocations[edition] = topBatch;
   }
 
   return allocations;
 }
 
-/**
- * Ranks items for a specific edition (Guten Morgen, Mittendrin, Guten Abend).
- * Leverages the unified cross-edition allocator ensuring zero ID collision across editions.
- */
 export function rankEditionFeed(
   items: FeedItem[],
   editionType: DayEditionType,
@@ -498,62 +703,7 @@ export function rankEditionFeed(
   dateSeed?: string,
   shuffleOffset: number = 0
 ): ScoredFeedItem[] {
-  const allocations = allocateDailyEditions(items, profile, interactions, dateSeed, shuffleOffset);
-  return allocations[editionType];
+  if (items.length === 0) return [];
+  const allAllocations = allocateDailyEditions(items, profile, interactions, dateSeed, shuffleOffset);
+  return allAllocations[editionType] || [];
 }
-
-/**
- * Variable-Reward Interleaver for Endless Learning & Curiosity
- * 
- * Prevents monotonous blocks of text-only cards by pacing the feed in 5-card waves:
- * 1. High-impact Discovery / Tech / Science ('ai_apple', 'science_society')
- * 2. Visual Art / Museum Masterpiece or Video ('art_aesthetics', 'youtube_gems')
- * 3. Deep Thought / Philosophy / Didactics ('philosophy_ethics', 'german_didactics', 'contemplation_mind')
- * 4. High-IQ Meme / Satire or Quick Insight ('memes_satire', format 'meme', format 'concise_insight')
- * 5. Book Masterpiece / Health / Sound / Opportunity ('book_mastery', 'sound_synthesis', 'health_biohacking', 'opportunities_growth')
- */
-export function interleaveForAddictiveLearning<T extends FeedItem>(items: T[]): T[] {
-  if (items.length <= 2) return [...items];
-
-  const pool = [...items];
-  const wavePicks: ((item: T) => boolean)[] = [
-    // Slot 1: Tech / Science
-    (i) => i.primaryTopic === 'ai_apple' || i.primaryTopic === 'science_society' || i.topics.includes('ai_apple'),
-    // Slot 2: Visual Art / Video
-    (i) => i.primaryTopic === 'art_aesthetics' || i.format === 'art_showcase' || i.primaryTopic === 'youtube_gems' || i.format === 'youtube_gem' || !!i.artMeta || !!i.youtubeMeta,
-    // Slot 3: Philosophy / Didactics / Mind
-    (i) => i.primaryTopic === 'philosophy_ethics' || i.primaryTopic === 'german_didactics' || i.primaryTopic === 'contemplation_mind',
-    // Slot 4: Meme / Satire / Quick Insight
-    (i) => i.primaryTopic === 'memes_satire' || i.format === 'meme' || i.format === 'concise_insight' || !!i.memeMeta,
-    // Slot 5: Books / Health / Sound / Opportunity
-    (i) => i.primaryTopic === 'book_mastery' || i.format === 'book_masterpiece' || i.primaryTopic === 'health_biohacking' || i.primaryTopic === 'sound_synthesis' || i.primaryTopic === 'opportunities_growth' || !!i.bookMeta || !!i.opportunityMeta
-  ];
-
-  const result: T[] = [];
-
-  while (pool.length > 0) {
-    let matchedInCycle = false;
-
-    for (let slot = 0; slot < wavePicks.length && pool.length > 0; slot++) {
-      const predicate = wavePicks[slot];
-      const matchIdx = pool.findIndex(predicate);
-      if (matchIdx !== -1) {
-        const [chosen] = pool.splice(matchIdx, 1);
-        result.push(chosen);
-        matchedInCycle = true;
-      }
-    }
-
-    // If no candidate matched the cycle predicates, take next item avoiding duplicate adjacent primaryTopic
-    if (!matchedInCycle && pool.length > 0) {
-      const lastTopic = result.length > 0 ? result[result.length - 1].primaryTopic : null;
-      let nextIdx = pool.findIndex(i => i.primaryTopic !== lastTopic);
-      if (nextIdx === -1) nextIdx = 0;
-      const [chosen] = pool.splice(nextIdx, 1);
-      result.push(chosen);
-    }
-  }
-
-  return result;
-}
-

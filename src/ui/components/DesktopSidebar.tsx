@@ -6,40 +6,39 @@ import { typography, radius, spacing } from '../theme';
 import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
 import { defaultUsageLedger } from '../../core/enrichment/ledger';
 import { EnrichmentLedgerSummary } from '../../core/enrichment/types';
+import { defaultSourceRepository } from '../../core/data/sourceRepository';
+import { TOPIC_SPACE_MAP, TopicTag } from '../../core/domain/types';
+import { NewsHubModal } from './NewsHubModal';
 
 interface DesktopSidebarProps {
   articleCount?: number;
+  selectedTopicFilter?: TopicTag | 'all' | string;
+  onSelectTopicFilter?: (topic: TopicTag | 'all') => void;
 }
 
-export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 68 }) => {
-  const { colors, savedArticles, interactions, refreshFeed, simulateDailyGeneration } = useApp();
+export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
+  articleCount = 68,
+  selectedTopicFilter = 'all',
+  onSelectTopicFilter
+}) => {
+  const { colors, savedArticles, interactions, refreshFeed, shuffleFeed } = useApp();
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [budgetSummary, setBudgetSummary] = useState<EnrichmentLedgerSummary | null>(null);
+  const [showNewsHubModal, setShowNewsHubModal] = useState<boolean>(false);
+
+  const healthOverview = defaultSourceRepository.getHealthOverview();
 
   React.useEffect(() => {
     void defaultUsageLedger.getSummary().then(setBudgetSummary);
   }, []);
 
-  const handleRefresh = async () => {
+  const handleShuffleAndRefresh = async () => {
     setIsRefreshing(true);
     try {
+      await shuffleFeed();
       await refreshFeed();
-      setCopyFeedback('✓ Live-Feeds erfolgreich aktualisiert (68 Artikel)!');
-      setTimeout(() => setCopyFeedback(null), 3000);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  const handleSimulateDay = async () => {
-    setIsRefreshing(true);
-    try {
-      const res = await simulateDailyGeneration(1);
-      setCopyFeedback(`✓ Neue Ausgabe für ${res.simulatedDate} generiert!`);
-      setTimeout(() => setCopyFeedback(null), 3500);
-    } catch {
-      setCopyFeedback('Simulation fehlgeschlagen.');
+      setCopyFeedback(`✓ Frischer Wind aus ${healthOverview.deliveringSources} aktiven Quellen!`);
       setTimeout(() => setCopyFeedback(null), 3000);
     } finally {
       setIsRefreshing(false);
@@ -50,7 +49,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 6
     const md = generateCraftMarkdown(savedArticles, interactions);
     const success = await copyToClipboard(md);
     if (success) {
-      setCopyFeedback('In Zwischenablage kopiert! Bereit für Craft Docs.');
+      setCopyFeedback('✓ In Zwischenablage kopiert (Craft Markdown)!');
       setTimeout(() => setCopyFeedback(null), 3000);
     }
   };
@@ -58,240 +57,213 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({ articleCount = 6
   const handleDownloadMarkdown = () => {
     const md = generateCraftMarkdown(savedArticles, interactions);
     const dateStr = new Date().toISOString().split('T')[0];
-    const success = downloadMarkdownFile(`atem-erkenntnisarchiv-${dateStr}.md`, md);
+    const success = downloadMarkdownFile(`atmen-erkenntnisarchiv-${dateStr}.md`, md);
     if (success) {
-      setCopyFeedback('Datei heruntergeladen (.md)!');
+      setCopyFeedback('✓ Datei heruntergeladen (.md)!');
       setTimeout(() => setCopyFeedback(null), 3000);
     }
   };
 
   return (
     <View style={styles.sidebarContainer}>
-      {/* 1. Community Card */}
+      {/* 1. c/atmen Bloomscrolling Community Card */}
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
         <View style={[styles.communityBanner, { backgroundColor: colors.accent }]}>
           <Text style={styles.bannerEmoji}>◎</Text>
+          <Text style={styles.bannerTag}>BLOOMSCROLLING</Text>
         </View>
 
         <View style={styles.communityBody}>
           <View style={styles.communityTitleRow}>
-            <Text style={[styles.communityHandle, { color: colors.textPrimary }]}>
-              c/atmen
-            </Text>
-            <View style={[styles.badgePill, { backgroundColor: colors.accentSubtle }]}>
-              <Text style={[styles.badgeText, { color: colors.accent }]}>SOUVERÄN</Text>
+            <Text style={[styles.communityHandle, { color: colors.textPrimary }]}>c/atmen</Text>
+            <View style={[styles.badgePill, { backgroundColor: 'rgba(16, 185, 129, 0.14)' }]}>
+              <Text style={[styles.badgeText, { color: '#10B981' }]}>
+                {healthOverview.deliveringSources} AKTIVE QUELLEN
+              </Text>
             </View>
           </View>
 
           <Text style={[styles.communityDesc, { color: colors.textSecondary }]}>
-            Das private, intellektuelle Social-Network als Gegenentwurf zum reflexartigen Doomscrolling. Höchste Erkenntnisdichte pro Minute Aufmerksamkeit.
+            Dein lebendiger Reddit-Ersatz zum Lesen: echte Stimmen, Forschung, KI, Philosophie, Kultur, Musik & Kunst. Endlos scrollbar, ohne künstliche Dopamin-Fallen.
           </Text>
 
-          {/* Community Stats */}
           <View style={[styles.statsRow, { borderTopColor: colors.borderSubtle, borderBottomColor: colors.borderSubtle }]}>
             <View style={styles.statCol}>
               <Text style={[styles.statNumber, { color: colors.textPrimary }]}>{articleCount}</Text>
-              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Beiträge heute</Text>
+              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Im Pool</Text>
             </View>
             <View style={styles.statCol}>
-              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>0</Text>
-              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Dopamin-Fallen</Text>
+              <Text style={[styles.statNumber, { color: '#10B981' }]}>
+                {healthOverview.deliveringSources}/{healthOverview.totalSources}
+              </Text>
+              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Quellen live</Text>
             </View>
             <View style={styles.statCol}>
-              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>100%</Text>
-              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Lokal & Sicher</Text>
+              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>{savedArticles.length}</Text>
+              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Gemerkt</Text>
             </View>
+          </View>
+
+          <View style={{ gap: 8, marginTop: 12 }}>
+            <TouchableOpacity
+              onPress={handleShuffleAndRefresh}
+              disabled={isRefreshing}
+              style={[styles.primarySidebarBtn, { backgroundColor: colors.accent }]}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="shuffle-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.primarySidebarBtnText}>
+                {isRefreshing ? 'Mische neuen Stream…' : '🔄 Frischer Wind (Neu mischen)'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setShowNewsHubModal(true)}
+              style={[styles.secondarySidebarBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="radio-outline" size={13} color={colors.textPrimary} style={{ marginRight: 6 }} />
+              <Text style={[styles.secondarySidebarBtnText, { color: colors.textPrimary }]}>
+                Quellen-Katalog & Health ({healthOverview.deliveringSources}/{healthOverview.totalSources})
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
 
-      {/* 2. Atem Community Regeln */}
+      {/* 2. Colorful Reddit-Style Communities / Spaces */}
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
         <View style={styles.cardHeader}>
-          <Ionicons name="shield-checkmark-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
-          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Community-Regeln</Text>
+          <Ionicons name="planet-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
+          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Spaces & Communities</Text>
         </View>
 
-        <View style={styles.rulesList}>
-          <View style={styles.ruleItem}>
-            <Text style={[styles.ruleNumber, { color: colors.accent }]}>1.</Text>
-            <View style={styles.ruleContent}>
-              <Text style={[styles.ruleTitle, { color: colors.textPrimary }]}>Kein Doomscrollen</Text>
-              <Text style={[styles.ruleSub, { color: colors.textSecondary }]}>
-                Endliche Tagesausgabe. Bewusste Innehalte-Momente nach jedem Gedanken.
-              </Text>
-            </View>
-          </View>
+        <View style={styles.spacesGrid}>
+          <TouchableOpacity
+            onPress={() => onSelectTopicFilter && onSelectTopicFilter('all')}
+            style={[
+              styles.spaceChip,
+              {
+                backgroundColor: selectedTopicFilter === 'all' ? colors.accent : colors.surfaceSecondary,
+                borderColor: selectedTopicFilter === 'all' ? colors.accent : colors.borderSubtle
+              }
+            ]}
+            activeOpacity={0.8}
+          >
+            <Text
+              style={[
+                styles.spaceChipText,
+                { color: selectedTopicFilter === 'all' ? '#FFFFFF' : colors.textPrimary }
+              ]}
+            >
+              🌈 Alle Spaces (Bloom-Mix)
+            </Text>
+          </TouchableOpacity>
 
-          <View style={styles.ruleItem}>
-            <Text style={[styles.ruleNumber, { color: colors.accent }]}>2.</Text>
-            <View style={styles.ruleContent}>
-              <Text style={[styles.ruleTitle, { color: colors.textPrimary }]}>Erkenntnis vor Dopamin</Text>
-              <Text style={[styles.ruleSub, { color: colors.textSecondary }]}>
-                Geprüfte Primärquellen (Öffentlich-Rechtlich, Stanford, Didaktik). Kein Clickbait.
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.ruleItem}>
-            <Text style={[styles.ruleNumber, { color: colors.accent }]}>3.</Text>
-            <View style={styles.ruleContent}>
-              <Text style={[styles.ruleTitle, { color: colors.textPrimary }]}>Eigene Thesen wagen</Text>
-              <Text style={[styles.ruleSub, { color: colors.textSecondary }]}>
-                Nutze den Mini-Composer für Einwände und sokratisches Sparring.
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.ruleItem}>
-            <Text style={[styles.ruleNumber, { color: colors.accent }]}>4.</Text>
-            <View style={styles.ruleContent}>
-              <Text style={[styles.ruleTitle, { color: colors.textPrimary }]}>Absolute Souveränität</Text>
-              <Text style={[styles.ruleSub, { color: colors.textSecondary }]}>
-                Deine Gedanken gehören dir. Jederzeit 1-Klick-Export für Craft Docs & Markdown.
-              </Text>
-            </View>
-          </View>
+          {(Object.keys(TOPIC_SPACE_MAP) as TopicTag[]).map(topic => {
+            const meta = TOPIC_SPACE_MAP[topic];
+            const isSelected = selectedTopicFilter === topic;
+            return (
+              <TouchableOpacity
+                key={topic}
+                onPress={() => onSelectTopicFilter && onSelectTopicFilter(isSelected ? 'all' : topic)}
+                style={[
+                  styles.spaceRowItem,
+                  {
+                    backgroundColor: isSelected ? meta.bgTint : colors.surfaceSecondary,
+                    borderColor: isSelected ? meta.color : colors.borderSubtle,
+                    borderLeftColor: meta.color,
+                    borderLeftWidth: 3
+                  }
+                ]}
+                activeOpacity={0.8}
+              >
+                <Ionicons name={meta.icon as any} size={14} color={meta.color} style={{ marginRight: 8 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.spaceRowTitle, { color: isSelected ? meta.color : colors.textPrimary }]}>
+                    {meta.space}
+                  </Text>
+                  <Text style={[styles.spaceRowSub, { color: colors.textMuted }]} numberOfLines={1}>
+                    {meta.name}
+                  </Text>
+                </View>
+                {isSelected && <Ionicons name="checkmark-circle" size={15} color={meta.color} />}
+              </TouchableOpacity>
+            );
+          })}
         </View>
       </View>
 
-      {/* 3. Vertrauenswürdige Quellen */}
+      {/* 3. Craft Export & Honest KI-Budget Card */}
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
         <View style={styles.cardHeader}>
-          <Ionicons name="checkmark-done-circle-outline" size={16} color="#10B981" style={{ marginRight: 6 }} />
-          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Geprüfte Quellen</Text>
-        </View>
-
-        <View style={styles.sourcesGrid}>
-          {[
-            { name: 'ARD Tagesschau', tag: 'Öffentlich-Rechtlich', icon: 'tv-outline' },
-            { name: 'Deutschlandfunk', tag: 'Öffentlich-Rechtlich', icon: 'radio-outline' },
-            { name: 'ZDFheute', tag: 'Öffentlich-Rechtlich', icon: 'newspaper-outline' },
-            { name: 'Stanford Encyclopedia', tag: 'Philosophie', icon: 'book-outline' },
-            { name: 'Aeon Essays', tag: 'Ideen & Kultur', icon: 'compass-outline' },
-            { name: 'Deutsches Schulportal', tag: 'Didaktik Sek I/II', icon: 'school-outline' },
-            { name: 'Quanta Magazine', tag: 'Wissenschaft', icon: 'flask-outline' },
-            { name: 'Heise Developer', tag: 'Frontier AI & Code', icon: 'code-slash-outline' },
-            { name: 'Tricycle', tag: 'Geist & Fokus', icon: 'leaf-outline' },
-            { name: 'Lines Community', tag: 'Klangforschung', icon: 'hardware-chip-outline' }
-          ].map(src => (
-            <View key={src.name} style={[styles.sourceItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-              <Ionicons name={src.icon as any} size={13} color={colors.textSecondary} style={{ marginRight: 6 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.sourceName, { color: colors.textPrimary }]} numberOfLines={1}>{src.name}</Text>
-                <Text style={[styles.sourceTag, { color: colors.textMuted }]}>{src.tag}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
-
-        <TouchableOpacity
-          onPress={handleRefresh}
-          disabled={isRefreshing}
-          style={[styles.refreshSidebarBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-        >
-          <Ionicons name="sync-outline" size={13} color={colors.accent} style={{ marginRight: 6 }} />
-          <Text style={[styles.refreshSidebarBtnText, { color: colors.accent }]}>
-            {isRefreshing ? 'Feeds werden synchronisiert…' : '🔄 29 Live-Feeds synchronisieren'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={handleSimulateDay}
-          disabled={isRefreshing}
-          style={[styles.refreshSidebarBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent, marginTop: 6 }]}
-        >
-          <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 6 }} />
-          <Text style={[styles.refreshSidebarBtnText, { color: colors.accent, fontWeight: '700' }]}>
-            🔄 Feed-Kurator (+1 Tag kuratieren)
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* 4. Monatliches KI-Budget Meter (€5.00 Cap) */}
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-        <View style={styles.cardHeader}>
-          <Ionicons name="wallet-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
-          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Monatliches KI-Budget</Text>
+          <Ionicons name="document-text-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
+          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Souveränes Archiv & Budget</Text>
         </View>
 
         <View style={styles.budgetBody}>
           <View style={styles.budgetRow}>
             <Text style={[styles.budgetLabel, { color: colors.textSecondary }]}>
-              {budgetSummary ? `Verbraucht (${budgetSummary.monthKey}):` : 'Verbraucht:'}
+              KI-Budget ({budgetSummary?.monthKey || 'Monat'}):
             </Text>
             <Text style={[styles.budgetValue, { color: colors.textPrimary }]}>
               {budgetSummary
                 ? `€${budgetSummary.totalCostEur.toFixed(4)} / €${budgetSummary.budgetLimitEur.toFixed(2)}`
-                : 'Noch nicht erfasst'}
+                : '€0.00 / €5.00'}
             </Text>
           </View>
 
-          {/* Progress bar */}
           <View style={[styles.budgetTrack, { backgroundColor: colors.surfaceSecondary }]}>
             <View
               style={[
                 styles.budgetFill,
                 {
-                  width: `${Math.min(100, Math.max(1, Math.round(((budgetSummary?.totalCostEur ?? 0) / (budgetSummary?.budgetLimitEur ?? 5)) * 100)))}%`,
-                  backgroundColor: (budgetSummary?.totalCostEur ?? 0) >= 4.50 ? '#EF4444' : '#10B981'
+                  width: `${Math.min(
+                    100,
+                    Math.max(1, Math.round(((budgetSummary?.totalCostEur ?? 0) / (budgetSummary?.budgetLimitEur ?? 5)) * 100))
+                  )}%`,
+                  backgroundColor: (budgetSummary?.totalCostEur ?? 0) >= 4.5 ? '#EF4444' : '#10B981'
                 }
               ]}
             />
           </View>
 
-          <Text style={[styles.budgetNote, { color: colors.textMuted }]}>
-            {budgetSummary && budgetSummary.totalCalls > 0
-              ? `${budgetSummary.totalCalls} bezahlte Abrufe erfasst. Rechnungsprüfung via EnrichmentUsageLedger.`
-              : 'Quellenmodus aktiv: 0 bezahlte Abrufe. Bei aktiviertem Provider automatisch auf €5.00/Monat gedeckelt.'}
-          </Text>
-        </View>
-      </View>
+          <View style={styles.exportActions}>
+            <TouchableOpacity
+              onPress={handleCopyCraft}
+              style={[styles.exportBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="copy-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
+              <Text style={[styles.exportBtnText, { color: colors.textPrimary }]}>Craft Markdown</Text>
+            </TouchableOpacity>
 
-      {/* 5. Craft Docs & Markdown Export */}
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-        <View style={styles.cardHeader}>
-          <Ionicons name="document-text-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
-          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Craft Docs & Souveränität</Text>
-        </View>
-
-        <Text style={[styles.exportDesc, { color: colors.textSecondary }]}>
-          Sichere deine gelesenen Artikel, persönlichen Einwände und Sparring-Dialoge in strukturiertem Markdown:
-        </Text>
-
-        <View style={styles.exportActions}>
-          <TouchableOpacity
-            onPress={handleCopyCraft}
-            style={[styles.exportBtn, { backgroundColor: colors.accent }]}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="copy-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.exportBtnText}>In Craft kopieren</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={handleDownloadMarkdown}
-            style={[styles.exportOutlineBtn, { borderColor: colors.borderSubtle }]}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="download-outline" size={14} color={colors.textPrimary} style={{ marginRight: 6 }} />
-            <Text style={[styles.exportOutlineBtnText, { color: colors.textPrimary }]}>.md herunterladen</Text>
-          </TouchableOpacity>
-        </View>
-
-        {copyFeedback && (
-          <View style={[styles.feedbackBanner, { backgroundColor: colors.accentSubtle }]}>
-            <Text style={[styles.feedbackText, { color: colors.accent }]}>{copyFeedback}</Text>
+            <TouchableOpacity
+              onPress={handleDownloadMarkdown}
+              style={[styles.exportBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="download-outline" size={13} color={colors.textSecondary} style={{ marginRight: 5 }} />
+              <Text style={[styles.exportBtnText, { color: colors.textPrimary }]}>.md Datei</Text>
+            </TouchableOpacity>
           </View>
-        )}
+
+          {copyFeedback && (
+            <View style={[styles.feedbackBanner, { backgroundColor: colors.accentSubtle }]}>
+              <Text style={[styles.feedbackText, { color: colors.accent }]}>{copyFeedback}</Text>
+            </View>
+          )}
+        </View>
       </View>
+
+      <NewsHubModal visible={showNewsHubModal} onClose={() => setShowNewsHubModal(false)} />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   sidebarContainer: {
-    width: 310,
+    width: 300,
     gap: spacing.md
   },
   card: {
@@ -300,12 +272,22 @@ const styles = StyleSheet.create({
     overflow: 'hidden'
   },
   communityBanner: {
-    height: 44,
-    justifyContent: 'center',
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: spacing.md
   },
   bannerEmoji: {
-    fontSize: 22
+    fontSize: 20,
+    color: '#FFFFFF',
+    fontWeight: '900'
+  },
+  bannerTag: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: 'rgba(255,255,255,0.9)',
+    letterSpacing: 1
   },
   communityBody: {
     padding: spacing.md
@@ -329,12 +311,12 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 9,
     fontWeight: '800',
-    letterSpacing: 0.5
+    letterSpacing: 0.4
   },
   communityDesc: {
-    fontSize: typography.sizes.caption,
-    lineHeight: 18,
-    marginBottom: spacing.md
+    fontSize: 12,
+    lineHeight: 17.5,
+    marginBottom: spacing.sm
   },
   statsRow: {
     flexDirection: 'row',
@@ -347,12 +329,36 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   statNumber: {
-    fontSize: typography.sizes.body,
-    fontWeight: '700'
+    fontSize: 14,
+    fontWeight: '800'
   },
   statLabel: {
     fontSize: 10,
     marginTop: 2
+  },
+  primarySidebarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    borderRadius: radius.sm
+  },
+  primarySidebarBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  secondarySidebarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: radius.sm,
+    borderWidth: 1
+  },
+  secondarySidebarBtnText: {
+    fontSize: 11.5,
+    fontWeight: '600'
   },
   cardHeader: {
     flexDirection: 'row',
@@ -362,70 +368,43 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xs
   },
   cardTitle: {
-    fontSize: typography.sizes.bodySmall,
+    fontSize: 13,
     fontWeight: '700'
   },
-  rulesList: {
-    padding: spacing.md,
-    gap: spacing.sm
+  spacesGrid: {
+    padding: spacing.sm,
+    gap: 5
   },
-  ruleItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8
+  spaceChip: {
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    alignItems: 'center',
+    marginBottom: 2
   },
-  ruleNumber: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '800'
+  spaceChipText: {
+    fontSize: 12,
+    fontWeight: '700'
   },
-  ruleContent: {
-    flex: 1
-  },
-  ruleTitle: {
-    fontSize: typography.sizes.caption,
-    fontWeight: '700',
-    marginBottom: 1
-  },
-  ruleSub: {
-    fontSize: typography.sizes.micro,
-    lineHeight: 15
-  },
-  sourcesGrid: {
-    padding: spacing.md,
-    gap: spacing.xs
-  },
-  sourceItem: {
+  spaceRowItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: spacing.xs,
-    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: radius.sm,
     borderWidth: 0.5
   },
-  sourceName: {
-    fontSize: typography.sizes.caption,
-    fontWeight: '600'
-  },
-  sourceTag: {
-    fontSize: 9
-  },
-  refreshSidebarBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.md,
-    borderRadius: radius.sm,
-    borderWidth: 1
-  },
-  refreshSidebarBtnText: {
-    fontSize: typography.sizes.micro,
+  spaceRowTitle: {
+    fontSize: 12,
     fontWeight: '700'
+  },
+  spaceRowSub: {
+    fontSize: 10
   },
   budgetBody: {
     padding: spacing.md,
-    gap: spacing.xs
+    gap: 8
   },
   budgetRow: {
     flexDirection: 'row',
@@ -433,71 +412,47 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   budgetLabel: {
-    fontSize: typography.sizes.caption
+    fontSize: 11.5
   },
   budgetValue: {
-    fontSize: typography.sizes.caption,
+    fontSize: 11.5,
     fontWeight: '700'
   },
   budgetTrack: {
-    height: 6,
+    height: 5,
     borderRadius: 3,
-    overflow: 'hidden',
-    marginVertical: 4
+    overflow: 'hidden'
   },
   budgetFill: {
     height: '100%',
     borderRadius: 3
   },
-  budgetNote: {
-    fontSize: typography.sizes.micro,
-    lineHeight: 14
-  },
-  exportDesc: {
-    fontSize: typography.sizes.caption,
-    lineHeight: 17,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.xs,
-    marginBottom: spacing.sm
-  },
   exportActions: {
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.md,
-    gap: spacing.xs
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4
   },
   exportBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 9,
-    borderRadius: radius.sm
-  },
-  exportBtnText: {
-    color: '#FFFFFF',
-    fontSize: typography.sizes.caption,
-    fontWeight: '700'
-  },
-  exportOutlineBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: radius.sm,
     borderWidth: 1
   },
-  exportOutlineBtnText: {
-    fontSize: typography.sizes.caption,
+  exportBtnText: {
+    fontSize: 11.5,
     fontWeight: '600'
   },
   feedbackBanner: {
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.md,
-    padding: spacing.xs,
+    padding: 6,
     borderRadius: radius.sm,
-    alignItems: 'center'
+    alignItems: 'center',
+    marginTop: 4
   },
   feedbackText: {
-    fontSize: typography.sizes.micro,
+    fontSize: 11,
     fontWeight: '600'
   }
 });

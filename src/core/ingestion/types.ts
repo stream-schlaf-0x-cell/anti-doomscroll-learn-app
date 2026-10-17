@@ -23,6 +23,8 @@ export interface RawFeedEntry {
   publishedAt: string;
   sourceId: string;
   imageUrl?: string;
+  imageAltText?: string;
+  imageCredit?: string;
 }
 
 export interface IngestionResult {

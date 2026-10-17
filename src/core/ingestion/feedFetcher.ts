@@ -1,130 +1,138 @@
-export interface FetchOptions {
-  timeoutMs?: number;
-  maxBytes?: number;
-  etag?: string;
-  lastModified?: string;
-  retries?: number;
-}
+import { RawFeedSource, RawFeedEntry } from './types';
+import { parseFeedXml } from './rssParser';
 
-export interface FetchResult {
-  url: string;
-  status: number;
-  notModified: boolean;
-  content: string;
-  etag?: string;
-  lastModified?: string;
+export interface FeedFetchResult {
+  source: RawFeedSource;
+  entries: RawFeedEntry[];
+  success: boolean;
+  error?: string;
+  durationMs: number;
+  fetchedAt: string;
 }
 
 /**
- * Resilient, bounded HTTP fetcher for external RSS/Atom feeds.
- * - 5-second timeout default via AbortController
- * - 1MB response size guard to prevent runaway memory consumption
- * - Conditional HTTP caching (If-None-Match / If-Modified-Since)
- * - Exponential backoff retry on transient 5xx or network errors
+ * Fetches an RSS/Atom feed directly without any third-party CORS proxy.
+ * Server-side / CI pipeline (`scripts/run-pipeline.ts`) and native iOS fetch all feeds directly;
+ * Web clients consume the public feed snapshot (`feed-snapshot.json`) plus CORS-native open APIs.
+ */
+async function fetchRssDirect(url: string, timeoutMs: number): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+        'User-Agent': 'atmen-learning-reader/2.0 (sovereign-knowledge-feed)'
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    const xml = await response.text();
+    if (!xml || (!xml.includes('<rss') && !xml.includes('<feed') && !xml.includes('<rdf') && !xml.includes('<item') && !xml.includes('<entry'))) {
+      throw new Error('Response is not valid RSS/Atom XML');
+    }
+    return xml;
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
+}
+
+/**
+ * Fetches and parses a single RSS/Atom feed with timeout & error isolation.
+ * Records fetch success, timestamp, item count, and error message per source.
+ */
+export async function fetchSingleFeed(
+  source: RawFeedSource,
+  timeoutMs = 7000
+): Promise<FeedFetchResult> {
+  const start = Date.now();
+  const fetchedAt = new Date().toISOString();
+
+  try {
+    const xml = await fetchRssDirect(source.url, timeoutMs);
+    const entries = parseFeedXml(xml, source.id);
+
+    return {
+      source,
+      entries,
+      success: entries.length > 0,
+      error: entries.length === 0 ? 'Keine Einträge im Feed gefunden' : undefined,
+      durationMs: Date.now() - start,
+      fetchedAt
+    };
+  } catch (err: any) {
+    const errorMsg = err?.name === 'AbortError'
+      ? `Timeout after ${timeoutMs}ms`
+      : (err?.message || String(err));
+
+    return {
+      source,
+      entries: [],
+      success: false,
+      error: errorMsg,
+      durationMs: Date.now() - start,
+      fetchedAt
+    };
+  }
+}
+
+/**
+ * Fetches multiple feeds concurrently with bounded concurrency.
+ * Never throws; returns isolated results for every source.
+ */
+export async function fetchAllFeeds(
+  sources: RawFeedSource[],
+  concurrency = 6,
+  timeoutMs = 7000
+): Promise<FeedFetchResult[]> {
+  const results: FeedFetchResult[] = [];
+  const queue = [...sources];
+
+  async function worker() {
+    while (queue.length > 0) {
+      const next = queue.shift();
+      if (!next) break;
+      const res = await fetchSingleFeed(next, timeoutMs);
+      results.push(res);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, sources.length) }, () => worker());
+  await Promise.all(workers);
+
+  return results;
+}
+
+/**
+ * Fetches raw XML string for a given feed URL.
  */
 export async function fetchFeedXml(
   url: string,
-  options: FetchOptions = {}
-): Promise<FetchResult> {
-  const timeoutMs = options.timeoutMs ?? 5000;
-  const maxBytes = options.maxBytes ?? 1024 * 1024; // 1 MB
-  const maxRetries = options.retries ?? 2;
-
-  let attempt = 0;
-  let lastError: Error | null = null;
-
-  while (attempt <= maxRetries) {
-    attempt++;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AtemDiscovery/1.0',
-      'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8'
-    };
-
-    if (options.etag) {
-      headers['If-None-Match'] = options.etag;
-    }
-    if (options.lastModified) {
-      headers['If-Modified-Since'] = options.lastModified;
-    }
-
-    try {
-      const response = await fetch(url, {
-        headers,
-        signal: controller.signal
-      });
-
-      clearTimeout(timer);
-
-      if (response.status === 304) {
-        return {
-          url,
-          status: 304,
-          notModified: true,
-          content: '',
-          etag: response.headers.get('etag') || options.etag,
-          lastModified: response.headers.get('last-modified') || options.lastModified
-        };
-      }
-
-      if (!response.ok) {
-        if (response.status >= 500 && attempt <= maxRetries) {
-          // Transient server error: retry after delay
-          await new Promise(r => setTimeout(r, attempt * 500));
-          continue;
-        }
-        throw new Error(`HTTP ${response.status} ${response.statusText} von ${url}`);
-      }
-
-      const contentLengthHeader = response.headers.get('content-length');
-      if (contentLengthHeader && parseInt(contentLengthHeader, 10) > maxBytes) {
-        throw new Error(`Antwort von ${url} überschreitet das Limit von ${maxBytes} Bytes`);
-      }
-
-      const text = await response.text();
-      if (text.length > maxBytes) {
-        throw new Error(`Antwortinhalt von ${url} überschreitet das Limit von ${maxBytes} Bytes`);
-      }
-
-      return {
-        url,
-        status: response.status,
-        notModified: false,
-        content: text,
-        etag: response.headers.get('etag') ?? undefined,
-        lastModified: response.headers.get('last-modified') ?? undefined
-      };
-    } catch (err: any) {
-      clearTimeout(timer);
-      lastError = err;
-      if (attempt <= maxRetries && (err?.name === 'AbortError' || err?.message?.includes('fetch failed'))) {
-        await new Promise(r => setTimeout(r, attempt * 500));
-        continue;
-      }
-      break;
-    }
-  }
-
-  throw new Error(`Feed-Abruf für ${url} fehlgeschlagen nach ${attempt} Versuchen: ${lastError?.message}`);
-}
-
-/**
- * Fetches RSS/Atom XML with automatic CORS proxy fallback for Web browser execution.
- * 1. First attempts direct fetch (1800ms timeout)
- * 2. On error (CORS restriction in web browser or network failure), falls back to CORS proxy
- */
-export async function fetchRssWithCorsFallback(
-  url: string,
-  options: FetchOptions = {}
-): Promise<FetchResult> {
-  const directTimeout = options.timeoutMs ?? 1800;
+  options?: { timeoutMs?: number }
+): Promise<{ content: string; status: number }> {
+  const timeoutMs = options?.timeoutMs ?? 6000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetchFeedXml(url, { ...options, timeoutMs: directTimeout, retries: 0 });
-  } catch {
-    // Web CORS fallback via open proxy
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-    return await fetchFeedXml(proxyUrl, { ...options, timeoutMs: 3500, retries: 0 });
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'atmen-bloomscroll/2.0',
+        Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*'
+      }
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return { content: await res.text(), status: res.status };
+  } finally {
+    clearTimeout(timer);
   }
 }
+

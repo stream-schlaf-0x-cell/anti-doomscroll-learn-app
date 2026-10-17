@@ -108,46 +108,109 @@ function getAttribute(xml: string, tagName: string, attrName: string): string {
 
 /**
  * Parses a date string into standard ISO 8601 or falls back to current time.
+ * Clamps future dates (e.g. weekend print issue dates) to Date.now().
  */
 function parseDateToIso(dateStr: string): string {
   if (!dateStr) return new Date().toISOString();
   const parsed = new Date(dateStr);
-  return isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+  if (isNaN(parsed.getTime())) return new Date().toISOString();
+  if (parsed.getTime() > Date.now()) return new Date().toISOString();
+  return parsed.toISOString();
+}
+
+function resolveMaybeRelativeUrl(rawSrc: string, itemLink?: string): string | undefined {
+  const src = rawSrc.trim();
+  if (!src) return undefined;
+  if (src.startsWith('http://') || src.startsWith('https://')) {
+    return src;
+  }
+  if (src.startsWith('//')) {
+    return `https:${src}`;
+  }
+  if (itemLink && (src.startsWith('/') || /^[a-z0-9_\-./]+\.(jpg|jpeg|png|webp|gif)/i.test(src))) {
+    try {
+      return new URL(src, itemLink).toString();
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 /**
  * Extracts a media/enclosure/inline image URL if present in the entry block.
+ * Resolves relative paths (e.g. /bilder/... on forschung-und-wissen.de) against itemLink.
  */
-function extractImageUrl(block: string): string | undefined {
+function extractImageUrl(block: string, itemLink?: string): string | undefined {
   // 1. YouTube & Media RSS thumbnail (<media:thumbnail url="...">)
   const thumbMatch = block.match(/<media:thumbnail\b[^>]*\burl=["']([^"']+)["']/i);
   if (thumbMatch && thumbMatch[1]) {
-    return decodeXmlEntities(thumbMatch[1]);
+    return resolveMaybeRelativeUrl(decodeXmlEntities(thumbMatch[1]), itemLink);
   }
 
   // 2. Enclosure attribute url="..." (filter out non-images like audio/video)
   const enclosureMatch = block.match(/<enclosure\b[^>]*\burl=["']([^"']+)["']/i);
   if (enclosureMatch && enclosureMatch[1] && !/\.(mp3|wav|ogg|mp4|m4a|flv)/i.test(enclosureMatch[1])) {
-    return decodeXmlEntities(enclosureMatch[1]);
+    return resolveMaybeRelativeUrl(decodeXmlEntities(enclosureMatch[1]), itemLink);
   }
 
   // 3. Media:content if it's an image (skip YouTube player URLs like youtube.com/v/ and media files)
   const mediaContentMatch = block.match(/<media:content\b[^>]*\burl=["']([^"']+)["']/i);
-  if (mediaContentMatch && mediaContentMatch[1] && !/\.(mp3|wav|ogg|mp4|m4a|flv)/i.test(mediaContentMatch[1]) && !mediaContentMatch[1].includes('youtube.com/v/')) {
-    return decodeXmlEntities(mediaContentMatch[1]);
+  if (
+    mediaContentMatch &&
+    mediaContentMatch[1] &&
+    !/\.(mp3|wav|ogg|mp4|m4a|flv)/i.test(mediaContentMatch[1]) &&
+    !mediaContentMatch[1].includes('youtube.com/v/')
+  ) {
+    return resolveMaybeRelativeUrl(decodeXmlEntities(mediaContentMatch[1]), itemLink);
   }
 
-  // 4. <img> tag in HTML content/description (handle both raw and XML-escaped HTML e.g. xkcd)
+  // 4. <img> tag in HTML content/description (handle both raw and XML-escaped HTML e.g. xkcd, forschung-und-wissen.de)
   const decodedBlock = decodeXmlEntities(block);
   const imgMatch = decodedBlock.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i);
   if (imgMatch && imgMatch[1]) {
-    const src = imgMatch[1].trim();
-    if (src.startsWith('http://') || src.startsWith('https://')) {
-      return src;
-    }
+    return resolveMaybeRelativeUrl(imgMatch[1], itemLink);
   }
 
   return undefined;
+}
+
+/**
+ * Extracts the hidden hover / bonus punchline from <img title="..." alt="..."> (e.g. xkcd, SMBC, Existential Comics).
+ */
+function extractImageAltText(block: string, entryTitle: string): string | undefined {
+  const decodedBlock = decodeXmlEntities(block);
+  const imgTagMatch = decodedBlock.match(/<img\b[^>]*>/i);
+  if (!imgTagMatch) return undefined;
+  const imgTag = imgTagMatch[0];
+
+  const titleAttr = imgTag.match(/\btitle=["']([^"']+)["']/i)?.[1]?.trim();
+  if (titleAttr && titleAttr.length > 6 && titleAttr.toLowerCase() !== entryTitle.trim().toLowerCase()) {
+    return decodeXmlEntities(titleAttr);
+  }
+
+  const altAttr = imgTag.match(/\balt=["']([^"']+)["']/i)?.[1]?.trim();
+  if (altAttr && altAttr.length > 20 && altAttr.toLowerCase() !== entryTitle.trim().toLowerCase()) {
+    return decodeXmlEntities(altAttr);
+  }
+
+  return undefined;
+}
+
+/**
+ * Separates inline copyright prefixes (e.g. "© Forschung und Wissen, KI-Bild") from the summary text.
+ */
+function extractCreditAndCleanSummary(summaryText: string): { cleanSummary: string; imageCredit?: string } {
+  const trimmed = summaryText.trim();
+  const creditMatch = trimmed.match(/^(?:©|Foto:|Bild:|Image:)\s*([^\n.]{3,75}?)(?:\s{2,}|\n|(?=[A-ZÄÖÜ]))/);
+  if (creditMatch && creditMatch[1]) {
+    const credit = creditMatch[1].trim();
+    const rest = trimmed.slice(creditMatch[0].length).trim();
+    if (rest.length > 20) {
+      return { cleanSummary: rest, imageCredit: `© ${credit.replace(/^©\s*/, '')}` };
+    }
+  }
+  return { cleanSummary: trimmed };
 }
 
 /**
@@ -184,7 +247,7 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
       const cleanId = decodeXmlEntities(id.trim());
 
       const summaryRaw = getTagContent(block, 'summary') || getTagContent(block, 'content');
-      const summary = stripHtml(summaryRaw);
+      const { cleanSummary: summary, imageCredit } = extractCreditAndCleanSummary(stripHtml(summaryRaw));
       const fullContentRaw = getTagContent(block, 'content');
       const fullContent = fullContentRaw ? stripHtml(fullContentRaw) : undefined;
 
@@ -197,7 +260,8 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
         getTagContent(block, 'published') ||
         getTagContent(block, 'updated');
 
-      const imageUrl = extractImageUrl(block);
+      const imageUrl = extractImageUrl(block, link);
+      const imageAltText = extractImageAltText(block, title);
 
       if (title && link) {
         entries.push({
@@ -209,7 +273,9 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
           author: author ? stripHtml(author) : undefined,
           publishedAt: parseDateToIso(published),
           sourceId,
-          imageUrl
+          imageUrl,
+          imageAltText,
+          imageCredit
         });
       }
     }
@@ -225,7 +291,7 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
       const title = stripHtml(titleRaw);
 
       const descRaw = getTagContent(block, 'description');
-      const summary = stripHtml(descRaw);
+      const { cleanSummary: summary, imageCredit } = extractCreditAndCleanSummary(stripHtml(descRaw));
 
       const contentEncodedRaw = getTagContent(block, 'content:encoded');
       const fullContent = contentEncodedRaw ? stripHtml(contentEncodedRaw) : undefined;
@@ -239,7 +305,8 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
         getTagContent(block, 'pubDate') ||
         getTagContent(block, 'dc:date');
 
-      const imageUrl = extractImageUrl(block);
+      const imageUrl = extractImageUrl(block, link);
+      const imageAltText = extractImageAltText(block, title);
 
       if (title && link) {
         entries.push({
@@ -251,7 +318,9 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
           author: author ? stripHtml(author) : undefined,
           publishedAt: parseDateToIso(pubDate),
           sourceId,
-          imageUrl
+          imageUrl,
+          imageAltText,
+          imageCredit
         });
       }
     }
@@ -259,3 +328,4 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
 
   return entries;
 }
+

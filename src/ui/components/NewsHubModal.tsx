@@ -491,7 +491,7 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
     });
   }, [sources, selectedCategory, searchQuery]);
 
-  const enabledCount = sources.filter(s => s.enabled).length;
+  const deliveringCount = sources.filter(s => s.isDelivering).length;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -508,7 +508,7 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                   News-Hub & Quellen-Zentrale
                 </Text>
                 <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
-                  {enabledCount} von {sources.length} Quellen aktiv • Tagesschau, ZDF, Spektrum, Quanta, YT & Import
+                  {deliveringCount} von {sources.length} Kandidaten-Quellen liefern aktiv • Verifizierter Abrufstatus
                 </Text>
               </View>
             </View>
@@ -1180,6 +1180,7 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                   <ScrollView style={styles.sourceScroll} contentContainerStyle={styles.sourceScrollContent}>
                     {filteredSources.map(source => {
                       const catMeta = CATEGORY_METADATA[source.category] || { label: source.category, color: colors.accent, icon: 'newspaper-outline' };
+                      const isActiveAndDelivering = Boolean(source.isDelivering);
 
                       return (
                         <View
@@ -1188,8 +1189,8 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                             styles.sourceRow,
                             {
                               backgroundColor: colors.surfaceSecondary,
-                              borderColor: source.enabled ? colors.borderSubtle : 'transparent',
-                              opacity: source.enabled ? 1 : 0.6
+                              borderColor: isActiveAndDelivering ? colors.borderSubtle : 'transparent',
+                              opacity: isActiveAndDelivering ? 1 : 0.65
                             }
                           ]}
                         >
@@ -1199,16 +1200,50 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                                 {source.name}
                               </Text>
 
+                              <View
+                                style={[
+                                  styles.trustTag,
+                                  {
+                                    backgroundColor: isActiveAndDelivering
+                                      ? 'rgba(16, 185, 129, 0.14)'
+                                      : 'rgba(245, 158, 11, 0.14)',
+                                    borderColor: isActiveAndDelivering ? '#10B981' : '#F59E0B'
+                                  }
+                                ]}
+                              >
+                                <Ionicons
+                                  name={isActiveAndDelivering ? 'checkmark-circle' : 'alert-circle-outline'}
+                                  size={10}
+                                  color={isActiveAndDelivering ? '#10B981' : '#D97706'}
+                                  style={{ marginRight: 3 }}
+                                />
+                                <Text
+                                  style={[
+                                    styles.trustTagText,
+                                    { color: isActiveAndDelivering ? '#10B981' : '#D97706' }
+                                  ]}
+                                >
+                                  {isActiveAndDelivering
+                                    ? `Aktiv (${source.itemCount ?? 0} Beiträge)`
+                                    : 'Inaktiv / Abruffehler'}
+                                </Text>
+                              </View>
+
                               {source.trustBadge && (
                                 <View style={[styles.trustTag, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}>
-                                  <Ionicons name="checkmark-circle" size={10} color={colors.accent} style={{ marginRight: 3 }} />
                                   <Text style={[styles.trustTagText, { color: colors.accent }]}>{source.trustBadge}</Text>
                                 </View>
                               )}
                             </View>
 
                             <Text style={[styles.sourceMeta, { color: colors.textMuted }]} numberOfLines={1}>
-                              {catMeta.label} • {source.defaultAuthor || 'Redaktion'} • {source.url}
+                              {catMeta.label} •{' '}
+                              {isActiveAndDelivering && source.lastSuccessAt
+                                ? `Letzter Erfolg: ${new Date(source.lastSuccessAt).toLocaleDateString('de-DE')}`
+                                : source.lastError
+                                ? `Fehler: ${source.lastError}`
+                                : 'Kein Abruf'}{' '}
+                              • {source.url}
                             </Text>
                           </View>
 
@@ -1225,9 +1260,9 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) 
                             )}
 
                             <Switch
-                              value={source.enabled}
+                              value={isActiveAndDelivering}
                               onValueChange={() => handleToggle(source.id)}
-                              trackColor={{ false: '#767577', true: colors.accent }}
+                              trackColor={{ false: '#767577', true: '#10B981' }}
                               thumbColor="#FFFFFF"
                             />
                           </View>
