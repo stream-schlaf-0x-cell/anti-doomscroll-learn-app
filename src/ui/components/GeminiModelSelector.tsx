@@ -304,11 +304,19 @@ export const GeminiModelSelector: React.FC<GeminiModelSelectorProps> = ({
         </Text>
       </View>
 
-      {/* Model Cards List */}
-      <View style={styles.modelsGrid}>
+      {/* Model Cards List (Compact Scrollable Container) */}
+      <ScrollView
+        style={[
+          styles.modelsScrollContainer,
+          { borderColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary }
+        ]}
+        contentContainerStyle={{ gap: 4, padding: 4 }}
+        nestedScrollEnabled={true}
+        showsVerticalScrollIndicator={true}
+      >
         {filteredModels.length === 0 ? (
           <View style={styles.emptyState}>
-            <Ionicons name="cube-outline" size={24} color={colors.textMuted} style={{ marginBottom: 6 }} />
+            <Ionicons name="cube-outline" size={20} color={colors.textMuted} style={{ marginBottom: 4 }} />
             <Text style={[styles.emptyStateText, { color: colors.textMuted }]}>
               Keine Modelle für diese Filterkombination gefunden.
             </Text>
@@ -320,29 +328,36 @@ export const GeminiModelSelector: React.FC<GeminiModelSelectorProps> = ({
             const isTooltipOpen = expandedTooltipId === model.id;
 
             return (
-              <TouchableOpacity
-                key={model.id}
-                onPress={() => onSelectModel(model.id, model)}
-                style={[
-                  styles.modelCard,
-                  {
-                    backgroundColor: isSelected ? colors.surfaceSecondary : colors.surface,
-                    borderColor: isSelected ? colors.accent : colors.borderSubtle
-                  },
-                  isSelected && styles.modelCardSelected
-                ]}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: isSelected }}
-              >
-                {/* Top Row: Label, Status Badge & Radio Indicator */}
-                <View style={styles.cardHeader}>
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+              <View key={model.id}>
+                <TouchableOpacity
+                  onPress={() => onSelectModel(model.id, model)}
+                  style={[
+                    styles.modelRow,
+                    {
+                      backgroundColor: isSelected ? colors.surface : colors.surfaceSecondary,
+                      borderColor: isSelected ? colors.accent : colors.borderSubtle
+                    },
+                    isSelected && styles.modelRowSelected
+                  ]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: isSelected }}
+                >
+                  <View style={styles.radioIndicator}>
+                    <Ionicons
+                      name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                      size={16}
+                      color={isSelected ? colors.accent : colors.textMuted}
+                    />
+                  </View>
+
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5 }}>
                       <Text
                         style={[
-                          styles.cardLabel,
+                          styles.modelRowTitle,
                           { color: colors.textPrimary, fontWeight: isSelected ? '700' : '600' }
                         ]}
+                        numberOfLines={1}
                       >
                         {model.label}
                       </Text>
@@ -368,48 +383,35 @@ export const GeminiModelSelector: React.FC<GeminiModelSelectorProps> = ({
                       )}
                     </View>
 
-                    <Text style={[styles.modelIdSubtext, { color: colors.textMuted }]}>
-                      ID: {model.id}
+                    <Text style={[styles.modelRowSubtext, { color: colors.textMuted }]} numberOfLines={1}>
+                      <Text style={{ fontFamily: 'monospace' }}>{model.id}</Text> • {model.description}
                     </Text>
                   </View>
 
-                  <View style={styles.radioIndicator}>
+                  <TouchableOpacity
+                    onPress={e => {
+                      // @ts-ignore
+                      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+                      setExpandedTooltipId(isTooltipOpen ? null : model.id);
+                    }}
+                    style={{ padding: 4, marginLeft: 4 }}
+                    accessibilityLabel="Details & Fähigkeiten anzeigen"
+                  >
                     <Ionicons
-                      name={isSelected ? 'radio-button-on' : 'radio-button-off'}
-                      size={18}
-                      color={isSelected ? colors.accent : colors.textMuted}
+                      name={isTooltipOpen ? 'chevron-up-circle' : 'information-circle-outline'}
+                      size={16}
+                      color={isTooltipOpen ? colors.accent : colors.textMuted}
                     />
-                  </View>
-                </View>
-
-                {/* Description & Strength Explanation */}
-                <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>
-                  {model.description}
-                </Text>
-
-                {/* Tooltip / Details Toggle */}
-                <TouchableOpacity
-                  onPress={() => setExpandedTooltipId(isTooltipOpen ? null : model.id)}
-                  style={styles.detailsToggle}
-                >
-                  <Ionicons
-                    name={isTooltipOpen ? 'chevron-up-outline' : 'information-circle-outline'}
-                    size={13}
-                    color={colors.accent}
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text style={[styles.detailsToggleText, { color: colors.accent }]}>
-                    {isTooltipOpen ? 'Weniger Details' : 'Fähigkeiten & Methoden'}
-                  </Text>
+                  </TouchableOpacity>
                 </TouchableOpacity>
 
                 {isTooltipOpen && (
-                  <View style={[styles.tooltipBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                  <View style={[styles.tooltipBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                     <Text style={[styles.tooltipLine, { color: colors.textPrimary }]}>
-                      • <Text style={{ fontWeight: '700' }}>Bereich:</Text> {CATEGORY_LABELS[model.category]?.label || model.category}
+                      • <Text style={{ fontWeight: '700' }}>Beschreibung:</Text> {model.description}
                     </Text>
                     <Text style={[styles.tooltipLine, { color: colors.textPrimary }]}>
-                      • <Text style={{ fontWeight: '700' }}>Methoden:</Text> {model.supportedMethods.join(', ')}
+                      • <Text style={{ fontWeight: '700' }}>Bereich:</Text> {CATEGORY_LABELS[model.category]?.label || model.category} | <Text style={{ fontWeight: '700' }}>Methoden:</Text> {model.supportedMethods.join(', ')}
                     </Text>
                     {model.contextWindow && (
                       <Text style={[styles.tooltipLine, { color: colors.textPrimary }]}>
@@ -418,11 +420,11 @@ export const GeminiModelSelector: React.FC<GeminiModelSelectorProps> = ({
                     )}
                   </View>
                 )}
-              </TouchableOpacity>
+              </View>
             );
           })
         )}
-      </View>
+      </ScrollView>
 
       {/* Custom Model String Option */}
       {allowCustomInput && (
@@ -559,6 +561,31 @@ const styles = StyleSheet.create({
   },
   modelCountBadge: {
     fontSize: 11
+  },
+  modelsScrollContainer: {
+    maxHeight: 220,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    marginVertical: 4
+  },
+  modelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    gap: 8
+  },
+  modelRowSelected: {
+    borderWidth: 1.5
+  },
+  modelRowTitle: {
+    fontSize: 12
+  },
+  modelRowSubtext: {
+    fontSize: 10,
+    marginTop: 1
   },
   modelsGrid: {
     gap: 8,

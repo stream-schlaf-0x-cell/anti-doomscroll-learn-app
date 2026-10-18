@@ -7,7 +7,8 @@ import {
   Pressable,
   TextInput,
   Modal,
-  ActivityIndicator
+  ActivityIndicator,
+  ScrollView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
@@ -593,180 +594,255 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
             style={StyleSheet.absoluteFill}
           />
           <View
-            style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, maxWidth: 640 }]}
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.borderSubtle,
+                maxWidth: 600,
+                width: '92%',
+                maxHeight: '88%',
+                display: 'flex',
+                flexDirection: 'column'
+              }
+            ]}
             onStartShouldSetResponder={() => true}
             // @ts-ignore - web click propagation guard
             onClick={(e: any) => {
               if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
             }}
           >
+            {/* Fixed Header */}
             <View style={styles.modalHeader}>
-              <Ionicons name="hardware-chip-outline" size={22} color={colors.accent} style={{ marginRight: 8 }} />
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>KI-Orchestrierung & Modelle</Text>
-              <TouchableOpacity onPress={() => setShowAIModal(false)}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <Ionicons name="hardware-chip-outline" size={20} color={colors.accent} style={{ marginRight: 8 }} />
+                <View>
+                  <Text style={[styles.modalTitle, { color: colors.textPrimary, fontSize: 16 }]}>KI-Orchestrierung & Modelle</Text>
+                  <Text style={{ fontSize: 11, color: colors.textMuted }}>API-Key konfigurieren & Modell wählen</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowAIModal(false)}
+                style={{ padding: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel="Dialog schließen"
+              >
                 <Ionicons name="close" size={20} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
 
-            {/* Provider Switcher */}
-            <Text style={[styles.modalSubHeader, { color: colors.textMuted }]}>KI-Provider wählen:</Text>
-            <View style={styles.providerRow}>
-              {[
-                { id: 'gemini' as const, label: '⚡️ Google Gemini', desc: 'Offiziell (3.8 Flash, Argon, Nano)' },
-                { id: 'openrouter' as const, label: '🔮 OpenRouter', desc: 'Claude 3.5 Sonnet, Llama 3.3 & mehr' }
-              ].map(p => (
+            {/* Scrollable Modal Content */}
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingVertical: 6, gap: 10 }}
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled={true}
+            >
+              {/* 1. Provider Switcher */}
+              <View>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 4 }]}>1. KI-Provider:</Text>
+                <View style={styles.providerRow}>
+                  {[
+                    { id: 'gemini' as const, label: '⚡️ Google Gemini', desc: 'Offiziell (3.8 Flash, Argon, Nano)' },
+                    { id: 'openrouter' as const, label: '🔮 OpenRouter', desc: 'Claude 3.5 Sonnet, Llama 3.3 & mehr' }
+                  ].map(p => (
+                    <TouchableOpacity
+                      key={p.id}
+                      onPress={() => void handleSwitchAIProvider(p.id)}
+                      style={[
+                        styles.providerPill,
+                        {
+                          backgroundColor: aiCreds.provider === p.id ? colors.accent : colors.surfaceSecondary,
+                          borderColor: aiCreds.provider === p.id ? colors.accent : colors.borderSubtle
+                        }
+                      ]}
+                    >
+                      <Text style={[styles.providerPillText, { color: aiCreds.provider === p.id ? '#FFFFFF' : colors.textPrimary }]}>
+                        {p.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* 2. API Key Section (IMMEDIATELY VISIBLE & ACCESSIBLE!) */}
+              <View style={{ backgroundColor: colors.surfaceSecondary, padding: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderSubtle }}>
+                <Text style={[styles.inputLabel, { color: colors.textPrimary, fontWeight: '700', fontSize: 12, marginBottom: 4 }]}>
+                  {aiCreds.provider === 'gemini'
+                    ? '2. Google AI Studio API-Key (lokal im Browser gesichert):'
+                    : '2. OpenRouter API-Key:'}
+                </Text>
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <TextInput
+                    value={aiCreds.apiKey}
+                    onChangeText={async text => {
+                      const next = { ...aiCreds, apiKey: text };
+                      setAiCreds(next);
+                      await saveAiCredentials(next);
+                    }}
+                    secureTextEntry={!showApiKey}
+                    placeholder={aiCreds.provider === 'gemini' ? 'AIzaSy... (von aistudio.google.com)' : 'sk-or-v1-...'}
+                    placeholderTextColor={colors.textMuted}
+                    style={[
+                      styles.modalInput,
+                      {
+                        flex: 1,
+                        backgroundColor: colors.surface,
+                        color: colors.textPrimary,
+                        borderColor: colors.borderSubtle
+                      }
+                    ]}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowApiKey(!showApiKey)}
+                    style={[
+                      styles.keyActionBtn,
+                      {
+                        backgroundColor: colors.surface,
+                        borderColor: colors.borderSubtle,
+                        borderWidth: 1,
+                        borderRadius: radius.md,
+                        padding: 8
+                      }
+                    ]}
+                    accessibilityLabel={showApiKey ? 'API-Key verbergen' : 'API-Key anzeigen'}
+                  >
+                    <Ionicons name={showApiKey ? 'eye-off-outline' : 'eye-outline'} size={18} color={colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Connection Test Button */}
                 <TouchableOpacity
-                  key={p.id}
-                  onPress={() => void handleSwitchAIProvider(p.id)}
+                  onPress={handleTestAI}
+                  disabled={isTestingAI}
                   style={[
-                    styles.providerPill,
+                    styles.modalActionBtn,
                     {
-                      backgroundColor: aiCreds.provider === p.id ? colors.accent : colors.surfaceSecondary,
-                      borderColor: aiCreds.provider === p.id ? colors.accent : colors.borderSubtle
+                      backgroundColor: colors.surface,
+                      borderColor: colors.accent,
+                      borderWidth: 1,
+                      marginTop: 8,
+                      paddingVertical: 7
                     }
                   ]}
                 >
-                  <Text style={[styles.providerPillText, { color: aiCreds.provider === p.id ? '#FFFFFF' : colors.textPrimary }]}>
-                    {p.label}
-                  </Text>
+                  {isTestingAI ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Text style={[styles.modalActionBtnText, { color: colors.accent, fontWeight: '700', fontSize: 12 }]}>
+                      🔑 Verbindung testen & Key validieren
+                    </Text>
+                  )}
                 </TouchableOpacity>
-              ))}
-            </View>
 
-            {/* If Gemini: Full GeminiModelSelector */}
-            {aiCreds.provider === 'gemini' ? (
-              <GeminiModelSelector
-                selectedModelId={aiCreds.model || DEFAULT_GEMINI_MODEL}
-                onSelectModel={async mId => {
-                  const next = { ...aiCreds, model: mId };
-                  setAiCreds(next);
-                  await saveAiCredentials(next);
-                }}
-                apiKey={aiCreds.apiKey}
-                workflow="text"
-              />
-            ) : (
-              /* OpenRouter Model Selection */
-              <View style={{ marginVertical: 8 }}>
-                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>OpenRouter Modell:</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 6 }}>
-                  {OPENROUTER_MODEL_PRESETS.map(preset => {
-                    const isSelected = (aiCreds.model || DEFAULT_OPENROUTER_MODEL) === preset.id;
-                    return (
-                      <TouchableOpacity
-                        key={preset.id}
-                        onPress={async () => {
-                          const next = { ...aiCreds, model: preset.id };
-                          setAiCreds(next);
-                          await saveAiCredentials(next);
-                        }}
-                        style={[
-                          styles.modelPresetPill,
-                          {
-                            backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
-                            borderColor: isSelected ? colors.accent : colors.borderSubtle
-                          }
-                        ]}
-                      >
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: isSelected ? '#FFFFFF' : colors.textPrimary }}>
-                          {preset.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-                <TextInput
-                  value={aiCreds.model}
-                  onChangeText={async text => {
-                    const next = { ...aiCreds, model: text };
-                    setAiCreds(next);
-                    await saveAiCredentials(next);
-                  }}
-                  placeholder={DEFAULT_OPENROUTER_MODEL}
-                  placeholderTextColor={colors.textMuted}
-                  style={[styles.modalInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
-                />
+                {/* Test Result Box */}
+                {testResult && (
+                  <View
+                    style={[
+                      styles.testResultBox,
+                      {
+                        backgroundColor: testResult.ok ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        borderColor: testResult.ok ? '#10B981' : '#EF4444',
+                        borderWidth: 1,
+                        marginTop: 8,
+                        borderRadius: radius.md,
+                        padding: 8
+                      }
+                    ]}
+                  >
+                    <Text style={{ color: testResult.ok ? '#10B981' : '#EF4444', fontSize: 12, fontWeight: '600' }}>
+                      {testResult.message}
+                    </Text>
+                  </View>
+                )}
               </View>
-            )}
 
-            {/* API Key Input */}
-            <View style={{ marginTop: 8 }}>
-              <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
-                {aiCreds.provider === 'gemini' ? 'Google AI Studio API-Key (lokal gesichert):' : 'OpenRouter API-Key:'}
+              {/* 3. Model Selector Section */}
+              <View>
+                <Text style={[styles.inputLabel, { color: colors.textPrimary, fontWeight: '700', fontSize: 12, marginBottom: 4 }]}>
+                  3. Modell auswählen:
+                </Text>
+
+                {aiCreds.provider === 'gemini' ? (
+                  <GeminiModelSelector
+                    selectedModelId={aiCreds.model || DEFAULT_GEMINI_MODEL}
+                    onSelectModel={async mId => {
+                      const next = { ...aiCreds, model: mId };
+                      setAiCreds(next);
+                      await saveAiCredentials(next);
+                    }}
+                    apiKey={aiCreds.apiKey}
+                    workflow="text"
+                  />
+                ) : (
+                  /* OpenRouter Model Selection */
+                  <View style={{ marginVertical: 4 }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 4 }}>
+                      {OPENROUTER_MODEL_PRESETS.map(preset => {
+                        const isSelected = (aiCreds.model || DEFAULT_OPENROUTER_MODEL) === preset.id;
+                        return (
+                          <TouchableOpacity
+                            key={preset.id}
+                            onPress={async () => {
+                              const next = { ...aiCreds, model: preset.id };
+                              setAiCreds(next);
+                              await saveAiCredentials(next);
+                            }}
+                            style={[
+                              styles.modelPresetPill,
+                              {
+                                backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
+                                borderColor: isSelected ? colors.accent : colors.borderSubtle
+                              }
+                            ]}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: isSelected ? '#FFFFFF' : colors.textPrimary }}>
+                              {preset.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <TextInput
+                      value={aiCreds.model}
+                      onChangeText={async text => {
+                        const next = { ...aiCreds, model: text };
+                        setAiCreds(next);
+                        await saveAiCredentials(next);
+                      }}
+                      placeholder={DEFAULT_OPENROUTER_MODEL}
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.modalInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
+                    />
+                  </View>
+                )}
+              </View>
+
+              {/* Zero-Risk Note */}
+              <Text style={[styles.modalFooterNote, { color: colors.textMuted, marginTop: 4 }]}>
+                Deckel: 5,00 €/Monat. Ohne Key oder bei Budgetlimit schaltet Atem unterbrechungsfrei auf die lokale Heuristik um.
               </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <TextInput
-                  value={aiCreds.apiKey}
-                  onChangeText={async text => {
-                    const next = { ...aiCreds, apiKey: text };
-                    setAiCreds(next);
-                    await saveAiCredentials(next);
-                  }}
-                  secureTextEntry={!showApiKey}
-                  placeholder={aiCreds.provider === 'gemini' ? 'AIzaSy...' : 'sk-or-v1-...'}
-                  placeholderTextColor={colors.textMuted}
-                  style={[styles.modalInput, { flex: 1, backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <TouchableOpacity
-                  onPress={() => setShowApiKey(!showApiKey)}
-                  style={[styles.keyActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1, borderRadius: radius.md, padding: 8 }]}
-                >
-                  <Ionicons name={showApiKey ? 'eye-off-outline' : 'eye-outline'} size={18} color={colors.textMuted} />
-                </TouchableOpacity>
-              </View>
-            </View>
+            </ScrollView>
 
-            {/* Action Buttons */}
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+            {/* Fixed Footer with Action Buttons */}
+            <View style={{ flexDirection: 'row', gap: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.borderSubtle }}>
               <TouchableOpacity
-                onPress={handleTestAI}
-                disabled={isTestingAI}
+                onPress={() => setShowAIModal(false)}
                 style={[styles.modalActionBtn, { flex: 1, backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
               >
-                {isTestingAI ? (
-                  <ActivityIndicator size="small" color={colors.accent} />
-                ) : (
-                  <Text style={[styles.modalActionBtnText, { color: colors.accent, fontWeight: '700' }]}>
-                    🔑 API-Key speichern & Verbindung testen
-                  </Text>
-                )}
+                <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>Schließen</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 onPress={handleSaveAISettings}
-                style={[styles.modalActionBtn, { backgroundColor: colors.accent, paddingHorizontal: 16 }]}
+                style={[styles.modalActionBtn, { flex: 1, backgroundColor: colors.accent }]}
               >
-                <Text style={[styles.modalActionBtnText, { color: '#FFFFFF' }]}>Speichern</Text>
+                <Text style={[styles.modalActionBtnText, { color: '#FFFFFF', fontWeight: '700' }]}>✓ Speichern</Text>
               </TouchableOpacity>
             </View>
-
-            {/* Test Result Box */}
-            {testResult && (
-              <View
-                style={[
-                  styles.testResultBox,
-                  {
-                    backgroundColor: testResult.ok ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                    borderColor: testResult.ok ? '#10B981' : '#EF4444',
-                    borderWidth: 1,
-                    marginTop: 10,
-                    borderRadius: radius.md,
-                    padding: 8
-                  }
-                ]}
-              >
-                <Text style={{ color: testResult.ok ? '#10B981' : '#EF4444', fontSize: 12, fontWeight: '600' }}>
-                  {testResult.message}
-                </Text>
-              </View>
-            )}
-
-            {/* Zero-Risk Note */}
-            <Text style={[styles.modalFooterNote, { color: colors.textMuted, marginTop: 8 }]}>
-              Deckel: 5,00 €/Monat. Ohne Key oder bei Budgetlimit schaltet Atem unterbrechungsfrei auf die lokale Heuristik um.
-            </Text>
           </View>
         </View>
       </Modal>
