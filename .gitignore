@@ -47,3 +47,5 @@ atmen_complete_codebase_*
 atmen_source_code_*
 *.dump.txt
 atmen_codebase_report.txt
+ATMEN_COMPLETE_CODEBASE.txt
+

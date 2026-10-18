@@ -751,19 +751,21 @@ export function allocateDailyEditions(
     evening: []
   };
 
-  // If shuffleOffset > 0, prioritize fresh candidates that haven't been shown in recent mixes
+  // Prioritize fresh candidates that haven't been shown in recent mixes
   const unshownPool = previouslyShownIds && previouslyShownIds.size > 0
     ? pool.filter(item => !previouslyShownIds.has(item.id))
     : [];
-  const effectiveBasePool = unshownPool.length >= targetPerEdition * 3
-    ? unshownPool
-    : pool;
 
   for (const edition of editions) {
-    let availablePool = effectiveBasePool.filter(item => !assignedIds.has(item.id));
+    let availablePool = unshownPool.length > 0
+      ? unshownPool.filter(item => !assignedIds.has(item.id))
+      : pool.filter(item => !assignedIds.has(item.id));
+
     if (availablePool.length < targetPerEdition) {
       // Backfill from full pool if unshown pool is exhausted
-      availablePool = pool.filter(item => !assignedIds.has(item.id));
+      const currentAvailableIds = new Set(availablePool.map(i => i.id));
+      const backfill = pool.filter(item => !assignedIds.has(item.id) && !currentAvailableIds.has(item.id));
+      availablePool = [...availablePool, ...backfill];
     }
     const scored = availablePool.map(item => scoreForEdition(item, edition, profile, interactions, seed, shuffleOffset));
     const bloomRanked = rankBloomScrollFeed(scored);

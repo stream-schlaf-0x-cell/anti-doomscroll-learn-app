@@ -36,8 +36,28 @@ if (typeof process !== 'undefined' && process.versions?.node) {
 export type NewsHubFilterCategory = 'all' | 'oerr' | 'tech' | 'science' | 'didactic' | 'culture';
 
 export type { SnapshotPayload as PublicFeedSnapshot } from '../feed/snapshotPayload';
-
 const PUBLIC_SNAPSHOT_CACHE_KEY = '@atem:public_feed_snapshot:v1';
+
+export type NewsProviderId = 'tagesschau' | 'hackernews' | 'wikinews' | 'snapshot' | 'rss';
+
+export interface NewsStatusInfo {
+  lastFetchTimeFormatted: string;
+  fetchStatus: 'live' | 'snapshot' | 'cached' | 'offline';
+  totalItems: number;
+  snapshotAgeLabel: string;
+  reachableSourcesCount: number;
+  totalSourcesCount: number;
+  statusLabel: string;
+}
+
+export interface LiveNewsUpdateEvent {
+  items: FeedItem[];
+  providerId: NewsProviderId;
+  newItemsCount: number;
+  statusInfo: NewsStatusInfo;
+}
+
+export type LiveNewsSubscriber = (event: LiveNewsUpdateEvent) => void;
 
 /**
  * ContinuousLiveNewsService
@@ -53,9 +73,47 @@ const PUBLIC_SNAPSHOT_CACHE_KEY = '@atem:public_feed_snapshot:v1';
 export class ContinuousLiveNewsService {
   private static liveIngestedItems: FeedItem[] = [];
   private static lastFetchTimestamp: number = 0;
+  private static lastDirectFetchTimestamp: number = 0;
+  private static lastCheckAttemptTimestamp: number = 0;
+  private static reachableLiveSources: Set<NewsProviderId> = new Set();
+  private static activeRefreshPromise: Promise<FeedItem[]> | null = null;
+  private static listeners = new Set<LiveNewsSubscriber>();
   private static lastFormattedUpdate: string = 'Offline · gespeicherte Inhalte';
   private static snapshotStatus: 'live_snapshot' | 'stale_snapshot' | 'cached_snapshot' | 'offline_fallback' = 'offline_fallback';
   private static readonly CACHE_TTL_MS = 1000 * 60 * 5; // 5 minutes
+
+  public static subscribe(listener: LiveNewsSubscriber): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private static notifySubscribers(event: LiveNewsUpdateEvent): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (err) {
+        console.warn('Live news listener error:', err);
+      }
+    }
+  }
+
+  public static resetStateForTesting(options?: {
+    items?: FeedItem[];
+    snapshotStatus?: 'live_snapshot' | 'stale_snapshot' | 'cached_snapshot' | 'offline_fallback';
+    lastFetchTimestamp?: number;
+    lastDirectFetchTimestamp?: number;
+    reachableLiveSources?: NewsProviderId[];
+  }): void {
+    this.liveIngestedItems = options?.items ? [...options.items] : [];
+    this.snapshotStatus = options?.snapshotStatus ?? 'offline_fallback';
+    this.lastFetchTimestamp = options?.lastFetchTimestamp ?? 0;
+    this.lastDirectFetchTimestamp = options?.lastDirectFetchTimestamp ?? 0;
+    this.reachableLiveSources = new Set(options?.reachableLiveSources ?? []);
+    this.activeRefreshPromise = null;
+    this.lastFormattedUpdate = 'Offline · gespeicherte Inhalte';
+  }
 
   public static getLastUpdatedTime(): string {
     return this.lastFormattedUpdate;
@@ -472,74 +530,124 @@ export class ContinuousLiveNewsService {
     }
   }
 
+  private static integrateProviderItems(incoming: FeedItem[], providerId: NewsProviderId): number {
+    const valid = this.validatedItems(incoming);
+    if (valid.length === 0) return 0;
+
+    if (providerId !== 'snapshot') {
+      this.lastDirectFetchTimestamp = Date.now();
+      this.reachableLiveSources.add(providerId);
+    }
+
+    const seen = new Set<string>();
+    for (const existing of this.liveIngestedItems) {
+      seen.add(existing.canonicalUrl || existing.id);
+    }
+
+    let newCount = 0;
+    const itemsToAdd: FeedItem[] = [];
+    for (const item of valid) {
+      const key = item.canonicalUrl || item.id;
+      if (!seen.has(key)) {
+        seen.add(key);
+        itemsToAdd.push(item);
+        newCount++;
+      }
+    }
+
+    if (itemsToAdd.length > 0) {
+      this.liveIngestedItems = [...itemsToAdd, ...this.liveIngestedItems];
+    }
+    this.lastFetchTimestamp = Date.now();
+    if (providerId !== 'snapshot') {
+      this.updateTimestampLabel();
+    }
+
+    this.notifySubscribers({
+      items: [...this.liveIngestedItems],
+      providerId,
+      newItemsCount: newCount,
+      statusInfo: this.getNewsStatusInfo()
+    });
+
+    return newCount;
+  }
+
   /**
-   * Fetches fresh live feeds across CORS-open JSON APIs, Public Snapshot, and direct RSS on native/Node.
+   * Fetches fresh live feeds progressively across CORS-open JSON APIs, Public Snapshot, and direct RSS on native/Node.
+   * Fast sources (e.g. Tagesschau ~200ms) are immediately emitted via subscriptions without waiting for slower sources.
+   * Concurrent requests are deduplicated in-flight.
    */
-  public static async refreshLiveFeeds(force = false): Promise<FeedItem[]> {
+  public static refreshLiveFeeds(force = false): Promise<FeedItem[]> {
+    if (this.activeRefreshPromise) {
+      return this.activeRefreshPromise;
+    }
+
     const now = Date.now();
     if (!force && this.liveIngestedItems.length > 0 && now - this.lastFetchTimestamp < this.CACHE_TTL_MS) {
-      return this.liveIngestedItems;
+      return Promise.resolve(this.liveIngestedItems);
     }
 
-    try {
-      const [tagesschauSettled, hnSettled, wikiNewsSettled, snapshotSettled] = await Promise.allSettled([
-        this.fetchTagesschauLiveJson(15),
-        this.fetchHackerNewsLiveJson(12),
-        this.fetchWikipediaCurrentNewsJson(),
-        this.loadPublicFeedSnapshot()
-      ]);
+    this.activeRefreshPromise = (async () => {
+      this.lastCheckAttemptTimestamp = Date.now();
+      this.reachableLiveSources.clear();
 
-      const corsLiveItems: FeedItem[] = [
-        ...(tagesschauSettled.status === 'fulfilled' ? tagesschauSettled.value : []),
-        ...(hnSettled.status === 'fulfilled' ? hnSettled.value : []),
-        ...(wikiNewsSettled.status === 'fulfilled' ? wikiNewsSettled.value : [])
+      const tasks: Promise<any>[] = [
+        this.fetchTagesschauLiveJson(15)
+          .then(items => this.integrateProviderItems(items, 'tagesschau'))
+          .catch(() => 0),
+        this.fetchHackerNewsLiveJson(12)
+          .then(items => this.integrateProviderItems(items, 'hackernews'))
+          .catch(() => 0),
+        this.fetchWikipediaCurrentNewsJson()
+          .then(items => this.integrateProviderItems(items, 'wikinews'))
+          .catch(() => 0),
+        this.loadPublicFeedSnapshot()
+          .then(items => this.integrateProviderItems(items, 'snapshot'))
+          .catch(() => 0)
       ];
 
-      // On native / Node environments, also fetch a quick subset of RSS feeds directly
-      let rssItems: FeedItem[] = [];
       const isWebBrowser = typeof window !== 'undefined' && typeof (window as any).document !== 'undefined';
       if (!isWebBrowser) {
-        try {
-          const prioritySources = VERIFIED_FEED_SOURCES.filter(source => getSourceKind(source) === 'feed').slice(0, 12);
-          const results = await fetchAllFeeds(prioritySources, 4, 3500);
-          const today = new Date().toISOString().slice(0, 10);
-          for (const res of results) {
-            if (!res.success) continue;
-            for (const entry of res.entries.slice(0, 3)) {
-              try {
-                rssItems.push(normalizeFeedEntry(entry, res.source, today));
-              } catch {
-                // Skip malformed entry
+        tasks.push(
+          (async () => {
+            try {
+              const prioritySources = VERIFIED_FEED_SOURCES.filter(source => getSourceKind(source) === 'feed').slice(0, 12);
+              const results = await fetchAllFeeds(prioritySources, 4, 3500);
+              const today = new Date().toISOString().slice(0, 10);
+              const rssItems: FeedItem[] = [];
+              for (const res of results) {
+                if (!res.success) continue;
+                for (const entry of res.entries.slice(0, 3)) {
+                  try {
+                    rssItems.push(normalizeFeedEntry(entry, res.source, today));
+                  } catch {
+                    // Skip malformed entry
+                  }
+                }
               }
+              return this.integrateProviderItems(rssItems, 'rss');
+            } catch {
+              return 0;
             }
-          }
-        } catch {
-          rssItems = [];
-        }
+          })()
+        );
       }
 
-      const freshItems = this.validatedItems([...corsLiveItems, ...rssItems]);
-      const snapshotItems = snapshotSettled.status === 'fulfilled' ? snapshotSettled.value : [];
-      const merged = [...freshItems, ...snapshotItems];
-      if (merged.length > 0) {
-        const seen = new Set<string>();
-        this.liveIngestedItems = merged.filter(item => {
-          const key = item.canonicalUrl || item.id;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        this.lastFetchTimestamp = now;
-        if (freshItems.length > 0) this.updateTimestampLabel();
-        return this.liveIngestedItems;
-      }
-    } catch {
-      // Fallback below
-    }
+      await Promise.allSettled(tasks);
 
-    this.snapshotStatus = 'offline_fallback';
-    this.lastFormattedUpdate = 'Offline · gespeicherte Inhalte';
-    return this.validatedItems(staticPipelineItems);
+      if (this.liveIngestedItems.length === 0) {
+        this.snapshotStatus = 'offline_fallback';
+        this.lastFormattedUpdate = 'Offline · gespeicherte Inhalte';
+        return this.validatedItems(staticPipelineItems);
+      }
+
+      return this.liveIngestedItems;
+    })().finally(() => {
+      this.activeRefreshPromise = null;
+    });
+
+    return this.activeRefreshPromise;
   }
 
   /**
@@ -586,7 +694,6 @@ export class ContinuousLiveNewsService {
     windowMode: '7d_quality' | '48h_fresh' | 'chronological' = '7d_quality',
     nowMs: number = Date.now()
   ): number {
-    if (item.id === 'news_hub_heise_1') return -1000;
     const pubMs = new Date(item.publishedAt).getTime() || nowMs;
     const ageHours = Math.max(0, (nowMs - pubMs) / (1000 * 60 * 60));
 
@@ -673,11 +780,7 @@ export class ContinuousLiveNewsService {
     }
 
     const refreshedStatic = this.validatedItems(staticPipelineItems);
-
-    const combined = [
-      ...liveItems,
-      ...refreshedStatic
-    ];
+    const combined = liveItems.length > 0 ? liveItems : refreshedStatic;
 
     const seen = new Set<string>();
     let unique = combined.filter(item => {
@@ -730,26 +833,17 @@ export class ContinuousLiveNewsService {
         return ageHours >= -0.5 && ageHours <= maxAgeHours;
       });
 
-      // If fewer than 5 items in 24h, gracefully expand to 48h or all available real news
-      const candidates = recent.length >= 5 ? recent : unique.filter(item => {
-        const pubMs = new Date(item.publishedAt).getTime();
-        return pubMs && !isNaN(pubMs);
-      });
+      // Strict adherence to time window: no secret expansion to all items if < 5!
+      unique = recent;
 
-      candidates.sort((a, b) => {
-        if (a.id === 'news_hub_heise_1' && b.id !== 'news_hub_heise_1') return 1;
-        if (b.id === 'news_hub_heise_1' && a.id !== 'news_hub_heise_1') return -1;
+      unique.sort((a, b) => {
         const timeA = new Date(a.publishedAt).getTime() || 0;
         const timeB = new Date(b.publishedAt).getTime() || 0;
         return timeB - timeA;
       });
-
-      unique = candidates;
     } else {
       // 7d_quality mode: Quality score + publisher diversity interleave
       unique.sort((a, b) => {
-        if (a.id === 'news_hub_heise_1' && b.id !== 'news_hub_heise_1') return 1;
-        if (b.id === 'news_hub_heise_1' && a.id !== 'news_hub_heise_1') return -1;
         const scoreA = this.computeRollingWindowQualityScore(a, windowMode, nowMs);
         const scoreB = this.computeRollingWindowQualityScore(b, windowMode, nowMs);
         if (scoreB !== scoreA) return scoreB - scoreA;
@@ -815,29 +909,53 @@ export class ContinuousLiveNewsService {
   /**
    * Transparent provenance status for the News Hub header.
    */
-  public static getNewsStatusInfo(): {
-    lastFetchTimeFormatted: string;
-    fetchStatus: 'live' | 'cached' | 'offline';
-    totalItems: number;
-    snapshotAgeLabel: string;
-  } {
+  public static getNewsStatusInfo(): NewsStatusInfo {
     const now = Date.now();
-    const ageMs = now - this.lastFetchTimestamp;
-    let fetchStatus: 'live' | 'cached' | 'offline' = 'live';
-    if (this.lastFetchTimestamp === 0 || this.snapshotStatus === 'offline_fallback') {
-      fetchStatus = 'offline';
-    } else if (ageMs > this.CACHE_TTL_MS) {
+    const ageDirectMs = now - this.lastDirectFetchTimestamp;
+    const ageAttemptMs = now - this.lastFetchTimestamp;
+    const totalAttempted = 3; // Tagesschau, HN, Wikipedia (+ Snapshot)
+
+    let fetchStatus: 'live' | 'snapshot' | 'cached' | 'offline' = 'live';
+    let statusLabel = '';
+
+    if (this.reachableLiveSources.size > 0 && ageDirectMs < this.CACHE_TTL_MS) {
+      fetchStatus = 'live';
+      const mins = Math.max(0, Math.round(ageDirectMs / 60000));
+      statusLabel = mins === 0
+        ? `Live geprüft · ${this.reachableLiveSources.size} Direktquellen aktiv`
+        : `Vor ${mins} Min. live geprüft · ${this.reachableLiveSources.size} Direktquellen aktiv`;
+    } else if (this.snapshotStatus === 'live_snapshot' || this.snapshotStatus === 'stale_snapshot' || this.snapshotStatus === 'cached_snapshot') {
+      fetchStatus = 'snapshot';
+      statusLabel = this.snapshotStatus === 'live_snapshot'
+        ? `Gespeicherter Stand (Snapshot) · ${this.lastFormattedUpdate}`
+        : `Älterer Stand (Snapshot) · ${this.lastFormattedUpdate}`;
+    } else if (this.liveIngestedItems.length > 0 && ageAttemptMs < this.CACHE_TTL_MS * 4) {
       fetchStatus = 'cached';
+      const mins = Math.max(1, Math.round(ageAttemptMs / 60000));
+      statusLabel = `Aus Zwischenspeicher · Zuletzt vor ${mins} Min. geprüft`;
+    } else {
+      fetchStatus = 'offline';
+      statusLabel = 'Offline · Gespeicherte Inhalte';
     }
+
     const lastTime = this.lastFetchTimestamp > 0
       ? new Date(this.lastFetchTimestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
       : 'Noch nicht geprüft';
+
     return {
       lastFetchTimeFormatted: lastTime,
       fetchStatus,
       totalItems: this.liveIngestedItems.length,
-      snapshotAgeLabel: this.lastFormattedUpdate
+      snapshotAgeLabel: this.lastFormattedUpdate,
+      reachableSourcesCount: this.reachableLiveSources.size,
+      totalSourcesCount: totalAttempted,
+      statusLabel
     };
+  }
+
+  public static getOlderAvailableCount(currentCount: number): number {
+    const total = this.liveIngestedItems.length + staticPipelineItems.length;
+    return Math.max(0, total - currentCount);
   }
 
   public static getLastFetchTimestamp(): number {

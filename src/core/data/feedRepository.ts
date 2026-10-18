@@ -309,10 +309,12 @@ export class LocalFeedRepository implements IFeedRepository {
     }
 
     let remainingItems = this.items.filter(item => !excludeSet.has(item.id));
-    // If excluding previously shown left too few items, fall back to all non-daily items
+    // If excluding previously shown left fewer than 12 items, keep unshown items first and backfill
     if (remainingItems.length < 12) {
       const baseDailyExclude = new Set(this.items.filter(i => i.isDailyEdition).slice(0, 8).map(i => i.id));
-      remainingItems = this.items.filter(item => !baseDailyExclude.has(item.id));
+      const unshownIds = new Set(remainingItems.map(i => i.id));
+      const backfill = this.items.filter(item => !baseDailyExclude.has(item.id) && !unshownIds.has(item.id));
+      remainingItems = [...remainingItems, ...backfill];
     }
     const ranked = rankAndInterleaveFeed(remainingItems, profile, interactions);
     return this.applyPinnedItems(ranked, profile, interactions, excludeSet);

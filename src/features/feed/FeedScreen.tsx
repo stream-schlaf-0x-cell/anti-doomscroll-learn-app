@@ -11,7 +11,8 @@ import {
   useWindowDimensions,
   ActivityIndicator,
   Platform,
-  TextInput
+  TextInput,
+  Linking
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, FeedItem, DayEditionType, DAY_EDITIONS_META, TOPIC_SPACE_MAP } from '../../core/domain/types';
@@ -41,6 +42,8 @@ import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
 import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
 import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
 import { holdFeedPresentation } from '../../core/feed/feedPresentation';
+import { NewsEvolutionModal } from '../../ui/components/NewsEvolutionModal';
+import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
 
 function useReadingStableFeed(items: ScoredFeedItem[], reading: boolean, scope: string): ScoredFeedItem[] {
   const latest = useMemo(() => ({ items, scope }), [items, scope]);
@@ -130,6 +133,34 @@ export const FeedScreen: React.FC = () => {
   const [liveNewsLimit, setLiveNewsLimit] = useState<number>(40);
   const [showNewsHubSettingsModal, setShowNewsHubSettingsModal] = useState<boolean>(false);
   const [classicsItems, setClassicsItems] = useState<FeedItem[]>([]);
+  const [showEvolutionModal, setShowEvolutionModal] = useState<boolean>(false);
+  const [evolutionLoading, setEvolutionLoading] = useState<boolean>(false);
+  const [evolutionBriefing, setEvolutionBriefing] = useState<NewsEvolutionBriefing | null>(null);
+
+  const handleOpenEvolution = useCallback(async (forceRefresh = false) => {
+    setShowEvolutionModal(true);
+    if (!evolutionBriefing || forceRefresh) {
+      setEvolutionLoading(true);
+      try {
+        const briefing = await NewsEvolutionService.generateEvolutionBriefing(liveNewsItems, { forceRefresh });
+        setEvolutionBriefing(briefing);
+      } catch (err) {
+        console.warn('News evolution briefing generation failed:', err);
+      } finally {
+        setEvolutionLoading(false);
+      }
+    }
+  }, [evolutionBriefing, liveNewsItems]);
+
+  // Progressive live news provider updates: when Tagesschau completes in ~200ms, display immediately!
+  React.useEffect(() => {
+    const unsubscribe = ContinuousLiveNewsService.subscribe(event => {
+      if (activeFeedOption === 'live_news' && event.items.length > 0) {
+        setLiveNewsItems(event.items);
+      }
+    });
+    return unsubscribe;
+  }, [activeFeedOption]);
 
   const activeTopic: TopicTag | undefined = useMemo(() => {
     if (selectedFilter === 'all') return undefined;
@@ -241,11 +272,19 @@ export const FeedScreen: React.FC = () => {
   const handleShuffle = async () => {
     setSimulatingDay(true);
     try {
-      await shuffleFeed();
+      const renderedIds = currentFeedItems.slice(0, visibleInfiniteCount).map(i => i.id);
+      const res = await shuffleFeed(renderedIds);
       setVisibleInfiniteCount(24);
       setActiveCardIndex(0);
       scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-      setSimToast('Frischer Wind: 24 neue Karten kuratiert');
+      if (res?.isPoolExhausted) {
+        setSimToast('Fundus vollständig gezeigt · mische aus allen Beiträgen neu');
+      } else {
+        const toastText = res?.pinnedCount && res.pinnedCount > 0
+          ? `${res.freshCount} neue Beiträge, ${res.pinnedCount} angeheftete behalten`
+          : `${res.freshCount} neue Beiträge kuratiert`;
+        setSimToast(toastText);
+      }
       setTimeout(() => setSimToast(null), 2500);
     } catch {
       setSimToast('Mischen fehlgeschlagen.');
@@ -1337,42 +1376,56 @@ export const FeedScreen: React.FC = () => {
                 <View style={[styles.liveNewsSubBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                   <View style={styles.liveNewsTopRow}>
                     <View style={styles.liveNewsTitleRow}>
-                      <View
-                        style={[
-                          styles.liveGreenDot,
-                          {
-                            backgroundColor:
-                              ContinuousLiveNewsService.getNewsStatusInfo().fetchStatus === 'live'
-                                ? '#10B981'
-                                : ContinuousLiveNewsService.getNewsStatusInfo().fetchStatus === 'cached'
-                                ? '#F59E0B'
-                                : '#94A3B8'
-                          }
-                        ]}
-                      />
-                      <Text style={[styles.liveNewsTitle, { color: colors.textPrimary }]}>
-                        Echtzeit-Ticker ({scoredLiveItems.length} Meldungen)
-                      </Text>
-                      <Text style={[styles.liveNewsLastUpdatedText, { color: colors.textMuted }]}>
-                        • {ContinuousLiveNewsService.getNewsStatusInfo().fetchStatus === 'live' ? '🟢 Live' : ContinuousLiveNewsService.getNewsStatusInfo().fetchStatus === 'cached' ? '🟡 Cache' : '⚪ Offline'} • Zuletzt geprüft: {ContinuousLiveNewsService.getNewsStatusInfo().lastFetchTimeFormatted}
-                      </Text>
+                      {(() => {
+                        const status = ContinuousLiveNewsService.getNewsStatusInfo();
+                        const dotColor = status.fetchStatus === 'live'
+                          ? '#10B981'
+                          : status.fetchStatus === 'snapshot'
+                          ? '#0EA5E9'
+                          : status.fetchStatus === 'cached'
+                          ? '#F59E0B'
+                          : '#94A3B8';
+                        return (
+                          <>
+                            <View style={[styles.liveGreenDot, { backgroundColor: dotColor }]} />
+                            <Text style={[styles.liveNewsTitle, { color: colors.textPrimary }]}>
+                              Echtzeit-Ticker ({scoredLiveItems.length} Meldungen)
+                            </Text>
+                            <Text style={[styles.liveNewsLastUpdatedText, { color: colors.textMuted }]}>
+                              • {status.statusLabel} • Geprüft: {status.lastFetchTimeFormatted}
+                            </Text>
+                          </>
+                        );
+                      })()}
                     </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <TouchableOpacity
+                        onPress={() => void handleOpenEvolution()}
+                        style={[styles.hubRefreshBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Was hat sich verändert? Analyse öffnen"
+                      >
+                        <Ionicons name="compass-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                        <Text style={[styles.hubRefreshBtnText, { color: colors.accent, fontWeight: '700' }]}>
+                          🧭 Was hat sich verändert?
+                        </Text>
+                      </TouchableOpacity>
+
                       <TouchableOpacity
                         onPress={() => void loadLiveNews(true)}
                         disabled={liveNewsLoading}
-                        style={[styles.hubRefreshBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+                        style={[styles.hubRefreshBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
                         accessibilityRole="button"
                         accessibilityLabel="Live-Feeds jetzt aktualisieren"
                       >
                         <Ionicons
                           name={liveNewsLoading ? 'hourglass-outline' : 'refresh'}
                           size={13}
-                          color={colors.accent}
+                          color={colors.textPrimary}
                           style={{ marginRight: 4 }}
                         />
-                        <Text style={[styles.hubRefreshBtnText, { color: colors.accent }]}>
-                          {liveNewsLoading ? 'Lädt…' : '🔄 Jetzt aktualisieren'}
+                        <Text style={[styles.hubRefreshBtnText, { color: colors.textPrimary }]}>
+                          {liveNewsLoading ? 'Lädt…' : '🔄 Aktualisieren'}
                         </Text>
                       </TouchableOpacity>
 
@@ -1470,6 +1523,25 @@ export const FeedScreen: React.FC = () => {
                       );
                     })}
                   </View>
+
+                  {/* Strict 24h Window Adherence Button */}
+                  {liveNewsWindowMode === 'chronological' && scoredLiveItems.length < 5 && (
+                    <View style={{ marginTop: 8, padding: 8, borderRadius: 8, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.borderSubtle, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary, flex: 1, marginRight: 8 }}>
+                        Im 24-Stunden-Fenster liegen {scoredLiveItems.length} Meldungen vor. Ältere Meldungen laden?
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setLiveNewsWindowMode('48h_fresh')}
+                        style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 6, backgroundColor: colors.accent }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Letzte 48 Stunden anzeigen"
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#FFFFFF' }}>
+                          ⚡ Letzte 48 Stunden anzeigen
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
 
                 {/* Live News Items */}
@@ -2212,6 +2284,25 @@ export const FeedScreen: React.FC = () => {
           setShowNewsHubSettingsModal(false);
           void loadLiveNews();
         }}
+      />
+
+      {/* News Evolution 3-Point Briefing Modal */}
+      <NewsEvolutionModal
+        visible={showEvolutionModal}
+        onClose={() => setShowEvolutionModal(false)}
+        briefing={evolutionBriefing}
+        loading={evolutionLoading}
+        onRefresh={() => void handleOpenEvolution(true)}
+        onOpenArticle={(urlOrId) => {
+          setShowEvolutionModal(false);
+          if (urlOrId.startsWith('http')) {
+            void Linking.openURL(urlOrId).catch(() => {});
+          } else {
+            void openArticle(urlOrId);
+          }
+        }}
+        colors={colors}
+        isDark={isDark}
       />
 
       {/* Inspectable Curation Operation Telemetry Modal */}

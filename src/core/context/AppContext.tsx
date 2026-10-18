@@ -27,6 +27,8 @@ import { RaindropService } from '../raindrop/raindropService';
 import { FeatureModuleId } from '../modules/featureRegistry';
 import { refreshLocalEdition } from './localFeedRefresh';
 import { defaultGraphRepository } from '../graph/graphRepository';
+import { BoundedIdSet } from '../feed/boundedIdSet';
+import { defaultFeedOperationManager } from '../feed/FeedOperationManager';
 
 export type StartupState =
   | { status: 'loading' }
@@ -114,7 +116,7 @@ interface AppContextValue {
   refreshFeed: () => Promise<void>;
   recomputeFeed: () => Promise<void>;
   shuffleSeed: number;
-  shuffleFeed: () => Promise<void>;
+  shuffleFeed: (currentlyRenderedIds?: string[]) => Promise<{ freshCount: number; pinnedCount: number; isPoolExhausted: boolean }>;
   updateEditionPreferences: (prefs: Partial<EditionPreferences>) => Promise<void>;
   simulateDailyGeneration: (daysOffset?: number, customDate?: string) => Promise<{ simulatedDate: string; itemCount: number }>;
   activeDateSeed: string;
@@ -169,7 +171,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const shuffleSeedRef = useRef<number>(0);
   shuffleSeedRef.current = shuffleSeed;
 
-  const sessionServedIdsRef = useRef<Set<string>>(new Set());
+  const sessionServedIdsRef = useRef<BoundedIdSet>(new BoundedIdSet(200));
 
   // References to track latest committed state and prevent stale closures
   const latestProfileRef = useRef<UserProfile>(profile);
@@ -237,7 +239,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const edition = targetEdition ?? selectedEditionTypeRef.current;
       const seed = customDateSeed ?? activeDateSeedRef.current;
       const offset = customShuffleOffset ?? shuffleSeedRef.current;
-      const prevIds = customPreviouslyShownIds ?? sessionServedIdsRef.current;
+      const prevIds = customPreviouslyShownIds ?? sessionServedIdsRef.current.toSet();
 
       const shouldLoadWeather = edition === 'morning' && prof.editionPreferences?.weatherEnabled !== false;
       const city = prof.editionPreferences?.weatherCity || 'dresden';
@@ -271,20 +273,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
   }, [scheduleFeedRecompute]);
 
-  const shuffleFeed = useCallback(async () => {
+  const shuffleFeed = useCallback(async (currentlyRenderedIds?: string[]) => {
     const nextOffset = shuffleSeedRef.current + 1;
     setShuffleSeed(nextOffset);
     shuffleSeedRef.current = nextOffset;
 
-    // Track currently served items so next mix prioritizes fresh unconsumed candidates!
+    // Track currently served items with bounded FIFO memory (200 IDs)
     const previouslyServed = sessionServedIdsRef.current;
-    dailyEdition.forEach(i => previouslyServed.add(i.id));
-    discoveryItems.slice(0, 24).forEach(i => previouslyServed.add(i.id));
-
-    // Reset when over 180 items served so user can cycle smoothly
-    if (previouslyServed.size > 180) {
-      previouslyServed.clear();
+    if (currentlyRenderedIds && currentlyRenderedIds.length > 0) {
+      previouslyServed.addMany(currentlyRenderedIds);
+    } else {
+      dailyEdition.forEach(i => previouslyServed.add(i.id));
+      discoveryItems.slice(0, 24).forEach(i => previouslyServed.add(i.id));
+      openWebItems.forEach(i => previouslyServed.add(i.id));
     }
+
+    const prevSnapshotSet = previouslyServed.toSet();
 
     await scheduleFeedRecompute(
       latestProfileRef.current,
@@ -292,9 +296,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       selectedEditionTypeRef.current,
       `${activeDateSeedRef.current}-shuffle-${nextOffset}`,
       nextOffset,
-      new Set(previouslyServed)
+      prevSnapshotSet
     );
-  }, [dailyEdition, discoveryItems, scheduleFeedRecompute]);
+
+    // Calculate truthful candidate metrics
+    const allRepoItems = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+    const totalPoolCount = allRepoItems.length + openWebItems.length;
+    const isPoolExhausted = previouslyServed.size >= totalPoolCount && totalPoolCount > 0;
+
+    const pinnedIds = defaultFeedOperationManager.getPinnedItemIds();
+    const pinnedCount = pinnedIds.length;
+    const estimatedFresh = Math.max(0, Math.min(24 - pinnedCount, totalPoolCount - previouslyServed.size));
+    const freshCount = isPoolExhausted ? Math.max(1, totalPoolCount - pinnedCount) : (estimatedFresh > 0 ? estimatedFresh : 24 - pinnedCount);
+
+    return {
+      freshCount,
+      pinnedCount,
+      isPoolExhausted
+    };
+  }, [dailyEdition, discoveryItems, openWebItems, scheduleFeedRecompute]);
 
   const updateEditionPreferences = useCallback(async (prefs: Partial<EditionPreferences>) => {
     try {
