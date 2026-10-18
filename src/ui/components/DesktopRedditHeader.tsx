@@ -426,6 +426,19 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               </TouchableOpacity>
 
               <TouchableOpacity
+                onPress={() => setActiveTab('network')}
+                style={[styles.tabBtn, activeTab === 'network' && { backgroundColor: colors.surface }]}
+                accessibilityRole="button"
+                accessibilityLabel="Netzwerk & Hyperspace öffnen"
+              >
+                <Ionicons
+                  name="planet-outline"
+                  size={15}
+                  color={activeTab === 'network' ? colors.accent : colors.textMuted}
+                />
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 onPress={() => setActiveTab('settings')}
                 style={[styles.tabBtn, activeTab === 'settings' && { backgroundColor: colors.surface }]}
                 accessibilityRole="button"

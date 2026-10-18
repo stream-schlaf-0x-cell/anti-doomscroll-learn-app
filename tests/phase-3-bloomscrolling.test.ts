@@ -24,7 +24,7 @@ import { generateHivemindStream } from '../src/core/synthesis/onTheFlyStreamServ
 
 describe('Phase 3: Bloomscrolling Engine, Native Atem Integration, Quizzes & Simplified Hub', () => {
   it('1. Feature Registry cleanly integrates 3 Phase 3 modules with default enabled', () => {
-    assert.strictEqual(FEATURE_MODULES.length, 9);
+    assert.strictEqual(FEATURE_MODULES.length, 12);
 
     const breathingMod = FEATURE_MODULES.find(m => m.id === 'breathing_portal');
     assert.ok(breathingMod, 'breathing_portal module must exist');

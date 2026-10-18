@@ -10,7 +10,10 @@ export const FeatureModuleIdSchema = z.enum([
   'why_this_transparency',
   'breathing_portal',
   'bloomscroll_quizzes',
-  'hivemind_streams'
+  'hivemind_streams',
+  'knowledge_graph',
+  'hyperspace_3d',
+  'research_automation'
 ]);
 export type FeatureModuleId = z.infer<typeof FeatureModuleIdSchema>;
 
@@ -95,6 +98,30 @@ export const FEATURE_MODULES: readonly FeatureModuleDefinition[] = [
     icon: 'color-wand-outline',
     category: 'discovery',
     defaultEnabled: true
+  },
+  {
+    id: 'knowledge_graph',
+    title: 'Persönliches Netzwerk & Notizen (Trace · Challenge · Connect)',
+    description: 'Eigene Thesen, Fragen und Beziehungen unabhängig verwalten und als Markdown exportieren.',
+    icon: 'share-social-outline',
+    category: 'reflection',
+    defaultEnabled: true
+  },
+  {
+    id: 'hyperspace_3d',
+    title: 'Ruhiger 3D-Hyperspace (Kosmos-Netzwerk)',
+    description: 'Optionale räumliche Apple-artige Visualisierung der gespeicherten Gedanken und Quellen.',
+    icon: 'planet-outline',
+    category: 'discovery',
+    defaultEnabled: true
+  },
+  {
+    id: 'research_automation',
+    title: 'Recherche-Automation (Eigene Vorhaben)',
+    description: 'Gezielte, vom Nutzer ausdrücklich autorisierte Vorhaben und Probeläufe zur Quellensammlung.',
+    icon: 'sync-outline',
+    category: 'discovery',
+    defaultEnabled: true
   }
 ];
 
@@ -107,7 +134,10 @@ export const DEFAULT_ENABLED_MODULES: Record<FeatureModuleId, boolean> = {
   why_this_transparency: true,
   breathing_portal: true,
   bloomscroll_quizzes: true,
-  hivemind_streams: true
+  hivemind_streams: true,
+  knowledge_graph: true,
+  hyperspace_3d: true,
+  research_automation: true
 };
 
 export function isFeatureEnabled(profile: UserProfile | undefined | null, id: FeatureModuleId): boolean {

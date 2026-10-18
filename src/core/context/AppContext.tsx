@@ -26,6 +26,7 @@ import { BackupService } from '../data/backupService';
 import { RaindropService } from '../raindrop/raindropService';
 import { FeatureModuleId } from '../modules/featureRegistry';
 import { refreshLocalEdition } from './localFeedRefresh';
+import { defaultGraphRepository } from '../graph/graphRepository';
 
 export type StartupState =
   | { status: 'loading' }
@@ -55,8 +56,8 @@ interface AppContextValue {
   colors: ThemeColors;
   isDark: boolean;
   palette: ThemePalette;
-  activeTab: 'feed' | 'library' | 'settings';
-  setActiveTab: (tab: 'feed' | 'library' | 'settings') => void;
+  activeTab: 'feed' | 'library' | 'settings' | 'network';
+  setActiveTab: (tab: 'feed' | 'library' | 'settings' | 'network') => void;
   activeFeedOption: FeedOption;
   setActiveFeedOption: (option: FeedOption) => void;
   openWebItems: FeedItem[];
@@ -132,7 +133,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [savedArticles, setSavedArticles] = useState<FeedItem[]>([]);
   const [startupState, setStartupState] = useState<StartupState>({ status: 'loading' });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'feed' | 'library' | 'settings'>('feed');
+  const [activeTab, setActiveTab] = useState<'feed' | 'library' | 'settings' | 'network'>('feed');
   const [activeFeedOption, setActiveFeedOption] = useState<FeedOption>('infinite');
   const [openWebItems, setOpenWebItems] = useState<FeedItem[]>([]);
   const [historyItems, setHistoryItems] = useState<{ item: FeedItem; record: AppearanceRecord }[]>([]);
@@ -818,6 +819,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           await userProfileRepository.saveProfile(res.updatedProfile);
           await scheduleFeedRecompute(res.updatedProfile, nextInteractions);
         }
+      }
+
+      // Mirror note to Personal Knowledge Graph (Masterplan v3)
+      try {
+        const thoughtType = tag === 'these' ? 'thesis' : tag === 'einwand' ? 'thesis' : tag === 'unterricht' ? 'concept' : 'article_note';
+        const thought = await defaultGraphRepository.addThought({
+          type: thoughtType,
+          title: text.length > 50 ? text.slice(0, 47) + '…' : text,
+          body: text,
+          sourceArticleId: id,
+          sourceArticleTitle: item?.title,
+          space: item?.space,
+          tags: tag ? [tag] : ['notiz'],
+          status: 'crystallized'
+        });
+        if (item) {
+          const relation = tag === 'einwand' ? 'contradicts' : tag === 'unterricht' ? 'belongs_to' : 'cites';
+          await defaultGraphRepository.connectNodes({
+            sourceId: item.id,
+            targetId: thought.id,
+            relation,
+            annotation: `Erstellt im Reader (${tag || 'notiz'})`,
+            provenance: 'user_curated'
+          });
+        }
+      } catch {
+        // Non-fatal mirror
       }
     } catch {
       setErrorMessage('Notiz konnte nicht gespeichert werden.');

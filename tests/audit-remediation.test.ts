@@ -166,8 +166,8 @@ describe('Audit Remediation & Verification Suite (Master Execution Plan)', () =>
   });
 
   it('5. Feature registry default state and toggling', () => {
-    // All 9 modules must be registered (6 original + 3 Phase 3 bloomscrolling modules)
-    assert.strictEqual(FEATURE_MODULES.length, 9);
+    // All 12 modules must be registered (6 original + 3 Phase 3 + 3 Masterplan v3 modules)
+    assert.strictEqual(FEATURE_MODULES.length, 12);
 
     // All must be enabled by default
     for (const mod of FEATURE_MODULES) {

@@ -10,6 +10,7 @@ import { FeedScreen } from './src/features/feed/FeedScreen';
 import { ReaderScreen } from './src/features/reader/ReaderScreen';
 import { LibraryScreen } from './src/features/library/LibraryScreen';
 import { SettingsScreen } from './src/features/settings/SettingsScreen';
+import { NetworkScreen } from './src/features/network/NetworkScreen';
 import { WhyThisModal } from './src/ui/components/WhyThisModal';
 import { AtmenLogo } from './src/ui/components/AtmenLogo';
 import { typography, radius } from './src/ui/theme';
@@ -196,6 +197,37 @@ const MainNavigator: React.FC = () => {
               </TouchableOpacity>
 
               <TouchableOpacity
+                onPress={() => setActiveTab('network')}
+                style={[
+                  styles.desktopNavPill,
+                  activeTab === 'network'
+                    ? { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    : { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                ]}
+                accessibilityRole="tab"
+                accessibilityLabel="Netzwerk"
+                accessibilityState={{ selected: activeTab === 'network' }}
+              >
+                <Ionicons
+                  name={activeTab === 'network' ? 'planet' : 'planet-outline'}
+                  size={15}
+                  color={activeTab === 'network' ? colors.accent : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.desktopNavPillText,
+                    {
+                      color: activeTab === 'network' ? colors.accent : colors.textPrimary,
+                      fontWeight: activeTab === 'network' ? '700' : '500'
+                    }
+                  ]}
+                >
+                  Netzwerk
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 onPress={() => setActiveTab('settings')}
                 style={[
                   styles.desktopNavPill,
@@ -258,6 +290,15 @@ const MainNavigator: React.FC = () => {
           pointerEvents={activeTab === 'settings' ? 'auto' : 'none'}
         >
           <SettingsScreen />
+        </View>
+        <View
+          style={[
+            styles.tabPane,
+            { display: activeTab === 'network' ? 'flex' : 'none' }
+          ]}
+          pointerEvents={activeTab === 'network' ? 'auto' : 'none'}
+        >
+          <NetworkScreen />
         </View>
       </View>
 
@@ -345,7 +386,31 @@ const MainNavigator: React.FC = () => {
               </Text>
             </TouchableOpacity>
 
-            {/* Tab 3: Steuerung */}
+            {/* Tab 3: Netzwerk */}
+            <TouchableOpacity
+              accessibilityRole="tab"
+              accessibilityLabel="Netzwerk"
+              accessibilityState={{ selected: activeTab === 'network' }}
+              onPress={() => setActiveTab('network')}
+              style={styles.tabItem}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={activeTab === 'network' ? 'planet' : 'planet-outline'}
+                size={22}
+                color={activeTab === 'network' ? colors.accent : colors.textMuted}
+              />
+              <Text
+                style={[
+                  styles.tabLabel,
+                  { color: activeTab === 'network' ? colors.accent : colors.textMuted }
+                ]}
+              >
+                Netzwerk
+              </Text>
+            </TouchableOpacity>
+
+            {/* Tab 4: Steuerung */}
             <TouchableOpacity
               accessibilityRole="tab"
               accessibilityLabel="Steuerung"
