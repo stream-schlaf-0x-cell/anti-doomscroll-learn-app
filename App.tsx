@@ -12,6 +12,7 @@ import { LibraryScreen } from './src/features/library/LibraryScreen';
 import { SettingsScreen } from './src/features/settings/SettingsScreen';
 import { NetworkScreen } from './src/features/network/NetworkScreen';
 import { WhyThisModal } from './src/ui/components/WhyThisModal';
+import { InvestigationModal } from './src/features/investigation/InvestigationModal';
 import { AtmenLogo } from './src/ui/components/AtmenLogo';
 import { typography, radius } from './src/ui/theme';
 
@@ -29,7 +30,11 @@ const MainNavigator: React.FC = () => {
     selectedArticleId,
     colors,
     isDark,
-    interactions
+    interactions,
+    isInvestigationOpen,
+    investigationTargetArticle,
+    investigationInitialQuestion,
+    closeInvestigation
   } = useApp();
 
   const insets = useSafeAreaInsets();
@@ -311,6 +316,14 @@ const MainNavigator: React.FC = () => {
 
       {/* Transparent "Why This" Modal */}
       <WhyThisModal />
+
+      {/* Epistemic Investigation Modal */}
+      <InvestigationModal
+        visible={isInvestigationOpen}
+        onClose={closeInvestigation}
+        initialArticle={investigationTargetArticle}
+        initialQuestion={investigationInitialQuestion}
+      />
 
       {/* Bottom Tab Bar with Inset Padding (Mobile/Tablet only) */}
       {!isDesktop && (

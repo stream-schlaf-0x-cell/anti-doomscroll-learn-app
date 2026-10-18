@@ -52,7 +52,8 @@ export const ReaderScreen: React.FC = () => {
     updateReadingProgress,
     flushReadingProgress,
     setFeedback,
-    addNote
+    addNote,
+    openInvestigation
   } = useApp();
 
   const { width } = useWindowDimensions();
@@ -694,6 +695,19 @@ export const ReaderScreen: React.FC = () => {
             >
               <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={16} color={colors.textSecondary} />
             </TouchableOpacity>
+
+            {/* Investigation (Neugier ausführen) Button */}
+            {isFeatureEnabled(profile, 'investigation') && (
+              <TouchableOpacity
+                onPress={() => openInvestigation(selectedArticle)}
+                style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel="Untersuchung zu diesem Beitrag starten"
+              >
+                <Ionicons name="telescope-outline" size={16} color={colors.accent} />
+              </TouchableOpacity>
+            )}
 
             {/* Save / Bookmark Button */}
             <TouchableOpacity

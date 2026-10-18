@@ -20,7 +20,7 @@ import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { TOPIC_SPACE_MAP, TopicTag } from '../../core/domain/types';
 
 export const NetworkScreen: React.FC = () => {
-  const { colors, isDark, profile, savedArticles, openArticle } = useApp();
+  const { colors, isDark, profile, savedArticles, openArticle, openInvestigation } = useApp();
 
   const [thoughts, setThoughts] = useState<UserThoughtNode[]>([]);
   const [connections, setConnections] = useState<KnowledgeConnection[]>([]);
@@ -563,6 +563,19 @@ export const NetworkScreen: React.FC = () => {
               )}
 
               <View style={styles.nodeModalActions}>
+                {isFeatureEnabled(profile, 'investigation') && (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: colors.accent, borderColor: colors.accent, marginRight: 8 }]}
+                    onPress={() => {
+                      const q = selectedNode.type === 'question' ? selectedNode.title : `Was trägt die These: „${selectedNode.title}“?`;
+                      setSelectedNode(null);
+                      openInvestigation(null, q);
+                    }}
+                  >
+                    <Ionicons name="telescope-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <Text style={[styles.actionBtnText, { color: '#FFFFFF' }]}>Untersuchen</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={[styles.deleteBtn, { borderColor: colors.danger }]}
                   onPress={() => handleDeleteThought(selectedNode.id)}

@@ -222,13 +222,14 @@ export async function testAiConnection(
       jsonMode: true,
       credentials,
       itemId: 'connection-test',
-      maxTokens: 32,
+      maxTokens: 128,
       // We pass an isolated in-memory ledger for connection testing so test calls don't block
       ledger: new EnrichmentUsageLedger('', false)
     });
 
     const latencyMs = Date.now() - start;
-    if (res.text.includes('ok')) {
+    const textLower = res.text.toLowerCase();
+    if (textLower.includes('ok') || textLower.includes('status')) {
       const providerName = credentials.provider === 'openrouter' ? 'OpenRouter' : 'Gemini';
       return {
         ok: true,

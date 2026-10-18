@@ -135,7 +135,7 @@ export const SettingsScreen: React.FC = () => {
   const handleChangeApiKey = async (text: string) => {
     const next: AiCredentials = {
       ...aiCreds,
-      apiKey: text
+      apiKey: text.trim()
     };
     setAiCreds(next);
     try {
@@ -799,6 +799,24 @@ export const SettingsScreen: React.FC = () => {
                 autoCapitalize="none"
                 autoCorrect={false}
               />
+              <TouchableOpacity
+                onPress={async () => {
+                  try {
+                    if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+                      const clip = await navigator.clipboard.readText();
+                      if (clip?.trim()) {
+                        await handleChangeApiKey(clip.trim());
+                      }
+                    }
+                  } catch {
+                    // Clipboard error
+                  }
+                }}
+                style={styles.keyActionBtn}
+                accessibilityLabel="Aus Zwischenablage einfügen"
+              >
+                <Ionicons name="clipboard-outline" size={18} color={colors.accent} />
+              </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setShowApiKey(!showApiKey)}
                 style={styles.keyActionBtn}

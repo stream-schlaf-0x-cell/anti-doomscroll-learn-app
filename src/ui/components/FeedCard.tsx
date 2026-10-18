@@ -84,7 +84,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     openWhyModal,
     voteItem,
     setFeedback,
-    addNote
+    addNote,
+    openInvestigation
   } = useApp();
 
   const [localKurzCheckOpen, setLocalKurzCheckOpen] = useState(false);
@@ -905,6 +906,21 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             {userNotes.length > 0 ? `${userNotes.length} Notiz` : 'Notiz'}
           </Text>
         </TouchableOpacity>
+
+        {/* 9.4b Gezielte Untersuchung (Neugier ausführen) */}
+        {isFeatureEnabled(profile, 'investigation') && (
+          <TouchableOpacity
+            onPress={() => openInvestigation(item)}
+            style={[styles.actionChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+            accessibilityRole="button"
+            accessibilityLabel="Untersuchung zu diesem Beitrag starten"
+          >
+            <Ionicons name="telescope-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+            <Text style={[styles.actionChipText, { color: colors.accent }]}>
+              Untersuchen
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* 9.5 Direct Source Link */}
         {originalUrl && (

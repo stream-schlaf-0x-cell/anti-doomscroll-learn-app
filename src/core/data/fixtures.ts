@@ -1184,7 +1184,14 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
     cross_references: true,
     sound_grounding: true,
     craft_obsidian_export: true,
-    why_this_transparency: true
+    why_this_transparency: true,
+    breathing_portal: true,
+    bloomscroll_quizzes: true,
+    hivemind_streams: true,
+    knowledge_graph: true,
+    hyperspace_3d: true,
+    research_automation: true,
+    investigation: true
   },
   isOnboarded: false,
   lastActiveDate: '2026-10-14'

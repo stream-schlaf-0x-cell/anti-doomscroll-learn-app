@@ -69,18 +69,48 @@ export async function fetchAiJson(url: string, init: RequestInit, timeoutMs = AI
   }
 }
 
-const countSchema = z.number().finite().nonnegative();
+const countSchema = z.number().finite().nonnegative().nullable().optional();
+
+const partSchema = z.object({
+  text: z.string().nullable().optional()
+}).passthrough();
+
+const contentSchema = z.object({
+  parts: z.array(partSchema).optional(),
+  role: z.string().optional()
+}).passthrough().optional();
+
+const candidateSchema = z.object({
+  content: contentSchema,
+  finishReason: z.string().optional()
+}).passthrough();
+
 const providerResultSchema = z.object({
-  candidates: z.array(z.object({ content: z.object({ parts: z.array(z.object({ text: z.string().optional() })) }).optional() })).optional(),
-  choices: z.array(z.object({ message: z.object({ content: z.string().nullable().optional() }).optional() })).optional(),
-  usageMetadata: z.object({ promptTokenCount: countSchema.optional(), candidatesTokenCount: countSchema.optional() }).optional(),
-  usage: z.object({ prompt_tokens: countSchema.optional(), completion_tokens: countSchema.optional() }).optional()
-});
+  candidates: z.array(candidateSchema).optional(),
+  choices: z.array(z.object({
+    message: z.object({
+      content: z.string().nullable().optional()
+    }).passthrough().optional()
+  }).passthrough()).optional(),
+  usageMetadata: z.object({
+    promptTokenCount: countSchema,
+    candidatesTokenCount: countSchema,
+    totalTokenCount: countSchema
+  }).passthrough().optional(),
+  usage: z.object({
+    prompt_tokens: countSchema,
+    completion_tokens: countSchema
+  }).passthrough().optional()
+}).passthrough();
+
 const proxyResultSchema = z.object({
   text: z.string().trim().min(1),
   model: z.string().optional(),
-  usage: z.object({ promptTokenCount: countSchema.optional(), candidatesTokenCount: countSchema.optional() }).optional()
-});
+  usage: z.object({
+    promptTokenCount: countSchema,
+    candidatesTokenCount: countSchema
+  }).passthrough().optional()
+}).passthrough();
 
 export interface ParsedAiResult {
   text: string;
@@ -93,17 +123,25 @@ export function parseAiResult(value: unknown, provider: 'gemini' | 'openrouter' 
   if (provider === 'proxy') {
     const parsed = proxyResultSchema.safeParse(value);
     if (!parsed.success) throw new Error('Ungültige oder leere Antwort des KI-Proxys.');
-    return { text: parsed.data.text, inputTokens: parsed.data.usage?.promptTokenCount, outputTokens: parsed.data.usage?.candidatesTokenCount, model: parsed.data.model };
+    return {
+      text: parsed.data.text,
+      inputTokens: parsed.data.usage?.promptTokenCount ?? undefined,
+      outputTokens: parsed.data.usage?.candidatesTokenCount ?? undefined,
+      model: parsed.data.model
+    };
   }
   const parsed = providerResultSchema.safeParse(value);
   if (!parsed.success) throw new Error('Ungültige Antwort des KI-Anbieters.');
   const text = provider === 'gemini'
-    ? parsed.data.candidates?.[0]?.content?.parts.map(part => part.text ?? '').join('')
-    : parsed.data.choices?.[0]?.message?.content;
-  if (!text?.trim()) throw new Error('Leere Antwort des KI-Anbieters.');
+    ? parsed.data.candidates?.[0]?.content?.parts
+        ?.map(part => part.text ?? '')
+        ?.filter(Boolean)
+        ?.join('') ?? ''
+    : parsed.data.choices?.[0]?.message?.content ?? '';
+  if (!text.trim()) throw new Error('Leere Antwort des KI-Anbieters.');
   return {
     text,
-    inputTokens: provider === 'gemini' ? parsed.data.usageMetadata?.promptTokenCount : parsed.data.usage?.prompt_tokens,
-    outputTokens: provider === 'gemini' ? parsed.data.usageMetadata?.candidatesTokenCount : parsed.data.usage?.completion_tokens
+    inputTokens: (provider === 'gemini' ? parsed.data.usageMetadata?.promptTokenCount : parsed.data.usage?.prompt_tokens) ?? undefined,
+    outputTokens: (provider === 'gemini' ? parsed.data.usageMetadata?.candidatesTokenCount : parsed.data.usage?.completion_tokens) ?? undefined
   };
 }

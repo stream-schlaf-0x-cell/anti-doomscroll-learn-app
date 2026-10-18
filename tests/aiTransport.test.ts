@@ -115,3 +115,25 @@ test('empty provider text is a failed call, and proxy-only connection tests are 
   mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ text: 'ok' })));
   assert.equal((await testAiConnection({ provider: 'gemini', proxyUrl: 'https://proxy.example/api/ai' })).ok, true);
 });
+
+test('Gemini responses with null usageMetadata tokens or extra fields parse cleanly', async () => {
+  mock.restoreAll();
+  mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+    candidates: [{
+      content: {
+        parts: [{ text: '{"status": "ok"}' }]
+      },
+      finishReason: 'STOP',
+      index: 0
+    }],
+    usageMetadata: {
+      promptTokenCount: 15,
+      candidatesTokenCount: null,
+      totalTokenCount: 15
+    }
+  })));
+  const result = await testAiConnection({ provider: 'gemini', apiKey: 'fake-valid-key' });
+  assert.equal(result.ok, true);
+  assert.ok(result.message.includes('Verbunden mit Gemini'));
+});
+

@@ -83,6 +83,11 @@ interface AppContextValue {
   whyModalItem: ScoredFeedItem | null;
   openWhyModal: (item: ScoredFeedItem) => void;
   closeWhyModal: () => void;
+  isInvestigationOpen: boolean;
+  investigationTargetArticle: FeedItem | null;
+  investigationInitialQuestion: string | null;
+  openInvestigation: (article?: FeedItem | null, question?: string | null) => void;
+  closeInvestigation: () => void;
   toggleSaveItem: (id: string) => Promise<void>;
   updateReadingProgress: (id: string, percent: number) => Promise<void>;
   flushReadingProgress: () => Promise<void>;
@@ -143,6 +148,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<FeedItem | null>(null);
   const [whyModalItem, setWhyModalItem] = useState<ScoredFeedItem | null>(null);
+  const [isInvestigationOpen, setIsInvestigationOpen] = useState<boolean>(false);
+  const [investigationTargetArticle, setInvestigationTargetArticle] = useState<FeedItem | null>(null);
+  const [investigationInitialQuestion, setInvestigationInitialQuestion] = useState<string | null>(null);
   const [selectedEditionType, setSelectedEditionTypeState] = useState<DayEditionType>(() => {
     return determineCurrentEditionType(new Date(), DEFAULT_USER_PROFILE);
   });
@@ -666,6 +674,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setWhyModalItem(null);
   }, []);
 
+  const openInvestigation = useCallback((article?: FeedItem | null, question?: string | null) => {
+    setInvestigationTargetArticle(article || null);
+    setInvestigationInitialQuestion(question || null);
+    setIsInvestigationOpen(true);
+  }, []);
+
+  const closeInvestigation = useCallback(() => {
+    setIsInvestigationOpen(false);
+    setInvestigationTargetArticle(null);
+    setInvestigationInitialQuestion(null);
+  }, []);
+
   const toggleSaveItem = useCallback(async (id: string) => {
     try {
       const isCurrentlySaved = latestInteractionsRef.current[id]?.saved ?? false;
@@ -1110,6 +1130,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         whyModalItem,
         openWhyModal,
         closeWhyModal,
+        isInvestigationOpen,
+        investigationTargetArticle,
+        investigationInitialQuestion,
+        openInvestigation,
+        closeInvestigation,
         toggleSaveItem,
         updateReadingProgress,
         flushReadingProgress,

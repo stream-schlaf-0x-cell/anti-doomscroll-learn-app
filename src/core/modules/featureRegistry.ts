@@ -13,7 +13,8 @@ export const FeatureModuleIdSchema = z.enum([
   'hivemind_streams',
   'knowledge_graph',
   'hyperspace_3d',
-  'research_automation'
+  'research_automation',
+  'investigation'
 ]);
 export type FeatureModuleId = z.infer<typeof FeatureModuleIdSchema>;
 
@@ -122,6 +123,14 @@ export const FEATURE_MODULES: readonly FeatureModuleDefinition[] = [
     icon: 'sync-outline',
     category: 'discovery',
     defaultEnabled: true
+  },
+  {
+    id: 'investigation',
+    title: 'Gezielte Untersuchungen (Neugier ausführen)',
+    description: 'Recherchebriefe, Belegprüfung & Updates zu konkreten Fragen aus Beiträgen oder Notizen.',
+    icon: 'telescope-outline',
+    category: 'reflection',
+    defaultEnabled: true
   }
 ];
 
@@ -137,7 +146,8 @@ export const DEFAULT_ENABLED_MODULES: Record<FeatureModuleId, boolean> = {
   hivemind_streams: true,
   knowledge_graph: true,
   hyperspace_3d: true,
-  research_automation: true
+  research_automation: true,
+  investigation: true
 };
 
 export function isFeatureEnabled(profile: UserProfile | undefined | null, id: FeatureModuleId): boolean {

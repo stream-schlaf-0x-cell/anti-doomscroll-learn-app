@@ -96,7 +96,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     if (showAIModal) {
       void (async () => {
         const creds = await loadAiCredentials();
-        setAiCreds(creds);
+        setAiCreds({ ...creds, persistApiKey: true });
       })();
     }
   }, [showAIModal]);
@@ -170,8 +170,11 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     setIsTestingAI(true);
     setTestResult(null);
     try {
-      await saveAiCredentials(aiCreds);
-      const res = await testAiConnection(aiCreds);
+      const trimmed = aiCreds.apiKey?.trim() ?? '';
+      const toTest = { ...aiCreds, apiKey: trimmed, persistApiKey: true };
+      setAiCreds(toTest);
+      await saveAiCredentials(toTest);
+      const res = await testAiConnection(toTest);
       setTestResult(res);
       showToast(res.ok ? '✓ Verbindung erfolgreich' : 'Verbindungsfehler');
     } finally {
@@ -689,7 +692,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                   <TextInput
                     value={aiCreds.apiKey}
                     onChangeText={async text => {
-                      const next = { ...aiCreds, apiKey: text };
+                      const trimmed = text.trim();
+                      const next = { ...aiCreds, apiKey: trimmed, persistApiKey: true };
                       setAiCreds(next);
                       await saveAiCredentials(next);
                     }}
@@ -708,6 +712,38 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                     autoCapitalize="none"
                     autoCorrect={false}
                   />
+                  {/* Paste from clipboard button */}
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+                          const clip = await navigator.clipboard.readText();
+                          if (clip?.trim()) {
+                            const trimmed = clip.trim();
+                            const next = { ...aiCreds, apiKey: trimmed, persistApiKey: true };
+                            setAiCreds(next);
+                            await saveAiCredentials(next);
+                            showToast('✓ Aus Zwischenablage eingefügt');
+                          }
+                        }
+                      } catch {
+                        // Clipboard permission or availability
+                      }
+                    }}
+                    style={[
+                      styles.keyActionBtn,
+                      {
+                        backgroundColor: colors.surface,
+                        borderColor: colors.borderSubtle,
+                        borderWidth: 1,
+                        borderRadius: radius.md,
+                        padding: 8
+                      }
+                    ]}
+                    accessibilityLabel="Aus Zwischenablage einfügen"
+                  >
+                    <Ionicons name="clipboard-outline" size={18} color={colors.accent} />
+                  </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => setShowApiKey(!showApiKey)}
                     style={[
