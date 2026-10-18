@@ -282,19 +282,14 @@ export class LocalFeedRepository implements IFeedRepository {
       }
 
       if (validated.length > 0) {
-        // Pass candidate items through smart AI Signal-vs-Noise Gatekeeper
-        // (Falls back gracefully to deterministic heuristics when offline/unconfigured)
-        const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(validated);
-        const finalItems = curated.length > 0 ? curated : validated;
-
-        this.addItems(finalItems);
+        this.addItems(validated);
         const snapshotDate = json?.generatedAt
           ? new Date(json.generatedAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
           : new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
 
         return {
           success: true,
-          itemCount: finalItems.length,
+          itemCount: validated.length,
           snapshotDate
         };
       }

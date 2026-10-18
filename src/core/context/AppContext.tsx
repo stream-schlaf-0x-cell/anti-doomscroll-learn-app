@@ -222,16 +222,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const edition = targetEdition ?? selectedEditionTypeRef.current;
       const seed = customDateSeed ?? activeDateSeedRef.current;
       const offset = customShuffleOffset ?? shuffleSeedRef.current;
-      const [daily, disc, openWeb] = await Promise.all([
+      const [daily, disc] = await Promise.all([
         feedRepository.getEditionFeed(edition, prof, inter, seed, offset),
-        feedRepository.getDiscoveryItems(prof, inter),
-        OpenWebHarvester.harvestAllOpenWeb()
+        feedRepository.getDiscoveryItems(prof, inter)
       ]);
       if (currentVersion === feedRecomputeVersion.current) {
         setDailyEdition(daily);
         setDiscoveryItems(disc);
-        setOpenWebItems(openWeb.allHarvested);
       }
+
+      // Non-blocking background harvest of open-web items
+      void OpenWebHarvester.harvestAllOpenWeb().then(openWeb => {
+        if (currentVersion === feedRecomputeVersion.current && openWeb?.allHarvested) {
+          setOpenWebItems(openWeb.allHarvested);
+        }
+      }).catch(() => {});
 
       if (edition === 'morning' && prof.editionPreferences?.weatherEnabled !== false) {
         const city = prof.editionPreferences?.weatherCity || 'dresden';
@@ -430,17 +435,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Non-fatal
       }
 
-      try {
-        const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(currentSnapshotUrl);
-        if (res?.success) {
-          const syncText = `Ausgabe vom ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
-          setSnapshotSyncInfo(syncText);
-        }
-      } catch {
-        // Fallback to local snapshot/vault
-      }
+      // 1. Instant reveal: Calculate local feed in < 5ms and unlock the UI immediately!
       await scheduleFeedRecompute(loadedProfile, loadedInteractions, initialEdition);
       setStartupState({ status: 'ready' });
+
+      // 2. Non-blocking background sync from public snapshot
+      void (async () => {
+        try {
+          const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(currentSnapshotUrl);
+          if (res?.success) {
+            const syncText = `Ausgabe vom ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+            setSnapshotSyncInfo(syncText);
+            void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, initialEdition);
+          }
+        } catch {
+          // Non-blocking fallback
+        }
+      })();
 
       // On Web: check initial URL query for ?article=<id>
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
