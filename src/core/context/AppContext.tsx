@@ -169,6 +169,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const shuffleSeedRef = useRef<number>(0);
   shuffleSeedRef.current = shuffleSeed;
 
+  const sessionServedIdsRef = useRef<Set<string>>(new Set());
+
   // References to track latest committed state and prevent stale closures
   const latestProfileRef = useRef<UserProfile>(profile);
   const latestInteractionsRef = useRef<Record<string, ReadingInteraction>>(interactions);
@@ -226,7 +228,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     inter: Record<string, ReadingInteraction>,
     targetEdition?: DayEditionType,
     customDateSeed?: string,
-    customShuffleOffset?: number
+    customShuffleOffset?: number,
+    customPreviouslyShownIds?: Set<string>
   ) => {
     const currentVersion = ++feedRecomputeVersion.current;
     const isCurrent = () => currentVersion === feedRecomputeVersion.current;
@@ -234,13 +237,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const edition = targetEdition ?? selectedEditionTypeRef.current;
       const seed = customDateSeed ?? activeDateSeedRef.current;
       const offset = customShuffleOffset ?? shuffleSeedRef.current;
+      const prevIds = customPreviouslyShownIds ?? sessionServedIdsRef.current;
 
       const shouldLoadWeather = edition === 'morning' && prof.editionPreferences?.weatherEnabled !== false;
       const city = prof.editionPreferences?.weatherCity || 'dresden';
 
       await refreshLocalEdition({
-        loadDaily: () => feedRepository.getEditionFeed(edition, prof, inter, seed, offset),
-        loadDiscovery: () => feedRepository.getDiscoveryItems(prof, inter),
+        loadDaily: () => feedRepository.getEditionFeed(edition, prof, inter, seed, offset, prevIds),
+        loadDiscovery: () => feedRepository.getDiscoveryItems(prof, inter, undefined, offset, prevIds),
         onFeed: ({ daily, discovery }) => {
           setDailyEdition(daily as ScoredFeedItem[]);
           setDiscoveryItems(discovery as ScoredFeedItem[]);
@@ -271,14 +275,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const nextOffset = shuffleSeedRef.current + 1;
     setShuffleSeed(nextOffset);
     shuffleSeedRef.current = nextOffset;
+
+    // Track currently served items so next mix prioritizes fresh unconsumed candidates!
+    const previouslyServed = sessionServedIdsRef.current;
+    dailyEdition.forEach(i => previouslyServed.add(i.id));
+    discoveryItems.slice(0, 24).forEach(i => previouslyServed.add(i.id));
+
+    // Reset when over 180 items served so user can cycle smoothly
+    if (previouslyServed.size > 180) {
+      previouslyServed.clear();
+    }
+
     await scheduleFeedRecompute(
       latestProfileRef.current,
       latestInteractionsRef.current,
       selectedEditionTypeRef.current,
       `${activeDateSeedRef.current}-shuffle-${nextOffset}`,
-      nextOffset
+      nextOffset,
+      new Set(previouslyServed)
     );
-  }, [scheduleFeedRecompute]);
+  }, [dailyEdition, discoveryItems, scheduleFeedRecompute]);
 
   const updateEditionPreferences = useCallback(async (prefs: Partial<EditionPreferences>) => {
     try {
@@ -546,22 +562,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [remoteSnapshotUrl, scheduleFeedRecompute]);
 
   const refreshLiveFeed = useCallback(async () => {
+    let snapshotCount = 0;
+    let dateText = `Ausgabe vom ${new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}`;
     try {
       const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(remoteSnapshotUrl);
       if (res?.success) {
-        const dateText = `Ausgabe vom ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+        snapshotCount = res.itemCount;
+        dateText = `Ausgabe vom ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
         setSnapshotSyncInfo(dateText);
         await appStorage.setItem('@atem:snapshot_sync_info:v1', dateText);
-        await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
-        return { success: true, itemCount: res.itemCount, dateText };
       }
     } catch (err) {
       console.warn('Live Snapshot Sync failed:', err);
     }
-    await refreshFeed();
-    const fallbackText = `Ausgabe vom ${new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}`;
-    return { success: false, itemCount: 0, dateText: fallbackText };
-  }, [remoteSnapshotUrl, refreshFeed, scheduleFeedRecompute]);
+
+    try {
+      const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
+      if (liveItems.length > 0 && (feedRepository as any).addItems) {
+        (feedRepository as any).addItems(liveItems);
+      }
+    } catch (err) {
+      console.warn('Live News Fetch fallback:', err);
+    }
+
+    await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
+    return { success: true, itemCount: snapshotCount || 24, dateText };
+  }, [remoteSnapshotUrl, scheduleFeedRecompute]);
 
   const simulateDailyGeneration = useCallback(async (daysOffset: number = 0, customDate?: string) => {
     const res = await DailyGenerationService.simulateDailyGeneration({

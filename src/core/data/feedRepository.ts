@@ -89,9 +89,16 @@ export interface IFeedRepository {
     profile: UserProfile,
     interactions?: Record<string, ReadingInteraction>,
     dateSeed?: string,
-    shuffleOffset?: number
+    shuffleOffset?: number,
+    previouslyShownIds?: Set<string>
   ): Promise<ScoredFeedItem[]>;
-  getDiscoveryItems(profile: UserProfile, interactions?: Record<string, ReadingInteraction>, excludedIds?: Set<string>): Promise<ScoredFeedItem[]>;
+  getDiscoveryItems(
+    profile: UserProfile,
+    interactions?: Record<string, ReadingInteraction>,
+    excludedIds?: Set<string>,
+    shuffleOffset?: number,
+    previouslyShownIds?: Set<string>
+  ): Promise<ScoredFeedItem[]>;
   getItemById(id: string): Promise<FeedItem | null>;
   searchItems(query: string, profile: UserProfile, interactions?: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
   setItems?(items: FeedItem[]): void;
@@ -277,24 +284,36 @@ export class LocalFeedRepository implements IFeedRepository {
     profile: UserProfile,
     interactions: Record<string, ReadingInteraction> = {},
     dateSeed?: string,
-    shuffleOffset?: number
+    shuffleOffset?: number,
+    previouslyShownIds?: Set<string>
   ): Promise<ScoredFeedItem[]> {
-    const ranked = rankEditionFeed(this.items, editionType, profile, interactions, dateSeed, shuffleOffset);
+    const ranked = rankEditionFeed(this.items, editionType, profile, interactions, dateSeed, shuffleOffset, previouslyShownIds);
     return this.applyPinnedItems(ranked, profile, interactions);
   }
 
   async getDiscoveryItems(
     profile: UserProfile,
     interactions: Record<string, ReadingInteraction> = {},
-    excludedIds?: Set<string>
+    excludedIds?: Set<string>,
+    shuffleOffset: number = 0,
+    previouslyShownIds?: Set<string>
   ): Promise<ScoredFeedItem[]> {
-    const excludeSet = excludedIds ?? (() => {
+    const excludeSet = new Set<string>(excludedIds ?? []);
+    if (!excludedIds) {
       const dailyPool = this.items.filter(item => item.isDailyEdition);
       const rankedDaily = rankAndInterleaveFeed(dailyPool, profile, interactions);
-      return new Set(rankedDaily.slice(0, 12).map(i => i.id));
-    })();
+      for (const i of rankedDaily.slice(0, 12)) excludeSet.add(i.id);
+    }
+    if (previouslyShownIds && previouslyShownIds.size > 0 && shuffleOffset > 0) {
+      for (const id of previouslyShownIds) excludeSet.add(id);
+    }
 
-    const remainingItems = this.items.filter(item => !excludeSet.has(item.id));
+    let remainingItems = this.items.filter(item => !excludeSet.has(item.id));
+    // If excluding previously shown left too few items, fall back to all non-daily items
+    if (remainingItems.length < 12) {
+      const baseDailyExclude = new Set(this.items.filter(i => i.isDailyEdition).slice(0, 8).map(i => i.id));
+      remainingItems = this.items.filter(item => !baseDailyExclude.has(item.id));
+    }
     const ranked = rankAndInterleaveFeed(remainingItems, profile, interactions);
     return this.applyPinnedItems(ranked, profile, interactions, excludeSet);
   }

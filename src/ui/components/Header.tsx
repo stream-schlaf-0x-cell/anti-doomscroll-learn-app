@@ -19,7 +19,7 @@ export const Header: React.FC<HeaderProps> = ({
   subtitle = 'atmen network • Raum für Erkenntnis & Souveränität',
   showThemeToggle = true
 }) => {
-  const { colors, isDark, setThemePreference, goHome } = useApp();
+  const { colors, isDark, setThemePreference, goHome, activeTab, setActiveTab, activeFeedOption, setActiveFeedOption } = useApp();
   const [showMaster, setShowMaster] = useState<boolean>(false);
   const [showMobile, setShowMobile] = useState<boolean>(false);
   const [showBreathing, setShowBreathing] = useState<boolean>(false);
@@ -56,11 +56,37 @@ export const Header: React.FC<HeaderProps> = ({
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <TouchableOpacity
               onPress={goHome}
-              style={[styles.themeToggle, { backgroundColor: colors.accentSubtle }]}
+              style={[
+                styles.themeToggle,
+                { backgroundColor: activeTab === 'feed' && activeFeedOption !== 'live_news' ? colors.accent : colors.accentSubtle }
+              ]}
               accessibilityRole="button"
               accessibilityLabel="Home Menü öffnen"
             >
-              <Ionicons name="home" size={16} color={colors.accent} />
+              <Ionicons
+                name="home"
+                size={16}
+                color={activeTab === 'feed' && activeFeedOption !== 'live_news' ? '#FFFFFF' : colors.accent}
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                setActiveTab('feed');
+                setActiveFeedOption('live_news');
+              }}
+              style={[
+                styles.themeToggle,
+                { backgroundColor: activeTab === 'feed' && activeFeedOption === 'live_news' ? colors.accent : colors.accentSubtle }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Echtzeit-Nachrichten öffnen"
+            >
+              <Ionicons
+                name="flash"
+                size={16}
+                color={activeTab === 'feed' && activeFeedOption === 'live_news' ? '#FFFFFF' : '#F59E0B'}
+              />
             </TouchableOpacity>
 
             <TouchableOpacity

@@ -83,12 +83,13 @@ const TOPIC_PRIMARY_GOAL: Record<TopicTag, PersonalGoal> = {
 /**
  * Returns the effective weight for a topic, preferring learned derivedWeights over explicitInterests.
  */
-export function getEffectiveTopicWeight(profile: UserProfile, topic: TopicTag): number {
+export function getEffectiveTopicWeight(profile?: UserProfile, topic?: TopicTag): number {
+  if (!profile || !topic) return 0.5;
   const derived = profile.derivedWeights?.[topic];
   if (typeof derived === 'number') {
     return derived;
   }
-  return profile.explicitInterests[topic] ?? 0.5;
+  return profile.explicitInterests?.[topic] ?? 0.5;
 }
 
 /**
@@ -155,7 +156,7 @@ export function scoreFeedItem(
 
   // 3. Reading Time Fit (Duration Match)
   let readingTimeFit = 0.85;
-  const pref = profile.readingPreferences.preferredDuration;
+  const pref = profile?.readingPreferences?.preferredDuration || 'balanced';
   const mins = item.estimatedReadingMinutes;
 
   if (pref === 'quick') {
@@ -736,7 +737,8 @@ export function allocateDailyEditions(
   profile: UserProfile,
   interactions: Record<string, ReadingInteraction> = {},
   dateSeed?: string,
-  shuffleOffset: number = 0
+  shuffleOffset: number = 0,
+  previouslyShownIds?: Set<string>
 ): Record<DayEditionType, ScoredFeedItem[]> {
   const seed = dateSeed || new Date().toISOString().slice(0, 10);
   const targetPerEdition = 8;
@@ -749,8 +751,20 @@ export function allocateDailyEditions(
     evening: []
   };
 
+  // If shuffleOffset > 0, prioritize fresh candidates that haven't been shown in recent mixes
+  const unshownPool = previouslyShownIds && previouslyShownIds.size > 0
+    ? pool.filter(item => !previouslyShownIds.has(item.id))
+    : [];
+  const effectiveBasePool = unshownPool.length >= targetPerEdition * 3
+    ? unshownPool
+    : pool;
+
   for (const edition of editions) {
-    const availablePool = pool.filter(item => !assignedIds.has(item.id));
+    let availablePool = effectiveBasePool.filter(item => !assignedIds.has(item.id));
+    if (availablePool.length < targetPerEdition) {
+      // Backfill from full pool if unshown pool is exhausted
+      availablePool = pool.filter(item => !assignedIds.has(item.id));
+    }
     const scored = availablePool.map(item => scoreForEdition(item, edition, profile, interactions, seed, shuffleOffset));
     const bloomRanked = rankBloomScrollFeed(scored);
 
@@ -792,9 +806,10 @@ export function rankEditionFeed(
   profile: UserProfile,
   interactions: Record<string, ReadingInteraction> = {},
   dateSeed?: string,
-  shuffleOffset: number = 0
+  shuffleOffset: number = 0,
+  previouslyShownIds?: Set<string>
 ): ScoredFeedItem[] {
   if (items.length === 0) return [];
-  const allAllocations = allocateDailyEditions(items, profile, interactions, dateSeed, shuffleOffset);
+  const allAllocations = allocateDailyEditions(items, profile, interactions, dateSeed, shuffleOffset, previouslyShownIds);
   return allAllocations[editionType] || [];
 }

@@ -57,6 +57,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     setPalettePreference,
     activeTab,
     setActiveTab,
+    activeFeedOption,
+    setActiveFeedOption,
     goHome,
     selectedArticleId,
     savedArticles,
@@ -258,10 +260,44 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               <Text
                 style={[
                   styles.homeCenterPillText,
-                  { color: activeTab === 'feed' && !selectedArticleId ? '#FFFFFF' : colors.textPrimary }
+                  { color: activeTab === 'feed' && !selectedArticleId && activeFeedOption !== 'live_news' ? '#FFFFFF' : colors.textPrimary }
                 ]}
               >
                 Home
+              </Text>
+            </TouchableOpacity>
+
+            {/* Direct 1-Click News Entry */}
+            <TouchableOpacity
+              onPress={() => {
+                setActiveTab('feed');
+                setActiveFeedOption('live_news');
+                if (onSelectSpace) onSelectSpace('all');
+              }}
+              style={[
+                styles.homeCenterPill,
+                {
+                  backgroundColor: activeTab === 'feed' && !selectedArticleId && activeFeedOption === 'live_news' ? colors.accent : colors.surfaceSecondary,
+                  borderColor: activeTab === 'feed' && !selectedArticleId && activeFeedOption === 'live_news' ? colors.accent : colors.borderSubtle
+                }
+              ]}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Echtzeit-Nachrichten öffnen"
+            >
+              <Ionicons
+                name="flash"
+                size={14}
+                color={activeTab === 'feed' && !selectedArticleId && activeFeedOption === 'live_news' ? '#FFFFFF' : '#F59E0B'}
+                style={{ marginRight: 5 }}
+              />
+              <Text
+                style={[
+                  styles.homeCenterPillText,
+                  { color: activeTab === 'feed' && !selectedArticleId && activeFeedOption === 'live_news' ? '#FFFFFF' : colors.textPrimary }
+                ]}
+              >
+                News
               </Text>
             </TouchableOpacity>
 
@@ -303,16 +339,16 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
 
           {/* Right: Clean Reddit-style Action Cluster (Quellen Status, Frischer Wind, Studio, Theme & Nav Tabs) */}
           <View style={styles.rightSection}>
-            {/* 1. Active Sources Pill -> Opens News-Hub & 60-Source Catalog */}
+            {/* 1. Active Sources Pill -> Opens Quellen- und Themenverwaltung */}
             <TouchableOpacity
               onPress={() => setShowNewsHubModal(true)}
               style={[styles.liveStatusPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
               accessibilityRole="button"
-              accessibilityLabel="Quellen-Katalog und Abrufstatus öffnen"
+              accessibilityLabel="Quellen- und Themenverwaltung öffnen"
             >
               <View style={styles.liveGreenDot} />
               <Text style={[styles.liveStatusText, { color: colors.textPrimary }]}>
-                {healthOverview.deliveringSources}/{healthOverview.totalSources} Quellen aktiv
+                Quellen & Themen ({healthOverview.deliveringSources}/{healthOverview.totalSources})
               </Text>
             </TouchableOpacity>
 

@@ -3,7 +3,6 @@ import { REAL_KNOWLEDGE_VAULT, EVERGREEN_INTERNET_CLASSICS } from './realKnowled
 import { VERIFIED_FEED_SOURCES } from '../ingestion/sources';
 import { fetchAllFeeds } from '../ingestion/feedFetcher';
 import { normalizeFeedEntry } from '../ingestion/normalizer';
-import { OpenWebHarvester } from '../ingestion/openWebHarvester';
 import { appStorage } from './storage';
 import { defaultSourceRepository } from './sourceRepository';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
@@ -429,12 +428,12 @@ export class ContinuousLiveNewsService {
                 title,
                 publisher: 'Wikipedia Aktuelles (Enzyklopädie)',
                 originalUrl: canonical,
-                publicationTimestamp: nowIso,
+                publicationTimestamp: `${yyyy}-${mm}-${dd}T06:00:00.000Z`,
                 retrievalTimestamp: nowIso,
                 isVerified: true
               }
             ],
-            publishedAt: nowIso,
+            publishedAt: `${yyyy}-${mm}-${dd}T06:00:00.000Z`,
             generatedAt: nowIso,
             estimatedReadingMinutes: 2,
             relevanceExplanation: 'Enzyklopädischer Hintergrund zu aktuellen Weltereignissen.',
@@ -483,22 +482,17 @@ export class ContinuousLiveNewsService {
     }
 
     try {
-      const [tagesschauSettled, hnSettled, wikiNewsSettled, openWebSettled, snapshotSettled] = await Promise.allSettled([
-        this.fetchTagesschauLiveJson(10),
-        this.fetchHackerNewsLiveJson(8),
+      const [tagesschauSettled, hnSettled, wikiNewsSettled, snapshotSettled] = await Promise.allSettled([
+        this.fetchTagesschauLiveJson(15),
+        this.fetchHackerNewsLiveJson(12),
         this.fetchWikipediaCurrentNewsJson(),
-        OpenWebHarvester.harvestAllOpenWeb(force),
         this.loadPublicFeedSnapshot()
       ]);
 
       const corsLiveItems: FeedItem[] = [
         ...(tagesschauSettled.status === 'fulfilled' ? tagesschauSettled.value : []),
         ...(hnSettled.status === 'fulfilled' ? hnSettled.value : []),
-        ...(wikiNewsSettled.status === 'fulfilled' ? wikiNewsSettled.value : []),
-        ...(openWebSettled.status === 'fulfilled'
-          ? openWebSettled.value.allHarvested.filter(i => i.format !== 'art_showcase' && i.sourceTrustLevel !== 'museum_collection')
-          : []),
-
+        ...(wikiNewsSettled.status === 'fulfilled' ? wikiNewsSettled.value : [])
       ];
 
       // On native / Node environments, also fetch a quick subset of RSS feeds directly
@@ -682,14 +676,18 @@ export class ContinuousLiveNewsService {
 
     const combined = [
       ...liveItems,
-      ...refreshedStatic,
-      ...REAL_KNOWLEDGE_VAULT.filter(i => !i.isEvergreenGem).map(i => this.sanitizeProvenanceItem(i))
+      ...refreshedStatic
     ];
 
     const seen = new Set<string>();
     let unique = combined.filter(item => {
-      // Artworks and museum showcases are NOT live news!
-      if (item.format === 'art_showcase' || item.primaryTopic === 'art_aesthetics' || item.sourceTrustLevel === 'museum_collection') {
+      // Artworks, philosophy vault and museum showcases are NOT live news!
+      if (
+        item.format === 'art_showcase' ||
+        item.primaryTopic === 'art_aesthetics' ||
+        item.sourceTrustLevel === 'museum_collection' ||
+        item.isEvergreenGem
+      ) {
         return false;
       }
 
@@ -721,18 +719,46 @@ export class ContinuousLiveNewsService {
     }
 
     const nowMs = Date.now();
-    unique.sort((a, b) => {
-      if (a.id === 'news_hub_heise_1' && b.id !== 'news_hub_heise_1') return 1;
-      if (b.id === 'news_hub_heise_1' && a.id !== 'news_hub_heise_1') return -1;
-      const scoreA = this.computeRollingWindowQualityScore(a, windowMode, nowMs);
-      const scoreB = this.computeRollingWindowQualityScore(b, windowMode, nowMs);
-      if (scoreB !== scoreA) return scoreB - scoreA;
-      const timeA = new Date(a.publishedAt).getTime() || 0;
-      const timeB = new Date(b.publishedAt).getTime() || 0;
-      return timeB - timeA;
-    });
 
-    unique = this.interleaveByDomain(unique);
+    if (windowMode === 'chronological' || windowMode === '48h_fresh') {
+      // STRICT CHRONOLOGICAL: No domain-interleaving; newest publication time stays #1!
+      const maxAgeHours = windowMode === '48h_fresh' ? 48 : 24;
+      const recent = unique.filter(item => {
+        const pubMs = new Date(item.publishedAt).getTime();
+        if (!pubMs || isNaN(pubMs)) return false;
+        const ageHours = (nowMs - pubMs) / (1000 * 60 * 60);
+        return ageHours >= -0.5 && ageHours <= maxAgeHours;
+      });
+
+      // If fewer than 5 items in 24h, gracefully expand to 48h or all available real news
+      const candidates = recent.length >= 5 ? recent : unique.filter(item => {
+        const pubMs = new Date(item.publishedAt).getTime();
+        return pubMs && !isNaN(pubMs);
+      });
+
+      candidates.sort((a, b) => {
+        if (a.id === 'news_hub_heise_1' && b.id !== 'news_hub_heise_1') return 1;
+        if (b.id === 'news_hub_heise_1' && a.id !== 'news_hub_heise_1') return -1;
+        const timeA = new Date(a.publishedAt).getTime() || 0;
+        const timeB = new Date(b.publishedAt).getTime() || 0;
+        return timeB - timeA;
+      });
+
+      unique = candidates;
+    } else {
+      // 7d_quality mode: Quality score + publisher diversity interleave
+      unique.sort((a, b) => {
+        if (a.id === 'news_hub_heise_1' && b.id !== 'news_hub_heise_1') return 1;
+        if (b.id === 'news_hub_heise_1' && a.id !== 'news_hub_heise_1') return -1;
+        const scoreA = this.computeRollingWindowQualityScore(a, windowMode, nowMs);
+        const scoreB = this.computeRollingWindowQualityScore(b, windowMode, nowMs);
+        if (scoreB !== scoreA) return scoreB - scoreA;
+        const timeA = new Date(a.publishedAt).getTime() || 0;
+        const timeB = new Date(b.publishedAt).getTime() || 0;
+        return timeB - timeA;
+      });
+      unique = this.interleaveByDomain(unique);
+    }
 
     if (category !== 'all') {
       unique = unique.filter(item => {
@@ -784,5 +810,37 @@ export class ContinuousLiveNewsService {
    */
   public static getEvergreenClassics(): FeedItem[] {
     return EVERGREEN_INTERNET_CLASSICS.map(i => enrichItemWithInstantResearch(this.sanitizeProvenanceItem(i)));
+  }
+
+  /**
+   * Transparent provenance status for the News Hub header.
+   */
+  public static getNewsStatusInfo(): {
+    lastFetchTimeFormatted: string;
+    fetchStatus: 'live' | 'cached' | 'offline';
+    totalItems: number;
+    snapshotAgeLabel: string;
+  } {
+    const now = Date.now();
+    const ageMs = now - this.lastFetchTimestamp;
+    let fetchStatus: 'live' | 'cached' | 'offline' = 'live';
+    if (this.lastFetchTimestamp === 0 || this.snapshotStatus === 'offline_fallback') {
+      fetchStatus = 'offline';
+    } else if (ageMs > this.CACHE_TTL_MS) {
+      fetchStatus = 'cached';
+    }
+    const lastTime = this.lastFetchTimestamp > 0
+      ? new Date(this.lastFetchTimestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+      : 'Noch nicht geprüft';
+    return {
+      lastFetchTimeFormatted: lastTime,
+      fetchStatus,
+      totalItems: this.liveIngestedItems.length,
+      snapshotAgeLabel: this.lastFormattedUpdate
+    };
+  }
+
+  public static getLastFetchTimestamp(): number {
+    return this.lastFetchTimestamp;
   }
 }

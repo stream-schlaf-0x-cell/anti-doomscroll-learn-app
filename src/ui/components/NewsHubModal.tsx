@@ -47,7 +47,7 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({
   onClose,
   initialTopicFilter = 'all'
 }) => {
-  const { colors, profile, updateTopicWeight, refreshFeed } = useApp();
+  const { colors, profile, updateTopicWeight, refreshFeed, setActiveTab: setGlobalActiveTab, setActiveFeedOption } = useApp();
 
   const [activeTab, setActiveTab] = useState<HubTab>('topics');
   const [sources, setSources] = useState<FeedSourceItem[]>([]);
@@ -207,19 +207,37 @@ export const NewsHubModal: React.FC<NewsHubModalProps> = ({
         {/* Header */}
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
           <View style={styles.headerTitleGroup}>
-            <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Themen & Quellen</Text>
+            <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Quellen & Themen</Text>
             <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
-              {activeCount} von {totalCount} Quellen aktiv • Deine persönliche Kurations-Zentrale
+              {activeCount} von {totalCount} Quellen aktiv • Feed-Kuration & Themengewichtung
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={onClose}
-            style={[styles.closeButton, { backgroundColor: colors.surfaceSecondary }]}
-            accessibilityRole="button"
-            accessibilityLabel="News-Hub schließen"
-          >
-            <Ionicons name="close" size={20} color={colors.textPrimary} />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => {
+                setGlobalActiveTab('feed');
+                setActiveFeedOption('live_news');
+                onClose();
+              }}
+              style={[styles.jumpToNewsBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+              accessibilityRole="button"
+              accessibilityLabel="Zu den Live-Nachrichten wechseln"
+            >
+              <Ionicons name="flash" size={14} color={colors.accent} style={{ marginRight: 4 }} />
+              <Text style={[styles.jumpToNewsBtnText, { color: colors.accent }]}>
+                ⚡ Zum Live-News-Feed
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={onClose}
+              style={[styles.closeButton, { backgroundColor: colors.surfaceSecondary }]}
+              accessibilityRole="button"
+              accessibilityLabel="News-Hub schließen"
+            >
+              <Ionicons name="close" size={20} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Tab Bar (Only 2 Tabs) */}
@@ -982,5 +1000,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     textAlign: 'center'
+  },
+  jumpToNewsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  jumpToNewsBtnText: {
+    fontSize: 12,
+    fontWeight: '700'
   }
 });

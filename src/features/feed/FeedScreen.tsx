@@ -10,7 +10,8 @@ import {
   NativeScrollEvent,
   useWindowDimensions,
   ActivityIndicator,
-  Platform
+  Platform,
+  TextInput
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, FeedItem, DayEditionType, DAY_EDITIONS_META, TOPIC_SPACE_MAP } from '../../core/domain/types';
@@ -104,7 +105,7 @@ export const FeedScreen: React.FC = () => {
   }, [isScrolledDown]);
   const presentationScope = `${activeFeedOption}:${selectedFilter}:${searchQuery}:${sortMode}:${selectedEditionType}`;
   const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
-  const [visibleInfiniteCount, setVisibleInfiniteCount] = useState<number>(12);
+  const [visibleInfiniteCount, setVisibleInfiniteCount] = useState<number>(24);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [simulatingDay, setSimulatingDay] = useState<boolean>(false);
   const [simToast, setSimToast] = useState<string | null>(null);
@@ -122,11 +123,11 @@ export const FeedScreen: React.FC = () => {
 
   // Live News Hub & Classics State
   const [liveNewsCategory, setLiveNewsCategory] = useState<NewsHubFilterCategory>('all');
-  const [liveNewsWindowMode, setLiveNewsWindowMode] = useState<'7d_quality' | '48h_fresh' | 'chronological'>('7d_quality');
+  const [liveNewsWindowMode, setLiveNewsWindowMode] = useState<'7d_quality' | '48h_fresh' | 'chronological'>('chronological');
+  const [newsSearchQuery, setNewsSearchQuery] = useState<string>('');
   const [liveNewsItems, setLiveNewsItems] = useState<FeedItem[]>([]);
   const [liveNewsLoading, setLiveNewsLoading] = useState<boolean>(false);
-  const [liveNewsLimit, setLiveNewsLimit] = useState<number>(35);
-  const [liveNewsLastUpdated, setLiveNewsLastUpdated] = useState<string>('Live');
+  const [liveNewsLimit, setLiveNewsLimit] = useState<number>(40);
   const [showNewsHubSettingsModal, setShowNewsHubSettingsModal] = useState<boolean>(false);
   const [classicsItems, setClassicsItems] = useState<FeedItem[]>([]);
 
@@ -149,20 +150,18 @@ export const FeedScreen: React.FC = () => {
     try {
       const items = await ContinuousLiveNewsService.getLiveStream({
         category: liveNewsCategory,
-        query: searchQuery,
+        query: newsSearchQuery.trim() || undefined,
         limit: liveNewsLimit,
         forceRefresh,
-        windowMode: liveNewsWindowMode,
-        topic: selectedFilter !== 'all' ? activeTopic : undefined
+        windowMode: liveNewsWindowMode
       });
       setLiveNewsItems(items);
-      setLiveNewsLastUpdated(ContinuousLiveNewsService.getLastUpdatedTime());
     } catch {
       // Non-fatal
     } finally {
       setLiveNewsLoading(false);
     }
-  }, [liveNewsCategory, searchQuery, liveNewsLimit, liveNewsWindowMode, selectedFilter, activeTopic]);
+  }, [liveNewsCategory, newsSearchQuery, liveNewsLimit, liveNewsWindowMode]);
 
   React.useEffect(() => {
     if (activeFeedOption === 'live_news') {
@@ -243,7 +242,10 @@ export const FeedScreen: React.FC = () => {
     setSimulatingDay(true);
     try {
       await shuffleFeed();
-      setSimToast('Frischer Wind: Ausgabe neu rotiert');
+      setVisibleInfiniteCount(24);
+      setActiveCardIndex(0);
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      setSimToast('Frischer Wind: 24 neue Karten kuratiert');
       setTimeout(() => setSimToast(null), 2500);
     } catch {
       setSimToast('Mischen fehlgeschlagen.');
@@ -317,10 +319,29 @@ export const FeedScreen: React.FC = () => {
   }, [searchQuery]);
 
   const latestScoredLiveItems = useMemo(() => {
-    const scored = liveNewsItems.filter(matchesSelectedSpace).map(item => scoreFeedItem(item, profile, interactions));
-    return filterByQuery(scored);
-  }, [liveNewsItems, matchesSelectedSpace, profile, interactions, filterByQuery]);
-  const scoredLiveItems = useReadingStableFeed(latestScoredLiveItems, isScrolledDown, `${presentationScope}:${liveNewsCategory}:${liveNewsWindowMode}`);
+    let items = liveNewsItems;
+    if (newsSearchQuery.trim()) {
+      const q = newsSearchQuery.toLowerCase().trim();
+      items = items.filter(item =>
+        item.title.toLowerCase().includes(q) ||
+        (item.subtitle && item.subtitle.toLowerCase().includes(q)) ||
+        (item.feedText && item.feedText.toLowerCase().includes(q)) ||
+        (item.sourceReferences[0]?.publisher && item.sourceReferences[0].publisher.toLowerCase().includes(q))
+      );
+    }
+    if (liveNewsWindowMode === 'chronological') {
+      // In chronological mode, strictly preserve publication timestamp order without user interest re-sorting
+      return items.map(item => {
+        const scored = scoreFeedItem(item, profile, interactions);
+        return {
+          ...scored,
+          score: 1.0
+        };
+      });
+    }
+    return items.map(item => scoreFeedItem(item, profile, interactions));
+  }, [liveNewsItems, newsSearchQuery, liveNewsWindowMode, profile, interactions]);
+  const scoredLiveItems = useReadingStableFeed(latestScoredLiveItems, isScrolledDown, `${presentationScope}:${liveNewsCategory}:${liveNewsWindowMode}:${newsSearchQuery}`);
 
   const scoredClassicsItems = useMemo(() => {
     const scored = classicsItems.filter(matchesSelectedSpace).map(item => scoreFeedItem(item, profile, interactions));
@@ -473,13 +494,11 @@ export const FeedScreen: React.FC = () => {
 
     const paddingToBottom = 800;
     if (layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom) {
-      if (activeFeedOption === 'infinite') {
-        setVisibleInfiniteCount(prev => Math.min(prev + 6, Math.max(12, totalInfiniteAvailable)));
-      } else {
+      if (activeFeedOption === 'daily') {
         setVisibleDiscoveryCount(prev => Math.min(prev + 6, Math.max(10, sortedDiscovery.length)));
       }
     }
-  }, [activeFeedOption, flushVisibleCardsToChronik, totalInfiniteAvailable, sortedDiscovery.length]);
+  }, [activeFeedOption, flushVisibleCardsToChronik, sortedDiscovery.length]);
 
   const [isCuratingLiveAi, setIsCuratingLiveAi] = useState<boolean>(false);
 
@@ -1243,24 +1262,69 @@ export const FeedScreen: React.FC = () => {
                       </View>
                     )}
 
-                    {visibleInfiniteCount < totalInfiniteAvailable ? (
-                      <TouchableOpacity
-                        onPress={handleLoadMoreInfinite}
-                        style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
-                      >
-                        <Ionicons name="compass-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
-                        <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
-                          Weiter entdecken (+12 Beiträge)
-                        </Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <View style={[styles.loadMoreButton, { borderColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary, opacity: 0.85 }]}>
-                        <Ionicons name="checkmark-circle-outline" size={18} color={colors.textMuted} style={{ marginRight: 6 }} />
-                        <Text style={[styles.loadMoreButtonText, { color: colors.textMuted }]}>
-                          Alle {totalInfiniteAvailable} frischen Beiträge & Klassiker durchstöbert
-                        </Text>
+                    {/* Finite Feed Peaceful Ending Card */}
+                    <View style={[styles.finiteEndingCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                      <View style={styles.finiteEndingHeader}>
+                        <View style={[styles.finiteEndingIconBox, { backgroundColor: colors.accentSubtle }]}>
+                          <Ionicons name="sparkles" size={20} color={colors.accent} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.finiteEndingTitle, { color: colors.textPrimary }]}>
+                            🌱 Das war deine Auswahl für jetzt
+                          </Text>
+                          <Text style={[styles.finiteEndingSubtitle, { color: colors.textSecondary }]}>
+                            Du hast {renderedInfiniteItems.length} kuratierte Beiträge erkundet. Ein bewusster Moment zum Innehalten — oder für den nächsten Impuls:
+                          </Text>
+                        </View>
                       </View>
-                    )}
+
+                      <View style={styles.finiteEndingActionsRow}>
+                        <TouchableOpacity
+                          onPress={handleShuffle}
+                          style={[styles.finiteEndingBtn, { backgroundColor: colors.accent, borderColor: colors.accent }]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Neuer Mix: 24 frische Beiträge laden"
+                        >
+                          <Ionicons name="shuffle-outline" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                          <Text style={[styles.finiteEndingBtnText, { color: '#FFFFFF', fontWeight: '700' }]}>
+                            🔄 Neuer Mix
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          onPress={() => setActiveFeedOption('live_news')}
+                          style={[styles.finiteEndingBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Zu den aktuellen Live-Nachrichten springen"
+                        >
+                          <Ionicons name="flash-outline" size={15} color="#F59E0B" style={{ marginRight: 6 }} />
+                          <Text style={[styles.finiteEndingBtnText, { color: colors.textPrimary, fontWeight: '600' }]}>
+                            ⚡ Zu den aktuellen Nachrichten
+                          </Text>
+                        </TouchableOpacity>
+
+                        {visibleInfiniteCount < totalInfiniteAvailable ? (
+                          <TouchableOpacity
+                            onPress={handleLoadMoreInfinite}
+                            style={[styles.finiteEndingBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                            accessibilityRole="button"
+                            accessibilityLabel="12 weitere Beiträge der aktuellen Auswahl anzeigen"
+                          >
+                            <Ionicons name="arrow-down-circle-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+                            <Text style={[styles.finiteEndingBtnText, { color: colors.accent, fontWeight: '600' }]}>
+                              ⬇️ 12 weitere anzeigen
+                            </Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <View style={[styles.finiteEndingBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, opacity: 0.75 }]}>
+                            <Ionicons name="checkmark-circle-outline" size={15} color={colors.textMuted} style={{ marginRight: 6 }} />
+                            <Text style={[styles.finiteEndingBtnText, { color: colors.textMuted, fontWeight: '500' }]}>
+                              Alle {totalInfiniteAvailable} Beiträge durchstöbert
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
                   </>
                 )}
               </>
@@ -1269,16 +1333,28 @@ export const FeedScreen: React.FC = () => {
             {/* 2. MODE: LIVE NEWS HUB */}
             {activeFeedOption === 'live_news' && (
               <View style={styles.modeSectionContainer}>
-                {/* News Hub Sub-Bar: Ticker headline, refresh button & Settings button */}
+                {/* News Hub Sub-Bar: Ticker headline, refresh button, search & transparent status */}
                 <View style={[styles.liveNewsSubBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                   <View style={styles.liveNewsTopRow}>
                     <View style={styles.liveNewsTitleRow}>
-                      <View style={styles.liveGreenDot} />
+                      <View
+                        style={[
+                          styles.liveGreenDot,
+                          {
+                            backgroundColor:
+                              ContinuousLiveNewsService.getNewsStatusInfo().fetchStatus === 'live'
+                                ? '#10B981'
+                                : ContinuousLiveNewsService.getNewsStatusInfo().fetchStatus === 'cached'
+                                ? '#F59E0B'
+                                : '#94A3B8'
+                          }
+                        ]}
+                      />
                       <Text style={[styles.liveNewsTitle, { color: colors.textPrimary }]}>
                         Echtzeit-Ticker ({scoredLiveItems.length} Meldungen)
                       </Text>
                       <Text style={[styles.liveNewsLastUpdatedText, { color: colors.textMuted }]}>
-                        • {liveNewsLastUpdated}
+                        • {ContinuousLiveNewsService.getNewsStatusInfo().fetchStatus === 'live' ? '🟢 Live' : ContinuousLiveNewsService.getNewsStatusInfo().fetchStatus === 'cached' ? '🟡 Cache' : '⚪ Offline'} • Zuletzt geprüft: {ContinuousLiveNewsService.getNewsStatusInfo().lastFetchTimeFormatted}
                       </Text>
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -1304,7 +1380,7 @@ export const FeedScreen: React.FC = () => {
                         onPress={() => setShowNewsHubSettingsModal(true)}
                         style={[styles.hubSettingsBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
                         accessibilityRole="button"
-                        accessibilityLabel="Quellen- und Scraper-Setup öffnen"
+                        accessibilityLabel="Quellen- und Themen-Setup öffnen"
                       >
                         <Ionicons name="options-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
                         <Text style={[styles.hubSettingsBtnText, { color: colors.textPrimary }]}>
@@ -1312,6 +1388,24 @@ export const FeedScreen: React.FC = () => {
                         </Text>
                       </TouchableOpacity>
                     </View>
+                  </View>
+
+                  {/* Inline News Search Bar */}
+                  <View style={[styles.newsSearchBar, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                    <Ionicons name="search" size={13} color={colors.textMuted} style={{ marginRight: 6 }} />
+                    <TextInput
+                      value={newsSearchQuery}
+                      onChangeText={setNewsSearchQuery}
+                      placeholder="In aktuellen Ticker-Meldungen suchen…"
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.newsSearchInput, { color: colors.textPrimary }]}
+                      autoCapitalize="none"
+                    />
+                    {newsSearchQuery.length > 0 && (
+                      <TouchableOpacity onPress={() => setNewsSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Ionicons name="close-circle" size={14} color={colors.textMuted} />
+                      </TouchableOpacity>
+                    )}
                   </View>
 
                   {/* Filter Chips for Live News */}
@@ -1348,9 +1442,9 @@ export const FeedScreen: React.FC = () => {
                   {/* Window Mode Selector */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}>
                     {[
-                      { id: '7d_quality' as const, label: '🎯 7-Tage Qualität' },
+                      { id: 'chronological' as const, label: '⏱ Chronologisch (Neueste zuerst)' },
                       { id: '48h_fresh' as const, label: '⚡️ 48h Frisch' },
-                      { id: 'chronological' as const, label: '⏱ Chronologisch' }
+                      { id: '7d_quality' as const, label: '🎯 7-Tage Qualität' }
                     ].map(mode => {
                       const isModeActive = liveNewsWindowMode === mode.id;
                       return (
@@ -2851,5 +2945,65 @@ const styles = StyleSheet.create({
   snapshotSyncText: {
     fontSize: 12,
     fontWeight: '600'
+  },
+  newsSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginTop: 4
+  },
+  newsSearchInput: {
+    flex: 1,
+    fontSize: 12,
+    padding: 0
+  },
+  finiteEndingCard: {
+    padding: 20,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    marginTop: 16,
+    marginBottom: 24,
+    gap: 16
+  },
+  finiteEndingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14
+  },
+  finiteEndingIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  finiteEndingTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 4
+  },
+  finiteEndingSubtitle: {
+    fontSize: 13,
+    lineHeight: 18
+  },
+  finiteEndingActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10
+  },
+  finiteEndingBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  finiteEndingBtnText: {
+    fontSize: 13
   }
 });
