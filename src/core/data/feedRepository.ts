@@ -1,9 +1,10 @@
-import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP, DayEditionType } from '../domain/types';
+import { FeedItem, FeedItemSchema, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP, DayEditionType } from '../domain/types';
 import { INITIAL_FIXTURES } from './fixtures';
 import { rankAndInterleaveFeed, rankEditionFeed, ScoredFeedItem } from '../domain/ranking';
 import { AtemStorage, appStorage } from './storage';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
+import { defaultBatchEditionEnricher } from '../enrichment/batchEnricher';
 
 // Safely load pipeline output if present
 let pipelineItems: FeedItem[] = [];
@@ -81,6 +82,8 @@ export interface IFeedRepository {
   setItems?(items: FeedItem[]): void;
   addItems?(items: FeedItem[]): void;
   getAllItems?(): FeedItem[];
+  hydrateFromPublicSnapshot?(remoteUrl?: string): Promise<{ success: boolean; itemCount: number; snapshotDate?: string }>;
+  curateAndAddItems?(items: FeedItem[]): Promise<FeedItem[]>;
 }
 
 export class LocalFeedRepository implements IFeedRepository {
@@ -241,6 +244,74 @@ export class LocalFeedRepository implements IFeedRepository {
       item.topics.some(t => t.toLowerCase().includes(q))
     );
     return rankAndInterleaveFeed(matched, profile, interactions);
+  }
+
+  /**
+   * Fetches the latest serverless feed snapshot (from raw GitHub or local public dir)
+   * with a 6-second timeout and safely merges validated items into storage.
+   */
+  async hydrateFromPublicSnapshot(
+    remoteUrl?: string
+  ): Promise<{ success: boolean; itemCount: number; snapshotDate?: string }> {
+    const url = remoteUrl?.trim() || (
+      typeof window !== 'undefined'
+        ? './feed-snapshot.json'
+        : 'https://raw.githubusercontent.com/username/anti-doomscroll-learn-app/main/public/feed-snapshot.json'
+    );
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        return { success: false, itemCount: 0 };
+      }
+
+      const json = await response.json();
+      const rawItems = Array.isArray(json?.items) ? json.items : (Array.isArray(json) ? json : []);
+      const validated: FeedItem[] = [];
+
+      for (const raw of rawItems) {
+        const safe = FeedItemSchema.safeParse(raw);
+        if (safe.success) {
+          validated.push(safe.data);
+        }
+      }
+
+      if (validated.length > 0) {
+        // Pass candidate items through smart AI Signal-vs-Noise Gatekeeper
+        // (Falls back gracefully to deterministic heuristics when offline/unconfigured)
+        const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(validated);
+        const finalItems = curated.length > 0 ? curated : validated;
+
+        this.addItems(finalItems);
+        const snapshotDate = json?.generatedAt
+          ? new Date(json.generatedAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
+          : new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+
+        return {
+          success: true,
+          itemCount: finalItems.length,
+          snapshotDate
+        };
+      }
+
+      return { success: false, itemCount: 0 };
+    } catch {
+      return { success: false, itemCount: 0 };
+    }
+  }
+
+  /**
+   * Passes candidate items through the AI Signal-vs-Noise Gatekeeper and adds them to storage.
+   */
+  async curateAndAddItems(items: FeedItem[]): Promise<FeedItem[]> {
+    const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(items);
+    this.addItems(curated);
+    return curated;
   }
 }
 

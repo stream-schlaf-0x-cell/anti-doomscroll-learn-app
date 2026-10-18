@@ -22,6 +22,9 @@ import { ContinuousLiveNewsService } from '../data/continuousLiveNewsService';
 import { ThemeColors, ThemePalette, getThemeColors } from '../../ui/theme';
 import { OpenWebHarvester } from '../ingestion/openWebHarvester';
 import { appearanceHistoryService, AppearanceRecord } from '../data/appearanceHistoryService';
+import { BackupService } from '../data/backupService';
+import { RaindropService } from '../raindrop/raindropService';
+import { FeatureModuleId } from '../modules/featureRegistry';
 
 export type StartupState =
   | { status: 'loading' }
@@ -29,6 +32,15 @@ export type StartupState =
   | { status: 'error'; message: string; isCorrupt?: boolean; canReset?: boolean };
 
 export type FeedOption = 'infinite' | 'daily' | 'live_news' | 'classics' | 'history';
+
+export interface OnboardingExtraOptions {
+  teachingTargetRatio?: number;
+  languageMix?: 'bilingual' | 'de_focus' | 'en_focus';
+  theme?: 'system' | 'light' | 'dark';
+  palette?: ThemePalette;
+  weatherCity?: string;
+  raindropToken?: string;
+}
 
 interface AppContextValue {
   profile: UserProfile;
@@ -84,7 +96,12 @@ interface AppContextValue {
   setFontSize: (size: 'sm' | 'md' | 'lg' | 'xl') => Promise<void>;
   setThemePreference: (theme: 'system' | 'light' | 'dark') => Promise<void>;
   setPalettePreference: (palette: ThemePalette) => Promise<void>;
-  completeOnboarding: (interests: Record<TopicTag, number>, duration: ReadingPreferenceDuration) => Promise<void>;
+  toggleFeatureModule: (moduleId: FeatureModuleId) => Promise<void>;
+  completeOnboarding: (
+    interests: Record<TopicTag, number>,
+    duration: ReadingPreferenceDuration,
+    extra?: OnboardingExtraOptions
+  ) => Promise<void>;
   repeatOnboarding: () => Promise<void>;
   clearAllLocalData: () => Promise<void>;
   refreshFeed: () => Promise<void>;
@@ -95,6 +112,11 @@ interface AppContextValue {
   activeDateSeed: string;
   retryStartup: () => Promise<void>;
   resetCorruptedData: () => Promise<void>;
+  reloadFromStorage: () => Promise<void>;
+  remoteSnapshotUrl: string;
+  setRemoteSnapshotUrl: (url: string) => Promise<void>;
+  refreshLiveFeed: () => Promise<{ success: boolean; itemCount: number; dateText: string }>;
+  snapshotSyncInfo: string | null;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -124,6 +146,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
   const [activeDateSeed, setActiveDateSeed] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [shuffleSeed, setShuffleSeed] = useState<number>(0);
+  const [remoteSnapshotUrl, setRemoteSnapshotUrlState] = useState<string>('');
+  const [snapshotSyncInfo, setSnapshotSyncInfo] = useState<string | null>(null);
 
   const selectedEditionTypeRef = useRef<DayEditionType>(selectedEditionType);
   selectedEditionTypeRef.current = selectedEditionType;
@@ -167,6 +191,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const colors = useMemo(() => {
     return getThemeColors(isDark ? 'dark' : 'light', palette);
   }, [isDark, palette]);
+
+  // Sync web document background and iOS theme-color meta tag
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      try {
+        document.body.style.backgroundColor = colors.background;
+        const html = document.documentElement;
+        if (html) html.style.backgroundColor = colors.background;
+        const meta = document.getElementById('theme-color-meta') as HTMLMetaElement | null;
+        if (meta) {
+          meta.content = colors.background;
+        }
+      } catch {
+        // Non-browser fallback
+      }
+    }
+  }, [colors.background]);
 
   // Sequenced feed recomputation: newest committed call always wins
   const scheduleFeedRecompute = useCallback(async (
@@ -374,8 +415,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const initialEdition = determineCurrentEditionType(new Date(), loadedProfile);
       setSelectedEditionTypeState(initialEdition);
       selectedEditionTypeRef.current = initialEdition;
+      let currentSnapshotUrl = '';
       try {
-        await (feedRepository as any).hydrateFromPublicSnapshot?.();
+        const storedUrl = await appStorage.getItem('@atem:remote_snapshot_url:v1');
+        if (storedUrl) {
+          currentSnapshotUrl = storedUrl;
+          setRemoteSnapshotUrlState(storedUrl);
+        }
+        const storedSync = await appStorage.getItem('@atem:snapshot_sync_info:v1');
+        if (storedSync) {
+          setSnapshotSyncInfo(storedSync);
+        }
+      } catch {
+        // Non-fatal
+      }
+
+      try {
+        const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(currentSnapshotUrl);
+        if (res?.success) {
+          const syncText = `Ausgabe vom ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+          setSnapshotSyncInfo(syncText);
+        }
       } catch {
         // Fallback to local snapshot/vault
       }
@@ -430,10 +490,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [loadInitialData]);
 
+  const setRemoteSnapshotUrl = useCallback(async (url: string) => {
+    setRemoteSnapshotUrlState(url);
+    await appStorage.setItem('@atem:remote_snapshot_url:v1', url);
+  }, []);
+
   const refreshFeed = useCallback(async () => {
     try {
       try {
-        await (feedRepository as any).hydrateFromPublicSnapshot?.();
+        const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(remoteSnapshotUrl);
+        if (res?.success) {
+          const dateText = `Ausgabe vom ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+          setSnapshotSyncInfo(dateText);
+          await appStorage.setItem('@atem:snapshot_sync_info:v1', dateText);
+        }
       } catch {
         // Fallback
       }
@@ -457,7 +527,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err) {
       console.warn('Feed-Aktualisierung fehlgeschlagen:', err);
     }
-  }, [scheduleFeedRecompute]);
+  }, [remoteSnapshotUrl, scheduleFeedRecompute]);
+
+  const refreshLiveFeed = useCallback(async () => {
+    try {
+      const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(remoteSnapshotUrl);
+      if (res?.success) {
+        const dateText = `Ausgabe vom ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+        setSnapshotSyncInfo(dateText);
+        await appStorage.setItem('@atem:snapshot_sync_info:v1', dateText);
+        await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
+        return { success: true, itemCount: res.itemCount, dateText };
+      }
+    } catch (err) {
+      console.warn('Live Snapshot Sync failed:', err);
+    }
+    await refreshFeed();
+    const fallbackText = `Ausgabe vom ${new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}`;
+    return { success: false, itemCount: 0, dateText: fallbackText };
+  }, [remoteSnapshotUrl, refreshFeed, scheduleFeedRecompute]);
 
   const simulateDailyGeneration = useCallback(async (daysOffset: number = 0, customDate?: string) => {
     const res = await DailyGenerationService.simulateDailyGeneration({
@@ -581,10 +669,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return next;
         });
         setSavedArticles(prev => prev.filter(a => a.id !== id));
+        void BackupService.saveAutoBackup();
       } else {
         let articleToSave: FeedItem | null =
           dailyEdition.find(i => i.id === id) ??
           discoveryItems.find(i => i.id === id) ??
+          openWebItems.find(i => i.id === id) ??
           (selectedArticle?.id === id ? selectedArticle : null) ??
           (await feedRepository.getItemById(id));
 
@@ -599,6 +689,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const exists = prev.some(a => a.id === id);
             return exists ? prev : [articleToSave!, ...prev];
           });
+          // Automatically sync to Raindrop.io in background if token is configured
+          void RaindropService.syncArticleIfConnected(articleToSave);
+          void BackupService.saveAutoBackup();
         } else {
           const updated = await libraryRepository.saveItem(id);
           setInteractions(prev => {
@@ -606,12 +699,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             latestInteractionsRef.current = next;
             return next;
           });
+          void BackupService.saveAutoBackup();
         }
       }
     } catch {
       setErrorMessage('Lesezeichen konnte nicht gespeichert werden.');
     }
-  }, [dailyEdition, discoveryItems, selectedArticle]);
+  }, [dailyEdition, discoveryItems, openWebItems, selectedArticle]);
 
   // Throttled reading progress write (bounds write rate to max 1 write / 800ms while scrolling)
   const updateReadingProgress = useCallback(async (id: string, percent: number) => {
@@ -832,19 +926,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  const completeOnboarding = useCallback(async (interests: Record<TopicTag, number>, duration: ReadingPreferenceDuration) => {
+  const toggleFeatureModule = useCallback(async (moduleId: FeatureModuleId) => {
     try {
+      const committed = await userProfileRepository.updateProfile(curr => {
+        const currentModules = curr.enabledModules || {};
+        const currentVal = currentModules[moduleId] ?? true;
+        return {
+          ...curr,
+          enabledModules: {
+            ...currentModules,
+            [moduleId]: !currentVal
+          }
+        };
+      });
+      latestProfileRef.current = committed;
+      setProfile(committed);
+    } catch {
+      setErrorMessage('Modul-Status konnte nicht gespeichert werden.');
+    }
+  }, []);
+
+  const completeOnboarding = useCallback(async (
+    interests: Record<TopicTag, number>,
+    duration: ReadingPreferenceDuration,
+    extra?: OnboardingExtraOptions
+  ) => {
+    try {
+      if (extra?.raindropToken !== undefined) {
+        await RaindropService.setStoredToken(extra.raindropToken);
+      }
       const committed = await userProfileRepository.updateProfile(curr => ({
         ...curr,
         explicitInterests: interests,
+        editorialTargets: {
+          ...curr.editorialTargets,
+          teachingTargetRatio:
+            typeof extra?.teachingTargetRatio === 'number'
+              ? extra.teachingTargetRatio
+              : curr.editorialTargets.teachingTargetRatio
+        },
         readingPreferences: {
           ...curr.readingPreferences,
-          preferredDuration: duration
+          preferredDuration: duration,
+          languageMix: extra?.languageMix ?? (curr.readingPreferences as any).languageMix ?? 'bilingual',
+          theme: extra?.theme ?? curr.readingPreferences.theme,
+          palette: extra?.palette ?? curr.readingPreferences.palette
+        },
+        editionPreferences: {
+          ...curr.editionPreferences,
+          weatherCity: extra?.weatherCity ?? curr.editionPreferences.weatherCity
         },
         isOnboarded: true
       }));
       latestProfileRef.current = committed;
       setProfile(committed);
+      void BackupService.saveAutoBackup();
       await scheduleFeedRecompute(committed, latestInteractionsRef.current);
     } catch {
       setErrorMessage('Onboarding konnte nicht gespeichert werden.');
@@ -950,6 +1086,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setFontSize,
         setThemePreference,
         setPalettePreference,
+        toggleFeatureModule,
         completeOnboarding,
         repeatOnboarding,
         clearAllLocalData,
@@ -960,7 +1097,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         simulateDailyGeneration,
         activeDateSeed,
         retryStartup: loadInitialData,
-        resetCorruptedData
+        resetCorruptedData,
+        reloadFromStorage: loadInitialData,
+        remoteSnapshotUrl,
+        setRemoteSnapshotUrl,
+        refreshLiveFeed,
+        snapshotSyncInfo
       }}
     >
       {children}

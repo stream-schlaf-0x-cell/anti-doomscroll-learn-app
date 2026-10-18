@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   Modal,
-  ActivityIndicator
+  ActivityIndicator,
+  Switch,
+  TextInput
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, TOPIC_METADATA, ReadingPreferenceDuration } from '../../core/domain/types';
@@ -14,6 +17,21 @@ import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing } from '../../ui/theme';
 import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
 import { NewsHubModal } from '../../ui/components/NewsHubModal';
+import { GeminiModelSelector } from '../../ui/components/GeminiModelSelector';
+import { FEATURE_MODULES, isFeatureEnabled } from '../../core/modules/featureRegistry';
+import {
+  AiCredentials,
+  DEFAULT_AI_CREDENTIALS,
+  DEFAULT_GEMINI_MODEL,
+  DEFAULT_OPENROUTER_MODEL,
+  OPENROUTER_MODEL_PRESETS,
+  loadAiCredentials,
+  saveAiCredentials,
+  clearAiCredentials,
+  testAiConnection
+} from '../../core/ai/atmenAiClient';
+import { defaultUsageLedger, MONTHLY_BUDGET_CEILING_EUR } from '../../core/enrichment/ledger';
+import { EnrichmentLedgerSummary } from '../../core/enrichment/types';
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -24,17 +42,131 @@ export const SettingsScreen: React.FC = () => {
     updateDurationPreference,
     setFontSize,
     setThemePreference,
+    toggleFeatureModule,
     repeatOnboarding,
     clearAllLocalData,
     updateEditionPreferences,
     colors,
-    setActiveTab
+    setActiveTab,
+    remoteSnapshotUrl,
+    setRemoteSnapshotUrl,
+    refreshLiveFeed,
+    snapshotSyncInfo
   } = useApp();
 
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
   const [showNewsHub, setShowNewsHub] = useState<boolean>(false);
   const [isClearing, setIsClearing] = useState<boolean>(false);
   const [craftNotice, setCraftNotice] = useState<string | null>(null);
+
+  // BYOK AI Credentials & Ledger State
+  const [aiCreds, setAiCreds] = useState<AiCredentials>(DEFAULT_AI_CREDENTIALS);
+  const [showApiKey, setShowApiKey] = useState<boolean>(false);
+  const [isTestingAi, setIsTestingAi] = useState<boolean>(false);
+  const [aiTestResult, setAiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [ledgerSummary, setLedgerSummary] = useState<EnrichmentLedgerSummary | null>(null);
+
+  // Serverless Remote Snapshot URL State
+  const [remoteUrlInput, setRemoteUrlInput] = useState<string>(remoteSnapshotUrl || '');
+  const [remoteUrlSavedNotice, setRemoteUrlSavedNotice] = useState<string | null>(null);
+  const [isSyncingSnapshot, setIsSyncingSnapshot] = useState<boolean>(false);
+
+  useEffect(() => {
+    void (async () => {
+      const creds = await loadAiCredentials();
+      setAiCreds(creds);
+      const summary = await defaultUsageLedger.getSummary();
+      setLedgerSummary(summary);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (remoteSnapshotUrl) {
+      setRemoteUrlInput(remoteSnapshotUrl);
+    }
+  }, [remoteSnapshotUrl]);
+
+  const handleSelectProvider = async (provider: 'gemini' | 'openrouter') => {
+    const defaultModel = provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL;
+    const next: AiCredentials = {
+      ...aiCreds,
+      provider,
+      model: defaultModel
+    };
+    setAiCreds(next);
+    await saveAiCredentials(next);
+    setAiTestResult(null);
+  };
+
+  const handleSelectModel = async (model: string) => {
+    const next: AiCredentials = {
+      ...aiCreds,
+      model: model.trim()
+    };
+    setAiCreds(next);
+    await saveAiCredentials(next);
+    setAiTestResult(null);
+  };
+
+  const handleChangeCustomModel = async (text: string) => {
+    const next: AiCredentials = {
+      ...aiCreds,
+      model: text
+    };
+    setAiCreds(next);
+    await saveAiCredentials(next);
+    setAiTestResult(null);
+  };
+
+  const handleChangeApiKey = async (text: string) => {
+    const next: AiCredentials = {
+      ...aiCreds,
+      apiKey: text
+    };
+    setAiCreds(next);
+    await saveAiCredentials(next);
+    setAiTestResult(null);
+  };
+
+  const handleClearApiKey = async () => {
+    const next: AiCredentials = {
+      ...aiCreds,
+      apiKey: ''
+    };
+    setAiCreds(next);
+    await clearAiCredentials();
+    setAiTestResult(null);
+  };
+
+  const handleTestAiConnection = async () => {
+    setIsTestingAi(true);
+    setAiTestResult(null);
+    try {
+      const res = await testAiConnection(aiCreds);
+      setAiTestResult(res);
+      const summary = await defaultUsageLedger.getSummary();
+      setLedgerSummary(summary);
+    } catch (err: any) {
+      setAiTestResult({ ok: false, message: err?.message || 'Verbindungstest fehlgeschlagen.' });
+    } finally {
+      setIsTestingAi(false);
+    }
+  };
+
+  const handleSaveRemoteUrl = async () => {
+    await setRemoteSnapshotUrl(remoteUrlInput.trim());
+    setRemoteUrlSavedNotice('✓ Gespeichert');
+    setTimeout(() => setRemoteUrlSavedNotice(null), 2500);
+  };
+
+  const handleSyncRemoteNow = async () => {
+    setIsSyncingSnapshot(true);
+    try {
+      await refreshLiveFeed();
+    } finally {
+      setIsSyncingSnapshot(false);
+    }
+  };
 
   const handleAdjustWeight = (topic: TopicTag, delta: number) => {
     const current = profile.explicitInterests[topic] ?? 0.5;
@@ -258,10 +390,51 @@ export const SettingsScreen: React.FC = () => {
           </View>
         </View>
 
+        {/* Section: Modular Feature Registry (Atmen Baukasten) */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Modulare Funktionen (Atmen Baukasten)
+          </Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Schalte einzelne Module nach deinen persönlichen Lern- und Konzentrationsbedürfnissen ein oder aus.
+          </Text>
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            {FEATURE_MODULES.map((mod, index) => {
+              const enabled = isFeatureEnabled(profile, mod.id);
+              return (
+                <View
+                  key={mod.id}
+                  style={[
+                    styles.settingItemRow,
+                    index > 0 && { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }
+                  ]}
+                >
+                  <View style={{ flex: 1, paddingRight: spacing.md }}>
+                    <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
+                      {mod.title}
+                    </Text>
+                    <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, marginTop: 2 }}>
+                      {mod.description}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={enabled}
+                    onValueChange={() => void toggleFeatureModule(mod.id)}
+                    trackColor={{ false: colors.borderSubtle, true: colors.accent }}
+                    thumbColor="#FFFFFF"
+                    accessibilityRole="switch"
+                    accessibilityLabel={`${mod.title} umschalten`}
+                  />
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
         {/* Section: Daily Editions & Weather Location */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            🌅 Tagesausgaben & Wetter-Ort
+            Tagesausgaben & Wetter-Ort
           </Text>
           <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
             Honeste Wetterlage (Open-Meteo & DWD) für deinen morgendlichen Fokus-Start ohne Standort-Tracking.
@@ -430,44 +603,325 @@ export const SettingsScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* Section: AI Sparring & Budget Control */}
+        {/* Section: AI Brain & Model Selector (BYOK Gemini / OpenRouter) */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            KI-Sparring & Budgetkontrolle (€5.00 / Monat)
+            KI-Gehirn & Modell-Auswahl (Gemini / OpenRouter)
           </Text>
           <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Intellektueller Gegenwind im Atem-Netzwerk. Strikte Kostenbegrenzung mit Zero-Risk-Garantie.
+            Bring Your Own Key (BYOK). Dein API-Schlüssel wird ausschließlich lokal verschlüsselt gespeichert und niemals exportiert.
           </Text>
-          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-            <View style={{ padding: spacing.md }}>
+
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
+            {/* Provider Picker */}
+            <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>KI-Anbieter wählen:</Text>
+            <View style={styles.providerRow}>
+              <TouchableOpacity
+                onPress={() => void handleSelectProvider('gemini')}
+                style={[
+                  styles.providerBtn,
+                  aiCreds.provider === 'gemini'
+                    ? { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    : { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Gemini Direct wählen"
+              >
+                <Ionicons
+                  name="sparkles-outline"
+                  size={14}
+                  color={aiCreds.provider === 'gemini' ? colors.accent : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.providerBtnText,
+                    { color: aiCreds.provider === 'gemini' ? colors.accent : colors.textPrimary }
+                  ]}
+                >
+                  Gemini Direct
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => void handleSelectProvider('openrouter')}
+                style={[
+                  styles.providerBtn,
+                  aiCreds.provider === 'openrouter'
+                    ? { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    : { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="OpenRouter wählen"
+              >
+                <Ionicons
+                  name="shuffle-outline"
+                  size={14}
+                  color={aiCreds.provider === 'openrouter' ? colors.accent : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.providerBtnText,
+                    { color: aiCreds.provider === 'openrouter' ? colors.accent : colors.textPrimary }
+                  ]}
+                >
+                  OpenRouter
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Model Selector */}
+            {aiCreds.provider === 'gemini' ? (
+              <View style={{ marginVertical: 10 }}>
+                <GeminiModelSelector
+                  selectedModelId={aiCreds.model || DEFAULT_GEMINI_MODEL}
+                  onSelectModel={async mId => {
+                    void handleSelectModel(mId);
+                  }}
+                  apiKey={aiCreds.apiKey}
+                  workflow="text"
+                />
+              </View>
+            ) : (
+              <View style={{ marginVertical: 10 }}>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                  OpenRouter Modell-Auswahl:
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 6 }}>
+                  {OPENROUTER_MODEL_PRESETS.map(preset => {
+                    const currentModel = aiCreds.model || DEFAULT_OPENROUTER_MODEL;
+                    const isSelected = currentModel === preset.id;
+                    return (
+                      <TouchableOpacity
+                        key={preset.id}
+                        onPress={() => void handleSelectModel(preset.id)}
+                        style={[
+                          styles.smallPill,
+                          {
+                            backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
+                            borderColor: isSelected ? colors.accent : colors.borderSubtle,
+                            borderWidth: 1,
+                            paddingHorizontal: 10,
+                            paddingVertical: 6
+                          }
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Modell ${preset.id} auswählen`}
+                      >
+                        <Text
+                          style={[
+                            styles.smallPillText,
+                            {
+                              color: isSelected ? '#FFFFFF' : colors.textPrimary,
+                              fontWeight: isSelected ? '700' : '500'
+                            }
+                          ]}
+                        >
+                          {isSelected ? `✓ ${preset.id}` : preset.id}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <View style={[styles.keyInputRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                  <Ionicons name="cube-outline" size={15} color={colors.textMuted} style={{ marginLeft: 4, marginRight: 6 }} />
+                  <TextInput
+                    style={[styles.keyInput, { color: colors.textPrimary, fontSize: 13 }]}
+                    value={aiCreds.model}
+                    onChangeText={text => void handleChangeCustomModel(text)}
+                    placeholder={DEFAULT_OPENROUTER_MODEL}
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+              </View>
+            )}
+
+            {/* API Key Input */}
+            <Text style={[styles.inputLabel, { color: colors.textSecondary, marginTop: 14 }]}>
+              {aiCreds.provider === 'gemini' ? 'Google AI Studio API-Key:' : 'OpenRouter API-Key:'}
+            </Text>
+            <View style={[styles.keyInputRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+              <TextInput
+                style={[styles.keyInput, { color: colors.textPrimary }]}
+                value={aiCreds.apiKey}
+                onChangeText={handleChangeApiKey}
+                placeholder={aiCreds.provider === 'gemini' ? 'AIzaSy...' : 'sk-or-v1-...'}
+                placeholderTextColor={colors.textMuted}
+                secureTextEntry={!showApiKey}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                onPress={() => setShowApiKey(!showApiKey)}
+                style={styles.keyActionBtn}
+                accessibilityLabel={showApiKey ? 'Schlüssel verbergen' : 'Schlüssel anzeigen'}
+              >
+                <Ionicons name={showApiKey ? 'eye-off-outline' : 'eye-outline'} size={18} color={colors.textMuted} />
+              </TouchableOpacity>
+              {Boolean(aiCreds.apiKey) && (
+                <TouchableOpacity
+                  onPress={handleClearApiKey}
+                  style={styles.keyActionBtn}
+                  accessibilityLabel="Schlüssel löschen"
+                >
+                  <Ionicons name="close-circle-outline" size={18} color={colors.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Test Connection Button */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 10, flexWrap: 'wrap' }}>
+              <TouchableOpacity
+                onPress={handleTestAiConnection}
+                disabled={isTestingAi || !aiCreds.apiKey?.trim()}
+                style={[
+                  styles.testConnectionBtn,
+                  {
+                    backgroundColor: aiCreds.apiKey?.trim() ? colors.accent : colors.surfaceSecondary,
+                    opacity: isTestingAi || !aiCreds.apiKey?.trim() ? 0.6 : 1
+                  }
+                ]}
+              >
+                {isTestingAi ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
+                ) : (
+                  <Ionicons name="flash-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                )}
+                <Text style={styles.testConnectionBtnText}>Verbindung testen</Text>
+              </TouchableOpacity>
+
+              {aiTestResult && (
+                <View
+                  style={[
+                    styles.testResultPill,
+                    {
+                      backgroundColor: aiTestResult.ok ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                      borderColor: aiTestResult.ok ? '#10B981' : '#EF4444'
+                    }
+                  ]}
+                >
+                  <Ionicons
+                    name={aiTestResult.ok ? 'checkmark-circle' : 'alert-circle'}
+                    size={14}
+                    color={aiTestResult.ok ? '#10B981' : '#EF4444'}
+                    style={{ marginRight: 5 }}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: '600',
+                      color: aiTestResult.ok ? '#10B981' : '#EF4444'
+                    }}
+                  >
+                    {aiTestResult.message}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {/* Monatsbudget Ledger Display */}
+            <View style={[styles.ledgerBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: 16 }]}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <Text style={{ fontSize: typography.sizes.bodySmall, fontWeight: '700', color: colors.textPrimary }}>
-                  Monatlicher KI-Deckel: 5,00 €
+                  Enrichment Monatsbudget (Gedeckelt)
                 </Text>
                 <View style={[styles.badgeActive, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
-                  <Text style={[styles.badgeActiveText, { color: '#10B981' }]}>Gedeckelt & Sicher</Text>
+                  <Text style={[styles.badgeActiveText, { color: '#10B981' }]}>
+                    {ledgerSummary?.isBudgetExceeded ? 'Budget erreicht' : 'Gedeckelt & Sicher'}
+                  </Text>
                 </View>
               </View>
 
-              {/* Budget Progress Bar */}
-              <View style={[styles.budgetTrack, { backgroundColor: colors.surfaceSecondary }]}>
-                <View style={[styles.budgetFill, { width: '8%', backgroundColor: colors.accent }]} />
+              <View style={[styles.budgetTrack, { backgroundColor: colors.background }]}>
+                <View
+                  style={[
+                    styles.budgetFill,
+                    {
+                      width: `${Math.min(100, Math.round(((ledgerSummary?.totalCostEur ?? 0) / MONTHLY_BUDGET_CEILING_EUR) * 100))}%`,
+                      backgroundColor: ledgerSummary?.isBudgetExceeded ? '#EF4444' : colors.accent
+                    }
+                  ]}
+                />
               </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, marginBottom: 12 }}>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, marginBottom: 8 }}>
                 <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted }}>
-                  Verbraucht: ~0,38 € (7,6%)
+                  Verbraucht: {(ledgerSummary?.totalCostEur ?? 0).toFixed(2)} € ({Math.round(((ledgerSummary?.totalCostEur ?? 0) / MONTHLY_BUDGET_CEILING_EUR) * 100)}%)
                 </Text>
                 <Text style={{ fontSize: typography.sizes.micro, color: colors.accent, fontWeight: '600' }}>
-                  Verbleibend: 4,62 €
+                  Limit: {MONTHLY_BUDGET_CEILING_EUR.toFixed(2)} € / Monat
                 </Text>
               </View>
 
-              <Text style={{ fontSize: typography.sizes.micro, color: colors.textSecondary, lineHeight: 18, marginBottom: 10 }}>
-                • Modell: <Text style={{ fontWeight: '700', color: colors.textPrimary }}>Gemini 2.5 Flash</Text> ($0.10/M In, $0.40/M Out).{'\n'}
-                • Sparring-Partner: <Text style={{ fontStyle: 'italic', color: colors.textPrimary }}>u/sokrates_2026</Text> (Dialektik), <Text style={{ fontStyle: 'italic', color: colors.textPrimary }}>u/didaktik_labor</Text> (Unterricht Sek II).{'\n'}
-                • Null-Kosten-Garantie: Bei Erreichen des 5-€-Limits oder ohne hinterlegten Key schaltet Atem unterbrechungsfrei auf die lokale Heuristik um.
+              <Text style={{ fontSize: typography.sizes.micro, color: colors.textSecondary, lineHeight: 17 }}>
+                • Anfragen diesen Monat: {ledgerSummary?.totalCalls ?? 0} Aufrufe ({((ledgerSummary?.totalInputTokens ?? 0) + (ledgerSummary?.totalOutputTokens ?? 0)).toLocaleString()} Tokens).{'\n'}
+                • Null-Kosten-Garantie: Wenn kein Key hinterlegt ist oder 5,00 € erreicht werden, schaltet Atmen automatisch auf deterministische Veredelung um.
               </Text>
             </View>
+          </View>
+        </View>
+
+        {/* Section: Serverless Live-Sync & GitHub Snapshot URL */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Serverless Live-Sync & Snapshot-Pipeline
+          </Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Atmen läuft ohne Home-Server über autonome GitHub-Actions-Snapshots. Konfiguriere hier eine eigene Remote-URL oder nutze den Standard.
+          </Text>
+
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
+            <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+              Remote-Snapshot-URL (JSON):
+            </Text>
+            <View style={[styles.keyInputRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+              <TextInput
+                style={[styles.keyInput, { color: colors.textPrimary }]}
+                value={remoteUrlInput}
+                onChangeText={setRemoteUrlInput}
+                placeholder="https://raw.githubusercontent.com/.../feed-snapshot.json"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 10, flexWrap: 'wrap' }}>
+              <TouchableOpacity
+                onPress={handleSaveRemoteUrl}
+                style={[styles.testConnectionBtn, { backgroundColor: colors.accent }]}
+              >
+                <Text style={styles.testConnectionBtnText}>URL speichern</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleSyncRemoteNow}
+                disabled={isSyncingSnapshot}
+                style={[styles.testConnectionBtn, { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.borderSubtle }]}
+              >
+                {isSyncingSnapshot ? (
+                  <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 6 }} />
+                ) : (
+                  <Ionicons name="refresh-outline" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+                )}
+                <Text style={[styles.testConnectionBtnText, { color: colors.textPrimary }]}>Jetzt synchronisieren</Text>
+              </TouchableOpacity>
+
+              {remoteUrlSavedNotice && (
+                <Text style={{ fontSize: 12, color: '#10B981', fontWeight: '600' }}>{remoteUrlSavedNotice}</Text>
+              )}
+            </View>
+
+            {snapshotSyncInfo && (
+              <View style={{ marginTop: 12, padding: 8, borderRadius: radius.sm, backgroundColor: colors.surfaceSecondary }}>
+                <Text style={{ fontSize: 11, color: colors.textMuted }}>
+                  Letzter Sync: <Text style={{ color: colors.textPrimary, fontWeight: '600' }}>{snapshotSyncInfo}</Text>
+                </Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -641,7 +1095,19 @@ export const SettingsScreen: React.FC = () => {
         onRequestClose={() => !isClearing && setShowClearConfirm(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+          <Pressable
+            accessibilityLabel="Hintergrund schließen"
+            onPress={() => !isClearing && setShowClearConfirm(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View
+            style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+            onStartShouldSetResponder={() => true}
+            // @ts-ignore - web click propagation guard
+            onClick={(e: any) => {
+              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+            }}
+          >
             <View style={styles.modalHeader}>
               <View style={[styles.warningIconCircle, { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
                 <Ionicons name="warning" size={24} color={colors.danger} />
@@ -1050,5 +1516,72 @@ const styles = StyleSheet.create({
   sourceTagText: {
     fontSize: typography.sizes.micro,
     fontWeight: '500'
+  },
+  inputLabel: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600',
+    marginBottom: 6
+  },
+  providerRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginBottom: 6
+  },
+  providerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  providerBtnText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  modelSubtext: {
+    fontSize: typography.sizes.micro,
+    marginBottom: 4
+  },
+  keyInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingHorizontal: 10
+  },
+  keyInput: {
+    flex: 1,
+    paddingVertical: 10,
+    fontSize: 13
+  },
+  keyActionBtn: {
+    padding: 8
+  },
+  testConnectionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: radius.md
+  },
+  testConnectionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  testResultPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  ledgerBox: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1
   }
 });

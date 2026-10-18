@@ -22,13 +22,13 @@ describe('Open-Web Harvesters, Live News CORS Resilience & Anti-Doomscroll Pacin
       'First item must not be the hardcoded static Python 3.15 item'
     );
 
-    // Verify that the top items are genuinely fresh (today's items)
-    const todayStr = new Date().toISOString().split('T')[0];
-    const topItemDate = firstItem.publishedAt.split('T')[0];
-    assert.strictEqual(
-      topItemDate,
-      todayStr,
-      `Top item must be from today (${todayStr}), got ${topItemDate}`
+    // Verify that the top items are genuinely fresh (within 7-day rolling quality window)
+    const nowMs = Date.now();
+    const itemMs = new Date(firstItem.publishedAt).getTime();
+    const ageDays = Math.max(0, (nowMs - itemMs) / (1000 * 60 * 60 * 24));
+    assert.ok(
+      ageDays <= 7.5,
+      `Top item must be within 7-day quality window, got publishedAt: ${firstItem.publishedAt} (${ageDays.toFixed(1)} days old)`
     );
   });
 

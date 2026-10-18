@@ -162,25 +162,25 @@ export const FeedItemFormatSchema = z.enum([
 export type FeedItemFormat = z.infer<typeof FeedItemFormatSchema>;
 
 export const FORMAT_BADGE_MAP: Record<FeedItemFormat, { label: string; icon: string }> = {
-  concise_insight: { label: '⚡︎ Kompaktimpuls', icon: 'flash-outline' },
-  sourced_update: { label: '◈ Recherche & Update', icon: 'newspaper-outline' },
-  creative_idea: { label: '💡 Kreativer Impuls', icon: 'bulb-outline' },
-  intriguing_question: { label: '❓ Denkfrage', icon: 'help-circle-outline' },
-  surprising_connection: { label: '☍ Interdisziplinäre Brücke', icon: 'git-network-outline' },
-  perspective_disagreement: { label: '✦ Philosophische Gegenposition', icon: 'compass-outline' },
-  long_invitation: { label: '📖 Vertiefender Essay', icon: 'book-outline' },
-  meme: { label: '🎭 High-IQ Satire & Meme', icon: 'happy-outline' },
-  youtube_gem: { label: '📺 YouTube Gem & Video-Essay', icon: 'play-circle-outline' },
-  book_masterpiece: { label: '📚 Meisterwerk-Empfehlung', icon: 'library-outline' },
-  opportunity_radar: { label: '🚀 Chancen- & Hebel-Radar', icon: 'trending-up-outline' },
-  art_showcase: { label: '🎨 Kunst & Visuelles', icon: 'color-palette-outline' }
+  concise_insight: { label: 'Kompaktimpuls', icon: 'flash-outline' },
+  sourced_update: { label: 'Recherche & Update', icon: 'newspaper-outline' },
+  creative_idea: { label: 'Kreativer Impuls', icon: 'bulb-outline' },
+  intriguing_question: { label: 'Denkfrage', icon: 'help-circle-outline' },
+  surprising_connection: { label: 'Interdisziplinäre Brücke', icon: 'git-network-outline' },
+  perspective_disagreement: { label: 'Gegenposition', icon: 'compass-outline' },
+  long_invitation: { label: 'Vertiefender Essay', icon: 'book-outline' },
+  meme: { label: 'Satire & Meme', icon: 'happy-outline' },
+  youtube_gem: { label: 'Video-Essay', icon: 'play-circle-outline' },
+  book_masterpiece: { label: 'Buch-Empfehlung', icon: 'library-outline' },
+  opportunity_radar: { label: 'Chancen-Radar', icon: 'trending-up-outline' },
+  art_showcase: { label: 'Kunst & Visuelles', icon: 'color-palette-outline' }
 };
 
 export function formatFeedItemFormat(format?: FeedItemFormat): string {
   if (format && format in FORMAT_BADGE_MAP) {
     return FORMAT_BADGE_MAP[format].label;
   }
-  return '✦ Lese-Entdeckung';
+  return 'Lese-Entdeckung';
 }
 
 // Phase 2 Evidence Tiers
@@ -314,12 +314,24 @@ export function formatEditorialSynthesisType(type?: EditorialSynthesisType): str
   }
 }
 
+export const FeedQuizQuestionSchema = z.object({
+  id: z.string(),
+  question: z.string(),
+  options: z.array(z.string()).min(2).max(4),
+  correctIndex: z.number().int().min(0),
+  explanation: z.string(),
+  sourceArticleId: z.string().optional(),
+  sourceArticleTitle: z.string().optional()
+});
+export type FeedQuizQuestion = z.infer<typeof FeedQuizQuestionSchema>;
+
 export const FeedItemSchema = z.object({
   id: z.string(),
   type: ContentTypeSchema,
   format: FeedItemFormatSchema.default('concise_insight'),
   title: z.string(),
   subtitle: z.string(),
+  quiz: FeedQuizQuestionSchema.optional(),
   feedText: z.string().default(''), // Standalone-Leseinhalt direkt auf der Feed-Karte
   articleBody: z.string().optional(), // Optionaler Langform-Text für den Reader
   body: z.string(), // Volltext / Reader-Inhalt (Abwärtskompatibilität)
@@ -436,7 +448,9 @@ export const FeedItemSchema = z.object({
     points: z.number().int().nonnegative(),
     commentsCount: z.number().int().nonnegative().optional(),
     discussionUrl: z.string().url().optional()
-  }).optional()
+  }).optional(),
+  curationScore: z.number().min(0).max(10).optional(),
+  curationReason: z.string().optional()
 });
 export const ArtMetaSchema = z.object({
   artist: z.string(),
@@ -508,99 +522,99 @@ export const TOPIC_SPACE_MAP: Record<TopicTag, {
 }> = {
   ai_apple: {
     space: 'c/acceleration',
-    name: 'Frontier AI & Apple',
-    flair: '⚡️ Frontier AI',
+    name: 'Frontier AI & Systeme',
+    flair: 'Frontier AI',
     icon: 'hardware-chip-outline',
-    color: '#3B82F6',
-    bgTint: 'rgba(59, 130, 246, 0.12)'
+    color: '#5282B8',
+    bgTint: 'rgba(82, 130, 184, 0.11)'
   },
   german_didactics: {
     space: 'c/didaktik_labor',
-    name: 'Deutsch & Didaktik-Labor',
-    flair: '🔬 Unterrichts-Labor',
+    name: 'Didaktik & Bildungsarchitektur',
+    flair: 'Didaktik-Labor',
     icon: 'school-outline',
-    color: '#10B981',
-    bgTint: 'rgba(16, 185, 129, 0.12)'
+    color: '#4D947A',
+    bgTint: 'rgba(77, 148, 122, 0.11)'
   },
   philosophy_ethics: {
     space: 'c/dialektik',
     name: 'Philosophie & Streitfragen',
-    flair: '✦ Streitfrage',
+    flair: 'Streitfrage',
     icon: 'compass-outline',
-    color: '#8B5CF6',
-    bgTint: 'rgba(139, 92, 246, 0.12)'
+    color: '#7E72B5',
+    bgTint: 'rgba(126, 114, 181, 0.11)'
   },
   sound_synthesis: {
     space: 'c/synth_alchemie',
     name: 'Klangforschung & Modular',
-    flair: '🎛 Klangforschung',
+    flair: 'Klangforschung',
     icon: 'musical-notes-outline',
-    color: '#F59E0B',
-    bgTint: 'rgba(245, 158, 11, 0.12)'
+    color: '#B58952',
+    bgTint: 'rgba(181, 137, 82, 0.11)'
   },
   contemplation_mind: {
     space: 'c/kontemplation',
     name: 'Geist & Kontemplation',
-    flair: '🌿 Geist & Fokus',
+    flair: 'Geist & Fokus',
     icon: 'leaf-outline',
-    color: '#06B6D4',
-    bgTint: 'rgba(6, 182, 212, 0.12)'
+    color: '#4B8E9D',
+    bgTint: 'rgba(75, 142, 157, 0.11)'
   },
   science_society: {
     space: 'c/serendipity',
-    name: 'Filterblasen-Brecher',
-    flair: '🔭 Serendipity',
+    name: 'Wissenschaft & Gesellschaft',
+    flair: 'Wissenschaft',
     icon: 'planet-outline',
-    color: '#EC4899',
-    bgTint: 'rgba(236, 72, 153, 0.12)'
+    color: '#5C7FA3',
+    bgTint: 'rgba(92, 127, 163, 0.11)'
   },
   memes_satire: {
     space: 'c/memes',
-    name: 'High-IQ Memes & Satire',
-    flair: '🎭 Satire & Memes',
+    name: 'Comics & Satire',
+    flair: 'Satire & Comics',
     icon: 'happy-outline',
-    color: '#F97316',
-    bgTint: 'rgba(249, 115, 22, 0.12)'
+    color: '#B87B5C',
+    bgTint: 'rgba(184, 123, 92, 0.11)'
   },
   youtube_gems: {
     space: 'c/youtube',
-    name: 'Deep YouTube Gems',
-    flair: '📺 Video-Essay',
+    name: 'Video-Essays & Doku',
+    flair: 'Video-Essay',
     icon: 'play-circle-outline',
-    color: '#EF4444',
-    bgTint: 'rgba(239, 68, 68, 0.12)'
+    color: '#A8646B',
+    bgTint: 'rgba(168, 100, 107, 0.11)'
   },
   book_mastery: {
     space: 'c/books',
-    name: 'Buch-Meisterwerke',
-    flair: '📚 Buch-Perle',
+    name: 'Bücher & Essays',
+    flair: 'Buch & Essay',
     icon: 'book-outline',
-    color: '#A855F7',
-    bgTint: 'rgba(168, 85, 247, 0.12)'
+    color: '#7A6BA8',
+    bgTint: 'rgba(122, 107, 168, 0.11)'
   },
   health_biohacking: {
     space: 'c/health_longevity',
-    name: 'Gesundheit & Biohacking',
-    flair: '🧘 Schlaf & Fokus',
+    name: 'Gesundheit & Neurobiologie',
+    flair: 'Neurobiologie',
     icon: 'fitness-outline',
-    color: '#10B981',
-    bgTint: 'rgba(16, 185, 129, 0.12)'
+    color: '#4C917D',
+    bgTint: 'rgba(76, 145, 125, 0.11)'
   },
   opportunities_growth: {
     space: 'c/chancen',
     name: 'Chancen- & Hebel-Radar',
-    flair: '🚀 Hebel & Grants',
+    flair: 'Hebel & Grants',
     icon: 'trending-up-outline',
-    color: '#06B6D4',
-    bgTint: 'rgba(6, 182, 212, 0.12)'
+    color: '#548C9C',
+    bgTint: 'rgba(84, 140, 156, 0.11)'
   },
   art_aesthetics: {
     space: 'c/kunst_galerie',
-    name: 'Kunst, Ästhetik & Visuelle Kultur',
-    flair: '🎨 Meisterwerk',
+    name: 'Kunst & Visuelle Kultur',
+    flair: 'Kunst & Kultur',
     icon: 'color-palette-outline',
-    color: '#D97706',
-    bgTint: 'rgba(217, 119, 6, 0.12)'
+    color: '#B0855B',
+    bgTint: 'rgba(176, 133, 91, 0.11)'
   }
 };
 
@@ -649,6 +663,9 @@ export const ThemePaletteSchema = z.enum([
 ]).default('tidalglass');
 export type ThemePalette = z.infer<typeof ThemePaletteSchema>;
 
+export const LanguageMixSchema = z.enum(['bilingual', 'de_focus', 'en_focus']).default('bilingual');
+export type LanguageMix = z.infer<typeof LanguageMixSchema>;
+
 export const UserProfileSchema = z.object({
   language: z.enum(['de', 'en']).default('de'),
   region: z.enum(['de', 'eu', 'global']).default('de'),
@@ -696,7 +713,8 @@ export const UserProfileSchema = z.object({
     preferredDuration: ReadingPreferenceDurationSchema.default('balanced'),
     theme: z.enum(['system', 'light', 'dark']).default('dark'),
     palette: ThemePaletteSchema.default('tidalglass'),
-    fontSize: z.enum(['sm', 'md', 'lg', 'xl']).default('md')
+    fontSize: z.enum(['sm', 'md', 'lg', 'xl']).default('md'),
+    languageMix: LanguageMixSchema.default('bilingual')
   }),
   editionPreferences: z.object({
     timezone: z.string().default('Europe/Berlin'),
@@ -712,6 +730,14 @@ export const UserProfileSchema = z.object({
     eveningStartHour: 18,
     weatherEnabled: true,
     weatherCity: 'dresden'
+  }),
+  enabledModules: z.record(z.string(), z.boolean()).default({
+    socratic_sparring: true,
+    didactic_transfer: true,
+    cross_references: true,
+    sound_grounding: true,
+    craft_obsidian_export: true,
+    why_this_transparency: true
   }),
   isOnboarded: z.boolean().default(false),
   lastActiveDate: z.string().optional()

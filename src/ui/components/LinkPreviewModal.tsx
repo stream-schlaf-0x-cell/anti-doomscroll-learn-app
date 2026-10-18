@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Linking } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Pressable, ScrollView, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import { radius, spacing } from '../theme';
@@ -58,7 +58,19 @@ export const LinkPreviewModal: React.FC<LinkPreviewModalProps> = ({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <Pressable
+          accessibilityLabel="Hintergrund schließen"
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+          onStartShouldSetResponder={() => true}
+          // @ts-ignore - web click propagation guard
+          onClick={(e: any) => {
+            if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          }}
+        >
           
           {/* Header Bar */}
           <View style={[styles.headerBar, { borderBottomColor: colors.borderSubtle }]}>

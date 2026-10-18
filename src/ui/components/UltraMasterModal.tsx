@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Modal,
   TouchableOpacity,
+  Pressable,
   ScrollView,
   TextInput,
   Image,
@@ -28,19 +29,32 @@ import { DailyGenerationService, DailyGenerationStatus } from '../../core/daily/
 import { copyToClipboard, downloadMarkdownFile, downloadJsonFile } from '../../core/export/craftExport';
 import { typography, radius, spacing } from '../theme';
 import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
+import {
+  STUDIO_LENSES,
+  StudioLens,
+  StudioOutput,
+  defaultAtmenStudioService
+} from '../../core/studio/atmenStudio';
 
 interface UltraMasterModalProps {
   visible: boolean;
   onClose: () => void;
 }
 
-type MasterTab = 'channels' | 'trends' | 'daily' | 'learning' | 'archive' | 'mobile';
+type MasterTab = 'studio' | 'channels' | 'trends' | 'daily' | 'learning' | 'archive' | 'mobile';
 
 export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onClose }) => {
   const { colors, profile, refreshFeed } = useApp();
 
-  const [activeTab, setActiveTab] = useState<MasterTab>('channels');
+  const [activeTab, setActiveTab] = useState<MasterTab>('studio');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Atmen Studio 3 Lenses state
+  const [studioLens, setStudioLens] = useState<StudioLens>('contemplation');
+  const [studioTitle, setStudioTitle] = useState<string>('Digitale Reizüberflutung & Souveränität');
+  const [studioText, setStudioText] = useState<string>('Wie wir in einer Welt permanenter Dopamin-Pings unsere kognitive Autonomie bewahren und Raum für tiefes Denken schaffen.');
+  const [isTransformingLens, setIsTransformingLens] = useState<boolean>(false);
+  const [studioOutput, setStudioOutput] = useState<StudioOutput | null>(null);
 
   // Subchannels state
   const [spaces, setSpaces] = useState<Subchannel[]>([]);
@@ -218,10 +232,61 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
     }
   };
 
+  // Atmen Studio Handlers
+  const handleTransformStudioLens = async () => {
+    if (!studioTitle.trim() || !studioText.trim()) {
+      showToast('Bitte Titel und Text für die Studio-Transformation eingeben');
+      return;
+    }
+    setIsTransformingLens(true);
+    try {
+      const output = await defaultAtmenStudioService.generateLensOutput({
+        title: studioTitle.trim(),
+        text: studioText.trim(),
+        lens: studioLens
+      });
+      setStudioOutput(output);
+      showToast(`✓ Linse „${STUDIO_LENSES[studioLens].title}“ erfolgreich berechnet!`);
+    } catch {
+      showToast('Fehler bei der Studio-Transformation');
+    } finally {
+      setIsTransformingLens(false);
+    }
+  };
+
+  const handleExportStudioMarkdown = () => {
+    if (!studioOutput) return;
+    const md = defaultAtmenStudioService.formatStudioOutputMarkdown(studioOutput);
+    const filename = `atmen-studio-${studioLens}-${Date.now()}.md`;
+    downloadMarkdownFile(filename, md);
+    showToast(`✓ Studio-Output als ${filename} exportiert!`);
+  };
+
+  const handleCopyStudioMarkdown = async () => {
+    if (!studioOutput) return;
+    const md = defaultAtmenStudioService.formatStudioOutputMarkdown(studioOutput);
+    const ok = await copyToClipboard(md);
+    if (ok) {
+      showToast('✓ Markdown in die Zwischenablage kopiert!');
+    }
+  };
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <Pressable
+          accessibilityLabel="Hintergrund schließen"
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+          onStartShouldSetResponder={() => true}
+          // @ts-ignore - web click propagation guard
+          onClick={(e: any) => {
+            if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          }}
+        >
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
             <View style={styles.headerLeft}>
@@ -261,6 +326,16 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
 
           {/* Navigation Bar */}
           <View style={[styles.tabBar, { borderBottomColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary }]}>
+            <TouchableOpacity
+              onPress={() => setActiveTab('studio')}
+              style={[styles.tabItem, activeTab === 'studio' && { borderBottomColor: '#EC4899', backgroundColor: colors.surface }]}
+            >
+              <Ionicons name="sparkles" size={14} color={activeTab === 'studio' ? '#EC4899' : colors.textMuted} style={{ marginRight: 6 }} />
+              <Text style={[styles.tabItemText, { color: activeTab === 'studio' ? '#EC4899' : colors.textSecondary }]}>
+                ✨ Studio (3 Linsen)
+              </Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               onPress={() => setActiveTab('channels')}
               style={[styles.tabItem, activeTab === 'channels' && { borderBottomColor: '#F59E0B', backgroundColor: colors.surface }]}
@@ -324,6 +399,213 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
 
           {/* Content Area */}
           <View style={styles.contentContainer}>
+            {/* TAB 0: Atmen Studio 3 Lenses */}
+            {activeTab === 'studio' && (
+              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                      ✨ Atmen Studio: Kognitive Transformation (3 Linsen)
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#EC4899' + '18', paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm }}>
+                      <Ionicons name="hardware-chip-outline" size={12} color="#EC4899" />
+                      <Text style={{ fontSize: typography.sizes.micro, color: '#EC4899', fontWeight: '700' }}>
+                        Gemini 3.8 / OpenRouter + Deterministic Fallback
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginTop: 4 }]}>
+                    Betrachte beliebige Texte oder Gedanken durch drei fundamentale erkenntnistheoretische Linsen: Didaktik (First-Principles), Kontemplation (Stoa/Zen) oder Klang-Alchemie (Resonanz).
+                  </Text>
+
+                  {/* 3 Lenses Selector */}
+                  <View style={{ marginTop: spacing.md }}>
+                    <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 8 }]}>
+                      Wähle eine transformative Linse:
+                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
+                      {(Object.keys(STUDIO_LENSES) as StudioLens[]).map(lensKey => {
+                        const lensInfo = STUDIO_LENSES[lensKey];
+                        const isSelected = studioLens === lensKey;
+                        const lensColor = lensKey === 'didactics' ? '#3B82F6' : lensKey === 'contemplation' ? '#10B981' : '#8B5CF6';
+                        return (
+                          <TouchableOpacity
+                            key={lensKey}
+                            onPress={() => setStudioLens(lensKey)}
+                            style={[
+                              styles.lensCard,
+                              {
+                                backgroundColor: isSelected ? lensColor + '15' : colors.surface,
+                                borderColor: isSelected ? lensColor : colors.borderSubtle
+                              }
+                            ]}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                              <Text style={{ fontSize: 16 }}>{lensInfo.badge.split(' ')[0]}</Text>
+                              <Text style={[styles.lensTitle, { color: isSelected ? lensColor : colors.textPrimary }]}>
+                                {lensInfo.title}
+                              </Text>
+                            </View>
+                            <Text style={[styles.lensDesc, { color: colors.textMuted }]} numberOfLines={2}>
+                              {lensInfo.description}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+
+                  {/* Input Fields */}
+                  <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Titel oder Kern-Fragestellung:</Text>
+                    <TextInput
+                      value={studioTitle}
+                      onChangeText={setStudioTitle}
+                      placeholder="z.B. Informationsüberlastung & Aufmerksamkeit"
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                    />
+
+                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Textkörper, Notiz oder Gedankenfragment:</Text>
+                    <TextInput
+                      value={studioText}
+                      onChangeText={setStudioText}
+                      multiline
+                      numberOfLines={4}
+                      placeholder="Füge hier deinen Text, Notizen oder Artikelabschnitt ein..."
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary, minHeight: 90, textAlignVertical: 'top' }]}
+                    />
+
+                    <TouchableOpacity
+                      onPress={handleTransformStudioLens}
+                      disabled={isTransformingLens}
+                      style={[
+                        styles.primaryActionBtn,
+                        {
+                          backgroundColor: studioLens === 'didactics' ? '#3B82F6' : studioLens === 'contemplation' ? '#10B981' : '#8B5CF6',
+                          marginTop: spacing.sm
+                        }
+                      ]}
+                    >
+                      {isTransformingLens ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="sparkles" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                          <Text style={styles.primaryActionBtnText}>
+                            Durch Linse „{STUDIO_LENSES[studioLens].title}“ transformieren
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Studio Transformation Output */}
+                {studioOutput && (
+                  <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <View style={[styles.customBadge, { backgroundColor: colors.accent + '20' }]}>
+                          <Text style={styles.customBadgeText}>
+                            {STUDIO_LENSES[studioOutput.lens].badge}
+                          </Text>
+                        </View>
+                        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                          {studioOutput.heading}
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity
+                          onPress={handleCopyStudioMarkdown}
+                          style={[styles.secondaryActionBtn, { borderColor: colors.borderSubtle, backgroundColor: colors.surface }]}
+                        >
+                          <Ionicons name="copy-outline" size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                          <Text style={[styles.secondaryActionBtnText, { color: colors.textSecondary }]}>Kopieren</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={handleExportStudioMarkdown}
+                          style={[styles.secondaryActionBtn, { borderColor: colors.borderSubtle, backgroundColor: colors.surface }]}
+                        >
+                          <Ionicons name="download-outline" size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                          <Text style={[styles.secondaryActionBtnText, { color: colors.textSecondary }]}>Export .md</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* AI Generation Status Badge */}
+                    <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center' }}>
+                      {studioOutput.isAiGenerated ? (
+                        <View style={{ backgroundColor: '#10B98118', borderColor: '#10B981', borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                          <Ionicons name="sparkles" size={13} color="#10B981" />
+                          <Text style={{ fontSize: typography.sizes.micro, color: '#10B981', fontWeight: '700' }}>
+                            🟢 Live generiert mit {studioOutput.modelUsed || 'Gemini'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={{ backgroundColor: colors.surface, borderColor: colors.borderSubtle, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                          <Ionicons name="hardware-chip-outline" size={13} color={colors.textMuted} />
+                          <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, fontWeight: '600' }}>
+                            ⚪ Lokale Synthese (Deterministisch)
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Core Thesis Card */}
+                    <View style={[styles.thesisCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                      <Text style={[styles.thesisLabel, { color: colors.textMuted }]}>KERNTHESE / ESSENZ</Text>
+                      <Text style={[styles.thesisText, { color: colors.textPrimary }]}>
+                        {studioOutput.coreThesis}
+                      </Text>
+                    </View>
+
+                    {/* Insights */}
+                    <View style={{ marginTop: spacing.md }}>
+                      <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 6 }]}>
+                        Erkenntnisbausteine ({studioOutput.insights.length}):
+                      </Text>
+                      {studioOutput.insights.map((insight, idx) => (
+                        <View key={idx} style={{ flexDirection: 'row', gap: 8, marginBottom: 6, alignItems: 'flex-start' }}>
+                          <Text style={{ color: colors.accent, fontWeight: '700' }}>•</Text>
+                          <Text style={{ flex: 1, color: colors.textSecondary, fontSize: typography.sizes.bodySmall, lineHeight: 20 }}>
+                            {insight}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Reflection Questions */}
+                    <View style={{ marginTop: spacing.md }}>
+                      <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 6 }]}>
+                        Reflexions-Fragen:
+                      </Text>
+                      {studioOutput.reflectionQuestions.map((q, idx) => (
+                        <View key={idx} style={{ flexDirection: 'row', gap: 8, marginBottom: 6, alignItems: 'flex-start' }}>
+                          <Text style={{ color: '#F59E0B', fontWeight: '700' }}>?</Text>
+                          <Text style={{ flex: 1, color: colors.textSecondary, fontSize: typography.sizes.bodySmall, fontStyle: 'italic', lineHeight: 20 }}>
+                            {q}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Practical Impulse */}
+                    <View style={[styles.impulseCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <Ionicons name="compass-outline" size={16} color="#10B981" />
+                        <Text style={[styles.impulseLabel, { color: '#10B981' }]}>PRAKTISCHER IMPULS</Text>
+                      </View>
+                      <Text style={[styles.impulseText, { color: colors.textPrimary }]}>
+                        {studioOutput.practicalImpulse}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+            )}
+
             {/* TAB 1: Subchannels */}
             {activeTab === 'channels' && (
               <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
@@ -1224,6 +1506,51 @@ const styles = StyleSheet.create({
   },
   stepDesc: {
     fontSize: typography.sizes.caption,
+    lineHeight: 20
+  },
+  lensCard: {
+    flex: 1,
+    minWidth: 160,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1.5
+  },
+  lensTitle: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '700'
+  },
+  lensDesc: {
+    fontSize: typography.sizes.micro,
+    lineHeight: 16
+  },
+  thesisCard: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  thesisLabel: {
+    fontSize: typography.sizes.micro,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 4
+  },
+  thesisText: {
+    fontSize: typography.sizes.body,
+    fontWeight: '600',
+    lineHeight: 22
+  },
+  impulseCard: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  impulseLabel: {
+    fontSize: typography.sizes.micro,
+    fontWeight: '800',
+    letterSpacing: 0.5
+  },
+  impulseText: {
+    fontSize: typography.sizes.bodySmall,
     lineHeight: 20
   }
 });

@@ -1,0 +1,504 @@
+import { FeedItem, TopicTag, TopicTagSchema } from '../domain/types';
+import { callAiModel, AiCredentials, loadAiCredentials } from '../ai/atmenAiClient';
+import { EnrichmentUsageLedger, defaultUsageLedger } from './ledger';
+import { synthesizeDidacticTransfer } from '../synthesis/backgroundResearchPipeline';
+
+export interface BatchEnrichmentItemInput {
+  id: string;
+  title: string;
+  subtitle?: string;
+  body: string;
+  publisher?: string;
+  currentTopic: TopicTag;
+}
+
+export interface EnrichedItemData {
+  id: string;
+  curationScore: number;
+  rejectionReason?: string;
+  feedText: string;
+  keyInsight: string;
+  primaryTopic: TopicTag;
+  topics: TopicTag[];
+  didacticTransfer: string;
+}
+
+export interface GatekeeperEvaluation {
+  score: number; // 0 to 10
+  passed: boolean; // score >= 7
+  reason: string;
+}
+
+export const VALID_TOPICS: TopicTag[] = [
+  'philosophy_ethics',
+  'german_didactics',
+  'ai_apple',
+  'contemplation_mind',
+  'science_society',
+  'sound_synthesis',
+  'memes_satire',
+  'youtube_gems',
+  'book_mastery',
+  'health_biohacking',
+  'opportunities_growth',
+  'art_aesthetics'
+];
+
+/**
+ * Detects whether the predominant language of a text is German or English.
+ */
+export function detectLanguage(text: string): 'de' | 'en' {
+  const englishWords = /\b(the|is|and|of|to|in|for|with|that|this|from|by|on|at|as|an|are|be|has|have|it|we|you|not|or)\b/gi;
+  const germanWords = /\b(der|die|das|und|ist|von|zu|im|für|mit|dass|dies|aus|bei|am|als|eine|einer|eines|einem|einen|wurde|wird|nicht|auf|sich)\b/gi;
+  const enCount = (text.match(englishWords) || []).length;
+  const deCount = (text.match(germanWords) || []).length;
+  return enCount > deCount ? 'en' : 'de';
+}
+
+/**
+ * Deterministic Signal-vs-Noise evaluation for offline and unconfigured fallback.
+ * Evaluates incoming raw items (Title + Publisher + Snippet) for intellectual depth,
+ * substance, and absence of clickbait/shopping/daily-politics triviality (Score 0–10).
+ * Threshold: score >= 7 passes; score < 7 is filtered out.
+ */
+export function evaluateSignalVsNoiseDeterministically(
+  item: {
+    title: string;
+    subtitle?: string;
+    body?: string;
+    feedText?: string;
+    publisher?: string;
+    format?: string;
+    sourceTrustLevel?: string;
+  }
+): GatekeeperEvaluation {
+  const title = (item.title || '').trim();
+  const snippet = (item.feedText || item.body || item.subtitle || '').trim();
+  const fullContent = [title, item.subtitle, item.feedText, item.body].filter(Boolean).join(' ');
+  const combined = fullContent.toLowerCase();
+
+  // 1. One-line stubs or extreme short text (< 30 characters) without art format
+  if (snippet.length < 30 && item.format !== 'art_showcase') {
+    return {
+      score: 3,
+      passed: false,
+      reason: 'Einzeiliger Stub / Unzureichender Kontext'
+    };
+  }
+
+  // 2. Pure affiliate deals, promo, vouchers, commerce discounts
+  const affiliateRegex = /\b(deal|deals|rabatt|rabattcode|gutschein|gutscheine|schnäppchen|kaufen|günstig kaufen|spartipp|affiliate|bestellen|preisvergleich|black friday|prime day|geschenktipp|werbung|anzeige|gesponsert|sponsored|shopping|cashback|sale)\b/i;
+  if (affiliateRegex.test(combined)) {
+    return {
+      score: 2,
+      passed: false,
+      reason: 'Kommerzielles Angebot / Affiliate-Deal'
+    };
+  }
+
+  // 3. Clickbait & Outrage / Boulevard
+  const clickbaitRegex = /\b(unglaublich|schock|enthüllt|du wirst nicht glauben|dieser trick|irre|promi|doku-drama|skandal|netz lacht|ausraster|verblüfft|heimlich)\b/i;
+  if (clickbaitRegex.test(title)) {
+    return {
+      score: 4,
+      passed: false,
+      reason: 'Clickbait / Trivialer Boulevard'
+    };
+  }
+
+  // 4. Substantial, trusted publishers and trust levels
+  const publisher = (item.publisher || '').toLowerCase();
+  const highTrustPublishers = [
+    'tagesschau', 'zdf', 'deutschlandfunk', 'dlf', 'quanta', 'spektrum', 'stanford',
+    'aeon', 'nautilus', 'mit technology review', 'nature', 'science', 'wikipedia',
+    'ars technica', 'heise', 'netzpolitik', 'br', 'wdr', 'swr', 'faz', 'zeit', 'lab', 'journal', 'foundation'
+  ];
+  const isHighTrust = highTrustPublishers.some(p => publisher.includes(p)) ||
+    item.sourceTrustLevel === 'peer_reviewed' ||
+    item.sourceTrustLevel === 'public_broadcaster' ||
+    item.sourceTrustLevel === 'encyclopedia' ||
+    item.sourceTrustLevel === 'museum_collection';
+
+  // Word count & depth heuristic based on full intellectual content
+  const wordCount = fullContent.split(/\s+/).filter(Boolean).length;
+  if (isHighTrust || wordCount >= 30) {
+    return {
+      score: 8,
+      passed: true,
+      reason: 'Substanzieller Beitrag mit Tiefgang'
+    };
+  }
+
+  // Baseline standard item with sufficient substance
+  if (wordCount >= 15) {
+    return {
+      score: 7,
+      passed: true,
+      reason: 'Solider Informationswert'
+    };
+  }
+
+  return {
+    score: 5,
+    passed: false,
+    reason: 'Geringe Informationstiefe'
+  };
+}
+
+/**
+ * Deterministic semantic keyword mapper for offline / fallback topic classification.
+ * Prevents e.g. WIRED biology or ecology articles from being misclassified as ai_apple.
+ */
+export function classifyTopicDeterministically(
+  title: string,
+  body: string,
+  fallback: TopicTag = 'philosophy_ethics'
+): TopicTag {
+  const combined = `${title} ${body}`.toLowerCase();
+
+  // Science & Society / Biology / Physics / Space
+  if (
+    /\b(biolog|genom|dna|rna|zell|crispr|organism|ökolog|klima|astronom|physik|quanten|teleskop|evolution|bakteri|virus)\b/i.test(
+      combined
+    )
+  ) {
+    return 'science_society';
+  }
+
+  // Sound Synthesis & Music Craft
+  if (
+    /\b(synthesizer|synth|eurorack|modular|moog|filter|reverb|ambient|klang|frequenz|audio|midi|ableton|patch)\b/i.test(
+      combined
+    )
+  ) {
+    return 'sound_synthesis';
+  }
+
+  // Contemplation & Mind
+  if (
+    /\b(meditat|achtsam|stoisch|stoiz|gelassen|atem|ruhe|entschleunig|fokus|kontemplat|zen|buddhis)\b/i.test(
+      combined
+    )
+  ) {
+    return 'contemplation_mind';
+  }
+
+  // Philosophy & Ethics
+  if (
+    /\b(philosoph|ethik|moral|epistem|sokrates|kant|nietzsche|aurelius|erkenntnis|sinn|existenz)\b/i.test(
+      combined
+    )
+  ) {
+    return 'philosophy_ethics';
+  }
+
+  // German Didactics & Teaching
+  if (
+    /\b(unterricht|didaktik|pädagog|schule|lehrkraft|schüler|lehrplan|bildungssystem|curriculum)\b/i.test(
+      combined
+    )
+  ) {
+    return 'german_didactics';
+  }
+
+  // Health & Biohacking
+  if (
+    /\b(schlaf|circadian|longevity|fasten|ernährung|dopamin|cortisol|mikrobiom|training|herzfrequenz)\b/i.test(
+      combined
+    )
+  ) {
+    return 'health_biohacking';
+  }
+
+  // AI & Apple Systems
+  if (
+    /\b(llm|gpt|transformer|mlx|apple silicon|m4|macos|ios|inference|neural network|diffusion|agent)\b/i.test(
+      combined
+    )
+  ) {
+    return 'ai_apple';
+  }
+
+  return fallback;
+}
+
+export class BatchEditionEnricher {
+  constructor(
+    private readonly ledger: EnrichmentUsageLedger = defaultUsageLedger,
+    private readonly credentialsLoader: () => Promise<AiCredentials> = loadAiCredentials
+  ) {}
+
+  /**
+   * Deterministic evaluation of signal vs noise.
+   */
+  evaluateSignalVsNoise(item: FeedItem): GatekeeperEvaluation {
+    return evaluateSignalVsNoiseDeterministically({
+      title: item.title,
+      subtitle: item.subtitle,
+      body: item.body,
+      feedText: item.feedText,
+      publisher: item.sourceReferences?.[0]?.publisher,
+      format: item.format
+    });
+  }
+
+  /**
+   * AI Curation Gatekeeper & Batch Intelligence.
+   * Passes candidate items through a smart Signal-vs-Noise Gatekeeper (evaluating for depth,
+   * substance, and absence of clickbait/shopping/daily politics, score 0-10).
+   * Filters out low-score items (< 7).
+   * Preserves source language: if source article is English, stays English; if German, stays German.
+   * Falls back gracefully to deterministic heuristics when offline or unconfigured.
+   */
+  async gatekeepAndEnrichBatch(items: FeedItem[], overrideCredentials?: AiCredentials): Promise<FeedItem[]> {
+    if (items.length === 0) return [];
+
+    const batchSize = 12;
+    const curatedList: FeedItem[] = [];
+
+    for (let i = 0; i < items.length; i += batchSize) {
+      const chunk = items.slice(i, i + batchSize);
+      const chunkCurated = await this.processChunk(chunk, overrideCredentials);
+      curatedList.push(...chunkCurated);
+    }
+
+    return curatedList;
+  }
+
+  /**
+   * Backward-compatible batch enricher method.
+   */
+  async enrichBatch(items: FeedItem[], overrideCredentials?: AiCredentials): Promise<FeedItem[]> {
+    return this.gatekeepAndEnrichBatch(items, overrideCredentials);
+  }
+
+  private async processChunk(items: FeedItem[], overrideCredentials?: AiCredentials): Promise<FeedItem[]> {
+    let credentials: AiCredentials;
+    if (overrideCredentials) {
+      credentials = overrideCredentials;
+    } else {
+      try {
+        credentials = await this.credentialsLoader();
+      } catch {
+        return this.fallbackDeterministicGatekeep(items);
+      }
+    }
+
+    if (!credentials.apiKey?.trim()) {
+      return this.fallbackDeterministicGatekeep(items);
+    }
+
+    const canSpend = await this.ledger.canSpend(0.005);
+    if (!canSpend) {
+      return this.fallbackDeterministicGatekeep(items);
+    }
+
+    const payload = items.map(it => {
+      const snippet = (it.body?.slice(0, 800) || it.feedText || it.subtitle || '').trim();
+      const detectedLang = detectLanguage(`${it.title} ${snippet}`);
+      return {
+        id: it.id,
+        title: it.title,
+        subtitle: it.subtitle,
+        snippet,
+        publisher: it.sourceReferences[0]?.publisher || '',
+        currentTopic: it.primaryTopic,
+        sourceLanguage: detectedLang
+      };
+    });
+
+    const systemInstruction = `Du bist die intellektuelle Chefredaktion und der Signal-vs-Noise Gatekeeper der Wissens- und Bildungs-App "Atmen".
+Deine Aufgabe ist zweistufig:
+1. Signal-vs-Noise Gatekeeper:
+   Bewerte jeden eingehenden Beitrag unbestechlich auf einer Skala von 0 bis 10 nach folgenden Kriterien:
+   - Intellektuelle Tiefe, Substanz, Erkenntnisgewinn, Evidenz, zeitlose Relevanz.
+   - Punktabzug (Score < 7) für: Clickbait, Affiliate-Deals/Shopping-Tipps, tagespolitischen Boulevard, Empörung, Parteiengezänk, PR-Meldungen oder einzeilige Stummeltexte ohne Kontext.
+   - Ein Score von mindestens 7 (7 bis 10) ist die zwingende Hürde für die Aufnahme in Atmen.
+
+2. Veredelung & Anreicherung (nur für Beiträge mit curationScore >= 7):
+   - "feedText": Formuliere einen flüssigen, hochsubstantiellen Lesetext (80-130 Wörter).
+   - "keyInsight": Prägnante 1-Satz-Kernthese.
+   - "primaryTopic": Exakte semantische Zuordnung aus: ${VALID_TOPICS.join(', ')}. Achte darauf, Biologie/Ökologie/Physik als science_society zuzuordnen und nicht als ai_apple.
+   - "topics": 1 bis 3 passende Themen-Tags.
+   - "didacticTransfer": Ein konkreter pädagogischer oder kontemplativer Reflexionsimpuls.
+
+SPRACH-REGEL (ABSOLUT STRIKT):
+Behalte die Ausgangssprache des Originalartikels bei!
+- Wenn der Quellartikel ENGLISCH ist (sourceLanguage === "en"), verfasse feedText, keyInsight und didacticTransfer natürlich auf ENGLISCH.
+- Wenn der Quellartikel DEUTSCH ist (sourceLanguage === "de"), verfasse feedText, keyInsight und didacticTransfer auf DEUTSCH.
+- Übersetze NIEMALS englische Artikel ins Deutsche und niemals deutsche ins Englische!
+
+Antworte AUSSCHLIESSLICH als JSON-Array von Objekten:
+[
+  {
+    "id": "item-id",
+    "curationScore": 8, // Zahl 0-10
+    "rejectionReason": "", // leer bei score >= 7, sonst kurzer Grund z.B. "Affiliate-Deal"
+    "feedText": "...",
+    "keyInsight": "...",
+    "primaryTopic": "...",
+    "topics": ["..."],
+    "didacticTransfer": "..."
+  }
+]`;
+
+    const prompt = `Hier sind die ${items.length} Kandidaten zur Kuration und Signal-vs-Noise-Prüfung:\n${JSON.stringify(payload, null, 2)}`;
+
+    try {
+      const response = await callAiModel(prompt, {
+        systemInstruction,
+        jsonMode: true,
+        maxTokens: 3500,
+        credentials,
+        ledger: this.ledger,
+        itemId: `ai-gatekeeper-${Date.now()}`
+      });
+
+      const parsed = JSON.parse(response.text);
+      if (Array.isArray(parsed)) {
+        const resultMap = new Map<string, EnrichedItemData>();
+        for (const entry of parsed) {
+          if (entry && typeof entry === 'object' && entry.id) {
+            const score = typeof entry.curationScore === 'number' ? entry.curationScore : 5;
+            const rawTopic = entry.primaryTopic;
+            const validPrimary: TopicTag = TopicTagSchema.safeParse(rawTopic).success
+              ? rawTopic
+              : 'science_society';
+
+            const rawTopics = Array.isArray(entry.topics) ? entry.topics : [validPrimary];
+            const validTopics: TopicTag[] = rawTopics.filter(
+              (t: unknown): t is TopicTag => TopicTagSchema.safeParse(t).success
+            );
+            if (!validTopics.includes(validPrimary)) {
+              validTopics.unshift(validPrimary);
+            }
+
+            resultMap.set(entry.id, {
+              id: entry.id,
+              curationScore: score,
+              rejectionReason: typeof entry.rejectionReason === 'string' ? entry.rejectionReason : undefined,
+              feedText: typeof entry.feedText === 'string' ? entry.feedText : '',
+              keyInsight: typeof entry.keyInsight === 'string' ? entry.keyInsight : '',
+              primaryTopic: validPrimary,
+              topics: validTopics,
+              didacticTransfer: typeof entry.didacticTransfer === 'string' ? entry.didacticTransfer : ''
+            });
+          }
+        }
+
+        const approved: FeedItem[] = [];
+        for (const original of items) {
+          const aiResult = resultMap.get(original.id);
+          if (aiResult) {
+            // Filter out low-score items (< 7)
+            if (aiResult.curationScore >= 7) {
+              approved.push({
+                ...original,
+                feedText: aiResult.feedText || original.feedText,
+                keyInsight: aiResult.keyInsight || original.keyInsight || original.subtitle,
+                primaryTopic: aiResult.primaryTopic,
+                topics: aiResult.topics.length > 0 ? aiResult.topics : original.topics,
+                didacticTransfer: aiResult.didacticTransfer || original.didacticTransfer,
+                didacticSeed: aiResult.didacticTransfer || original.didacticSeed,
+                curationScore: aiResult.curationScore,
+                aiAssisted: true
+              });
+            }
+          } else {
+            // Missing from AI response: evaluate deterministically
+            const evalResult = this.evaluateSignalVsNoise(original);
+            if (evalResult.passed) {
+              const enriched = this.enrichDeterministically(original);
+              approved.push({
+                ...enriched,
+                curationScore: evalResult.score,
+                curationReason: evalResult.reason
+              });
+            }
+          }
+        }
+
+        return approved;
+      }
+    } catch {
+      // Fallback on AI error
+    }
+
+    return this.fallbackDeterministicGatekeep(items);
+  }
+
+  /**
+   * Evaluates each item deterministically: filters out items with score < 7
+   * and enriches passing items with language preservation.
+   */
+  private fallbackDeterministicGatekeep(items: FeedItem[]): FeedItem[] {
+    const approved: FeedItem[] = [];
+
+    for (const item of items) {
+      const evalResult = this.evaluateSignalVsNoise(item);
+      if (evalResult.passed) {
+        const enriched = this.enrichDeterministically(item);
+        approved.push({
+          ...enriched,
+          curationScore: evalResult.score,
+          curationReason: evalResult.reason
+        });
+      }
+    }
+
+    return approved;
+  }
+
+  /**
+   * Deterministic zero-token fallback enrichment with strict source language preservation.
+   */
+  enrichDeterministically(item: FeedItem): FeedItem {
+    const semanticTopic = classifyTopicDeterministically(item.title, item.body || item.feedText, item.primaryTopic);
+    const topics = item.topics.includes(semanticTopic) ? item.topics : [semanticTopic, ...item.topics];
+
+    const lang = detectLanguage(`${item.title} ${item.feedText || item.subtitle || ''}`);
+
+    const keyInsight = item.keyInsight || item.subtitle || (
+      item.feedText.split('.')[0] ? `${item.feedText.split('.')[0]}.` : item.title
+    );
+
+    const hasGermanClash = lang === 'en' && Boolean(
+      (item.didacticTransfer && detectLanguage(item.didacticTransfer) === 'de') ||
+      (item.didacticSeed && detectLanguage(item.didacticSeed) === 'de')
+    );
+
+    const didacticTransfer = (!hasGermanClash && (item.didacticTransfer || item.didacticSeed)) || (
+      lang === 'en'
+        ? `Reflective inquiry: How does this insight regarding "${item.title}" inform your perspective or daily practice?`
+        : synthesizeDidacticTransfer(
+            item.title,
+            item.body || item.feedText,
+            semanticTopic,
+            item.isTeachingRelated
+          )
+    );
+
+    return {
+      ...item,
+      primaryTopic: semanticTopic,
+      topics,
+      keyInsight,
+      didacticTransfer,
+      didacticSeed: didacticTransfer
+    };
+  }
+
+  classifyTopicDeterministically(
+    title: string,
+    body: string,
+    fallback: TopicTag = 'philosophy_ethics'
+  ): TopicTag {
+    return classifyTopicDeterministically(title, body, fallback);
+  }
+}
+
+export const defaultBatchEditionEnricher = new BatchEditionEnricher();
+
+export function enrichDeterministically(item: FeedItem): FeedItem {
+  return defaultBatchEditionEnricher.enrichDeterministically(item);
+}

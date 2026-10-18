@@ -163,24 +163,46 @@ export function findRelatedEvergreenGem(topic: TopicTag, title: string): FeedIte
 }
 
 /**
+ * Cleans markdown formatting and artifacts for fluid plain-text summary distillation.
+ */
+function cleanMarkdownForSummary(text: string): string {
+  return (text || '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/^\s*>\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Synthesizes an honest, content-derived Editorial Abstract for the Reader view.
  */
 export function synthesizeEditorialAbstract(item: FeedItem): EditorialAbstract {
   const primaryTopic = item.primaryTopic || 'philosophy_ethics';
-  const rawText = (item.articleBody || item.feedText || item.body || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-  const sentences = rawText.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+  const rawText = cleanMarkdownForSummary(item.articleBody || item.feedText || item.body || '');
+  const sentences = rawText
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length >= 20 && !/^#+\s/.test(s));
 
   const overview = sentences[0] && sentences[0].length >= 25
     ? sentences[0]
-    : `${item.title} (${item.sourceReferences[0]?.publisher || 'Originalquelle'}).`;
+    : `${cleanMarkdownForSummary(item.title)} (${item.sourceReferences[0]?.publisher || 'Originalquelle'}).`;
 
   const keyFinding = sentences.length > 1
     ? sentences.slice(1, 3).join(' ')
-    : (item.keyInsight || synthesizeKeyInsight(item.title, rawText, primaryTopic));
+    : cleanMarkdownForSummary(item.keyInsight || synthesizeKeyInsight(item.title, rawText, primaryTopic));
 
   const relevanceWhy = item.relevanceExplanation && item.relevanceExplanation.length > 15
-    ? item.relevanceExplanation
-    : `Beitrag aus ${item.sourceReferences[0]?.publisher || 'verifizierter Quelle'} im Themenraum ${item.space || primaryTopic}.`;
+    ? cleanMarkdownForSummary(item.relevanceExplanation)
+    : `Ausgewählter Beitrag aus ${item.sourceReferences[0]?.publisher || 'verifizierter Quelle'} im Themenraum ${item.space || primaryTopic}.`;
 
   const limitation = item.evidenceTier === 'metadata_only'
     ? 'Kompakter Quell-Hinweis (Metadaten / Kurznotiz). Für den vollständigen Beitrag bitte direkt die Originalquelle öffnen.'
@@ -340,9 +362,30 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
   };
 }
 
+const CROSS_REF_STOPWORDS = new Set([
+  'auch', 'über', 'unter', 'nach', 'vor', 'beim', 'diese', 'dieser', 'dieses', 'diesem', 'diesen',
+  'einem', 'einer', 'eines', 'einen', 'einig', 'einige', 'einigen', 'mehr', 'oder', 'aber', 'sehr',
+  'hier', 'dort', 'wird', 'werden', 'wurde', 'wurden', 'kann', 'können', 'konnte', 'könnten',
+  'soll', 'sollen', 'sollte', 'sollten', 'muss', 'müssen', 'musste', 'durch', 'gegen', 'ohne',
+  'zwischen', 'nicht', 'warum', 'wieso', 'weshalb', 'welche', 'welcher', 'welches', 'welchen',
+  'damit', 'dabei', 'dafür', 'davon', 'darüber', 'darum', 'alle', 'aller', 'allen', 'alles',
+  'sein', 'seine', 'seiner', 'seinem', 'seinen', 'ihre', 'ihrer', 'ihrem', 'ihren', 'ihres',
+  'wenn', 'weil', 'dass', 'denn', 'doch', 'schon', 'selbst', 'wieder', 'immer', 'jedoch',
+  'der', 'die', 'das', 'den', 'dem', 'des', 'und', 'von', 'zur', 'zum', 'mit', 'auf', 'aus',
+  'für', 'wie', 'bei', 'ein', 'eine',
+  // English common words
+  'with', 'from', 'that', 'this', 'what', 'when', 'where', 'which', 'about', 'after', 'before',
+  'between', 'into', 'through', 'over', 'more', 'some', 'other', 'their', 'there', 'these', 'those',
+  'have', 'been', 'were', 'will', 'would', 'could', 'should', 'they', 'them', 'your', 'ours'
+]);
+
+const ACRONYM_WHITELIST = new Set([
+  'ki', 'ai', 'llm', 'llms', 'mlx', 'midi', 'daz', 'dna', 'rna', 'gpu', 'npu', 'tpu'
+]);
+
 /**
  * Discovers up to 2-3 genuine cross-reference connections in the local knowledge pool.
- * Prioritizes items that share concrete title keywords over generic topic matches.
+ * Uses whole-word tokenization and strict stopword filtering to prevent substring false positives.
  */
 export function findRelatedNetworkPosts(item: FeedItem, customPool?: FeedItem[]): RelatedCrossReference[] {
   const pool = customPool && customPool.length > 0
@@ -350,12 +393,11 @@ export function findRelatedNetworkPosts(item: FeedItem, customPool?: FeedItem[])
     : [...REAL_KNOWLEDGE_VAULT, ...INITIAL_FIXTURES, ...cachedPipelineItems];
 
   const topic = item.primaryTopic || 'philosophy_ethics';
-  const stopWords = new Set(['über', 'unter', 'einer', 'einem', 'einen', 'nicht', 'warum', 'wieso', 'durch', 'gegen', 'oder', 'und', 'der', 'die', 'das', 'with', 'from', 'that', 'this', 'what', 'when']);
   const titleWords = item.title
     .toLowerCase()
     .replace(/[^a-zäöüß0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter(w => w.length >= 4 && !stopWords.has(w));
+    .filter(w => (w.length >= 5 || ACRONYM_WHITELIST.has(w)) && !CROSS_REF_STOPWORDS.has(w));
 
   const seenIds = new Set<string>([item.id]);
   const scoredCandidates: { ref: RelatedCrossReference; score: number }[] = [];
@@ -365,8 +407,14 @@ export function findRelatedNetworkPosts(item: FeedItem, customPool?: FeedItem[])
 
     const sharesPrimary = candidate.primaryTopic === topic;
     const sharesSecondary = candidate.topics?.includes(topic);
-    const candidateText = `${candidate.title} ${candidate.subtitle || ''}`.toLowerCase();
-    const matchedWords = titleWords.filter(w => candidateText.includes(w));
+    const candidateTokens = new Set(
+      `${candidate.title} ${candidate.subtitle || ''} ${candidate.feedText || ''}`
+        .toLowerCase()
+        .replace(/[^a-zäöüß0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean)
+    );
+    const matchedWords = titleWords.filter(w => candidateTokens.has(w));
 
     if (!sharesPrimary && !sharesSecondary && matchedWords.length === 0) continue;
 

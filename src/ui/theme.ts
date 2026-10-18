@@ -27,34 +27,34 @@ export const PALETTE_METADATA: Record<ThemePalette, {
   icon: string;
 }> = {
   tidalglass: {
-    name: 'Tidal Glass',
-    subtitle: 'Ozeanisches Cyan, Tiefsee-Glanz & Klarheit',
-    accent: '#06B6D4',
+    name: 'Nordic Slate',
+    subtitle: 'Kühler Schiefer, Stahlblau & ruhige Klarheit',
+    accent: '#5282B8',
     icon: 'water-outline'
   },
   mosspulse: {
-    name: 'Moss Pulse',
-    subtitle: 'Nordischer Wald, lebendiges Moos & Salbei',
-    accent: '#4ADE80',
+    name: 'Fjord Sage',
+    subtitle: 'Kühler Salbei, nordische Kiefer & Mineralgrün',
+    accent: '#4B9B7E',
     icon: 'leaf-outline'
   },
   oxford: {
-    name: 'Oxford Editorial',
-    subtitle: 'Klassisches Buchpapier, Bernstein & Burgunder',
-    accent: '#F59E0B',
+    name: 'Archiv & Zinn',
+    subtitle: 'Kühles Archivpapier, Zinn & gedämpftes Ocker',
+    accent: '#B58952',
     icon: 'book-outline'
   },
   cyberpunk: {
-    name: 'Obsidian Ember',
-    subtitle: 'Stealth-Anthrazit & Reddit Glutrot',
-    accent: '#FF5722',
-    icon: 'flame-outline'
+    name: 'Graphit & Kupfer',
+    subtitle: 'Dunkles Anthrazit & gedämpftes Terrakotta',
+    accent: '#C86D51',
+    icon: 'layers-outline'
   },
   monochrome: {
-    name: 'Minimalist Slate',
-    subtitle: 'Bauhaus Ästhetik, Schiefer & Elektro-Indigo',
-    accent: '#6366F1',
-    icon: 'hardware-chip-outline'
+    name: 'Minimalist Indigo',
+    subtitle: 'Kühles Schiefergrau & gedämpftes Mineral-Indigo',
+    accent: '#6272A4',
+    icon: 'grid-outline'
   }
 };
 
@@ -62,205 +62,205 @@ export function getThemeColors(mode: ThemeMode = 'dark', palette: ThemePalette =
   if (palette === 'mosspulse') {
     return mode === 'dark'
       ? {
-          background: '#0F1410',
-          surface: '#182019',
-          surfaceSecondary: '#202B22',
-          surfaceSubtle: '#28362B',
-          textPrimary: '#EAF2EB',
-          textSecondary: '#A7B9A9',
-          textMuted: '#6C806F',
-          accent: '#4ADE80',
-          accentSubtle: 'rgba(74, 222, 128, 0.15)',
-          border: '#263428',
-          borderSubtle: '#1C271E',
-          danger: '#CF6679',
-          success: '#81C784',
-          badgeBg: '#202B22',
-          badgeText: '#D2EAD6',
-          cardHighlight: '#1E2B20'
+          background: '#0B100F',
+          surface: '#121A18',
+          surfaceSecondary: '#192421',
+          surfaceSubtle: '#22302C',
+          textPrimary: '#E2ECE9',
+          textSecondary: '#94ABA4',
+          textMuted: '#637A73',
+          accent: '#4B9B7E',
+          accentSubtle: 'rgba(75, 155, 126, 0.14)',
+          border: '#21302C',
+          borderSubtle: '#17221F',
+          danger: '#C96A75',
+          success: '#56A88A',
+          badgeBg: '#192421',
+          badgeText: '#B8DCD0',
+          cardHighlight: '#15201D'
         }
       : {
-          background: '#F4F8F4',
-          surface: '#FFFFFF',
-          surfaceSecondary: '#EAF2EB',
-          surfaceSubtle: '#DFECE1',
-          textPrimary: '#132216',
-          textSecondary: '#425A47',
-          textMuted: '#758D7A',
-          accent: '#15803D',
-          accentSubtle: 'rgba(21, 128, 61, 0.12)',
-          border: '#D5E4D8',
-          borderSubtle: '#E4EFE6',
-          danger: '#A83232',
-          success: '#2E7D32',
-          badgeBg: '#E2EFE4',
-          badgeText: '#1B3D22',
-          cardHighlight: '#EDF6EF'
+          background: '#EFF4F2',
+          surface: '#FAFCFB',
+          surfaceSecondary: '#E3ECE9',
+          surfaceSubtle: '#D5E2DE',
+          textPrimary: '#12201C',
+          textSecondary: '#455A53',
+          textMuted: '#6E857D',
+          accent: '#34785F',
+          accentSubtle: 'rgba(52, 120, 95, 0.10)',
+          border: '#CCDAD5',
+          borderSubtle: '#DCE7E3',
+          danger: '#A64452',
+          success: '#2E7D62',
+          badgeBg: '#E0ECE8',
+          badgeText: '#235342',
+          cardHighlight: '#F3F8F6'
         };
   }
 
   if (palette === 'oxford') {
     return mode === 'dark'
       ? {
-          background: '#151214',
-          surface: '#211C20',
-          surfaceSecondary: '#2D262C',
-          surfaceSubtle: '#3B323A',
-          textPrimary: '#F5ECE8',
-          textSecondary: '#C4B2B0',
-          textMuted: '#847372',
-          accent: '#F59E0B',
-          accentSubtle: 'rgba(245, 158, 11, 0.15)',
-          border: '#382D36',
-          borderSubtle: '#292027',
-          danger: '#CF6679',
-          success: '#81C784',
-          badgeBg: '#2D262C',
-          badgeText: '#FDE68A',
-          cardHighlight: '#261F24'
+          background: '#0E1014',
+          surface: '#161920',
+          surfaceSecondary: '#1F232C',
+          surfaceSubtle: '#292E3A',
+          textPrimary: '#E6E8EC',
+          textSecondary: '#9EA4B0',
+          textMuted: '#6C7280',
+          accent: '#B58952',
+          accentSubtle: 'rgba(181, 137, 82, 0.14)',
+          border: '#272C37',
+          borderSubtle: '#1C2029',
+          danger: '#C96A75',
+          success: '#4B9B7E',
+          badgeBg: '#20242E',
+          badgeText: '#DFC7A7',
+          cardHighlight: '#1A1E26'
         }
       : {
-          background: '#FBF8F3',
-          surface: '#FFFFFF',
-          surfaceSecondary: '#F3ECE2',
-          surfaceSubtle: '#E9DFD2',
-          textPrimary: '#2A1A1E',
-          textSecondary: '#614B50',
-          textMuted: '#8F797E',
-          accent: '#991B1B',
-          accentSubtle: 'rgba(153, 27, 27, 0.10)',
-          border: '#E4D7C8',
-          borderSubtle: '#F0E6D8',
-          danger: '#A83232',
-          success: '#2E7D32',
-          badgeBg: '#F5EBE6',
-          badgeText: '#781515',
-          cardHighlight: '#FDF6ED'
+          background: '#F2F3F5',
+          surface: '#FAFAFC',
+          surfaceSecondary: '#E7E9EE',
+          surfaceSubtle: '#DBDDE4',
+          textPrimary: '#181B22',
+          textSecondary: '#4E5462',
+          textMuted: '#767D8C',
+          accent: '#8C6536',
+          accentSubtle: 'rgba(140, 101, 54, 0.10)',
+          border: '#D2D6E0',
+          borderSubtle: '#E2E5EC',
+          danger: '#A64452',
+          success: '#2E7D62',
+          badgeBg: '#EAE7E1',
+          badgeText: '#664822',
+          cardHighlight: '#F5F6F8'
         };
   }
 
   if (palette === 'cyberpunk') {
     return mode === 'dark'
       ? {
-          background: '#0D0E11',
-          surface: '#16181D',
-          surfaceSecondary: '#20232B',
-          surfaceSubtle: '#2A2F3A',
-          textPrimary: '#F3F4F6',
-          textSecondary: '#9CA3AF',
-          textMuted: '#6B7280',
-          accent: '#FF5722',
-          accentSubtle: 'rgba(255, 87, 34, 0.15)',
-          border: '#2D323E',
-          borderSubtle: '#1F232B',
-          danger: '#EF4444',
-          success: '#10B981',
-          badgeBg: '#222631',
-          badgeText: '#FFCCBC',
-          cardHighlight: '#1F222A'
+          background: '#0B0D11',
+          surface: '#13161C',
+          surfaceSecondary: '#1B1F28',
+          surfaceSubtle: '#252A36',
+          textPrimary: '#E5E7EB',
+          textSecondary: '#98A1B0',
+          textMuted: '#667080',
+          accent: '#C86D51',
+          accentSubtle: 'rgba(200, 109, 81, 0.14)',
+          border: '#242936',
+          borderSubtle: '#191D26',
+          danger: '#C96A75',
+          success: '#4B9B7E',
+          badgeBg: '#1E222C',
+          badgeText: '#E6B8A8',
+          cardHighlight: '#171B23'
         }
       : {
-          background: '#F8F9FA',
-          surface: '#FFFFFF',
-          surfaceSecondary: '#F1F3F5',
-          surfaceSubtle: '#E5E7EB',
-          textPrimary: '#111827',
-          textSecondary: '#4B5563',
-          textMuted: '#6B7280',
-          accent: '#EA580C',
-          accentSubtle: 'rgba(234, 88, 12, 0.12)',
-          border: '#D1D5DB',
-          borderSubtle: '#E5E7EB',
-          danger: '#DC2626',
-          success: '#059669',
-          badgeBg: '#FFEDD5',
-          badgeText: '#9A3412',
-          cardHighlight: '#FFF7ED'
+          background: '#F1F3F6',
+          surface: '#FAFBFC',
+          surfaceSecondary: '#E6E9EF',
+          surfaceSubtle: '#D8DDE6',
+          textPrimary: '#141821',
+          textSecondary: '#4B5363',
+          textMuted: '#717A8B',
+          accent: '#A85238',
+          accentSubtle: 'rgba(168, 82, 56, 0.10)',
+          border: '#CFD5E0',
+          borderSubtle: '#DFE4EC',
+          danger: '#A64452',
+          success: '#2E7D62',
+          badgeBg: '#EFE6E2',
+          badgeText: '#7D3924',
+          cardHighlight: '#F5F7FA'
         };
   }
 
   if (palette === 'monochrome') {
     return mode === 'dark'
       ? {
-          background: '#0F172A',
-          surface: '#1E293B',
-          surfaceSecondary: '#334155',
-          surfaceSubtle: '#475569',
-          textPrimary: '#F8FAFC',
+          background: '#0B0E14',
+          surface: '#131822',
+          surfaceSecondary: '#1C2331',
+          surfaceSubtle: '#262F42',
+          textPrimary: '#E6ECF5',
           textSecondary: '#94A3B8',
           textMuted: '#64748B',
-          accent: '#6366F1',
-          accentSubtle: 'rgba(99, 102, 241, 0.15)',
-          border: '#334155',
-          borderSubtle: '#1E293B',
-          danger: '#F43F5E',
-          success: '#10B981',
-          badgeBg: '#334155',
-          badgeText: '#C7D2FE',
-          cardHighlight: '#1E293B'
+          accent: '#6272A4',
+          accentSubtle: 'rgba(98, 114, 164, 0.15)',
+          border: '#232C3D',
+          borderSubtle: '#181F2C',
+          danger: '#C96A75',
+          success: '#4B9B7E',
+          badgeBg: '#1D2433',
+          badgeText: '#C5CEE8',
+          cardHighlight: '#161C28'
         }
       : {
-          background: '#F8FAFC',
-          surface: '#FFFFFF',
-          surfaceSecondary: '#F1F5F9',
-          surfaceSubtle: '#E2E8F0',
+          background: '#F1F4F9',
+          surface: '#FAFCFF',
+          surfaceSecondary: '#E6ECF5',
+          surfaceSubtle: '#D8E1EE',
           textPrimary: '#0F172A',
           textSecondary: '#475569',
           textMuted: '#64748B',
-          accent: '#4F46E5',
-          accentSubtle: 'rgba(79, 70, 229, 0.10)',
+          accent: '#4C5B8A',
+          accentSubtle: 'rgba(76, 91, 138, 0.10)',
           border: '#CBD5E1',
-          borderSubtle: '#E2E8F0',
-          danger: '#E11D48',
-          success: '#059669',
-          badgeBg: '#EEF2FF',
-          badgeText: '#3730A3',
-          cardHighlight: '#F8FAFC'
+          borderSubtle: '#DCE4EE',
+          danger: '#A64452',
+          success: '#2E7D62',
+          badgeBg: '#E6EAF4',
+          badgeText: '#364269',
+          cardHighlight: '#F4F7FB'
         };
   }
 
-  // Default: Tidal Glass (Ozeanisches Cyan)
+  // Default: Nordic Slate ('tidalglass' — Kühler Schiefer & Stahlblau)
   return mode === 'dark'
     ? {
-        background: '#0B131B',
-        surface: '#121E2A',
-        surfaceSecondary: '#1A2A3B',
-        surfaceSubtle: '#23384D',
-        textPrimary: '#E1EDF7',
-        textSecondary: '#8EABCA',
-        textMuted: '#5A7797',
-        accent: '#06B6D4',
-        accentSubtle: 'rgba(6, 182, 212, 0.15)',
-        border: '#20344A',
-        borderSubtle: '#172737',
-        danger: '#CF6679',
-        success: '#10B981',
-        badgeBg: '#182C3F',
-        badgeText: '#CFFAFE',
-        cardHighlight: '#142537'
+        background: '#0A0E14',
+        surface: '#111722',
+        surfaceSecondary: '#18202F',
+        surfaceSubtle: '#202B3D',
+        textPrimary: '#E4EBF3',
+        textSecondary: '#94A3B8',
+        textMuted: '#64748B',
+        accent: '#5282B8',
+        accentSubtle: 'rgba(82, 130, 184, 0.14)',
+        border: '#222E42',
+        borderSubtle: '#182232',
+        danger: '#C96A75',
+        success: '#4B9B7E',
+        badgeBg: '#172233',
+        badgeText: '#B8D0EB',
+        cardHighlight: '#141D2B'
       }
     : {
-        background: '#F1F7FC',
-        surface: '#FFFFFF',
-        surfaceSecondary: '#E3EFF9',
-        surfaceSubtle: '#D3E5F4',
-        textPrimary: '#0C1E30',
-        textSecondary: '#3B5B7E',
-        textMuted: '#6C8CAE',
-        accent: '#0891B2',
-        accentSubtle: 'rgba(8, 145, 178, 0.12)',
-        border: '#CBE0F2',
-        borderSubtle: '#DEECF8',
-        danger: '#A83232',
-        success: '#2E7D32',
-        badgeBg: '#E0F2FE',
-        badgeText: '#075985',
-        cardHighlight: '#EBF5FD'
+        background: '#EFF3F8',
+        surface: '#FAFCFF',
+        surfaceSecondary: '#E4EBF3',
+        surfaceSubtle: '#D6E0EC',
+        textPrimary: '#111927',
+        textSecondary: '#475569',
+        textMuted: '#64748B',
+        accent: '#3B6998',
+        accentSubtle: 'rgba(59, 105, 152, 0.10)',
+        border: '#CBD5E1',
+        borderSubtle: '#DCE4EE',
+        danger: '#A64452',
+        success: '#2E7D62',
+        badgeBg: '#E3ECF5',
+        badgeText: '#2A4F75',
+        cardHighlight: '#F3F7FB'
       };
 }
 
-export const lightColors = getThemeColors('light', 'mosspulse');
-export const darkColors = getThemeColors('dark', 'mosspulse');
+export const lightColors = getThemeColors('light', 'tidalglass');
+export const darkColors = getThemeColors('dark', 'tidalglass');
 
 export const typography = {
   fontFamilies: {

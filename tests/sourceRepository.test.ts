@@ -29,13 +29,19 @@ describe('SourceRepository & News Hub Ingestion Engine', () => {
     assert.ok(memes.length >= 1, 'Expected >= 1 memes source');
     assert.strictEqual(memes[0].name.includes('xkcd'), true);
 
-    // All should be enabled by default
-    assert.strictEqual(sources.every(s => s.enabled), true);
+    // Active core sources should be enabled by default
+    const coreSources = sources.filter(s => s.defaultEnabled !== false);
+    assert.strictEqual(coreSources.every(s => s.enabled), true);
+
+    // Reserve research corpus sources should be inactive by default
+    const reserveSources = sources.filter(s => s.defaultEnabled === false);
+    assert.ok(reserveSources.length >= 200, 'Expected >= 200 reserve sources');
+    assert.strictEqual(reserveSources.every(s => !s.enabled), true);
   });
 
   it('toggles a source off and on', async () => {
     const initial = await repo.getAllSources();
-    const target = initial[0];
+    const target = initial.find(s => s.defaultEnabled !== false)!;
 
     const isEnabledAfterToggle = await repo.toggleSource(target.id);
     assert.strictEqual(isEnabledAfterToggle, false);
@@ -48,6 +54,19 @@ describe('SourceRepository & News Hub Ingestion Engine', () => {
 
     updated = await repo.getAllSources();
     assert.strictEqual(updated.find(s => s.id === target.id)?.enabled, true);
+
+    // Also test toggling a reserve source on and off
+    const reserveTarget = initial.find(s => s.defaultEnabled === false)!;
+    assert.strictEqual(reserveTarget.enabled, false);
+
+    const isReserveEnabledAfterToggle = await repo.toggleSource(reserveTarget.id);
+    assert.strictEqual(isReserveEnabledAfterToggle, true);
+
+    updated = await repo.getAllSources();
+    assert.strictEqual(updated.find(s => s.id === reserveTarget.id)?.enabled, true);
+
+    const isReserveDisabledAgain = await repo.toggleSource(reserveTarget.id);
+    assert.strictEqual(isReserveDisabledAgain, false);
   });
 
   it('adds and removes a custom RSS feed', async () => {
@@ -89,20 +108,20 @@ describe('SourceRepository & News Hub Ingestion Engine', () => {
 <opml version="2.0">
   <head><title>Subscriptions</title></head>
   <body>
-    <outline text="Tech">
-      <outline type="rss" text="Ars Technica" title="Ars Technica" xmlUrl="https://arstechnica.com/feed/" />
-      <outline type="rss" text="The Verge" title="The Verge" xmlUrl="https://www.theverge.com/rss/index.xml" />
+    <outline text="Custom Test Category">
+      <outline type="rss" text="Mock Tech News" title="Mock Tech News" xmlUrl="https://custom-mock-test-1.org/feed.xml" />
+      <outline type="rss" text="Mock Science Journal" title="Mock Science Journal" xmlUrl="https://custom-mock-test-2.org/rss.xml" />
     </outline>
   </body>
 </opml>`;
 
     const res = await repo.importOPML(sampleOpml);
     assert.strictEqual(res.added.length, 2);
-    assert.strictEqual(res.added[0].name, 'Ars Technica');
-    assert.strictEqual(res.added[1].name, 'The Verge');
+    assert.strictEqual(res.added[0].name, 'Mock Tech News');
+    assert.strictEqual(res.added[1].name, 'Mock Science Journal');
 
     const sources = await repo.getAllSources();
-    assert.strictEqual(sources.some(s => s.url === 'https://arstechnica.com/feed/'), true);
+    assert.strictEqual(sources.some(s => s.url === 'https://custom-mock-test-1.org/feed.xml'), true);
   });
 
   it('exports all sources to standard OPML 2.0 XML', async () => {
@@ -125,4 +144,27 @@ describe('SourceRepository & News Hub Ingestion Engine', () => {
     const all = await repo.getAllSources();
     assert.strictEqual(all.every(s => s.enabled), true);
   });
+
+  it('toggles an entire category in bulk (toggleCategory)', async () => {
+    // 1. Disable all OERR sources at once
+    await repo.toggleCategory('oerr', false);
+    let sources = await repo.getAllSources();
+    const oerrSources = sources.filter(s => s.category === 'oerr');
+    assert.ok(oerrSources.length > 0);
+    assert.strictEqual(oerrSources.every(s => !s.enabled), true);
+
+    // 2. Enable all OERR sources at once
+    await repo.toggleCategory('oerr', true);
+    sources = await repo.getAllSources();
+    const oerrSourcesAfter = sources.filter(s => s.category === 'oerr');
+    assert.strictEqual(oerrSourcesAfter.every(s => s.enabled), true);
+
+    // 3. Enable a reserve category in bulk
+    await repo.toggleCategory('fact_check', true);
+    sources = await repo.getAllSources();
+    const factCheckSources = sources.filter(s => s.category === 'fact_check');
+    assert.ok(factCheckSources.length > 0);
+    assert.strictEqual(factCheckSources.every(s => s.enabled), true);
+  });
 });
+

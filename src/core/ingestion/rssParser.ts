@@ -61,6 +61,8 @@ export function unwrapCdata(input: string): string {
   return input.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
 }
 
+export const ZERO_WIDTH_REGEX = /[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF\u00AD]/g;
+
 /**
  * Strips HTML tags, preserves paragraph breaks as double newlines, and trims excess whitespace.
  * Decodes XML entities before tag stripping so escaped tags (&lt;p&gt;) are properly detected and removed.
@@ -73,6 +75,7 @@ export function stripHtml(input: string): string {
     .replace(/<\/?(p|div|br|li|h[1-6])[^>]*>/gi, '\n')
     .replace(/<[^>]+>/g, '');
   return decodeXmlEntities(textWithLineBreaks)
+    .replace(ZERO_WIDTH_REGEX, '')
     .replace(/\r\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]+/g, ' ')
@@ -118,6 +121,40 @@ function parseDateToIso(dateStr: string): string {
   return parsed.toISOString();
 }
 
+export function sanitizeImageUrl(rawUrl?: string): string | undefined {
+  if (!rawUrl) return undefined;
+  let url = decodeXmlEntities(rawUrl.trim());
+  url = url.replace(/&amp;/g, '&');
+
+  // Upgrade http:// to https://
+  if (url.startsWith('http://')) {
+    url = 'https://' + url.slice(7);
+  } else if (url.startsWith('//')) {
+    url = 'https:' + url;
+  }
+
+  // Reject tracking pixel and junk image URLs
+  const lower = url.toLowerCase();
+  if (
+    lower.includes('cpx.golem.de') ||
+    lower.includes('follow.it/track') ||
+    lower.includes('doubleclick') ||
+    lower.includes('1x1') ||
+    lower.includes('pixel') ||
+    lower.endsWith('.svg') ||
+    lower.includes('.svg?')
+  ) {
+    return undefined;
+  }
+
+  // Must be a valid absolute HTTPS URL
+  if (!url.startsWith('https://')) {
+    return undefined;
+  }
+
+  return url;
+}
+
 function resolveMaybeRelativeUrl(rawSrc: string, itemLink?: string): string | undefined {
   const src = rawSrc.trim();
   if (!src) return undefined;
@@ -142,37 +179,45 @@ function resolveMaybeRelativeUrl(rawSrc: string, itemLink?: string): string | un
  * Resolves relative paths (e.g. /bilder/... on forschung-und-wissen.de) against itemLink.
  */
 function extractImageUrl(block: string, itemLink?: string): string | undefined {
+  let candidate: string | undefined;
+
   // 1. YouTube & Media RSS thumbnail (<media:thumbnail url="...">)
   const thumbMatch = block.match(/<media:thumbnail\b[^>]*\burl=["']([^"']+)["']/i);
   if (thumbMatch && thumbMatch[1]) {
-    return resolveMaybeRelativeUrl(decodeXmlEntities(thumbMatch[1]), itemLink);
+    candidate = resolveMaybeRelativeUrl(decodeXmlEntities(thumbMatch[1]), itemLink);
   }
 
   // 2. Enclosure attribute url="..." (filter out non-images like audio/video)
-  const enclosureMatch = block.match(/<enclosure\b[^>]*\burl=["']([^"']+)["']/i);
-  if (enclosureMatch && enclosureMatch[1] && !/\.(mp3|wav|ogg|mp4|m4a|flv)/i.test(enclosureMatch[1])) {
-    return resolveMaybeRelativeUrl(decodeXmlEntities(enclosureMatch[1]), itemLink);
+  if (!candidate) {
+    const enclosureMatch = block.match(/<enclosure\b[^>]*\burl=["']([^"']+)["']/i);
+    if (enclosureMatch && enclosureMatch[1] && !/\.(mp3|wav|ogg|mp4|m4a|flv)/i.test(enclosureMatch[1])) {
+      candidate = resolveMaybeRelativeUrl(decodeXmlEntities(enclosureMatch[1]), itemLink);
+    }
   }
 
   // 3. Media:content if it's an image (skip YouTube player URLs like youtube.com/v/ and media files)
-  const mediaContentMatch = block.match(/<media:content\b[^>]*\burl=["']([^"']+)["']/i);
-  if (
-    mediaContentMatch &&
-    mediaContentMatch[1] &&
-    !/\.(mp3|wav|ogg|mp4|m4a|flv)/i.test(mediaContentMatch[1]) &&
-    !mediaContentMatch[1].includes('youtube.com/v/')
-  ) {
-    return resolveMaybeRelativeUrl(decodeXmlEntities(mediaContentMatch[1]), itemLink);
+  if (!candidate) {
+    const mediaContentMatch = block.match(/<media:content\b[^>]*\burl=["']([^"']+)["']/i);
+    if (
+      mediaContentMatch &&
+      mediaContentMatch[1] &&
+      !/\.(mp3|wav|ogg|mp4|m4a|flv)/i.test(mediaContentMatch[1]) &&
+      !mediaContentMatch[1].includes('youtube.com/v/')
+    ) {
+      candidate = resolveMaybeRelativeUrl(decodeXmlEntities(mediaContentMatch[1]), itemLink);
+    }
   }
 
   // 4. <img> tag in HTML content/description (handle both raw and XML-escaped HTML e.g. xkcd, forschung-und-wissen.de)
-  const decodedBlock = decodeXmlEntities(block);
-  const imgMatch = decodedBlock.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i);
-  if (imgMatch && imgMatch[1]) {
-    return resolveMaybeRelativeUrl(imgMatch[1], itemLink);
+  if (!candidate) {
+    const decodedBlock = decodeXmlEntities(block);
+    const imgMatch = decodedBlock.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i);
+    if (imgMatch && imgMatch[1]) {
+      candidate = resolveMaybeRelativeUrl(imgMatch[1], itemLink);
+    }
   }
 
-  return undefined;
+  return sanitizeImageUrl(candidate);
 }
 
 /**

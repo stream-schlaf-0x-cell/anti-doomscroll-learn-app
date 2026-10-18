@@ -73,23 +73,23 @@ describe('Feed Batching & Discovery Partitioning Invariants', () => {
 
   it('5. Correctly maps all Phase 2 FeedItemFormat values to editorial labels', () => {
     const formats: Record<FeedItemFormat, string> = {
-      concise_insight: '⚡︎ Kompaktimpuls',
-      sourced_update: '◈ Recherche & Update',
-      creative_idea: '💡 Kreativer Impuls',
-      intriguing_question: '❓ Denkfrage',
-      surprising_connection: '☍ Interdisziplinäre Brücke',
-      perspective_disagreement: '✦ Philosophische Gegenposition',
-      long_invitation: '📖 Vertiefender Essay',
-      meme: '🎭 High-IQ Satire & Meme',
-      youtube_gem: '📺 YouTube Gem & Video-Essay',
-      book_masterpiece: '📚 Meisterwerk-Empfehlung',
-      opportunity_radar: '🚀 Chancen- & Hebel-Radar',
-      art_showcase: '🎨 Kunst & Visuelles'
+      concise_insight: 'Kompaktimpuls',
+      sourced_update: 'Recherche & Update',
+      creative_idea: 'Kreativer Impuls',
+      intriguing_question: 'Denkfrage',
+      surprising_connection: 'Interdisziplinäre Brücke',
+      perspective_disagreement: 'Gegenposition',
+      long_invitation: 'Vertiefender Essay',
+      meme: 'Satire & Meme',
+      youtube_gem: 'Video-Essay',
+      book_masterpiece: 'Buch-Empfehlung',
+      opportunity_radar: 'Chancen-Radar',
+      art_showcase: 'Kunst & Visuelles'
     };
 
     for (const [format, expectedLabel] of Object.entries(formats)) {
       assert.equal(formatFeedItemFormat(format as FeedItemFormat), expectedLabel);
     }
-    assert.equal(formatFeedItemFormat(undefined), '✦ Lese-Entdeckung');
+    assert.equal(formatFeedItemFormat(undefined), 'Lese-Entdeckung');
   });
 });

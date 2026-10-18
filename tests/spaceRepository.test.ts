@@ -12,12 +12,13 @@ describe('SpaceRepository (Modular Reddit-like Subchannels)', () => {
     repo = new SpaceRepository(storage);
   });
 
-  it('loads all 9 default curated subchannels', async () => {
+  it('loads all 12 default curated subchannels matching TOPIC_SPACE_MAP', async () => {
     const spaces = await repo.getAllSpaces();
-    assert.ok(spaces.length >= 9);
-    assert.ok(spaces.some(s => s.handle === 'c/philosophie_ethik'));
-    assert.ok(spaces.some(s => s.handle === 'c/ai_apple'));
+    assert.equal(spaces.length, 12);
+    assert.ok(spaces.some(s => s.handle === 'c/dialektik'));
+    assert.ok(spaces.some(s => s.handle === 'c/acceleration'));
     assert.ok(spaces.some(s => s.handle === 'c/synth_alchemie'));
+    assert.ok(spaces.some(s => s.handle === 'c/serendipity'));
   });
 
   it('creates a new custom subchannel on the go with sanitized handle', async () => {

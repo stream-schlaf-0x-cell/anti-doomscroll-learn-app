@@ -1167,7 +1167,8 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
     preferredDuration: 'balanced',
     theme: 'dark',
     palette: 'tidalglass',
-    fontSize: 'md'
+    fontSize: 'md',
+    languageMix: 'bilingual'
   },
   editionPreferences: {
     timezone: 'Europe/Berlin',
@@ -1176,6 +1177,14 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
     eveningStartHour: 18,
     weatherEnabled: true,
     weatherCity: 'dresden'
+  },
+  enabledModules: {
+    socratic_sparring: true,
+    didactic_transfer: true,
+    cross_references: true,
+    sound_grounding: true,
+    craft_obsidian_export: true,
+    why_this_transparency: true
   },
   isOnboarded: false,
   lastActiveDate: '2026-10-14'

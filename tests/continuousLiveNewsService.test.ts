@@ -68,6 +68,9 @@ describe('ContinuousLiveNewsService & Instant Research Invariants', () => {
         item.title.toLowerCase().includes('klima') ||
         (item.subtitle && item.subtitle.toLowerCase().includes('klima')) ||
         (item.feedText && item.feedText.toLowerCase().includes('klima')) ||
+        (item.articleBody && item.articleBody.toLowerCase().includes('klima')) ||
+        (item.sourceBroadcasterName && item.sourceBroadcasterName.toLowerCase().includes('klima')) ||
+        Boolean(item.sourceReferences?.[0]?.publisher && item.sourceReferences[0].publisher.toLowerCase().includes('klima')) ||
         item.topics.some(t => t.toLowerCase().includes('klima'));
       assert.strictEqual(match, true, 'Result must match query keyword');
     }

@@ -5,6 +5,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -115,7 +116,19 @@ export const StreamGenerationProgressModal: React.FC<StreamGenerationProgressMod
       onRequestClose={onCancel}
     >
       <View style={styles.backdrop}>
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <Pressable
+          accessibilityLabel="Hintergrund schließen"
+          onPress={onCancel}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+          onStartShouldSetResponder={() => true}
+          // @ts-ignore - web click propagation guard
+          onClick={(e: any) => {
+            if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          }}
+        >
           {/* Header */}
           <View style={styles.header}>
             <View style={[styles.iconWrap, { backgroundColor: colors.accentSubtle }]}>

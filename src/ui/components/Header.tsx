@@ -5,7 +5,7 @@ import { useApp } from '../../core/context/AppContext';
 import { typography, spacing } from '../theme';
 import { UltraMasterModal } from './UltraMasterModal';
 import { MobilePublishModal } from './MobilePublishModal';
-import { AtemBreathingModal } from './AtemBreathingModal';
+import { AtmenBreathingPortal } from '../../features/breathing/AtmenBreathingPortal';
 
 interface HeaderProps {
   title?: string;
@@ -109,7 +109,7 @@ export const Header: React.FC<HeaderProps> = ({
 
       <UltraMasterModal visible={showMaster} onClose={() => setShowMaster(false)} />
       <MobilePublishModal visible={showMobile} onClose={() => setShowMobile(false)} />
-      <AtemBreathingModal visible={showBreathing} onClose={() => setShowBreathing(false)} targetRounds={3} />
+      <AtmenBreathingPortal visible={showBreathing} onClose={() => setShowBreathing(false)} mode="modal" />
     </>
   );
 };

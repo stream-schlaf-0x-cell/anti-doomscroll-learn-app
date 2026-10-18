@@ -4,8 +4,7 @@ import {
   TopicTag,
   ReadingInteraction,
   PersonalGoal,
-  DayEditionType,
-  DAY_EDITIONS_META
+  DayEditionType
 } from './types';
 
 export interface ScoreBreakdown {
@@ -21,6 +20,8 @@ export interface ScoreBreakdown {
   feedbackAdjustment: number;
   behavioralAdjustment: number;
   authorBoost: number;
+  credibilityBonus?: number;
+  manipulativeDampener?: number;
   totalScore: number;
   explanation: string;
   primaryReason: string;
@@ -166,30 +167,78 @@ export function scoreFeedItem(
   }
   const durationMatch = readingTimeFit;
 
-  // 4. Freshness Score (prioritizes genuinely current items)
+  // 4. Freshness Score (7-Day Rolling Quality Window: treats the entire past week as active high-value pool)
   const pubTime = new Date(item.publishedAt).getTime();
   const nowTime = Date.now();
   const hoursOld = isNaN(pubTime) ? 24 : Math.max(0, (nowTime - pubTime) / (1000 * 60 * 60));
-  let freshness = 0.75;
-  if (hoursOld <= 6) {
-    freshness = 1.0;
-  } else if (hoursOld <= 24) {
-    freshness = 0.94;
-  } else if (hoursOld <= 72) {
-    freshness = 0.84;
+  let freshness = 0.80;
+  if (hoursOld <= 12) {
+    freshness = 0.98;
+  } else if (hoursOld <= 48) {
+    freshness = 0.95;
+  } else if (hoursOld <= 120) {
+    freshness = 0.91;
   } else if (hoursOld <= 168) {
-    freshness = 0.72;
+    freshness = 0.87;
   } else {
-    freshness = item.isEvergreenGem ? 0.68 : 0.55;
+    freshness = item.isEvergreenGem ? 0.74 : 0.62;
   }
 
-  // 5. Editorial & Source Value
+  // 5. Editorial & Source Value (substance over raw recency + Tier A/B Credibility Bonus)
   let editorialValue = 0.82;
-  if (item.contentOrigin === 'live_ingested') editorialValue += 0.12;
+  if (item.contentOrigin === 'live_ingested') editorialValue += 0.10;
   if (item.evidenceTier === 'permitted_full_text' || item.evidenceTier === 'multiple_sources') {
-    editorialValue += 0.06;
+    editorialValue += 0.08;
   }
-  editorialValue = Math.min(1, editorialValue);
+  if ((item.wordCount || 0) >= 180) {
+    editorialValue += 0.05;
+  }
+
+  // Tier A / B Credibility bonus: public service broadcasting, wire services, science journals, fact checkers
+  const pubNorm = (item.sourceReferences?.[0]?.publisher || item.sourceBroadcasterName || item.sourceDomain || '').toLowerCase();
+  let credibilityBonus = 0;
+  if (
+    pubNorm.includes('tagesschau') ||
+    pubNorm.includes('deutschlandfunk') ||
+    pubNorm.includes('zdf') ||
+    pubNorm.includes('br24') ||
+    pubNorm.includes('dpa') ||
+    pubNorm.includes('reuters') ||
+    pubNorm.includes('correctiv') ||
+    pubNorm.includes('mimikama') ||
+    pubNorm.includes('nature') ||
+    pubNorm.includes('science') ||
+    pubNorm.includes('arxiv') ||
+    pubNorm.includes('pubmed') ||
+    pubNorm.includes('destatis') ||
+    pubNorm.includes('eurostat') ||
+    pubNorm.includes('rki') ||
+    pubNorm.includes('who') ||
+    pubNorm.includes('edpb') ||
+    pubNorm.includes('eff')
+  ) {
+    credibilityBonus = 0.12;
+  } else if (
+    pubNorm.includes('heise') ||
+    pubNorm.includes('spektrum') ||
+    pubNorm.includes('quanta') ||
+    pubNorm.includes('aeon') ||
+    pubNorm.includes('psyche') ||
+    pubNorm.includes('mit tech') ||
+    pubNorm.includes('stanford')
+  ) {
+    credibilityBonus = 0.06;
+  }
+  editorialValue = Math.min(1, editorialValue + credibilityBonus);
+
+  // Manipulative / Sensationalist Signals Dampener (Anti-Doomscroll Multi-Objective Engine)
+  const titleAndTeaser = `${item.title || ''} ${item.subtitle || ''}`.trim();
+  let manipulativeDampener = 0;
+  const clickbaitRegex = /(schockierend|unglaublich|unfassbar|must see|you won't believe|mind-blowing|sprachlos|das musst du|enthüllung des jahrhunderts|shocking truth)/i;
+  const punctuationRegex = /[!?]{2,}/;
+  if (clickbaitRegex.test(titleAndTeaser) || punctuationRegex.test(titleAndTeaser)) {
+    manipulativeDampener = 0.22;
+  }
 
   // 6. Serendipity & Format Discovery
   const serendipity = item.type === 'discovery' || item.format === 'surprising_connection' || item.format === 'meme'
@@ -250,6 +299,11 @@ export function scoreFeedItem(
     rawScore *= 0.72;
   }
 
+  // Anti-Doomscroll Sensationalism Dampener: reduces clickbait utility without punishing serious crisis reporting
+  if (manipulativeDampener > 0) {
+    rawScore *= (1 - manipulativeDampener);
+  }
+
   const totalScore = Math.round(rawScore * 1000) / 1000;
 
   const topicLabel = getTopicLabel(item.primaryTopic);
@@ -264,6 +318,13 @@ export function scoreFeedItem(
     `Explizites Feedback-Signal: ${Math.round(feedbackAdjustment * 100)}%`,
     `Format & Lesezeit (~${mins} Min.): ${Math.round(readingTimeFit * 100)}%`
   ];
+
+  if (credibilityBonus >= 0.08) {
+    whyFactors.push(`Hohe Quellen-Reliabilität: Tier A Verifikation (+${Math.round(credibilityBonus * 100)}%)`);
+  }
+  if (manipulativeDampener > 0) {
+    whyFactors.push(`Sensationalismus-Dämpfung (-${Math.round(manipulativeDampener * 100)}%)`);
+  }
 
   return {
     ...item,
@@ -282,6 +343,8 @@ export function scoreFeedItem(
       feedbackAdjustment,
       behavioralAdjustment,
       authorBoost,
+      credibilityBonus,
+      manipulativeDampener,
       totalScore,
       explanation,
       primaryReason,

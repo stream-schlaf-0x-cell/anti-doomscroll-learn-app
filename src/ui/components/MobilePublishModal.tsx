@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Modal,
   TouchableOpacity,
+  Pressable,
   ScrollView,
   Image
 } from 'react-native';
@@ -56,7 +57,19 @@ export const MobilePublishModal: React.FC<MobilePublishModalProps> = ({ visible,
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <Pressable
+          accessibilityLabel="Hintergrund schließen"
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+          onStartShouldSetResponder={() => true}
+          // @ts-ignore - web click propagation guard
+          onClick={(e: any) => {
+            if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          }}
+        >
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
             <View style={styles.headerLeft}>

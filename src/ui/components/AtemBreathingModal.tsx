@@ -5,6 +5,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   Animated,
   Easing
 } from 'react-native';
@@ -147,7 +148,19 @@ export const AtemBreathingModal: React.FC<AtemBreathingModalProps> = ({
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <View style={[styles.container, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <Pressable
+          accessibilityLabel="Hintergrund schließen"
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          style={[styles.container, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+          onStartShouldSetResponder={() => true}
+          // @ts-ignore - web click propagation guard
+          onClick={(e: any) => {
+            if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          }}
+        >
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>

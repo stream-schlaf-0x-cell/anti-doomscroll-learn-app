@@ -111,11 +111,161 @@ const MainNavigator: React.FC = () => {
         </View>
       )}
 
+      {/* Persistent Desktop Top Bar on non-feed tabs so desktop users are never trapped */}
+      {isDesktop && activeTab !== 'feed' && (
+        <View style={[styles.desktopTopNav, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
+          <View style={styles.desktopTopNavInner}>
+            {/* Brand */}
+            <TouchableOpacity
+              onPress={() => {
+                setActiveTab('feed');
+                goHome();
+              }}
+              style={styles.desktopBrandRow}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Zurück zur Ausgabe"
+            >
+              <View style={[styles.desktopBrandEmblem, { backgroundColor: colors.accent }]}>
+                <Text style={styles.desktopBrandSymbol}>◎</Text>
+              </View>
+              <View>
+                <Text style={[styles.desktopBrandTitle, { color: colors.textPrimary }]}>Atmen</Text>
+                <Text style={[styles.desktopBrandSubtitle, { color: colors.textMuted }]}>Dein ruhiger Wissens-Feed</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Navigation Pills */}
+            <View style={styles.desktopNavGroup}>
+              <TouchableOpacity
+                onPress={() => setActiveTab('feed')}
+                style={[
+                  styles.desktopNavPill,
+                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                ]}
+                accessibilityRole="tab"
+                accessibilityLabel="Ausgabe"
+                accessibilityState={{ selected: false }}
+              >
+                <Ionicons
+                  name="newspaper-outline"
+                  size={15}
+                  color={colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.desktopNavPillText,
+                    {
+                      color: colors.textPrimary,
+                      fontWeight: '500'
+                    }
+                  ]}
+                >
+                  Ausgabe
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setActiveTab('library')}
+                style={[
+                  styles.desktopNavPill,
+                  activeTab === 'library'
+                    ? { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    : { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                ]}
+                accessibilityRole="tab"
+                accessibilityLabel={`Bibliothek${savedCount > 0 ? ` (${savedCount} gespeichert)` : ''}`}
+                accessibilityState={{ selected: activeTab === 'library' }}
+              >
+                <Ionicons
+                  name={activeTab === 'library' ? 'bookmarks' : 'bookmarks-outline'}
+                  size={15}
+                  color={activeTab === 'library' ? colors.accent : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.desktopNavPillText,
+                    {
+                      color: activeTab === 'library' ? colors.accent : colors.textPrimary,
+                      fontWeight: activeTab === 'library' ? '700' : '500'
+                    }
+                  ]}
+                >
+                  Bibliothek
+                </Text>
+                {savedCount > 0 && (
+                  <View style={[styles.desktopBadge, { backgroundColor: colors.accent }]}>
+                    <Text style={styles.desktopBadgeText}>{savedCount}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setActiveTab('settings')}
+                style={[
+                  styles.desktopNavPill,
+                  activeTab === 'settings'
+                    ? { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    : { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                ]}
+                accessibilityRole="tab"
+                accessibilityLabel="Steuerung"
+                accessibilityState={{ selected: activeTab === 'settings' }}
+              >
+                <Ionicons
+                  name={activeTab === 'settings' ? 'options' : 'options-outline'}
+                  size={15}
+                  color={activeTab === 'settings' ? colors.accent : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={[
+                    styles.desktopNavPillText,
+                    {
+                      color: activeTab === 'settings' ? colors.accent : colors.textPrimary,
+                      fontWeight: activeTab === 'settings' ? '700' : '500'
+                    }
+                  ]}
+                >
+                  Steuerung
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
       {/* Screen Body: Always mounted to preserve feed scroll position and topic filters! */}
       <View style={styles.screenContainer}>
-        {activeTab === 'feed' && <FeedScreen />}
-        {activeTab === 'library' && <LibraryScreen />}
-        {activeTab === 'settings' && <SettingsScreen />}
+        <View
+          style={[
+            styles.tabPane,
+            { display: activeTab === 'feed' ? 'flex' : 'none' }
+          ]}
+          pointerEvents={activeTab === 'feed' ? 'auto' : 'none'}
+        >
+          <FeedScreen />
+        </View>
+        <View
+          style={[
+            styles.tabPane,
+            { display: activeTab === 'library' ? 'flex' : 'none' }
+          ]}
+          pointerEvents={activeTab === 'library' ? 'auto' : 'none'}
+        >
+          <LibraryScreen />
+        </View>
+        <View
+          style={[
+            styles.tabPane,
+            { display: activeTab === 'settings' ? 'flex' : 'none' }
+          ]}
+          pointerEvents={activeTab === 'settings' ? 'auto' : 'none'}
+        >
+          <SettingsScreen />
+        </View>
       </View>
 
       {/* Fullscreen Reader Overlay: Renders on top of tabs so originating tab & scroll are preserved */}
@@ -141,10 +291,10 @@ const MainNavigator: React.FC = () => {
           ]}
         >
           <View style={styles.tabBarInner}>
-            {/* Tab 1: Home / Feed */}
+            {/* Tab 1: Ausgabe */}
             <TouchableOpacity
               accessibilityRole="tab"
-              accessibilityLabel="Home"
+              accessibilityLabel="Ausgabe"
               accessibilityState={{ selected: activeTab === 'feed' }}
               onPress={() => {
                 if (activeTab === 'feed') {
@@ -157,7 +307,7 @@ const MainNavigator: React.FC = () => {
               activeOpacity={0.7}
             >
               <Ionicons
-                name={activeTab === 'feed' ? 'home' : 'home-outline'}
+                name={activeTab === 'feed' ? 'newspaper' : 'newspaper-outline'}
                 size={22}
                 color={activeTab === 'feed' ? colors.accent : colors.textMuted}
               />
@@ -167,14 +317,14 @@ const MainNavigator: React.FC = () => {
                   { color: activeTab === 'feed' ? colors.accent : colors.textMuted }
                 ]}
               >
-                Home
+                Ausgabe
               </Text>
             </TouchableOpacity>
 
-            {/* Tab 2: Library & Notebook */}
+            {/* Tab 2: Bibliothek */}
             <TouchableOpacity
               accessibilityRole="tab"
-              accessibilityLabel="Bibliothek"
+              accessibilityLabel={`Bibliothek${savedCount > 0 ? ` (${savedCount} gespeichert)` : ''}`}
               accessibilityState={{ selected: activeTab === 'library' }}
               onPress={() => setActiveTab('library')}
               style={styles.tabItem}
@@ -202,10 +352,10 @@ const MainNavigator: React.FC = () => {
               </Text>
             </TouchableOpacity>
 
-            {/* Tab 3: Settings */}
+            {/* Tab 3: Steuerung */}
             <TouchableOpacity
               accessibilityRole="tab"
-              accessibilityLabel="Einstellungen"
+              accessibilityLabel="Steuerung"
               accessibilityState={{ selected: activeTab === 'settings' }}
               onPress={() => setActiveTab('settings')}
               style={styles.tabItem}
@@ -315,6 +465,81 @@ const styles = StyleSheet.create({
   },
   screenContainer: {
     flex: 1
+  },
+  tabPane: {
+    flex: 1
+  },
+  desktopTopNav: {
+    borderBottomWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    zIndex: 100
+  },
+  desktopTopNavInner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    maxWidth: 1280,
+    width: '100%',
+    alignSelf: 'center'
+  },
+  desktopBrandRow: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  desktopBrandEmblem: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10
+  },
+  desktopBrandSymbol: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800'
+  },
+  desktopBrandTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: -0.3
+  },
+  desktopBrandSubtitle: {
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: -2
+  },
+  desktopNavGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  desktopNavPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    borderWidth: 1
+  },
+  desktopNavPillText: {
+    fontSize: 13,
+    fontWeight: '600'
+  },
+  desktopBadge: {
+    marginLeft: 6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 5
+  },
+  desktopBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800'
   },
   readerOverlay: {
     ...StyleSheet.absoluteFillObject,

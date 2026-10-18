@@ -9,6 +9,7 @@
 
 import { FeedItem, TopicTag } from '../domain/types';
 import { optimizeImageUrl } from '../utils/imageQuality';
+import { appStorage, AtemStorage } from '../data/storage';
 
 export interface RaindropUser {
   _id: number;
@@ -164,8 +165,56 @@ export const DEMO_RAINDROP_BOOKMARKS: RaindropItem[] = [
 ];
 
 export class RaindropService {
-  private static STORAGE_KEY_TOKEN = 'atmen_raindrop_api_token';
+  public static STORAGE_KEY_TOKEN = '@atem:raindrop_api_token:v1';
   private static API_BASE = 'https://api.raindrop.io/rest/v1';
+
+  public static async getStoredToken(storage: AtemStorage = appStorage): Promise<string | null> {
+    try {
+      const token = await storage.getItem(this.STORAGE_KEY_TOKEN);
+      return token && token.trim() ? token.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  public static async setStoredToken(token: string, storage: AtemStorage = appStorage): Promise<void> {
+    const clean = token.trim();
+    if (!clean) {
+      await storage.removeItem(this.STORAGE_KEY_TOKEN);
+    } else {
+      await storage.setItem(this.STORAGE_KEY_TOKEN, clean);
+    }
+  }
+
+  public static async clearStoredToken(storage: AtemStorage = appStorage): Promise<void> {
+    await storage.removeItem(this.STORAGE_KEY_TOKEN);
+  }
+
+  /**
+   * Automatically pushes a bookmarked FeedItem to Raindrop.io if a token is configured.
+   */
+  public static async syncArticleIfConnected(
+    article: FeedItem,
+    storage: AtemStorage = appStorage
+  ): Promise<{ synced: boolean; error?: string }> {
+    const token = await this.getStoredToken(storage);
+    if (!token) {
+      return { synced: false };
+    }
+    const link = article.sourceReferences?.[0]?.originalUrl || article.canonicalUrl || 'https://atmen.app';
+    const tags = Array.from(new Set([
+      'atmen',
+      article.primaryTopic,
+      ...(article.space ? [article.space.replace(/^c\//, '')] : [])
+    ]));
+    const res = await this.saveToRaindrop(token, {
+      title: article.title,
+      link,
+      excerpt: article.feedText || article.subtitle,
+      tags
+    });
+    return { synced: res.success, error: res.error };
+  }
 
   /**
    * Verifies a Raindrop Personal Access Token against the /user endpoint.
@@ -231,10 +280,10 @@ export class RaindropService {
     if (token === 'demo' || token === 'test') {
       return [
         { _id: 0, title: 'Alle Lesezeichen', count: 4 },
-        { _id: 10, title: 'Philosophie & Geist', count: 1, color: '#8B5CF6' },
-        { _id: 20, title: 'Klang & Modular', count: 1, color: '#EC4899' },
-        { _id: 30, title: 'KI & Wissenschaft', count: 1, color: '#06B6D4' },
-        { _id: 40, title: 'Gesundheit & Fokus', count: 1, color: '#10B981' }
+        { _id: 10, title: 'Philosophie & Geist', count: 1, color: '#7E72B5' },
+        { _id: 20, title: 'Klang & Modular', count: 1, color: '#B58952' },
+        { _id: 30, title: 'KI & Wissenschaft', count: 1, color: '#5282B8' },
+        { _id: 40, title: 'Gesundheit & Fokus', count: 1, color: '#4C917D' }
       ];
     }
 
@@ -288,7 +337,7 @@ export class RaindropService {
           try { return new URL(r.link).hostname.replace(/^www\./, ''); } catch { return 'raindrop.io'; }
         })(),
         tags: Array.isArray(r.tags) ? r.tags : [],
-        cover: optimizeImageUrl(r.cover) || 'https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=1400&q=85',
+        cover: optimizeImageUrl(r.cover),
         created: r.created || new Date().toISOString(),
         type: r.type || 'link',
         collectionId: r.collection?.$id

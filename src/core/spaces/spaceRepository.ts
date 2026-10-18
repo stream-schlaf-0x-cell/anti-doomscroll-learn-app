@@ -20,59 +20,14 @@ export interface Subchannel {
 
 export const DEFAULT_SUBCHANNELS: Subchannel[] = [
   {
-    id: 'space-philosophy',
-    handle: 'c/philosophie_ethik',
-    title: 'Philosophie & Ethik',
-    description: 'Kritische Erkenntnistheorie, antike Lebenskunst und ethische Grenzfragen der Spätmoderne.',
-    icon: 'school-outline',
-    flair: '◈ Philosophie',
-    primaryTopic: 'philosophy_ethics',
-    accentColor: '#8B5CF6',
-    isCustom: false,
-    createdAt: '2026-10-01T00:00:00.000Z',
-    pinned: true,
-    antithesisPrompt: 'Welches stärkste ontologische Gegenargument erschüttert diese Prämisse?',
-    memberCount: 1420
-  },
-  {
-    id: 'space-ai',
-    handle: 'c/ai_apple',
-    title: 'Künstliche Intelligenz & Systeme',
-    description: 'Maschinelles Lernen, Architektur großer Modelle und soziotechnische Resonanzen.',
-    icon: 'hardware-chip-outline',
-    flair: '◈ KI & Kognition',
-    primaryTopic: 'ai_apple',
-    accentColor: '#3B82F6',
-    isCustom: false,
-    createdAt: '2026-10-01T00:00:00.000Z',
-    pinned: true,
-    antithesisPrompt: 'Wo liegt der unauflösbare semantische Bruch zwischen statistischer Imitation und Verstehen?',
-    memberCount: 2890
-  },
-  {
-    id: 'space-synth',
-    handle: 'c/synth_alchemie',
-    title: 'Klang-Synthese & Akustik',
-    description: 'Modulare Synthese, Psychoakustik, Ambient-Architektur und Frequenz-Alchemie.',
-    icon: 'musical-notes-outline',
-    flair: '◈ Klang-Synthese',
-    primaryTopic: 'sound_synthesis',
-    accentColor: '#EC4899',
-    isCustom: false,
-    createdAt: '2026-10-01T00:00:00.000Z',
-    pinned: true,
-    antithesisPrompt: 'Welche physikalische Unschärfe unterscheidet analoge Schwingung von diskreter Abtastung?',
-    memberCount: 970
-  },
-  {
     id: 'space-science',
-    handle: 'c/quanten_kosmos',
-    title: 'Wissenschaft & Epistemologie',
+    handle: 'c/serendipity',
+    title: 'Wissenschaft & Gesellschaft',
     description: 'Grundlagenforschung, Astrophysik, Biologie und gesellschaftliche Transformation.',
-    icon: 'flask-outline',
-    flair: '◈ Wissenschaft',
+    icon: 'planet-outline',
+    flair: 'Wissenschaft',
     primaryTopic: 'science_society',
-    accentColor: '#06B6D4',
+    accentColor: '#5C7FA3',
     isCustom: false,
     createdAt: '2026-10-01T00:00:00.000Z',
     pinned: true,
@@ -80,14 +35,89 @@ export const DEFAULT_SUBCHANNELS: Subchannel[] = [
     memberCount: 1840
   },
   {
+    id: 'space-ai',
+    handle: 'c/acceleration',
+    title: 'Frontier AI & Systeme',
+    description: 'Maschinelles Lernen, Architektur großer Modelle, Open Source und digitale Souveränität.',
+    icon: 'hardware-chip-outline',
+    flair: 'Frontier AI',
+    primaryTopic: 'ai_apple',
+    accentColor: '#5282B8',
+    isCustom: false,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    pinned: true,
+    antithesisPrompt: 'Wo liegt der unauflösbare semantische Bruch zwischen statistischer Imitation und Verstehen?',
+    memberCount: 2890
+  },
+  {
+    id: 'space-philosophy',
+    handle: 'c/dialektik',
+    title: 'Philosophie & Streitfragen',
+    description: 'Kritische Erkenntnistheorie, antike Lebenskunst und ethische Grenzfragen der Spätmoderne.',
+    icon: 'compass-outline',
+    flair: 'Streitfrage',
+    primaryTopic: 'philosophy_ethics',
+    accentColor: '#7E72B5',
+    isCustom: false,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    pinned: true,
+    antithesisPrompt: 'Welches stärkste ontologische Gegenargument erschüttert diese Prämisse?',
+    memberCount: 1420
+  },
+  {
+    id: 'space-art',
+    handle: 'c/kunst_galerie',
+    title: 'Kunst & Visuelle Kultur',
+    description: 'Malerei, Fotografie, Architektur & visuelle Philosophie aus offenen Museumssammlungen.',
+    icon: 'color-palette-outline',
+    flair: 'Kunst & Kultur',
+    primaryTopic: 'art_aesthetics',
+    accentColor: '#B0855B',
+    isCustom: false,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    pinned: true,
+    antithesisPrompt: 'Inwiefern transformiert diese ästhetische Form unsere Wahrnehmung der Wirklichkeit?',
+    memberCount: 1680
+  },
+  {
+    id: 'space-synth',
+    handle: 'c/synth_alchemie',
+    title: 'Klangforschung & Modular',
+    description: 'Modulare Synthese, Psychoakustik, Ambient-Architektur und elektronische Komposition.',
+    icon: 'musical-notes-outline',
+    flair: 'Klangforschung',
+    primaryTopic: 'sound_synthesis',
+    accentColor: '#B58952',
+    isCustom: false,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    pinned: true,
+    antithesisPrompt: 'Welche physikalische Unschärfe unterscheidet analoge Schwingung von diskreter Abtastung?',
+    memberCount: 970
+  },
+  {
+    id: 'space-books',
+    handle: 'c/books',
+    title: 'Bücher & Essays',
+    description: 'Sorgfältige Essays über epochemachende Sachbücher, Literaturkritik und Primärtexte.',
+    icon: 'book-outline',
+    flair: 'Buch & Essay',
+    primaryTopic: 'book_mastery',
+    accentColor: '#7A6BA8',
+    isCustom: false,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    pinned: true,
+    antithesisPrompt: 'Inwiefern ist die Grundhypothese des Werkes zeitgebunden oder falsifizierbar?',
+    memberCount: 890
+  },
+  {
     id: 'space-contemplation',
-    handle: 'c/kontemplation_stille',
-    title: 'Kontemplation & Stille',
-    description: 'Achtsamkeitspraktiken, Neurobiologie der Ruhe und bewusste Entschleunigung.',
+    handle: 'c/kontemplation',
+    title: 'Geist & Kontemplation',
+    description: 'Buddhismus, Qi Gong, Achtsamkeitspraktiken und Neurobiologie der Ruhe.',
     icon: 'leaf-outline',
-    flair: '◈ Kontemplation',
+    flair: 'Geist & Fokus',
     primaryTopic: 'contemplation_mind',
-    accentColor: '#10B981',
+    accentColor: '#4B8E9D',
     isCustom: false,
     createdAt: '2026-10-01T00:00:00.000Z',
     pinned: false,
@@ -95,29 +125,14 @@ export const DEFAULT_SUBCHANNELS: Subchannel[] = [
     memberCount: 1120
   },
   {
-    id: 'space-didactics',
-    handle: 'c/didaktik_labor',
-    title: 'Didaktik & Bildungsarchitektur',
-    description: 'Lernpsychologie, sokratische Gesprächsführung und zeitgemäße Wissensvermittlung.',
-    icon: 'book-outline',
-    flair: '◈ Didaktik',
-    primaryTopic: 'german_didactics',
-    accentColor: '#F59E0B',
-    isCustom: false,
-    createdAt: '2026-10-01T00:00:00.000Z',
-    pinned: false,
-    antithesisPrompt: 'Wie verhindert man, dass didaktische Reduktion in triviale Verflachung kippt?',
-    memberCount: 650
-  },
-  {
     id: 'space-health',
-    handle: 'c/biohacking_gesundheit',
-    title: 'Neurobiologie & Vitalität',
+    handle: 'c/health_longevity',
+    title: 'Gesundheit & Neurobiologie',
     description: 'Zirkadiane Rhythmen, Schlafarchitektur, Stoffwechsel und evidenzbasierte Langlebigkeit.',
     icon: 'fitness-outline',
-    flair: '◈ Neurobiologie',
+    flair: 'Neurobiologie',
     primaryTopic: 'health_biohacking',
-    accentColor: '#14B8A6',
+    accentColor: '#4C917D',
     isCustom: false,
     createdAt: '2026-10-01T00:00:00.000Z',
     pinned: false,
@@ -125,29 +140,14 @@ export const DEFAULT_SUBCHANNELS: Subchannel[] = [
     memberCount: 1310
   },
   {
-    id: 'space-books',
-    handle: 'c/buecher_meisterwerke',
-    title: 'Bücher-Bibliothek & Meisterwerke',
-    description: 'Sorgfältige Essays über epochemachende Sachbücher, Traktate und Primärtexte.',
-    icon: 'library-outline',
-    flair: '◈ Buch-Meisterwerk',
-    primaryTopic: 'book_mastery',
-    accentColor: '#6366F1',
-    isCustom: false,
-    createdAt: '2026-10-01T00:00:00.000Z',
-    pinned: false,
-    antithesisPrompt: 'Inwiefern ist die Grundhypothese des Werkes zeitgebunden oder falsifizierbar?',
-    memberCount: 890
-  },
-  {
     id: 'space-memes',
-    handle: 'c/memes_dialektik',
-    title: 'Intellektuelle Meme-Dialektik',
-    description: 'xkcd, akademische Satire und feinsinnige Dekonstruktion digitaler Widersprüche.',
-    icon: 'sparkles-outline',
-    flair: '◈ Meme-Dialektik',
-    primaryTopic: 'philosophy_ethics',
-    accentColor: '#F43F5E',
+    handle: 'c/memes',
+    title: 'Comics & Satire',
+    description: 'xkcd, SMBC, akademische Satire und feinsinnige Dekonstruktion digitaler Widersprüche.',
+    icon: 'happy-outline',
+    flair: 'Satire & Comics',
+    primaryTopic: 'memes_satire',
+    accentColor: '#B87B5C',
     isCustom: false,
     createdAt: '2026-10-01T00:00:00.000Z',
     pinned: false,
@@ -155,39 +155,81 @@ export const DEFAULT_SUBCHANNELS: Subchannel[] = [
     memberCount: 2150
   },
   {
-    id: 'space-art',
-    handle: 'c/kunst_galerie',
-    title: 'Kunst, Ästhetik & Visuelle Kultur',
-    description: 'Malerei, Fotografie, Architektur & visuelle Philosophie aus offenen Museumssammlungen.',
-    icon: 'color-palette-outline',
-    flair: '🎨 Meisterwerk',
-    primaryTopic: 'art_aesthetics',
-    accentColor: '#D97706',
+    id: 'space-youtube',
+    handle: 'c/youtube',
+    title: 'Video-Essays & Doku',
+    description: 'Kuratierte Video-Essays aus Wissenschaft, Philosophie, Technik und Kultur.',
+    icon: 'play-circle-outline',
+    flair: 'Video-Essay',
+    primaryTopic: 'youtube_gems',
+    accentColor: '#A8646B',
     isCustom: false,
     createdAt: '2026-10-01T00:00:00.000Z',
-    pinned: true,
-    antithesisPrompt: 'Inwiefern transformiert diese ästhetische Form unsere Wahrnehmung der Wirklichkeit?',
-    memberCount: 1680
+    pinned: false,
+    antithesisPrompt: 'Welche analytische Tiefe bleibt hinter der visuellen Inszenierung verborgen?',
+    memberCount: 1540
+  },
+  {
+    id: 'space-opportunities',
+    handle: 'c/chancen',
+    title: 'Chancen- & Hebel-Radar',
+    description: 'Forschungsförderung, Open-Source-Ökosysteme, Fellowships und strategische Hebel.',
+    icon: 'trending-up-outline',
+    flair: 'Hebel & Grants',
+    primaryTopic: 'opportunities_growth',
+    accentColor: '#548C9C',
+    isCustom: false,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    pinned: false,
+    antithesisPrompt: 'Welcher langfristige Hebel unterscheidet echte Substanz von kurzfristigem Hype?',
+    memberCount: 780
+  },
+  {
+    id: 'space-didactics',
+    handle: 'c/didaktik_labor',
+    title: 'Didaktik & Bildungsarchitektur',
+    description: 'Lernpsychologie, sokratische Gesprächsführung und zeitgemäße Wissensvermittlung.',
+    icon: 'school-outline',
+    flair: 'Didaktik-Labor',
+    primaryTopic: 'german_didactics',
+    accentColor: '#4D947A',
+    isCustom: false,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    pinned: false,
+    antithesisPrompt: 'Wie verhindert man, dass didaktische Reduktion in triviale Verflachung kippt?',
+    memberCount: 650
   }
 ];
 
 export class SpaceRepository {
   private static STORAGE_KEY = '@atem:custom_subchannels';
+  private static PINNED_IDS_KEY = '@atem:pinned_space_ids';
 
   constructor(private storage: AtemStorage = appStorage) {}
 
   public async getAllSpaces(): Promise<Subchannel[]> {
     try {
-      const raw = await this.storage.getItem(SpaceRepository.STORAGE_KEY);
-      if (!raw) return DEFAULT_SUBCHANNELS;
-      const custom: Subchannel[] = JSON.parse(raw);
-      // Merge defaults with custom channels (custom takes precedence on ID match)
+      const [rawCustom, rawPinned] = await Promise.all([
+        this.storage.getItem(SpaceRepository.STORAGE_KEY),
+        this.storage.getItem(SpaceRepository.PINNED_IDS_KEY)
+      ]);
+      const pinnedIds: string[] | null = rawPinned ? JSON.parse(rawPinned) : null;
+      const custom: Subchannel[] = rawCustom ? JSON.parse(rawCustom) : [];
+
       const map = new Map<string, Subchannel>();
       for (const d of DEFAULT_SUBCHANNELS) {
-        map.set(d.id, d);
+        map.set(d.id, {
+          ...d,
+          pinned: pinnedIds ? pinnedIds.includes(d.id) : d.pinned
+        });
       }
       for (const c of custom) {
-        map.set(c.id, c);
+        if (c.isCustom) {
+          map.set(c.id, {
+            ...c,
+            pinned: pinnedIds ? pinnedIds.includes(c.id) : c.pinned
+          });
+        }
       }
       return Array.from(map.values());
     } catch {
@@ -220,9 +262,9 @@ export class SpaceRepository {
       title: data.title.trim(),
       description: data.description.trim() || 'Persönlicher Subchannel für vertiefte Dialektik.',
       icon: data.icon || 'layers-outline',
-      flair: data.flair || `◈ ${data.title.trim()}`,
+      flair: data.flair || data.title.trim(),
       primaryTopic: data.primaryTopic || 'science_society',
-      accentColor: data.accentColor || '#6366F1',
+      accentColor: data.accentColor || '#5282B8',
       isCustom: true,
       createdAt: new Date().toISOString(),
       pinned: true,
@@ -234,6 +276,9 @@ export class SpaceRepository {
     const customOnly = spaces.filter(s => s.isCustom);
     customOnly.push(newChannel);
     await this.storage.setItem(SpaceRepository.STORAGE_KEY, JSON.stringify(customOnly));
+
+    const pinnedIds = [...spaces.filter(s => s.pinned).map(s => s.id), newChannel.id];
+    await this.storage.setItem(SpaceRepository.PINNED_IDS_KEY, JSON.stringify(pinnedIds));
 
     return newChannel;
   }
@@ -255,7 +300,11 @@ export class SpaceRepository {
     const all = await this.getAllSpaces();
     const updated = all.map(s => s.id === id ? { ...s, pinned: !s.pinned } : s);
     const customOnly = updated.filter(s => s.isCustom);
-    await this.storage.setItem(SpaceRepository.STORAGE_KEY, JSON.stringify(customOnly));
+    const pinnedIds = updated.filter(s => s.pinned).map(s => s.id);
+    await Promise.all([
+      this.storage.setItem(SpaceRepository.STORAGE_KEY, JSON.stringify(customOnly)),
+      this.storage.setItem(SpaceRepository.PINNED_IDS_KEY, JSON.stringify(pinnedIds))
+    ]);
     return updated;
   }
 }

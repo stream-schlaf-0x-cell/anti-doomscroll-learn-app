@@ -1,6 +1,7 @@
 import { FeedItem, FeedItemFormat, ContentType, FactReviewStatus } from '../domain/types';
 import { RawFeedEntry, RawFeedSource } from './types';
 import { buildKnowledgeContextForEntry } from '../synthesis/backgroundResearchPipeline';
+import { ZERO_WIDTH_REGEX, sanitizeImageUrl } from './rssParser';
 
 /**
  * Pure TypeScript SHA-256 implementation (FIPS 180-4).
@@ -270,6 +271,91 @@ function buildRelevanceExplanation(source: RawFeedSource): string {
   }
 }
 
+export const BOILERPLATE_PATTERNS: RegExp[] = [
+  /Für Links auf dieser Seite.*?Provision.*?Partner/gi,
+  /Hier geht['']?s zu unseren Affiliate-Links/gi,
+  /Hinweis: Für diesen Artikel.*?Provision/gi,
+  /Folgen Sie uns auf.*?(?:Telegram|WhatsApp|Facebook|Twitter|X|Instagram)/gi
+];
+
+export function stripBoilerplate(text: string): string {
+  if (!text) return '';
+  let cleaned = text;
+  for (const pattern of BOILERPLATE_PATTERNS) {
+    cleaned = cleaned.replace(pattern, '');
+  }
+  return cleaned.trim();
+}
+
+/**
+ * Splits text into sentences while respecting German/English ordinal numbers (e.g. "21. September")
+ * and abbreviations (e.g. "z.B.", "Dr.", "Prof.") so they are not falsely treated as sentence boundaries.
+ */
+export function splitSentencesAware(text: string): string[] {
+  if (!text) return [];
+  const clean = text.trim();
+  if (!clean) return [];
+
+  const regex = /([.!?]+)(?=\s+|$)/g;
+  const sentences: string[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(clean)) !== null) {
+    const punct = match[1];
+    const matchIndex = match.index;
+    const matchEnd = matchIndex + punct.length;
+
+    if (punct.includes('.')) {
+      const textBefore = clean.slice(0, matchIndex);
+      // Check 1-2 digits: e.g. " 21."
+      if (/\b\d{1,2}$/.test(textBefore)) {
+        continue;
+      }
+      // Check abbreviations: e.g. "z.B", "Dr", "Prof", "ca", etc.
+      if (/(?:^|\s)(?:z\.B|u\.a|d\.h|bzw|vgl|ca|Dr|Prof|Mio|Mrd|Nr|St|vs|etc|inkl|evtl|usw)$/i.test(textBefore)) {
+        continue;
+      }
+    }
+
+    const rest = clean.slice(matchEnd);
+    const wsMatch = rest.match(/^\s+/);
+    if (!wsMatch && matchEnd < clean.length) {
+      continue;
+    }
+
+    const sentence = clean.slice(lastIndex, matchEnd).trim();
+    if (sentence) {
+      sentences.push(sentence);
+    }
+    lastIndex = matchEnd + (wsMatch ? wsMatch[0].length : 0);
+  }
+
+  const trailing = clean.slice(lastIndex).trim();
+  if (trailing) {
+    sentences.push(trailing);
+  }
+
+  return sentences.length > 0 ? sentences : [clean];
+}
+
+/**
+ * Enforces minimum substance for subtitles/claims:
+ * Must have at least 35 characters and at least 6 words, and cannot be a stub like "Comments".
+ */
+export function isSubstantialSubtitle(text: string): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === 'comments' || lower.startsWith('comments (') || lower === 'kommentare' || lower.startsWith('kommentare (')) {
+    return false;
+  }
+  if (trimmed.length < 35) return false;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length < 6) return false;
+  return true;
+}
+
 /**
  * Normalizes a raw RSS/Atom entry into a strictly validated FeedItem.
  * - Preserves 100% honest source text without template bloating.
@@ -282,30 +368,51 @@ export function normalizeFeedEntry(
   editionDate: string = new Date().toISOString().slice(0, 10)
 ): FeedItem {
   const canonical = canonicalizeUrl(entry.link);
-  const rawBodyText = (entry.fullContent && entry.fullContent.length > entry.summary.length)
-    ? entry.fullContent.trim()
-    : entry.summary.trim();
+  const cleanTitle = entry.title.replace(ZERO_WIDTH_REGEX, '').trim();
+  const rawBodyText = stripBoilerplate(
+    ((entry.fullContent && entry.fullContent.length > entry.summary.length)
+      ? entry.fullContent
+      : entry.summary
+    ).replace(ZERO_WIDTH_REGEX, '').trim()
+  );
 
   const effectiveText = rawBodyText.length > 0
     ? rawBodyText
     : entry.imageAltText
-    ? entry.imageAltText
-    : `${entry.title}. Originalbeitrag veröffentlicht bei ${source.name}.`;
+    ? entry.imageAltText.replace(ZERO_WIDTH_REGEX, '').trim()
+    : `${cleanTitle}. Originalbeitrag veröffentlicht bei ${source.name}.`;
 
   const words = effectiveText.split(/\s+/).filter(Boolean);
   const wordCount = Math.max(12, words.length);
   const estimatedReadingMinutes = Math.max(1, Math.min(15, Math.ceil(wordCount / 180)));
 
-  const contentHash = generateContentHash(canonical, entry.title, effectiveText);
-  const { format, type } = classifyFormatAndType(entry, source, wordCount);
+  const contentHash = generateContentHash(canonical, cleanTitle, effectiveText);
+  const { format, type } = classifyFormatAndType({ ...entry, title: cleanTitle }, source, wordCount);
   const { sourceTrustLevel, factReviewStatus, provenanceSummary } = classifySourceProvenance(source);
 
   // Split teaser into distinct subtitle and non-repeating feedText
-  const sentences = effectiveText.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const sentences = splitSentencesAware(effectiveText).filter(Boolean);
   let subtitle = '';
   let feedText = '';
 
-  if (sentences.length > 1) {
+  let firstSubstantialIdx = -1;
+  for (let i = 0; i < sentences.length; i++) {
+    if (isSubstantialSubtitle(sentences[i])) {
+      firstSubstantialIdx = i;
+      break;
+    }
+  }
+
+  if (firstSubstantialIdx !== -1) {
+    const candidateSub = sentences[firstSubstantialIdx].trim();
+    subtitle = candidateSub.length > 150
+      ? candidateSub.slice(0, 147).trim() + '…'
+      : candidateSub;
+    const remainingText = sentences.filter((_, idx) => idx !== firstSubstantialIdx).join(' ').trim();
+    feedText = remainingText.length > 520
+      ? remainingText.slice(0, 517).trim() + '…'
+      : (remainingText || effectiveText);
+  } else if (sentences.length > 0 && sentences[0].length >= 20 && !sentences[0].toLowerCase().startsWith('comments')) {
     const firstSentence = sentences[0].trim();
     subtitle = firstSentence.length > 150
       ? firstSentence.slice(0, 147).trim() + '…'
@@ -331,7 +438,7 @@ export function normalizeFeedEntry(
   const articleBody = effectiveText;
 
   const knowledgeContext = buildKnowledgeContextForEntry({
-    title: entry.title,
+    title: cleanTitle,
     summary: effectiveText,
     topic: source.primaryTopic,
     sourceName: source.name
@@ -345,9 +452,7 @@ export function normalizeFeedEntry(
     sourceDomain = undefined;
   }
 
-  const authenticImageUrl = entry.imageUrl && entry.imageUrl.startsWith('http')
-    ? entry.imageUrl
-    : undefined;
+  const authenticImageUrl = sanitizeImageUrl(entry.imageUrl);
 
   const memeMeta =
     format === 'meme' && entry.imageAltText
@@ -362,7 +467,7 @@ export function normalizeFeedEntry(
     id: deterministicId,
     type,
     format,
-    title: entry.title,
+    title: cleanTitle,
     subtitle,
     feedText,
     articleBody,
@@ -373,7 +478,7 @@ export function normalizeFeedEntry(
       {
         publisher: source.name,
         originalUrl: canonical,
-        title: entry.title,
+        title: cleanTitle,
         publicationTimestamp: entry.publishedAt,
         retrievalTimestamp: new Date().toISOString(),
         author: entry.author || source.defaultAuthor,

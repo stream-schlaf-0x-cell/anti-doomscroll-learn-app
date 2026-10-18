@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Pressable, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing } from '../theme';
@@ -21,7 +21,19 @@ export const WhyThisModal: React.FC = () => {
       onRequestClose={closeWhyModal}
     >
       <View style={styles.overlay}>
-        <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Pressable
+          accessibilityLabel="Hintergrund schließen"
+          onPress={closeWhyModal}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          onStartShouldSetResponder={() => true}
+          // @ts-ignore - web click propagation guard
+          onClick={(e: any) => {
+            if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          }}
+        >
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.titleRow}>

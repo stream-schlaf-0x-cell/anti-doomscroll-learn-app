@@ -4,6 +4,11 @@ import { generateSparringReply } from './fixtures';
 
 export const INTERACTIONS_STORAGE_KEY = '@atem:interactions:v1';
 export const SAVED_ARTICLES_STORAGE_KEY = '@atem:saved_articles:v1';
+export const ARTICLE_BODY_STORAGE_PREFIX = '@atem:article_body:v1:';
+
+export function getArticleBodyStorageKey(itemId: string): string {
+  return `${ARTICLE_BODY_STORAGE_PREFIX}${itemId}`;
+}
 
 export interface ILibraryRepository {
   getInteractions(): Promise<Record<string, ReadingInteraction>>;
@@ -14,6 +19,7 @@ export interface ILibraryRepository {
   unsaveArticle(itemId: string): Promise<ReadingInteraction>;
   getSavedArticles(): Promise<FeedItem[]>;
   getSavedArticle(itemId: string): Promise<FeedItem | null>;
+  getSavedArticleById(itemId: string): Promise<FeedItem | null>;
   updateProgress(itemId: string, progressPercent: number): Promise<ReadingInteraction>;
   setFeedback(itemId: string, feedback: 'more_like_this' | 'less_like_this' | 'neutral'): Promise<ReadingInteraction>;
   addNote(itemId: string, text: string, tag?: 'einwand' | 'unterricht' | 'these' | 'notiz'): Promise<ReadingInteraction>;
@@ -134,11 +140,26 @@ export class LocalLibraryRepository implements ILibraryRepository {
   }
 
   /**
-   * Persists both the interaction bookmark and the full article offline
-   * so it remains accessible permanently even when feeds rotate.
+   * Persists both the interaction bookmark and the full article offline.
+   * Shards heavy article bodies to @atem:article_body:v1:<id> to prevent exceeding AsyncStorage key limits.
    */
   async saveArticle(article: FeedItem): Promise<ReadingInteraction> {
     const interaction = await this.saveItem(article.id);
+    const validatedArticle = FeedItemSchema.parse(article);
+
+    // 1. Shard heavy articleBody to separate storage key if present
+    if (validatedArticle.articleBody) {
+      await this.storage.setItem(
+        getArticleBodyStorageKey(validatedArticle.id),
+        validatedArticle.articleBody
+      );
+    }
+
+    // 2. Index in fast SAVED_ARTICLES_STORAGE_KEY without heavy articleBody
+    const indexArticle: FeedItem = {
+      ...validatedArticle,
+      articleBody: undefined
+    };
 
     await this.storage.runTransaction(SAVED_ARTICLES_STORAGE_KEY, async (tx) => {
       const raw = await tx.get();
@@ -160,8 +181,7 @@ export class LocalLibraryRepository implements ILibraryRepository {
         }
       }
 
-      const validatedArticle = FeedItemSchema.parse(article);
-      articles[article.id] = validatedArticle;
+      articles[article.id] = indexArticle;
       await tx.set(JSON.stringify(articles));
     });
 
@@ -177,26 +197,29 @@ export class LocalLibraryRepository implements ILibraryRepository {
   }
 
   /**
-   * Unmarks bookmark and removes the full article from decoupled offline storage.
+   * Unmarks bookmark and removes the full article and its body shard from offline storage.
    */
   async unsaveArticle(itemId: string): Promise<ReadingInteraction> {
     const interaction = await this.unsaveItem(itemId);
 
-    await this.storage.runTransaction(SAVED_ARTICLES_STORAGE_KEY, async (tx) => {
-      const raw = await tx.get();
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            const articles = { ...(parsed as Record<string, FeedItem>) };
-            delete articles[itemId];
-            await tx.set(JSON.stringify(articles));
+    await Promise.all([
+      this.storage.removeItem(getArticleBodyStorageKey(itemId)),
+      this.storage.runTransaction(SAVED_ARTICLES_STORAGE_KEY, async (tx) => {
+        const raw = await tx.get();
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              const articles = { ...(parsed as Record<string, FeedItem>) };
+              delete articles[itemId];
+              await tx.set(JSON.stringify(articles));
+            }
+          } catch {
+            // Ignore parse errors on delete
           }
-        } catch {
-          // Ignore parse errors on delete
         }
-      }
-    });
+      })
+    ]);
 
     return interaction;
   }
@@ -213,7 +236,15 @@ export class LocalLibraryRepository implements ILibraryRepository {
       for (const val of Object.values(parsed as Record<string, unknown>)) {
         const safe = FeedItemSchema.safeParse(val);
         if (safe.success) {
-          list.push(safe.data);
+          const item = { ...safe.data };
+          // Transparently rehydrate articleBody from shard if not already present inline
+          if (!item.articleBody) {
+            const sharded = await this.storage.getItem(getArticleBodyStorageKey(item.id));
+            if (sharded) {
+              item.articleBody = sharded;
+            }
+          }
+          list.push(item);
         }
       }
       return list;
@@ -232,10 +263,23 @@ export class LocalLibraryRepository implements ILibraryRepository {
       const val = (parsed as Record<string, unknown>)[itemId];
       if (!val) return null;
       const safe = FeedItemSchema.safeParse(val);
-      return safe.success ? safe.data : null;
+      if (!safe.success) return null;
+
+      const item = { ...safe.data };
+      if (!item.articleBody) {
+        const sharded = await this.storage.getItem(getArticleBodyStorageKey(itemId));
+        if (sharded) {
+          item.articleBody = sharded;
+        }
+      }
+      return item;
     } catch {
       return null;
     }
+  }
+
+  async getSavedArticleById(itemId: string): Promise<FeedItem | null> {
+    return this.getSavedArticle(itemId);
   }
 
   async updateProgress(itemId: string, progressPercent: number): Promise<ReadingInteraction> {
@@ -295,6 +339,21 @@ export class LocalLibraryRepository implements ILibraryRepository {
   }
 
   async clearLibrary(): Promise<void> {
+    try {
+      const raw = await this.storage.getItem(SAVED_ARTICLES_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          const bodyDeletions = Object.keys(parsed).map(id =>
+            this.storage.removeItem(getArticleBodyStorageKey(id))
+          );
+          await Promise.all(bodyDeletions);
+        }
+      }
+    } catch {
+      // Ignore errors on shard cleanup
+    }
+
     await Promise.all([
       this.storage.removeItem(INTERACTIONS_STORAGE_KEY),
       this.storage.removeItem(SAVED_ARTICLES_STORAGE_KEY)

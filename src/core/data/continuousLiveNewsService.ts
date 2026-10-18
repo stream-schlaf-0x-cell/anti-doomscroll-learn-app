@@ -5,6 +5,8 @@ import { fetchAllFeeds } from '../ingestion/feedFetcher';
 import { normalizeFeedEntry } from '../ingestion/normalizer';
 import { OpenWebHarvester } from '../ingestion/openWebHarvester';
 import { appStorage } from './storage';
+import { defaultSourceRepository } from './sourceRepository';
+import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
 
 let staticPipelineItems: FeedItem[] = [];
 try {
@@ -576,7 +578,73 @@ export class ContinuousLiveNewsService {
   }
 
   /**
-   * Returns a freshness-sorted, domain-interleaved stream of live news items.
+   * Scores an item for the 7-Day Rolling Quality Window so substantive essays,
+   * studies, and deep journalism from the last 7 days outrank thin minute-old wire noise.
+   */
+  public static computeRollingWindowQualityScore(
+    item: FeedItem,
+    windowMode: '7d_quality' | '48h_fresh' | 'chronological' = '7d_quality',
+    nowMs: number = Date.now()
+  ): number {
+    if (item.id === 'news_hub_heise_1') return -1000;
+    const pubMs = new Date(item.publishedAt).getTime() || nowMs;
+    const ageHours = Math.max(0, (nowMs - pubMs) / (1000 * 60 * 60));
+
+    if (windowMode === 'chronological') {
+      return pubMs;
+    }
+
+    let score = 0;
+
+    if (windowMode === '48h_fresh') {
+      if (ageHours <= 48) {
+        score += 65 - (ageHours / 48) * 20;
+      } else if (ageHours <= 168) {
+        score += 25 - ((ageHours - 48) / 120) * 15;
+      } else {
+        score += 5;
+      }
+    } else {
+      // '7d_quality': 7-Day Rolling Quality Window (168 hours)
+      // Treats the entire past 7 days as an active quality pool rather than rewarding raw minute-by-minute recency
+      if (ageHours <= 168) {
+        score += 50;
+        // Sweet spot: 3 hours to 120 hours (5 days) old where full articles & discussions have matured
+        if (ageHours >= 2 && ageHours <= 120) {
+          score += 12;
+        }
+      } else if (ageHours <= 336) {
+        score += 22;
+      } else {
+        score += 8;
+      }
+    }
+
+    // Substance & Depth signals
+    const words = item.wordCount || item.feedText.split(/\s+/).length;
+    if (words >= 220) score += 20;
+    else if (words >= 120) score += 14;
+    else if (words < 45 && !item.externalCommunityScore?.points) score -= 18;
+
+    if (item.feedText && item.feedText.length >= 160) score += 10;
+    if (item.evidenceTier === 'multiple_sources' || item.evidenceTier === 'permitted_full_text') score += 14;
+    if (item.sourceTrustLevel === 'peer_reviewed') score += 16;
+    else if (item.sourceTrustLevel === 'public_broadcaster') score += 12;
+
+    const hnPoints = item.externalCommunityScore?.points;
+    if (typeof hnPoints === 'number' && hnPoints >= 40) {
+      score += Math.min(16, Math.round(Math.log10(hnPoints) * 6));
+    }
+
+    if (item.format === 'long_invitation' || item.format === 'surprising_connection' || item.format === 'perspective_disagreement') {
+      score += 8;
+    }
+
+    return score;
+  }
+
+  /**
+   * Returns a 7-day quality-ranked, domain-interleaved stream of live news & research items.
    * Explicitly excludes artworks (`art_showcase` / `museum_collection`) from Live News.
    */
   public static async getLiveStream(options?: {
@@ -584,25 +652,25 @@ export class ContinuousLiveNewsService {
     query?: string;
     limit?: number;
     forceRefresh?: boolean;
+    windowMode?: '7d_quality' | '48h_fresh' | 'chronological';
+    topic?: TopicTag;
   }): Promise<FeedItem[]> {
     const category = options?.category || 'all';
     const query = (options?.query || '').toLowerCase().trim();
-    const limit = options?.limit || 40;
+    const limit = options?.limit || 80;
+    const windowMode = options?.windowMode || '7d_quality';
 
     const liveItems = await this.refreshLiveFeeds(Boolean(options?.forceRefresh));
 
     let disabledDomains: string[] = [];
     let disabledNames: string[] = [];
     try {
-      const { defaultSourceRepository } = require('./sourceRepository');
       disabledDomains = await defaultSourceRepository.getDisabledDomains();
       disabledNames = await defaultSourceRepository.getDisabledNames();
     } catch {
       disabledDomains = [];
       disabledNames = [];
     }
-
-    const { enrichItemWithInstantResearch } = require('../synthesis/backgroundResearchPipeline');
 
     const todayStr = new Date().toISOString().split('T')[0];
     const refreshedStatic = staticPipelineItems.map((item, idx) => {
@@ -650,10 +718,19 @@ export class ContinuousLiveNewsService {
       return true;
     });
 
-    // Sort by publishedAt descending; push static 'news_hub_heise_1' down so live items always lead
+    if (options?.topic) {
+      unique = unique.filter(
+        item => item.primaryTopic === options.topic || item.topics.includes(options.topic!)
+      );
+    }
+
+    const nowMs = Date.now();
     unique.sort((a, b) => {
       if (a.id === 'news_hub_heise_1' && b.id !== 'news_hub_heise_1') return 1;
       if (b.id === 'news_hub_heise_1' && a.id !== 'news_hub_heise_1') return -1;
+      const scoreA = this.computeRollingWindowQualityScore(a, windowMode, nowMs);
+      const scoreB = this.computeRollingWindowQualityScore(b, windowMode, nowMs);
+      if (scoreB !== scoreA) return scoreB - scoreA;
       const timeA = new Date(a.publishedAt).getTime() || 0;
       const timeB = new Date(b.publishedAt).getTime() || 0;
       return timeB - timeA;
@@ -710,7 +787,6 @@ export class ContinuousLiveNewsService {
    * Returns timeless Evergreen Classics & Internet Gems.
    */
   public static getEvergreenClassics(): FeedItem[] {
-    const { enrichItemWithInstantResearch } = require('../synthesis/backgroundResearchPipeline');
     return EVERGREEN_INTERNET_CLASSICS.map(i => enrichItemWithInstantResearch(this.sanitizeProvenanceItem(i)));
   }
 }

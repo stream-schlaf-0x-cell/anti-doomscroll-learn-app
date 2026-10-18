@@ -1,5 +1,5 @@
 import { VERIFIED_FEED_SOURCES } from '../ingestion/sources';
-import { RawFeedSource } from '../ingestion/types';
+import { RawFeedSource, ReliabilityTier, SourceDomain } from '../ingestion/types';
 import { TopicTag } from '../domain/types';
 import { AtemStorage, appStorage } from './storage';
 
@@ -11,6 +11,11 @@ export type SourceCategory =
   | 'education'
   | 'tech'
   | 'memes'
+  | 'fact_check'
+  | 'wellbeing'
+  | 'law_ethics'
+  | 'official'
+  | 'open_source'
   | 'custom';
 
 export interface SourceHealthInfo {
@@ -49,6 +54,11 @@ export interface FeedSourceItem {
   articleCount?: number;
   lastSynced?: string;
   createdAt?: string;
+  reliabilityTier?: ReliabilityTier;
+  sourceDomain?: SourceDomain;
+  homepageUrl?: string;
+  description?: string;
+  defaultEnabled?: boolean;
   // Per-source health telemetry
   fetchSuccess?: boolean;
   lastSuccessAt?: string;
@@ -70,11 +80,41 @@ export const CATEGORY_METADATA: Record<SourceCategory, {
     color: '#06B6D4',
     description: 'Tagesschau, ZDFheute, Deutschlandfunk, BR24 – werbefrei & redaktionell geprüft'
   },
+  fact_check: {
+    label: 'Faktencheck & Medien',
+    icon: 'checkmark-circle',
+    color: '#14B8A6',
+    description: 'Correctiv, dpa-Faktencheck, Mimikama, IFCN, Snopes, Full Fact'
+  },
   science: {
     label: 'Wissenschaft & Kognition',
     icon: 'flask',
     color: '#8B5CF6',
-    description: 'Quanta Magazine, Nature, Spektrum, ScienceDaily, scinexx, arXiv'
+    description: 'Quanta Magazine, Nature, Spektrum, ScienceDaily, scinexx, arXiv, PubMed'
+  },
+  wellbeing: {
+    label: 'Mental Health & Wellbeing',
+    icon: 'heart',
+    color: '#EC4899',
+    description: 'Center for Humane Tech, WHO Mental Health, DGPPN, Cochrane, Mindfulness'
+  },
+  law_ethics: {
+    label: 'Recht, Ethik & Datenschutz',
+    icon: 'scale',
+    color: '#6366F1',
+    description: 'EDPB, BfDI, AlgorithmWatch, EFF, Netzpolitik, AI Act & Privacy'
+  },
+  official: {
+    label: 'Amtliche Referenzen',
+    icon: 'business',
+    color: '#0EA5E9',
+    description: 'Destatis, Eurostat, RKI, EU Institutions, WHO'
+  },
+  open_source: {
+    label: 'Open Source Software',
+    icon: 'git-branch',
+    color: '#10B981',
+    description: 'FreshRSS, Miniflux, NewsBlur, uBlock Origin, LeechBlock, FSFE'
   },
   youtube: {
     label: 'YouTube Meisterkurse',
@@ -95,10 +135,10 @@ export const CATEGORY_METADATA: Record<SourceCategory, {
     description: 'Deutsches Schulportal, Bildungsserver, bpb, Edutopia'
   },
   tech: {
-    label: 'KI, Tech & Klangsynthese',
+    label: 'KI, Tech & Standards',
     icon: 'hardware-chip',
     color: '#3B82F6',
-    description: 'Simon Willison, Hugging Face, Heise, MIT Tech Review, Lobsters, CDM, Lines'
+    description: 'Simon Willison, Hugging Face, Heise, MIT Tech Review, W3C, Mozilla'
   },
   memes: {
     label: 'Spielerisches, Humor & Kurioses',
@@ -115,6 +155,29 @@ export const CATEGORY_METADATA: Record<SourceCategory, {
 };
 
 function categorizeVerifiedSource(source: RawFeedSource): { category: SourceCategory; trustBadge: string } {
+  // If explicitly categorized by global research domain
+  if (source.sourceDomain) {
+    const tierBadge = source.reliabilityTier === 'tier_a' ? 'Tier A (Primär/Referenz)' : 'Tier B (Qualität)';
+    switch (source.sourceDomain) {
+      case 'fact_check':
+        return { category: 'fact_check', trustBadge: `Faktencheck • ${tierBadge}` };
+      case 'mental_health_wellbeing':
+        return { category: 'wellbeing', trustBadge: `Mental Health • ${tierBadge}` };
+      case 'law_ethics_privacy':
+        return { category: 'law_ethics', trustBadge: `Recht & Ethik • ${tierBadge}` };
+      case 'official_reference':
+        return { category: 'official', trustBadge: `Amtlich • ${tierBadge}` };
+      case 'open_source':
+        return { category: 'open_source', trustBadge: `Open Source • ${tierBadge}` };
+      case 'science_research':
+        return { category: 'science', trustBadge: `Wissenschaft • ${tierBadge}` };
+      case 'datasets':
+        return { category: 'science', trustBadge: `Datensatz • ${tierBadge}` };
+      case 'tools_standards':
+        return { category: 'tech', trustBadge: `Standard/Tool • ${tierBadge}` };
+    }
+  }
+
   const id = source.id.toLowerCase();
   if (
     id.startsWith('tagesschau') ||
@@ -192,6 +255,7 @@ const SOURCES_STATE_KEY = '@atem:sources_state';
 
 interface SourcesStatePayload {
   disabledIds: string[];
+  enabledIds?: string[];
   customSources: FeedSourceItem[];
   lastSyncTimestamp?: string;
   sourceHealthOverrides?: Record<string, SourceHealthInfo>;
@@ -207,6 +271,7 @@ export class SourceRepository {
         const parsed = JSON.parse(raw);
         return {
           disabledIds: Array.isArray(parsed.disabledIds) ? parsed.disabledIds : [],
+          enabledIds: Array.isArray(parsed.enabledIds) ? parsed.enabledIds : [],
           customSources: Array.isArray(parsed.customSources) ? parsed.customSources : [],
           lastSyncTimestamp: parsed.lastSyncTimestamp,
           sourceHealthOverrides: parsed.sourceHealthOverrides || {}
@@ -215,7 +280,7 @@ export class SourceRepository {
     } catch (e) {
       console.warn('Could not read sources state:', e);
     }
-    return { disabledIds: [], customSources: [], sourceHealthOverrides: {} };
+    return { disabledIds: [], enabledIds: [], customSources: [], sourceHealthOverrides: {} };
   }
 
   private async saveState(state: SourcesStatePayload): Promise<void> {
@@ -233,18 +298,34 @@ export class SourceRepository {
     deliveringSources: number;
     failingSources: number;
     totalItemsHarvested: number;
+    activeDefaultSourcesCount: number;
+    reserveSourcesCount: number;
   } {
     const totalSources = VERIFIED_FEED_SOURCES.length;
     let deliveringCount = 0;
     let failingCount = 0;
     let totalItems = 0;
+    let activeDefaultSourcesCount = 0;
+    let reserveSourcesCount = 0;
 
     for (const s of VERIFIED_FEED_SOURCES) {
-      const h = bundledSourceHealth[s.id];
-      const ok = h ? (h.fetchSuccess && h.itemCount > 0) : true;
+      if (s.defaultEnabled !== false) {
+        activeDefaultSourcesCount++;
+      } else {
+        reserveSourcesCount++;
+      }
+      const h = bundledSourceHealth[s.id] || {
+        sourceId: s.id,
+        name: s.name,
+        url: s.url,
+        fetchSuccess: true,
+        lastSuccessAt: new Date('2026-10-17T12:00:00Z').toISOString(),
+        itemCount: 4
+      };
+      const ok = h.fetchSuccess && (h.itemCount === undefined || h.itemCount > 0);
       if (ok) {
         deliveringCount++;
-        totalItems += h ? h.itemCount : 4;
+        totalItems += h.itemCount || 4;
       } else {
         failingCount++;
       }
@@ -257,7 +338,9 @@ export class SourceRepository {
       totalItems,
       deliveringSources: deliveringCount,
       failingSources: failingCount,
-      totalItemsHarvested: totalItems
+      totalItemsHarvested: totalItems,
+      activeDefaultSourcesCount,
+      reserveSourcesCount
     };
   }
 
@@ -268,15 +351,27 @@ export class SourceRepository {
   async getAllSources(): Promise<FeedSourceItem[]> {
     const state = await this.loadState();
     const disabledSet = new Set(state.disabledIds);
+    const enabledSet = new Set(state.enabledIds || []);
     const overrides = state.sourceHealthOverrides || {};
 
     const verifiedItems: FeedSourceItem[] = VERIFIED_FEED_SOURCES.map(s => {
       const { category, trustBadge } = categorizeVerifiedSource(s);
-      const health = overrides[s.id] || bundledSourceHealth[s.id];
-      const fetchSuccess = health ? health.fetchSuccess : true;
-      const itemCount = health ? health.itemCount : 4;
+      const isDefaultActive = s.defaultEnabled !== false;
+      const isEnabled = isDefaultActive ? !disabledSet.has(s.id) : enabledSet.has(s.id);
+
+      const health: SourceHealthInfo = overrides[s.id] || bundledSourceHealth[s.id] || {
+        sourceId: s.id,
+        name: s.name,
+        url: s.url,
+        fetchSuccess: true,
+        lastSuccessAt: new Date('2026-10-17T12:00:00Z').toISOString(),
+        itemCount: 4
+      };
+
+      const fetchSuccess = health.fetchSuccess;
+      const itemCount = health.itemCount ?? 4;
       const isDelivering = fetchSuccess && itemCount > 0;
-      const lastSuccessFormatted = health?.lastSuccessAt
+      const lastSuccessFormatted = health.lastSuccessAt
         ? new Date(health.lastSuccessAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
         : undefined;
 
@@ -289,17 +384,22 @@ export class SourceRepository {
         topics: s.topics,
         defaultAuthor: s.defaultAuthor,
         language: s.language,
-        enabled: !disabledSet.has(s.id),
+        enabled: isEnabled,
+        defaultEnabled: s.defaultEnabled,
+        reliabilityTier: s.reliabilityTier,
+        sourceDomain: s.sourceDomain,
+        homepageUrl: s.homepageUrl,
+        description: s.description,
         isCustom: false,
         trustBadge,
         articleCount: itemCount,
         itemCount,
         lastSynced: isDelivering
           ? (lastSuccessFormatted || state.lastSyncTimestamp || 'Liefert aktiv')
-          : `Abruf-Fehler: ${health?.lastError || 'Nicht erreichbar'}`,
+          : `Abruf-Fehler: ${health.lastError || 'Nicht erreichbar'}`,
         fetchSuccess,
-        lastSuccessAt: health?.lastSuccessAt,
-        lastError: health?.lastError,
+        lastSuccessAt: health.lastSuccessAt,
+        lastError: health.lastError,
         isDelivering,
         health
       };
@@ -366,28 +466,81 @@ export class SourceRepository {
   async toggleSource(sourceId: string, forceStatus?: boolean): Promise<boolean> {
     const state = await this.loadState();
     const disabledSet = new Set(state.disabledIds);
+    const enabledSet = new Set(state.enabledIds || []);
+    const verified = VERIFIED_FEED_SOURCES.find(s => s.id === sourceId);
+    const isDefaultActive = verified ? verified.defaultEnabled !== false : true;
+
     let isNowEnabled: boolean;
 
     if (typeof forceStatus === 'boolean') {
       isNowEnabled = forceStatus;
-      if (isNowEnabled) {
-        disabledSet.delete(sourceId);
+      if (isDefaultActive) {
+        if (isNowEnabled) {
+          disabledSet.delete(sourceId);
+        } else {
+          disabledSet.add(sourceId);
+        }
       } else {
-        disabledSet.add(sourceId);
+        if (isNowEnabled) {
+          enabledSet.add(sourceId);
+        } else {
+          enabledSet.delete(sourceId);
+        }
       }
     } else {
-      if (disabledSet.has(sourceId)) {
-        disabledSet.delete(sourceId);
-        isNowEnabled = true;
+      const currentlyEnabled = isDefaultActive ? !disabledSet.has(sourceId) : enabledSet.has(sourceId);
+      isNowEnabled = !currentlyEnabled;
+      if (isDefaultActive) {
+        if (isNowEnabled) {
+          disabledSet.delete(sourceId);
+        } else {
+          disabledSet.add(sourceId);
+        }
       } else {
-        disabledSet.add(sourceId);
-        isNowEnabled = false;
+        if (isNowEnabled) {
+          enabledSet.add(sourceId);
+        } else {
+          enabledSet.delete(sourceId);
+        }
       }
     }
 
     state.disabledIds = Array.from(disabledSet);
+    state.enabledIds = Array.from(enabledSet);
     await this.saveState(state);
     return isNowEnabled;
+  }
+
+  /**
+   * Toggles all sources belonging to a specific category at once.
+   */
+  async toggleCategory(category: SourceCategory, enable: boolean): Promise<void> {
+    const state = await this.loadState();
+    const disabledSet = new Set(state.disabledIds);
+    const enabledSet = new Set(state.enabledIds || []);
+    const all = await this.getAllSources();
+    const categorySources = all.filter(s => s.category === category);
+
+    for (const s of categorySources) {
+      const isDefaultActive = s.defaultEnabled !== false;
+      if (enable) {
+        if (isDefaultActive) {
+          disabledSet.delete(s.id);
+        } else {
+          enabledSet.add(s.id);
+        }
+      } else {
+        if (isDefaultActive) {
+          disabledSet.add(s.id);
+        } else {
+          enabledSet.delete(s.id);
+        }
+      }
+    }
+
+    state.disabledIds = Array.from(disabledSet);
+    state.enabledIds = Array.from(enabledSet);
+    await this.saveState(state);
   }
 
   /**
@@ -548,13 +701,20 @@ ${bodyOutlines}  </body>
 
     if (preset === 'all') {
       state.disabledIds = [];
+      state.enabledIds = all.filter(s => s.defaultEnabled === false).map(s => s.id);
     } else if (preset === 'oerr_only') {
       state.disabledIds = all
-        .filter(s => s.category !== 'oerr')
+        .filter(s => s.category !== 'oerr' && s.defaultEnabled !== false)
+        .map(s => s.id);
+      state.enabledIds = all
+        .filter(s => s.category === 'oerr' && s.defaultEnabled === false)
         .map(s => s.id);
     } else if (preset === 'science_culture') {
       state.disabledIds = all
-        .filter(s => s.category !== 'science' && s.category !== 'culture')
+        .filter(s => s.category !== 'science' && s.category !== 'culture' && s.defaultEnabled !== false)
+        .map(s => s.id);
+      state.enabledIds = all
+        .filter(s => (s.category === 'science' || s.category === 'culture') && s.defaultEnabled === false)
         .map(s => s.id);
     }
 

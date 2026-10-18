@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,1812 +14,680 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import {
   defaultSourceRepository,
-  FeedSourceItem,
-  SourceCategory,
-  CATEGORY_METADATA
+  FeedSourceItem
 } from '../../core/data/sourceRepository';
-import { TopicTag, TOPIC_SPACE_MAP, FeedItem } from '../../core/domain/types';
-import { typography, radius, spacing } from '../theme';
-import { copyToClipboard, downloadMarkdownFile, downloadJsonFile } from '../../core/export/craftExport';
-import { MusicTrackCard } from './MusicTrackCard';
-import {
-  MusicRecommendationService,
-  MusicTrackItem,
-  CURATED_SOUND_MASTERS
-} from '../../core/music/musicRecommendationService';
-import {
-  RaindropService,
-  RaindropUser,
-  RaindropCollection,
-  RaindropItem
-} from '../../core/raindrop/raindropService';
-import {
-  FoundationalCanonService,
-  FoundationalCanon,
-  INITIAL_FOUNDATIONAL_CANON
-} from '../../core/archive/foundationalCanonService';
-import { feedRepository } from '../../core/data/feedRepository';
-import { userProfileRepository } from '../../core/data/userProfileRepository';
-import {
-  AutonomousResearcherService,
-  POPULAR_QUALITY_FEEDS,
-  DiscoveredFeedCandidate
-} from '../../core/ingestion/autonomousResearcherService';
-
-let pipelineNewsItems: FeedItem[] = [];
-try {
-  const loaded = require('../../core/data/pipeline-output.json');
-  if (Array.isArray(loaded)) {
-    pipelineNewsItems = loaded as FeedItem[];
-  }
-} catch {
-  pipelineNewsItems = [];
-}
+import { TopicTag, TOPIC_METADATA } from '../../core/domain/types';
+import { radius, spacing } from '../theme';
 
 interface NewsHubModalProps {
   visible: boolean;
   onClose: () => void;
+  initialTopicFilter?: TopicTag | 'all';
 }
 
-type HubTab = 'curated_news' | 'sources' | 'gatherer' | 'import' | 'raindrop' | 'music' | 'sync';
+const ALL_TOPICS: TopicTag[] = [
+  'philosophy_ethics',
+  'german_didactics',
+  'ai_apple',
+  'contemplation_mind',
+  'science_society',
+  'sound_synthesis',
+  'art_aesthetics',
+  'book_mastery',
+  'health_biohacking',
+  'opportunities_growth',
+  'memes_satire',
+  'youtube_gems'
+];
 
-export const NewsHubModal: React.FC<NewsHubModalProps> = ({ visible, onClose }) => {
-  const { colors, refreshFeed, openArticle, toggleSaveItem, savedArticles } = useApp();
+type HubTab = 'topics' | 'sources';
 
-  const [activeTab, setActiveTab] = useState<HubTab>('curated_news');
-  const [curatedNewsList, setCuratedNewsList] = useState<FeedItem[]>(pipelineNewsItems);
-  const [newsFilter, setNewsFilter] = useState<'all' | 'oerr' | 'tech' | 'science' | 'culture'>('all');
-  const [newsSearch, setNewsSearch] = useState<string>('');
-  const [isGeneratingNews, setIsGeneratingNews] = useState<boolean>(false);
+export const NewsHubModal: React.FC<NewsHubModalProps> = ({
+  visible,
+  onClose,
+  initialTopicFilter = 'all'
+}) => {
+  const { colors, profile, updateTopicWeight, refreshFeed } = useApp();
 
-  // Automated Gatherer & Scraper state
-  const [discoveryUrlInput, setDiscoveryUrlInput] = useState<string>('');
-  const [discoveredCandidate, setDiscoveredCandidate] = useState<DiscoveredFeedCandidate | null>(null);
-  const [isDiscoveringFeed, setIsDiscoveringFeed] = useState<boolean>(false);
-  const [inquiryTopicInput, setInquiryTopicInput] = useState<string>('');
-  const [isInquiring, setIsInquiring] = useState<boolean>(false);
-  const [musicQuery, setMusicQuery] = useState<string>('');
-  const [musicResults, setMusicResults] = useState<MusicTrackItem[]>(CURATED_SOUND_MASTERS);
-  const [isSearchingMusic, setIsSearchingMusic] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<HubTab>('topics');
   const [sources, setSources] = useState<FeedSourceItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedCategory, setSelectedCategory] = useState<SourceCategory | 'all'>('all');
+  const [selectedTopicFilter, setSelectedTopicFilter] = useState<TopicTag | 'all'>(initialTopicFilter);
 
-  // Add custom feed state
-  const [customUrl, setCustomUrl] = useState<string>('');
+  // Custom source form
   const [customName, setCustomName] = useState<string>('');
-  const [customTopic, setCustomTopic] = useState<TopicTag>('science_society');
-  const [opmlInput, setOpmlInput] = useState<string>('');
+  const [customUrl, setCustomUrl] = useState<string>('');
+  const [customTopic, setCustomTopic] = useState<TopicTag>('philosophy_ethics');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Status & Feedback toast
+  // Toast feedback
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Raindrop state
-  const [raindropTokenInput, setRaindropTokenInput] = useState<string>('demo');
-  const [raindropUser, setRaindropUser] = useState<RaindropUser | null>(null);
-  const [raindropCollections, setRaindropCollections] = useState<RaindropCollection[]>([]);
-  const [raindropBookmarks, setRaindropBookmarks] = useState<RaindropItem[]>([]);
-  const [selectedRaindropCollection, setSelectedRaindropCollection] = useState<number>(0);
-  const [isRaindropLoading, setIsRaindropLoading] = useState<boolean>(false);
-  const [savedCanonSnapshot, setSavedCanonSnapshot] = useState<FoundationalCanon | null>(null);
-
-  const showToast = (msg: string) => {
+  const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
-  };
+    setTimeout(() => setToastMessage(null), 3000);
+  }, []);
 
-  const handleConnectRaindrop = async (tokenOverride?: string) => {
-    const token = (tokenOverride || raindropTokenInput).trim();
-    if (!token) {
-      showToast('Bitte einen Raindrop-Token eingeben');
-      return;
-    }
-    setIsRaindropLoading(true);
+  const loadSources = useCallback(async () => {
+    setIsLoading(true);
     try {
-      const auth = await RaindropService.verifyToken(token);
-      if (!auth.success || !auth.user) {
-        showToast(auth.error || 'Verbindung fehlgeschlagen');
-        return;
+      const all = await defaultSourceRepository.getAllSources();
+      setSources(all);
+    } catch {
+      showToast('Quellen konnten nicht geladen werden.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    if (visible) {
+      void loadSources();
+      if (initialTopicFilter !== 'all') {
+        setSelectedTopicFilter(initialTopicFilter);
       }
-      setRaindropUser(auth.user);
-      const [colls, marks] = await Promise.all([
-        RaindropService.getCollections(token),
-        RaindropService.getRaindrops(token, 0, 30)
-      ]);
-      setRaindropCollections(colls);
-      setRaindropBookmarks(marks);
-      showToast(`✓ Verbunden mit Raindrop als „${auth.user.name}“`);
-    } catch (e: any) {
-      showToast(`Verbindungsfehler: ${e.message}`);
-    } finally {
-      setIsRaindropLoading(false);
+    }
+  }, [visible, initialTopicFilter, loadSources]);
+
+  // Derived counts
+  const totalCount = sources.length;
+  const activeCount = useMemo(() => sources.filter(s => s.enabled).length, [sources]);
+
+  // Topic weights map
+  const topicWeights = useMemo(() => {
+    const weights: Record<TopicTag, number> = {} as Record<TopicTag, number>;
+    for (const t of ALL_TOPICS) {
+      const explicit = profile.explicitInterests?.[t];
+      const derived = profile.derivedWeights?.[t];
+      weights[t] = typeof explicit === 'number' ? explicit : (typeof derived === 'number' ? derived : 0.6);
+    }
+    return weights;
+  }, [profile.explicitInterests, profile.derivedWeights]);
+
+  // Count active sources per topic
+  const sourcesPerTopic = useMemo(() => {
+    const counts: Record<TopicTag, number> = {} as Record<TopicTag, number>;
+    for (const t of ALL_TOPICS) {
+      counts[t] = sources.filter(s => s.enabled && (s.primaryTopic === t || s.topics?.includes(t))).length;
+    }
+    return counts;
+  }, [sources]);
+
+  // Handle source toggle
+  const handleToggleSource = async (sourceId: string, currentEnabled: boolean) => {
+    const nextStatus = !currentEnabled;
+    setSources(prev => prev.map(s => (s.id === sourceId ? { ...s, enabled: nextStatus } : s)));
+    try {
+      await defaultSourceRepository.toggleSource(sourceId, nextStatus);
+      void refreshFeed();
+    } catch {
+      setSources(prev => prev.map(s => (s.id === sourceId ? { ...s, enabled: currentEnabled } : s)));
+      showToast('Status konnte nicht gespeichert werden.');
     }
   };
 
-  const handleSelectRaindropCollection = async (collId: number) => {
-    setSelectedRaindropCollection(collId);
-    setIsRaindropLoading(true);
+  // Bulk activate/pause
+  const handleBulkToggle = async (enable: boolean) => {
+    setIsLoading(true);
     try {
-      const marks = await RaindropService.getRaindrops(raindropTokenInput, collId, 30);
-      setRaindropBookmarks(marks);
-    } finally {
-      setIsRaindropLoading(false);
-    }
-  };
-
-  const handleLearnFromRaindrop = async () => {
-    if (raindropBookmarks.length === 0) {
-      showToast('Keine Lesezeichen zum Analysieren gefunden');
-      return;
-    }
-    setIsRaindropLoading(true);
-    try {
-      const { interests } = RaindropService.deriveProfileFromRaindrop(raindropBookmarks);
-      await userProfileRepository.updateProfile(curr => ({
-        ...curr,
-        explicitInterests: {
-          ...curr.explicitInterests,
-          ...interests
+      for (const s of filteredSources) {
+        if (s.enabled !== enable) {
+          await defaultSourceRepository.toggleSource(s.id, enable);
         }
-      }));
-      await refreshFeed();
-      showToast(`✓ Profil-Interessen aus ${raindropBookmarks.length} Raindrop-Tags gelernt!`);
-    } catch {
-      showToast('Fehler beim Lernen aus Raindrop');
-    } finally {
-      setIsRaindropLoading(false);
-    }
-  };
-
-  const handleImportRaindropToFeed = async () => {
-    if (raindropBookmarks.length === 0) {
-      showToast('Keine Lesezeichen zum Importieren');
-      return;
-    }
-    setIsRaindropLoading(true);
-    try {
-      const items = raindropBookmarks.map((b, idx) => RaindropService.convertRaindropToFeedItem(b, idx));
-      if (feedRepository.addItems) {
-        feedRepository.addItems(items);
       }
-      await refreshFeed();
-      showToast(`✓ ${items.length} Raindrop-Artikel in den Feed importiert!`);
+      await loadSources();
+      void refreshFeed();
+      showToast(enable ? 'Alle sichtbaren Quellen aktiviert' : 'Alle sichtbaren Quellen pausiert');
     } catch {
-      showToast('Import fehlgeschlagen');
-    } finally {
-      setIsRaindropLoading(false);
-    }
-  };
-
-  const handleSnapshotFoundationalCanon = async () => {
-    setIsRaindropLoading(true);
-    try {
-      const activeBookmarks = raindropBookmarks.length > 0 ? raindropBookmarks : (savedCanonSnapshot?.bookmarks || []);
-      const { interests, boostedDomains } = RaindropService.deriveProfileFromRaindrop(activeBookmarks);
-      const snapshot = FoundationalCanonService.createSnapshot({
-        name: `atmen Ur-Fundament (${new Date().toLocaleDateString('de-DE')})`,
-        description: 'Dauerhaft abgesicherter Wissens-Kanon. Vollständig unabhängig von Raindrop.io.',
-        bookmarks: activeBookmarks,
-        feedItems: [],
-        derivedWeights: interests,
-        boostedDomains
-      });
-      await FoundationalCanonService.saveCanon(snapshot);
-      setSavedCanonSnapshot(snapshot);
-      showToast('✓ Lesezeichen als unabhängiges Ur-Fundament dauerhaft gesichert!');
-    } catch (err: any) {
-      showToast(`Fehler beim Sichern: ${err?.message || 'Unbekannt'}`);
-    } finally {
-      setIsRaindropLoading(false);
-    }
-  };
-
-  const handleExportCanonMarkdown = () => {
-    const canon = savedCanonSnapshot || INITIAL_FOUNDATIONAL_CANON;
-    const md = FoundationalCanonService.exportCanonToMarkdown(canon);
-    downloadMarkdownFile('atmen-ur-fundament.md', md);
-    showToast('✓ Fundament als Markdown exportiert!');
-  };
-
-  const handleExportCanonJson = () => {
-    const canon = savedCanonSnapshot || INITIAL_FOUNDATIONAL_CANON;
-    const json = FoundationalCanonService.exportCanonToJson(canon);
-    downloadJsonFile('atmen-ur-fundament.json', json);
-    showToast('✓ Fundament als JSON exportiert!');
-  };
-
-  const loadSources = async () => {
-    try {
-      setIsLoading(true);
-      const data = await defaultSourceRepository.getAllSources();
-      setSources(data);
-    } catch (e) {
-      console.warn('Failed to load sources:', e);
+      showToast('Massen-Aktualisierung fehlgeschlagen.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (visible) {
-      void loadSources();
-      void FoundationalCanonService.getCanon().then(setSavedCanonSnapshot);
-    }
-  }, [visible]);
-
-  const handleGenerateFreshNews = async () => {
-    setIsGeneratingNews(true);
-    try {
-      await refreshFeed();
-      const shuffled = [...curatedNewsList].sort(() => 0.5 - Math.random());
-      setCuratedNewsList(shuffled);
-      showToast(`✓ ${shuffled.length} Meldungen aus 24 Live-Feeds aktualisiert`);
-    } catch {
-      showToast('Fehler beim Aktualisieren der Feeds');
-    } finally {
-      setIsGeneratingNews(false);
-    }
-  };
-
-  const handleDiscoverFeed = async () => {
-    if (!discoveryUrlInput.trim()) {
-      showToast('Bitte eine Website-URL oder Domain eingeben (z.B. spiegel.de)');
-      return;
-    }
-    setIsDiscoveringFeed(true);
-    setDiscoveredCandidate(null);
-    try {
-      const candidate = await AutonomousResearcherService.discoverFeedFromWebsite(discoveryUrlInput);
-      if (candidate) {
-        setDiscoveredCandidate(candidate);
-        showToast(`✓ RSS-Feed für ${candidate.name} gefunden!`);
-      } else {
-        showToast('Kein RSS-Feed für diese URL ermittelbar.');
-      }
-    } catch (e: any) {
-      showToast(`Recherche-Fehler: ${e.message}`);
-    } finally {
-      setIsDiscoveringFeed(false);
-    }
-  };
-
-  const handleSubscribeDiscovered = async (candidate: DiscoveredFeedCandidate) => {
-    try {
-      const added = await defaultSourceRepository.addCustomSource({
-        name: candidate.name,
-        url: candidate.url,
-        primaryTopic: candidate.primaryTopic,
-        category: candidate.category
-      });
-      setSources(prev => [...prev, added]);
-      await refreshFeed();
-      showToast(`✓ „${candidate.name}“ erfolgreich abonniert!`);
-      setDiscoveredCandidate(null);
-      setDiscoveryUrlInput('');
-    } catch (e: any) {
-      showToast(e.message || 'Konnte Quelle nicht abonnieren');
-    }
-  };
-
-  const handleConductInquiry = async () => {
-    if (!inquiryTopicInput.trim()) {
-      showToast('Bitte ein Thema oder eine Frage für den Teammate eingeben');
-      return;
-    }
-    setIsInquiring(true);
-    try {
-      const inquiryItem = await AutonomousResearcherService.conductSpiritualInquiry(inquiryTopicInput);
-      if (feedRepository.addItems) {
-        feedRepository.addItems([inquiryItem]);
-      }
-      await refreshFeed();
-      showToast(`✓ Spirituelles Dossier zu „${inquiryTopicInput}“ erstellt & im Feed verankert!`);
-      setInquiryTopicInput('');
-    } catch (e: any) {
-      showToast(`Inquiry-Fehler: ${e.message}`);
-    } finally {
-      setIsInquiring(false);
-    }
-  };
-
-  const filteredNews = useMemo(() => {
-    let list = curatedNewsList;
-    if (newsFilter === 'oerr') {
-      list = list.filter(i => {
-        const pub = i.sourceReferences[0]?.publisher?.toLowerCase() || '';
-        return pub.includes('tagesschau') || pub.includes('zdf') || pub.includes('deutschlandfunk') || pub.includes('bpb');
-      });
-    } else if (newsFilter === 'tech') {
-      list = list.filter(i => i.primaryTopic === 'ai_apple' || i.topics.includes('ai_apple'));
-    } else if (newsFilter === 'science') {
-      list = list.filter(i => i.primaryTopic === 'science_society' || i.primaryTopic === 'philosophy_ethics');
-    } else if (newsFilter === 'culture') {
-      list = list.filter(i => i.primaryTopic === 'sound_synthesis' || i.primaryTopic === 'contemplation_mind' || i.primaryTopic === 'book_mastery');
-    }
-
-    if (newsSearch.trim()) {
-      const q = newsSearch.toLowerCase().trim();
-      list = list.filter(i =>
-        i.title.toLowerCase().includes(q) ||
-        (i.feedText && i.feedText.toLowerCase().includes(q)) ||
-        (i.sourceReferences[0]?.publisher && i.sourceReferences[0].publisher.toLowerCase().includes(q))
-      );
-    }
-
-    return list;
-  }, [curatedNewsList, newsFilter, newsSearch]);
-
-  const handleToggle = async (id: string) => {
-    const newStatus = await defaultSourceRepository.toggleSource(id);
-    setSources(prev => prev.map(s => s.id === id ? { ...s, enabled: newStatus } : s));
-    showToast(newStatus ? '✓ Quelle aktiviert' : 'Quelle pausiert');
-  };
-
-  const handleAddCustom = async () => {
+  // Add custom source
+  const handleAddCustomSource = async () => {
     if (!customUrl.trim()) {
-      showToast('Bitte eine gültige RSS- oder Atom-URL eingeben');
+      showToast('Bitte eine gültige RSS/Atom-URL eingeben.');
       return;
     }
     setIsSubmitting(true);
     try {
-      const added = await defaultSourceRepository.addCustomSource({
-        name: customName.trim(),
+      await defaultSourceRepository.addCustomSource({
+        name: customName.trim() || customUrl.trim(),
         url: customUrl.trim(),
-        primaryTopic: customTopic,
-        category: 'custom'
+        primaryTopic: customTopic
       });
-      setSources(prev => [...prev, added]);
-      setCustomUrl('');
       setCustomName('');
-      showToast(`✓ Feed „${added.name}“ hinzugefügt`);
-      setActiveTab('sources');
-    } catch (err: any) {
-      showToast(err.message || 'Fehler beim Hinzufügen des Feeds');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleDeleteCustom = async (id: string, name: string) => {
-    try {
-      await defaultSourceRepository.removeCustomSource(id);
-      setSources(prev => prev.filter(s => s.id !== id));
-      showToast(`✓ Quelle „${name}“ entfernt`);
-    } catch {
-      showToast('Löschen fehlgeschlagen');
-    }
-  };
-
-  const handleImportOPML = async () => {
-    if (!opmlInput.trim()) {
-      showToast('Bitte OPML-XML-Text einfügen');
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      const res = await defaultSourceRepository.importOPML(opmlInput);
+      setCustomUrl('');
       await loadSources();
-      setOpmlInput('');
-      showToast(`✓ ${res.added.length} Feeds importiert (${res.skippedCount} übersprungen)`);
-      setActiveTab('sources');
-    } catch {
-      showToast('OPML-Import fehlgeschlagen: Ungültiges XML');
+      void refreshFeed();
+      showToast('✓ Eigene Quelle erfolgreich hinzugefügt!');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Fehler beim Hinzufügen.';
+      showToast(msg);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleExportOPML = async () => {
+  // Delete custom source
+  const handleDeleteCustomSource = async (sourceId: string) => {
     try {
-      const xml = defaultSourceRepository.exportOPML(sources);
-      const ok = await copyToClipboard(xml);
-      if (ok) {
-        showToast('✓ OPML in Zwischenablage kopiert!');
-      } else {
-        showToast('Kopieren fehlgeschlagen');
-      }
-    } catch {
-      showToast('Export-Fehler');
-    }
-  };
-
-  const handleDownloadOPML = () => {
-    try {
-      const xml = defaultSourceRepository.exportOPML(sources);
-      const filename = `atmen-subscriptions-${new Date().toISOString().slice(0, 10)}.opml`;
-      const ok = downloadMarkdownFile(filename, xml);
-      if (ok) {
-        showToast(`✓ Datei ${filename} heruntergeladen`);
-      }
-    } catch {
-      showToast('Download fehlgeschlagen');
-    }
-  };
-
-  const handleApplyPreset = async (preset: 'all' | 'oerr_only' | 'science_culture') => {
-    await defaultSourceRepository.applyPreset(preset);
-    await loadSources();
-    if (preset === 'all') showToast('✓ Alle 29 Quellen aktiviert');
-    if (preset === 'oerr_only') showToast('✓ Nur Öffentlich-Rechtliche aktiviert');
-    if (preset === 'science_culture') showToast('✓ Fokus auf Wissenschaft & Kultur');
-  };
-
-  const handleMusicSearch = async (query: string) => {
-    setMusicQuery(query);
-    if (!query.trim()) {
-      setMusicResults(CURATED_SOUND_MASTERS);
-      return;
-    }
-    setIsSearchingMusic(true);
-    try {
-      const results = await MusicRecommendationService.searchITunesTracks(query.trim(), 8);
-      setMusicResults(results.length > 0 ? results : CURATED_SOUND_MASTERS);
-    } catch {
-      setMusicResults(CURATED_SOUND_MASTERS);
-    } finally {
-      setIsSearchingMusic(false);
-    }
-  };
-
-  const handleSyncNow = async () => {
-    setIsSubmitting(true);
-    try {
-      await defaultSourceRepository.recordSync();
-      await refreshFeed();
+      await defaultSourceRepository.removeCustomSource(sourceId);
       await loadSources();
-      showToast('✓ Live-Synchronisation erfolgreich abgeschlossen');
+      void refreshFeed();
+      showToast('Quelle entfernt.');
     } catch {
-      showToast('Sync fehlgeschlagen');
-    } finally {
-      setIsSubmitting(false);
+      showToast('Entfernen fehlgeschlagen.');
     }
   };
 
-  // Filtered sources
+  // Filtered sources for Tab 2
   const filteredSources = useMemo(() => {
     return sources.filter(s => {
-      if (selectedCategory !== 'all' && s.category !== selectedCategory) return false;
-      if (searchQuery.trim().length > 0) {
+      if (selectedTopicFilter !== 'all') {
+        const matchesTopic = s.primaryTopic === selectedTopicFilter || s.topics?.includes(selectedTopicFilter);
+        if (!matchesTopic) return false;
+      }
+      if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        return s.name.toLowerCase().includes(q)
-          || s.url.toLowerCase().includes(q)
-          || (s.defaultAuthor && s.defaultAuthor.toLowerCase().includes(q));
+        const matchesName = s.name.toLowerCase().includes(q);
+        const matchesUrl = s.url.toLowerCase().includes(q);
+        if (!matchesName && !matchesUrl) return false;
       }
       return true;
     });
-  }, [sources, selectedCategory, searchQuery]);
-
-  const deliveringCount = sources.filter(s => s.isDelivering).length;
+  }, [sources, selectedTopicFilter, searchQuery]);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-          {/* Header */}
-          <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
-            <View style={styles.headerLeft}>
-              <View style={[styles.iconEmblem, { backgroundColor: colors.accentSubtle }]}>
-                <Ionicons name="radio-outline" size={18} color={colors.accent} />
-              </View>
-              <View>
-                <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
-                  News-Hub & Quellen-Zentrale
-                </Text>
-                <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
-                  {deliveringCount} von {sources.length} Kandidaten-Quellen liefern aktiv • Verifizierter Abrufstatus
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity
-              onPress={onClose}
-              style={[styles.closeBtn, { backgroundColor: colors.surfaceSecondary }]}
-              accessibilityRole="button"
-              accessibilityLabel="News-Hub schließen"
-            >
-              <Ionicons name="close" size={18} color={colors.textSecondary} />
-            </TouchableOpacity>
+    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        {/* Header */}
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
+          <View style={styles.headerTitleGroup}>
+            <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Themen & Quellen</Text>
+            <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
+              {activeCount} von {totalCount} Quellen aktiv • Deine persönliche Kurations-Zentrale
+            </Text>
           </View>
+          <TouchableOpacity
+            onPress={onClose}
+            style={[styles.closeButton, { backgroundColor: colors.surfaceSecondary }]}
+            accessibilityRole="button"
+            accessibilityLabel="News-Hub schließen"
+          >
+            <Ionicons name="close" size={20} color={colors.textPrimary} />
+          </TouchableOpacity>
+        </View>
 
-          {/* Toast Notice */}
-          {toastMessage && (
-            <View style={[styles.toast, { backgroundColor: colors.accent }]}>
-              <Text style={styles.toastText}>{toastMessage}</Text>
-            </View>
-          )}
-
-          {/* Nav Tabs */}
-          <View style={[styles.tabBar, { borderBottomColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary }]}>
-            {/* TAB 0: Curated News Magazine (DEFAULT) */}
-            <TouchableOpacity
-              onPress={() => setActiveTab('curated_news')}
+        {/* Tab Bar (Only 2 Tabs) */}
+        <View style={[styles.tabBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
+          <TouchableOpacity
+            onPress={() => setActiveTab('topics')}
+            style={[
+              styles.tabItem,
+              activeTab === 'topics' && [styles.activeTabItem, { borderBottomColor: colors.accent }]
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Themen wählen"
+          >
+            <Ionicons
+              name="compass-outline"
+              size={18}
+              color={activeTab === 'topics' ? colors.accent : colors.textMuted}
+              style={{ marginRight: 8 }}
+            />
+            <Text
               style={[
-                styles.tabItem,
-                activeTab === 'curated_news' && { borderBottomColor: colors.accent, backgroundColor: colors.surface }
+                styles.tabText,
+                { color: activeTab === 'topics' ? colors.accent : colors.textMuted, fontWeight: activeTab === 'topics' ? '700' : '500' }
               ]}
             >
-              <Ionicons
-                name="newspaper-outline"
-                size={14}
-                color={activeTab === 'curated_news' ? colors.accent : colors.textMuted}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.tabItemText,
-                  { color: activeTab === 'curated_news' ? colors.accent : colors.textSecondary }
-                ]}
-              >
-                📰 Kuratierte News ({filteredNews.length})
-              </Text>
-            </TouchableOpacity>
+              Themen wählen
+            </Text>
+          </TouchableOpacity>
 
-            {/* TAB 1: Sources & Feeds Settings */}
-            <TouchableOpacity
-              onPress={() => setActiveTab('sources')}
+          <TouchableOpacity
+            onPress={() => setActiveTab('sources')}
+            style={[
+              styles.tabItem,
+              activeTab === 'sources' && [styles.activeTabItem, { borderBottomColor: colors.accent }]
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Quellen & Eigene Feeds"
+          >
+            <Ionicons
+              name="options-outline"
+              size={18}
+              color={activeTab === 'sources' ? colors.accent : colors.textMuted}
+              style={{ marginRight: 8 }}
+            />
+            <Text
               style={[
-                styles.tabItem,
-                activeTab === 'sources' && { borderBottomColor: colors.accent, backgroundColor: colors.surface }
+                styles.tabText,
+                { color: activeTab === 'sources' ? colors.accent : colors.textMuted, fontWeight: activeTab === 'sources' ? '700' : '500' }
               ]}
             >
-              <Ionicons
-                name="settings-outline"
-                size={14}
-                color={activeTab === 'sources' ? colors.accent : colors.textMuted}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.tabItemText,
-                  { color: activeTab === 'sources' ? colors.accent : colors.textSecondary }
-                ]}
-              >
-                ⚙️ Quellen ({sources.length})
-              </Text>
-            </TouchableOpacity>
+              Quellen & Eigene Feeds
+            </Text>
+          </TouchableOpacity>
+        </View>
 
-            {/* TAB 2: Gatherer & Scraper */}
-            <TouchableOpacity
-              onPress={() => setActiveTab('gatherer')}
-              style={[
-                styles.tabItem,
-                activeTab === 'gatherer' && { borderBottomColor: colors.accent, backgroundColor: colors.surface }
-              ]}
-            >
-              <Ionicons
-                name="sparkles-outline"
-                size={14}
-                color={activeTab === 'gatherer' ? colors.accent : colors.textMuted}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.tabItemText,
-                  { color: activeTab === 'gatherer' ? colors.accent : colors.textSecondary }
-                ]}
-              >
-                🤖 Scraper & Teammate
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setActiveTab('import')}
-              style={[
-                styles.tabItem,
-                activeTab === 'import' && { borderBottomColor: colors.accent, backgroundColor: colors.surface }
-              ]}
-            >
-              <Ionicons
-                name="cloud-upload-outline"
-                size={14}
-                color={activeTab === 'import' ? colors.accent : colors.textMuted}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.tabItemText,
-                  { color: activeTab === 'import' ? colors.accent : colors.textSecondary }
-                ]}
-              >
-                Import & OPML
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setActiveTab('raindrop')}
-              style={[
-                styles.tabItem,
-                activeTab === 'raindrop' && { borderBottomColor: '#0284C7', backgroundColor: colors.surface }
-              ]}
-            >
-              <Ionicons
-                name="water-outline"
-                size={14}
-                color={activeTab === 'raindrop' ? '#0284C7' : colors.textMuted}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.tabItemText,
-                  { color: activeTab === 'raindrop' ? '#0284C7' : colors.textSecondary }
-                ]}
-              >
-                💧 Raindrop.io
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setActiveTab('music')}
-              style={[
-                styles.tabItem,
-                activeTab === 'music' && { borderBottomColor: '#EF4444', backgroundColor: colors.surface }
-              ]}
-            >
-              <Ionicons
-                name="musical-notes-outline"
-                size={14}
-                color={activeTab === 'music' ? '#EF4444' : colors.textMuted}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.tabItemText,
-                  { color: activeTab === 'music' ? '#EF4444' : colors.textSecondary }
-                ]}
-              >
-                Musik
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setActiveTab('sync')}
-              style={[
-                styles.tabItem,
-                activeTab === 'sync' && { borderBottomColor: colors.accent, backgroundColor: colors.surface }
-              ]}
-            >
-              <Ionicons
-                name="sync-outline"
-                size={14}
-                color={activeTab === 'sync' ? colors.accent : colors.textMuted}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.tabItemText,
-                  { color: activeTab === 'sync' ? colors.accent : colors.textSecondary }
-                ]}
-              >
-                Sync
-              </Text>
-            </TouchableOpacity>
+        {/* Toast Feedback */}
+        {toastMessage && (
+          <View style={[styles.toast, { backgroundColor: colors.accent }]}>
+            <Text style={styles.toastText}>{toastMessage}</Text>
           </View>
+        )}
 
-          {/* Tab Content */}
-          <View style={styles.contentContainer}>
-            {/* TAB 0: CURATED NEWS FEED */}
-            {activeTab === 'curated_news' && (
-              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.md }}>
-                {/* News Header & Action Bar */}
-                <View style={[styles.newsHeaderBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <View style={styles.newsHeaderLeft}>
-                    <Text style={[styles.newsHeaderTitle, { color: colors.textPrimary }]}>
-                      Kuratierte Tagesausgabe ({filteredNews.length})
-                    </Text>
-                    <Text style={[styles.newsHeaderSubtitle, { color: colors.textMuted }]}>
-                      Recherchierte Meldungen aus Tagesschau, ZDFheute, DLF, heise, Quanta & Spektrum
-                    </Text>
-                  </View>
+        {/* Content Area */}
+        {isLoading ? (
+          <View style={styles.centerContainer}>
+            <ActivityIndicator size="large" color={colors.accent} />
+            <Text style={[styles.loadingText, { color: colors.textMuted }]}>Quellen werden geladen…</Text>
+          </View>
+        ) : activeTab === 'topics' ? (
+          /* TAB 1: Themen wählen */
+          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.topicsGrid}>
+              {ALL_TOPICS.map(topic => {
+                const meta = TOPIC_METADATA[topic];
+                const weight = topicWeights[topic];
+                const isActive = weight > 0;
+                const activeSourcesInTopic = sourcesPerTopic[topic] || 0;
 
-                  <View style={styles.newsActionRow}>
-                    <TouchableOpacity
-                      onPress={handleGenerateFreshNews}
-                      disabled={isGeneratingNews}
-                      style={[styles.generateNewsButton, { backgroundColor: colors.accent, opacity: isGeneratingNews ? 0.7 : 1 }]}
-                    >
-                      <Ionicons
-                        name={isGeneratingNews ? 'hourglass-outline' : 'refresh-outline'}
-                        size={14}
-                        color="#FFFFFF"
-                        style={{ marginRight: 6 }}
-                      />
-                      <Text style={styles.generateNewsButtonText}>
-                        {isGeneratingNews ? 'Lade Feeds…' : '🔄 Neu generieren'}
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => setActiveTab('sources')}
-                      style={[styles.settingsShortcutButton, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                    >
-                      <Ionicons name="settings-outline" size={14} color={colors.textPrimary} style={{ marginRight: 4 }} />
-                      <Text style={[styles.settingsShortcutText, { color: colors.textPrimary }]}>
-                        Quellen anpassen
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => setActiveTab('gatherer')}
-                      style={[styles.settingsShortcutButton, { backgroundColor: colors.surface, borderColor: colors.accent }]}
-                    >
-                      <Ionicons name="sparkles-outline" size={14} color={colors.accent} style={{ marginRight: 4 }} />
-                      <Text style={[styles.settingsShortcutText, { color: colors.accent }]}>
-                        + Scraper
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* News Search & Category Bar */}
-                <View style={styles.newsFilterRow}>
-                  <View style={[styles.newsSearchBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Ionicons name="search" size={14} color={colors.textMuted} style={{ marginRight: 6 }} />
-                    <TextInput
-                      value={newsSearch}
-                      onChangeText={setNewsSearch}
-                      placeholder="Meldungen durchsuchen…"
-                      placeholderTextColor={colors.textMuted}
-                      style={[styles.newsSearchInput, { color: colors.textPrimary }]}
-                    />
-                    {newsSearch.length > 0 && (
-                      <TouchableOpacity onPress={() => setNewsSearch('')}>
-                        <Ionicons name="close-circle" size={14} color={colors.textMuted} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.newsCategoryScroll}>
-                    <TouchableOpacity
-                      onPress={() => setNewsFilter('all')}
-                      style={[styles.newsCategoryChip, { backgroundColor: newsFilter === 'all' ? colors.accent : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                    >
-                      <Text style={[styles.newsCategoryChipText, { color: newsFilter === 'all' ? '#FFFFFF' : colors.textPrimary }]}>
-                        🌐 Alle Top-Meldungen
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setNewsFilter('oerr')}
-                      style={[styles.newsCategoryChip, { backgroundColor: newsFilter === 'oerr' ? '#0284C7' : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                    >
-                      <Text style={[styles.newsCategoryChipText, { color: newsFilter === 'oerr' ? '#FFFFFF' : colors.textPrimary }]}>
-                        🏛️ ÖRR (Tagesschau/ZDF/DLF)
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setNewsFilter('tech')}
-                      style={[styles.newsCategoryChip, { backgroundColor: newsFilter === 'tech' ? '#3B82F6' : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                    >
-                      <Text style={[styles.newsCategoryChipText, { color: newsFilter === 'tech' ? '#FFFFFF' : colors.textPrimary }]}>
-                        💻 Tech & KI
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setNewsFilter('science')}
-                      style={[styles.newsCategoryChip, { backgroundColor: newsFilter === 'science' ? '#8B5CF6' : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                    >
-                      <Text style={[styles.newsCategoryChipText, { color: newsFilter === 'science' ? '#FFFFFF' : colors.textPrimary }]}>
-                        🔬 Wissenschaft (Quanta/Spektrum)
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setNewsFilter('culture')}
-                      style={[styles.newsCategoryChip, { backgroundColor: newsFilter === 'culture' ? '#F59E0B' : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                    >
-                      <Text style={[styles.newsCategoryChipText, { color: newsFilter === 'culture' ? '#FFFFFF' : colors.textPrimary }]}>
-                        🎧 Kultur & Sound
-                      </Text>
-                    </TouchableOpacity>
-                  </ScrollView>
-                </View>
-
-                {/* News Cards */}
-                {filteredNews.length === 0 ? (
-                  <View style={[styles.newsEmptyCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                    <Ionicons name="newspaper-outline" size={32} color={colors.textMuted} />
-                    <Text style={[styles.newsEmptyTitle, { color: colors.textPrimary }]}>
-                      Keine Meldungen für diesen Filter gefunden
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => { setNewsFilter('all'); setNewsSearch(''); }}
-                      style={[styles.resetFilterBtn, { backgroundColor: colors.accentSubtle }]}
-                    >
-                      <Text style={{ color: colors.accent, fontWeight: '600' }}>Filter zurücksetzen</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <View style={styles.newsCardGrid}>
-                    {filteredNews.map(item => {
-                      const pub = item.sourceReferences[0]?.publisher || 'Verifizierte Quelle';
-                      const isSaved = savedArticles.some(s => s.id === item.id);
-                      return (
-                        <View
-                          key={item.id}
-                          style={[styles.newsArticleCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                        >
-                          <View style={styles.newsCardTop}>
-                            <View style={[styles.newsPublisherBadge, { backgroundColor: colors.surfaceSecondary }]}>
-                              <Ionicons name="checkmark-circle" size={12} color={colors.accent} style={{ marginRight: 4 }} />
-                              <Text style={[styles.newsPublisherText, { color: colors.textPrimary }]}>{pub}</Text>
-                            </View>
-                            <Text style={[styles.newsTimeText, { color: colors.textMuted }]}>
-                              vor 45 Min.
-                            </Text>
-                          </View>
-
-                          <Text style={[styles.newsArticleTitle, { color: colors.textPrimary }]}>
-                            {item.title}
-                          </Text>
-
-                          {item.feedText ? (
-                            <Text style={[styles.newsArticleSummary, { color: colors.textSecondary }]} numberOfLines={3}>
-                              {item.feedText}
-                            </Text>
-                          ) : null}
-
-                          <View style={styles.newsCardActions}>
-                            <TouchableOpacity
-                              onPress={() => {
-                                onClose();
-                                void openArticle(item.id);
-                              }}
-                              style={[styles.readArticleButton, { backgroundColor: colors.accent }]}
-                            >
-                              <Ionicons name="book-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                              <Text style={styles.readArticleButtonText}>Im Reader lesen</Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                              onPress={() => void toggleSaveItem(item.id)}
-                              style={[styles.saveArticleButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                            >
-                              <Ionicons
-                                name={isSaved ? 'bookmark' : 'bookmark-outline'}
-                                size={14}
-                                color={isSaved ? colors.accent : colors.textMuted}
-                              />
-                            </TouchableOpacity>
-
-                            {item.canonicalUrl && (
-                              <TouchableOpacity
-                                onPress={() => {
-                                  if (typeof window !== 'undefined' && window.open) {
-                                    window.open(item.canonicalUrl, '_blank');
-                                  }
-                                }}
-                                style={[styles.openLinkButton, { backgroundColor: colors.surfaceSecondary }]}
-                              >
-                                <Ionicons name="open-outline" size={13} color={colors.textMuted} />
-                              </TouchableOpacity>
-                            )}
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                )}
-              </ScrollView>
-            )}
-
-            {/* TAB: GATHERER & SCRAPER (SPIRITUAL TEAMMATE) */}
-            {activeTab === 'gatherer' && (
-              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.md }}>
-                {/* Spiritual Teammate Header Banner */}
-                <View style={[styles.gathererHeaderBanner, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}>
-                  <View style={styles.gathererBannerTop}>
-                    <Ionicons name="sparkles" size={20} color={colors.accent} style={{ marginRight: 8 }} />
-                    <Text style={[styles.gathererBannerTitle, { color: colors.accent }]}>
-                      Automatischer Gatherer & Spiritueller Teammate
-                    </Text>
-                  </View>
-                  <Text style={[styles.gathererBannerDesc, { color: colors.textSecondary }]}>
-                    Gib eine beliebige Website ein oder frage den Teammate nach einer Recherche. Atem durchforstet das Web, findet RSS-Endpoints und synthetisiert substanzielle Erkenntnis-Dossiers.
-                  </Text>
-                </View>
-
-                {/* Section 1: Auto-RSS Website Scraper */}
-                <View style={[styles.gathererCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <View style={styles.gathererCardHeader}>
-                    <Ionicons name="globe-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
-                    <Text style={[styles.gathererCardTitle, { color: colors.textPrimary }]}>
-                      Neuer Website folgen (Auto-Discovery & RSS-Scraper)
-                    </Text>
-                  </View>
-
-                  <Text style={[styles.gathererCardDesc, { color: colors.textMuted }]}>
-                    Gib die Domain einer Zeitung, eines Blogs oder Magazins ein (z.B. spiegel.de, theverge.com, heise.de, aeon.co):
-                  </Text>
-
-                  <View style={styles.gathererInputRow}>
-                    <TextInput
-                      value={discoveryUrlInput}
-                      onChangeText={setDiscoveryUrlInput}
-                      placeholder="z.B. https://www.spiegel.de oder theverge.com"
-                      placeholderTextColor={colors.textMuted}
-                      style={[styles.gathererInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
-                    />
-                    <TouchableOpacity
-                      onPress={handleDiscoverFeed}
-                      disabled={isDiscoveringFeed}
-                      style={[styles.gathererSearchBtn, { backgroundColor: colors.accent, opacity: isDiscoveringFeed ? 0.7 : 1 }]}
-                    >
-                      {isDiscoveringFeed ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <Text style={styles.gathererSearchBtnText}>🔍 Finden</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Discovered Candidate Result Card */}
-                  {discoveredCandidate && (
-                    <View style={[styles.discoveredResultCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.accent }]}>
-                      <View style={styles.candidateTopRow}>
-                        <View style={styles.candidateInfo}>
-                          <Text style={[styles.candidateName, { color: colors.textPrimary }]}>
-                            {discoveredCandidate.name}
-                          </Text>
-                          <Text style={[styles.candidateUrl, { color: colors.accent }]}>
-                            {discoveredCandidate.url}
-                          </Text>
-                          <Text style={[styles.candidateDesc, { color: colors.textMuted }]}>
-                            {discoveredCandidate.description}
-                          </Text>
-                        </View>
-                        <TouchableOpacity
-                          onPress={() => void handleSubscribeDiscovered(discoveredCandidate)}
-                          style={[styles.candidateAddBtn, { backgroundColor: '#10B981' }]}
-                        >
-                          <Text style={styles.candidateAddBtnText}>+ Folgen ✓</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  )}
-                </View>
-
-                {/* Section 2: Spiritual Teammate Inquiry */}
-                <View style={[styles.gathererCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <View style={styles.gathererCardHeader}>
-                    <Ionicons name="bulb-outline" size={16} color="#8B5CF6" style={{ marginRight: 6 }} />
-                    <Text style={[styles.gathererCardTitle, { color: colors.textPrimary }]}>
-                      Spirituellen Impuls & Recherche anfordern
-                    </Text>
-                  </View>
-                  <Text style={[styles.gathererCardDesc, { color: colors.textMuted }]}>
-                    Über welches philosophische, musikalische oder gesellschaftliche Thema soll der Teammate für dich recherchieren?
-                  </Text>
-                  <View style={styles.gathererInputRow}>
-                    <TextInput
-                      value={inquiryTopicInput}
-                      onChangeText={setInquiryTopicInput}
-                      placeholder="z.B. Kognitive Gelassenheit, Modular Synthesizer, Epistemische Souveränität…"
-                      placeholderTextColor={colors.textMuted}
-                      style={[styles.gathererInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
-                    />
-                    <TouchableOpacity
-                      onPress={handleConductInquiry}
-                      disabled={isInquiring}
-                      style={[styles.gathererSearchBtn, { backgroundColor: '#8B5CF6', opacity: isInquiring ? 0.7 : 1 }]}
-                    >
-                      {isInquiring ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <Text style={styles.gathererSearchBtnText}>✨ Dossier bauen</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Section 3: Popular Pre-Vetted Quality Feeds Catalog */}
-                <View style={[styles.gathererCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <View style={styles.gathererCardHeader}>
-                    <Ionicons name="ribbon-outline" size={16} color="#F59E0B" style={{ marginRight: 6 }} />
-                    <Text style={[styles.gathererCardTitle, { color: colors.textPrimary }]}>
-                      Schnell-Abonnieren: Beliebte Qualitäts-Feeds
-                    </Text>
-                  </View>
-                  <Text style={[styles.gathererCardDesc, { color: colors.textMuted }]}>
-                    Mit einem Klick zu deinen Quellen hinzufügen:
-                  </Text>
-
-                  <View style={styles.popularGrid}>
-                    {POPULAR_QUALITY_FEEDS.map(item => {
-                      const isSubscribed = sources.some(s => s.url.toLowerCase() === item.url.toLowerCase());
-                      return (
-                        <View
-                          key={item.url}
-                          style={[styles.popularCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                        >
-                          <View style={styles.popularCardContent}>
-                            <Text style={[styles.popularTitle, { color: colors.textPrimary }]}>
-                              {item.name}
-                            </Text>
-                            <Text style={[styles.popularDesc, { color: colors.textMuted }]} numberOfLines={2}>
-                              {item.description}
-                            </Text>
-                          </View>
-
-                          <TouchableOpacity
-                            onPress={() => {
-                              if (!isSubscribed) {
-                                void handleSubscribeDiscovered(item);
-                              }
-                            }}
-                            disabled={isSubscribed}
-                            style={[
-                              styles.popularSubscribeBtn,
-                              { backgroundColor: isSubscribed ? colors.surface : colors.accent }
-                            ]}
-                          >
-                            <Text style={[styles.popularSubscribeText, { color: isSubscribed ? colors.textMuted : '#FFFFFF' }]}>
-                              {isSubscribed ? '✓ Abonniert' : '+ Abonnieren'}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
-              </ScrollView>
-            )}
-
-            {/* TAB 1: Sources Catalog */}
-            {activeTab === 'sources' && (
-              <View style={{ flex: 1 }}>
-                {/* Search & Category Filter */}
-                <View style={[styles.filterBar, { borderBottomColor: colors.borderSubtle }]}>
-                  <View style={[styles.searchBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Ionicons name="search" size={14} color={colors.textMuted} style={{ marginRight: 6 }} />
-                    <TextInput
-                      value={searchQuery}
-                      onChangeText={setSearchQuery}
-                      placeholder="Quellen durchsuchen (z.B. Tagesschau, Spektrum, YouTube)…"
-                      placeholderTextColor={colors.textMuted}
-                      style={[styles.searchInput, { color: colors.textPrimary }]}
-                    />
-                    {searchQuery.length > 0 && (
-                      <TouchableOpacity onPress={() => setSearchQuery('')}>
-                        <Ionicons name="close-circle" size={14} color={colors.textMuted} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-
-                  {/* Preset Buttons */}
-                  <View style={styles.presetRow}>
-                    <TouchableOpacity
-                      onPress={() => handleApplyPreset('all')}
-                      style={[styles.presetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                    >
-                      <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>🌐 Alle an</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => handleApplyPreset('oerr_only')}
-                      style={[styles.presetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                    >
-                      <Text style={[styles.presetPillText, { color: colors.accent }]}>🏛️ Nur ÖRR</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => handleApplyPreset('science_culture')}
-                      style={[styles.presetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                    >
-                      <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>🔬 Wissenschaft & Kultur</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Category Pills Bar */}
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.categoryScroll}
-                  style={[styles.categoryScrollBar, { borderBottomColor: colors.borderSubtle }]}
-                >
-                  <TouchableOpacity
-                    onPress={() => setSelectedCategory('all')}
+                return (
+                  <View
+                    key={topic}
                     style={[
-                      styles.categoryChip,
+                      styles.topicCard,
                       {
-                        backgroundColor: selectedCategory === 'all' ? colors.accent : colors.surfaceSecondary,
-                        borderColor: colors.borderSubtle
+                        backgroundColor: colors.surface,
+                        borderColor: isActive ? colors.accent : colors.borderSubtle
+                      }
+                    ]}
+                  >
+                    <View style={styles.topicCardHeader}>
+                      <View style={styles.topicIconTitleRow}>
+                        <Ionicons
+                          name={(meta?.icon as any) || 'compass-outline'}
+                          size={20}
+                          color={isActive ? colors.accent : colors.textMuted}
+                          style={{ marginRight: 8 }}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.topicTitle, { color: colors.textPrimary }]}>{meta?.label || topic}</Text>
+                          <Text style={[styles.topicSourcesCount, { color: colors.textMuted }]}>
+                            {activeSourcesInTopic} aktive Quellen
+                          </Text>
+                        </View>
+                      </View>
+                      <Switch
+                        value={isActive}
+                        onValueChange={async nextVal => {
+                          const newWeight = nextVal ? 0.6 : 0;
+                          await updateTopicWeight(topic, newWeight);
+                          showToast(nextVal ? `✓ ${meta?.label || topic} aktiviert` : `${meta?.label || topic} pausiert`);
+                        }}
+                        trackColor={{ false: colors.borderSubtle, true: colors.accent }}
+                      />
+                    </View>
+
+                    {meta?.description ? (
+                      <Text style={[styles.topicDescription, { color: colors.textSecondary }]} numberOfLines={2}>
+                        {meta.description}
+                      </Text>
+                    ) : null}
+
+                    {/* Weight Presets */}
+                    <View style={styles.presetsRow}>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          await updateTopicWeight(topic, 0);
+                          showToast(`${meta?.label || topic}: Aus (0%)`);
+                        }}
+                        style={[
+                          styles.presetPill,
+                          {
+                            backgroundColor: weight === 0 ? colors.borderSubtle : colors.surfaceSecondary,
+                            borderColor: colors.borderSubtle
+                          }
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${meta?.label || topic} ausschalten`}
+                      >
+                        <Text style={[styles.presetText, { color: weight === 0 ? colors.textPrimary : colors.textMuted }]}>
+                          Aus (0%)
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={async () => {
+                          await updateTopicWeight(topic, 0.6);
+                          showToast(`${meta?.label || topic}: Normal (60%)`);
+                        }}
+                        style={[
+                          styles.presetPill,
+                          {
+                            backgroundColor: weight > 0 && weight <= 0.75 ? colors.accentSubtle : colors.surfaceSecondary,
+                            borderColor: weight > 0 && weight <= 0.75 ? colors.accent : colors.borderSubtle
+                          }
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${meta?.label || topic} auf Normal (60%) setzen`}
+                      >
+                        <Text
+                          style={[
+                            styles.presetText,
+                            { color: weight > 0 && weight <= 0.75 ? colors.accent : colors.textMuted }
+                          ]}
+                        >
+                          Normal (60%)
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={async () => {
+                          await updateTopicWeight(topic, 0.95);
+                          showToast(`${meta?.label || topic}: Fokus (95%)`);
+                        }}
+                        style={[
+                          styles.presetPill,
+                          {
+                            backgroundColor: weight > 0.75 ? colors.accentSubtle : colors.surfaceSecondary,
+                            borderColor: weight > 0.75 ? colors.accent : colors.borderSubtle
+                          }
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${meta?.label || topic} auf Fokus (95%) setzen`}
+                      >
+                        <Text
+                          style={[
+                            styles.presetText,
+                            { color: weight > 0.75 ? colors.accent : colors.textMuted }
+                          ]}
+                        >
+                          Fokus (95%)
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Jump to sources filtered by this topic */}
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSelectedTopicFilter(topic);
+                        setActiveTab('sources');
+                      }}
+                      style={[styles.jumpButton, { borderTopColor: colors.borderSubtle }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Quellen für ${meta?.label || topic} im Detail ansehen`}
+                    >
+                      <Text style={[styles.jumpButtonText, { color: colors.accent }]}>Quellen im Detail →</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          </ScrollView>
+        ) : (
+          /* TAB 2: Quellen & Eigene Feeds */
+          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            {/* Top Card: Eigene Quelle hinzufügen */}
+            <View style={[styles.addCustomCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+              <View style={styles.addCustomHeader}>
+                <Ionicons name="add-circle-outline" size={20} color={colors.accent} style={{ marginRight: 8 }} />
+                <Text style={[styles.addCustomTitle, { color: colors.textPrimary }]}>Eigene Quelle hinzufügen</Text>
+              </View>
+
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
+                placeholder="Name der Quelle (z. B. Mein Blog)"
+                placeholderTextColor={colors.textMuted}
+                value={customName}
+                onChangeText={setCustomName}
+              />
+
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
+                placeholder="RSS/Atom Feed-URL (https://…)"
+                placeholderTextColor={colors.textMuted}
+                value={customUrl}
+                onChangeText={setCustomUrl}
+                autoCapitalize="none"
+                keyboardType="url"
+              />
+
+              {/* Topic Selector Pills */}
+              <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>Themenbereich:</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalPills}>
+                {ALL_TOPICS.map(topic => (
+                  <TouchableOpacity
+                    key={topic}
+                    onPress={() => setCustomTopic(topic)}
+                    style={[
+                      styles.filterPill,
+                      {
+                        backgroundColor: customTopic === topic ? colors.accent : colors.surfaceSecondary,
+                        borderColor: customTopic === topic ? colors.accent : colors.borderSubtle
                       }
                     ]}
                   >
                     <Text
                       style={[
-                        styles.categoryChipText,
-                        { color: selectedCategory === 'all' ? '#FFFFFF' : colors.textPrimary }
+                        styles.filterPillText,
+                        { color: customTopic === topic ? '#FFFFFF' : colors.textPrimary }
                       ]}
                     >
-                      Alle ({sources.length})
+                      {TOPIC_METADATA[topic]?.label || topic}
                     </Text>
                   </TouchableOpacity>
+                ))}
+              </ScrollView>
 
-                  {(Object.keys(CATEGORY_METADATA) as SourceCategory[]).map(catKey => {
-                    const catMeta = CATEGORY_METADATA[catKey];
-                    const count = sources.filter(s => s.category === catKey).length;
-                    const isSelected = selectedCategory === catKey;
-
-                    return (
-                      <TouchableOpacity
-                        key={catKey}
-                        onPress={() => setSelectedCategory(catKey)}
-                        style={[
-                          styles.categoryChip,
-                          {
-                            backgroundColor: isSelected ? catMeta.color : colors.surfaceSecondary,
-                            borderColor: colors.borderSubtle
-                          }
-                        ]}
-                      >
-                        <Ionicons
-                          name={catMeta.icon as any}
-                          size={12}
-                          color={isSelected ? '#FFFFFF' : catMeta.color}
-                          style={{ marginRight: 4 }}
-                        />
-                        <Text
-                          style={[
-                            styles.categoryChipText,
-                            { color: isSelected ? '#FFFFFF' : colors.textPrimary }
-                          ]}
-                        >
-                          {catMeta.label} ({count})
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-
-                {/* Sources List */}
-                {isLoading ? (
-                  <View style={styles.centerContainer}>
-                    <ActivityIndicator size="small" color={colors.accent} />
-                    <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Lade Quellen-Katalog…</Text>
-                  </View>
+              <TouchableOpacity
+                onPress={handleAddCustomSource}
+                disabled={isSubmitting}
+                style={[styles.submitButton, { backgroundColor: colors.accent }]}
+                accessibilityRole="button"
+                accessibilityLabel="Quelle speichern"
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <ScrollView style={styles.sourceScroll} contentContainerStyle={styles.sourceScrollContent}>
-                    {filteredSources.map(source => {
-                      const catMeta = CATEGORY_METADATA[source.category] || { label: source.category, color: colors.accent, icon: 'newspaper-outline' };
-                      const isActiveAndDelivering = Boolean(source.isDelivering);
+                  <>
+                    <Ionicons name="checkmark-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.submitButtonText}>Quelle speichern</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
 
-                      return (
-                        <View
-                          key={source.id}
-                          style={[
-                            styles.sourceRow,
-                            {
-                              backgroundColor: colors.surfaceSecondary,
-                              borderColor: isActiveAndDelivering ? colors.borderSubtle : 'transparent',
-                              opacity: isActiveAndDelivering ? 1 : 0.65
-                            }
-                          ]}
-                        >
-                          <View style={styles.sourceInfo}>
-                            <View style={styles.sourceHeaderLine}>
-                              <Text style={[styles.sourceName, { color: colors.textPrimary }]} numberOfLines={1}>
-                                {source.name}
-                              </Text>
-
-                              <View
-                                style={[
-                                  styles.trustTag,
-                                  {
-                                    backgroundColor: isActiveAndDelivering
-                                      ? 'rgba(16, 185, 129, 0.14)'
-                                      : 'rgba(245, 158, 11, 0.14)',
-                                    borderColor: isActiveAndDelivering ? '#10B981' : '#F59E0B'
-                                  }
-                                ]}
-                              >
-                                <Ionicons
-                                  name={isActiveAndDelivering ? 'checkmark-circle' : 'alert-circle-outline'}
-                                  size={10}
-                                  color={isActiveAndDelivering ? '#10B981' : '#D97706'}
-                                  style={{ marginRight: 3 }}
-                                />
-                                <Text
-                                  style={[
-                                    styles.trustTagText,
-                                    { color: isActiveAndDelivering ? '#10B981' : '#D97706' }
-                                  ]}
-                                >
-                                  {isActiveAndDelivering
-                                    ? `Aktiv (${source.itemCount ?? 0} Beiträge)`
-                                    : 'Inaktiv / Abruffehler'}
-                                </Text>
-                              </View>
-
-                              {source.trustBadge && (
-                                <View style={[styles.trustTag, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}>
-                                  <Text style={[styles.trustTagText, { color: colors.accent }]}>{source.trustBadge}</Text>
-                                </View>
-                              )}
-                            </View>
-
-                            <Text style={[styles.sourceMeta, { color: colors.textMuted }]} numberOfLines={1}>
-                              {catMeta.label} •{' '}
-                              {isActiveAndDelivering && source.lastSuccessAt
-                                ? `Letzter Erfolg: ${new Date(source.lastSuccessAt).toLocaleDateString('de-DE')}`
-                                : source.lastError
-                                ? `Fehler: ${source.lastError}`
-                                : 'Kein Abruf'}{' '}
-                              • {source.url}
-                            </Text>
-                          </View>
-
-                          <View style={styles.sourceActions}>
-                            {source.isCustom && (
-                              <TouchableOpacity
-                                onPress={() => handleDeleteCustom(source.id, source.name)}
-                                style={[styles.deleteBtn, { backgroundColor: colors.surface }]}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Eigene Quelle ${source.name} löschen`}
-                              >
-                                <Ionicons name="trash-outline" size={14} color={colors.danger} />
-                              </TouchableOpacity>
-                            )}
-
-                            <Switch
-                              value={isActiveAndDelivering}
-                              onValueChange={() => handleToggle(source.id)}
-                              trackColor={{ false: '#767577', true: '#10B981' }}
-                              thumbColor="#FFFFFF"
-                            />
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </ScrollView>
+            {/* Filter Row: Search & Topic Filter Pills & Bulk Actions */}
+            <View style={styles.filterSection}>
+              {/* Search input */}
+              <View style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <Ionicons name="search-outline" size={16} color={colors.textMuted} style={{ marginRight: 8 }} />
+                <TextInput
+                  style={[styles.searchInput, { color: colors.textPrimary }]}
+                  placeholder="Quelle oder Domain suchen…"
+                  placeholderTextColor={colors.textMuted}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')}>
+                    <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                  </TouchableOpacity>
                 )}
               </View>
-            )}
 
-            {/* TAB 2: Import & OPML */}
-            {activeTab === 'import' && (
-              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                {/* 1. Direkte RSS Feed URL hinzufügen */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <View style={styles.sectionHeaderRow}>
-                    <Ionicons name="add-circle-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
-                    <View>
-                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                        1. Beliebigen RSS / Atom Feed hinzufügen
-                      </Text>
-                      <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                        Gib eine beliebige öffentliche Feed-URL ein (z.B. Substack, Heise, Medium, Uni-Blogs, Arxiv).
-                      </Text>
-                    </View>
-                  </View>
-
-                  <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Feed-URL (XML / RSS / Atom):</Text>
-                  <TextInput
-                    value={customUrl}
-                    onChangeText={setCustomUrl}
-                    placeholder="https://beispiel.de/feed.xml"
-                    placeholderTextColor={colors.textMuted}
-                    autoCapitalize="none"
-                    style={[styles.textInput, { backgroundColor: colors.surface, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
-                  />
-
-                  <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Name der Publikation (optional):</Text>
-                  <TextInput
-                    value={customName}
-                    onChangeText={setCustomName}
-                    placeholder="z.B. Heise Developer oder Mein Lieblings-Blog"
-                    placeholderTextColor={colors.textMuted}
-                    style={[styles.textInput, { backgroundColor: colors.surface, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
-                  />
-
-                  <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Themen-Space zuweisen:</Text>
-                  <View style={styles.topicSelectRow}>
-                    {(['science_society', 'ai_apple', 'book_mastery', 'philosophy_ethics', 'memes_satire'] as TopicTag[]).map(t => {
-                      const spaceMeta = TOPIC_SPACE_MAP[t];
-                      const isSel = customTopic === t;
-                      return (
-                        <TouchableOpacity
-                          key={t}
-                          onPress={() => setCustomTopic(t)}
-                          style={[
-                            styles.topicSelectChip,
-                            {
-                              backgroundColor: isSel ? colors.accent : colors.surface,
-                              borderColor: colors.borderSubtle
-                            }
-                          ]}
-                        >
-                          <Text style={[styles.topicSelectText, { color: isSel ? '#FFFFFF' : colors.textPrimary }]}>
-                            {spaceMeta?.space || t}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-
-                  <TouchableOpacity
-                    onPress={handleAddCustom}
-                    disabled={isSubmitting}
-                    style={[styles.primaryActionBtn, { backgroundColor: colors.accent }]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Feed abonnieren"
+              {/* Topic Filter Pills */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.horizontalPills}>
+                <TouchableOpacity
+                  onPress={() => setSelectedTopicFilter('all')}
+                  style={[
+                    styles.filterPill,
+                    {
+                      backgroundColor: selectedTopicFilter === 'all' ? colors.accent : colors.surfaceSecondary,
+                      borderColor: selectedTopicFilter === 'all' ? colors.accent : colors.borderSubtle
+                    }
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.filterPillText,
+                      { color: selectedTopicFilter === 'all' ? '#FFFFFF' : colors.textPrimary }
+                    ]}
                   >
-                    {isSubmitting ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <Ionicons name="add" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                        <Text style={styles.primaryActionBtnText}>Feed zu atmen hinzufügen</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
+                    Alle ({sources.length})
+                  </Text>
+                </TouchableOpacity>
 
-                {/* 2. Universal OPML Import */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <View style={styles.sectionHeaderRow}>
-                    <Ionicons name="document-text-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
-                    <View>
-                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                        2. OPML-Import (Feedly, Inoreader, NetNewsWire)
-                      </Text>
-                      <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                        Kopiere den Inhalt deiner exportierten .opml Datei hierhin, um alle Abos in einem Schritt zu übertragen.
-                      </Text>
-                    </View>
-                  </View>
-
-                  <TextInput
-                    value={opmlInput}
-                    onChangeText={setOpmlInput}
-                    placeholder={`<opml version="2.0">\n  <body>\n    <outline type="rss" xmlUrl="https://..." text="..." />\n  </body>\n</opml>`}
-                    placeholderTextColor={colors.textMuted}
-                    multiline
-                    numberOfLines={4}
-                    style={[styles.codeTextArea, { backgroundColor: colors.surface, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
-                  />
-
+                {ALL_TOPICS.map(topic => (
                   <TouchableOpacity
-                    onPress={handleImportOPML}
-                    disabled={isSubmitting}
-                    style={[styles.secondaryActionBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                    accessibilityRole="button"
-                    accessibilityLabel="OPML importieren"
+                    key={topic}
+                    onPress={() => setSelectedTopicFilter(topic)}
+                    style={[
+                      styles.filterPill,
+                      {
+                        backgroundColor: selectedTopicFilter === topic ? colors.accent : colors.surfaceSecondary,
+                        borderColor: selectedTopicFilter === topic ? colors.accent : colors.borderSubtle
+                      }
+                    ]}
                   >
-                    <Ionicons name="download-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
-                    <Text style={[styles.secondaryActionBtnText, { color: colors.accent }]}>OPML jetzt importieren</Text>
+                    <Text
+                      style={[
+                        styles.filterPillText,
+                        { color: selectedTopicFilter === topic ? '#FFFFFF' : colors.textPrimary }
+                      ]}
+                    >
+                      {TOPIC_METADATA[topic]?.label || topic} ({sourcesPerTopic[topic] || 0})
+                    </Text>
                   </TouchableOpacity>
-                </View>
-
-                {/* 3. OPML Export für Datensouveränität */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <View style={styles.sectionHeaderRow}>
-                    <Ionicons name="shield-checkmark-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
-                    <View>
-                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                        3. Digitale Souveränität & OPML Export
-                      </Text>
-                      <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                        Deine Abonnements gehören dir. Exportiere alle aktiven Feeds jederzeit als offenes OPML-Dokument.
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.exportBtnRow}>
-                    <TouchableOpacity
-                      onPress={handleDownloadOPML}
-                      style={[styles.exportHalfBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                    >
-                      <Ionicons name="arrow-down-circle-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
-                      <Text style={[styles.secondaryActionBtnText, { color: colors.accent }]}>.opml herunterladen</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={handleExportOPML}
-                      style={[styles.exportHalfBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                    >
-                      <Ionicons name="copy-outline" size={15} color={colors.textPrimary} style={{ marginRight: 6 }} />
-                      <Text style={[styles.secondaryActionBtnText, { color: colors.textPrimary }]}>In Zwischenablage</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                ))}
               </ScrollView>
-            )}
 
-            {/* TAB: Raindrop.io Integration */}
-            {activeTab === 'raindrop' && (
-              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                {/* Intro Box */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <View style={styles.sectionHeaderRow}>
-                    <Ionicons name="water" size={20} color="#0284C7" style={{ marginRight: 8 }} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                        Raindrop.io Lesezeichen & Empfehlungs-Brücke
-                      </Text>
-                      <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                        Verbinde deine Raindrop-Sammlungen direkt mit Atem. Lerne dein thematisches Interessen-Profil automatisch aus deinen Tags und importiere Lesezeichen in den Magazin-Reader.
-                      </Text>
-                    </View>
-                  </View>
+              {/* Bulk Action Buttons */}
+              <View style={styles.bulkActionRow}>
+                <TouchableOpacity
+                  onPress={() => handleBulkToggle(true)}
+                  style={[styles.bulkButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Alle sichtbaren Quellen aktivieren"
+                >
+                  <Ionicons name="checkmark-done-outline" size={15} color={colors.accent} style={{ marginRight: 4 }} />
+                  <Text style={[styles.bulkButtonText, { color: colors.accent }]}>Alle aktivieren</Text>
+                </TouchableOpacity>
 
-                  {/* Token Connection Form */}
-                  {!raindropUser ? (
-                    <View style={{ marginTop: spacing.md }}>
-                      <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
-                        Raindrop.io Personal Access Token (oder &apos;demo&apos;):
-                      </Text>
-                      <TextInput
-                        value={raindropTokenInput}
-                        onChangeText={setRaindropTokenInput}
-                        placeholder="z.B. demo oder 5a1b2c3d-..."
-                        placeholderTextColor={colors.textMuted}
-                        style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                      />
+                <TouchableOpacity
+                  onPress={() => handleBulkToggle(false)}
+                  style={[styles.bulkButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Alle sichtbaren Quellen pausieren"
+                >
+                  <Ionicons name="pause-outline" size={15} color={colors.textMuted} style={{ marginRight: 4 }} />
+                  <Text style={[styles.bulkButtonText, { color: colors.textMuted }]}>Alle pausieren</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
 
-                      <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm, flexWrap: 'wrap' }}>
-                        <TouchableOpacity
-                          onPress={() => void handleConnectRaindrop('demo')}
-                          disabled={isRaindropLoading}
-                          style={[styles.secondaryActionBtn, { backgroundColor: '#0284C7' + '1A', borderColor: '#0284C7' }]}
-                        >
-                          <Ionicons name="sparkles" size={14} color="#0284C7" style={{ marginRight: 4 }} />
-                          <Text style={[styles.secondaryActionBtnText, { color: '#0284C7' }]}>
-                            💧 Demo-Konto laden (1-Klick)
+            {/* Sources List */}
+            <View style={styles.sourcesList}>
+              {filteredSources.length === 0 ? (
+                <View style={[styles.emptyContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                  <Ionicons name="search-outline" size={32} color={colors.textMuted} style={{ marginBottom: 8 }} />
+                  <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>Keine Quellen gefunden</Text>
+                  <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+                    Passe den Suchfilter oder die Themenauswahl an.
+                  </Text>
+                </View>
+              ) : (
+                filteredSources.map(source => {
+                  let domain = '';
+                  try {
+                    domain = new URL(source.url).hostname.replace(/^www\./, '');
+                  } catch {
+                    domain = source.url;
+                  }
+
+                  const topicLabel = TOPIC_METADATA[source.primaryTopic]?.label || source.primaryTopic;
+
+                  return (
+                    <View
+                      key={source.id}
+                      style={[
+                        styles.sourceCard,
+                        {
+                          backgroundColor: colors.surface,
+                          borderColor: source.enabled ? colors.borderSubtle : colors.borderSubtle,
+                          opacity: source.enabled ? 1 : 0.6
+                        }
+                      ]}
+                    >
+                      <View style={styles.sourceCardLeft}>
+                        <View style={styles.sourceTitleRow}>
+                          <Text style={[styles.sourceName, { color: colors.textPrimary }]} numberOfLines={1}>
+                            {source.name}
                           </Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          onPress={() => void handleConnectRaindrop()}
-                          disabled={isRaindropLoading}
-                          style={[styles.primaryActionBtn, { backgroundColor: '#0284C7' }]}
-                        >
-                          {isRaindropLoading ? (
-                            <ActivityIndicator size="small" color="#FFFFFF" />
-                          ) : (
-                            <>
-                              <Ionicons name="link-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                              <Text style={styles.primaryActionBtnText}>Token verbinden</Text>
-                            </>
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                      <Text style={[styles.hintText, { color: colors.textMuted, marginTop: 8 }]}>
-                        Tipp: Einen echten Token erstellst du in Raindrop unter Einstellungen → Integrationen → For Developers.
-                      </Text>
-                    </View>
-                  ) : (
-                    <View style={{ marginTop: spacing.md }}>
-                      {/* Connected Account Card */}
-                      <View style={[styles.userBadgeCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                        <View style={styles.userBadgeLeft}>
-                          <View style={[styles.avatarCircle, { backgroundColor: '#0284C7' }]}>
-                            <Text style={styles.avatarLetter}>{raindropUser.name.charAt(0).toUpperCase()}</Text>
-                          </View>
-                          <View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                              <Text style={[styles.userNameText, { color: colors.textPrimary }]}>{raindropUser.name}</Text>
-                              {raindropUser.pro && (
-                                <View style={styles.proBadge}>
-                                  <Text style={styles.proBadgeText}>PRO</Text>
-                                </View>
-                              )}
+                          {source.isCustom && (
+                            <View style={[styles.badge, { backgroundColor: colors.accentSubtle }]}>
+                              <Text style={[styles.badgeText, { color: colors.accent }]}>Eigene</Text>
                             </View>
-                            <Text style={[styles.userSubText, { color: colors.textMuted }]}>
-                              {raindropCollections.length} Sammlungen • {raindropBookmarks.length} Lesezeichen geladen
-                            </Text>
-                          </View>
+                          )}
                         </View>
-                        <TouchableOpacity
-                          onPress={() => setRaindropUser(null)}
-                          style={[styles.disconnectBtn, { backgroundColor: colors.surfaceSecondary }]}
-                        >
-                          <Text style={[styles.disconnectBtnText, { color: colors.textSecondary }]}>Trennen</Text>
-                        </TouchableOpacity>
-                      </View>
 
-                      {/* Action Buttons Row */}
-                      <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md, flexWrap: 'wrap' }}>
-                        <TouchableOpacity
-                          onPress={handleLearnFromRaindrop}
-                          disabled={isRaindropLoading}
-                          style={[styles.primaryActionBtn, { backgroundColor: '#8B5CF6' }]}
-                        >
-                          <Ionicons name="bulb-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                          <Text style={styles.primaryActionBtnText}>🧠 Interessen-Profil aus Tags lernen</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          onPress={handleImportRaindropToFeed}
-                          disabled={isRaindropLoading}
-                          style={[styles.primaryActionBtn, { backgroundColor: '#0284C7' }]}
-                        >
-                          <Ionicons name="download-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                          <Text style={styles.primaryActionBtnText}>📥 In den Feed importieren ({raindropBookmarks.length})</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  )}
-                </View>
-
-                {/* Independent Knowledge Foundation (Ur-Kanon) */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <Text style={{ fontSize: 16 }}>🏛️</Text>
-                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                      Unabhängiges Wissens-Fundament (Ur-Kanon)
-                    </Text>
-                  </View>
-                  <Text style={[styles.hintText, { color: colors.textSecondary, marginBottom: spacing.md }]}>
-                    Sichert deine importierten Raindrop-Lesezeichen und Profilgewichte dauerhaft lokal ab. Selbst wenn Raindrop getrennt wird oder offline ist, dient dieses Fundament als unveränderlicher Ausgangspunkt für Empfehlungen.
-                  </Text>
-
-                  <View style={{ flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' }}>
-                    <TouchableOpacity
-                      onPress={handleSnapshotFoundationalCanon}
-                      disabled={isRaindropLoading}
-                      style={[styles.primaryActionBtn, { backgroundColor: '#10B981' }]}
-                    >
-                      <Ionicons name="shield-checkmark-outline" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                      <Text style={styles.primaryActionBtnText}>🏛️ Als Ur-Fundament sichern</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={handleExportCanonMarkdown}
-                      style={[styles.secondaryActionBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                    >
-                      <Ionicons name="document-text-outline" size={14} color={colors.accent} style={{ marginRight: 4 }} />
-                      <Text style={[styles.secondaryActionBtnText, { color: colors.accent }]}>Markdown Export</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={handleExportCanonJson}
-                      style={[styles.secondaryActionBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                    >
-                      <Ionicons name="code-download-outline" size={14} color={colors.accent} style={{ marginRight: 4 }} />
-                      <Text style={[styles.secondaryActionBtnText, { color: colors.accent }]}>JSON Export</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {savedCanonSnapshot && (
-                    <View style={{ marginTop: spacing.md, padding: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.borderSubtle }}>
-                      <Text style={{ fontSize: typography.sizes.caption, color: '#10B981', fontWeight: '700', marginBottom: 2 }}>
-                        ✓ Gesichertes Fundament: {savedCanonSnapshot.name}
-                      </Text>
-                      <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted }}>
-                        {savedCanonSnapshot.totalBookmarks} Lesezeichen • Stamm-Domains: {savedCanonSnapshot.boostedDomains.join(', ')} • Stand: {savedCanonSnapshot.savedAt.slice(0, 10)}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                {/* Collections Bar */}
-                {raindropUser && raindropCollections.length > 0 && (
-                  <View style={{ marginTop: spacing.md }}>
-                    <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
-                      Sammlungen ({raindropCollections.length})
-                    </Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                      {raindropCollections.map(coll => {
-                        const isSelected = selectedRaindropCollection === coll._id;
-                        return (
-                          <TouchableOpacity
-                            key={coll._id}
-                            onPress={() => void handleSelectRaindropCollection(coll._id)}
-                            style={[
-                              styles.categoryChip,
-                              {
-                                backgroundColor: isSelected ? '#0284C7' : colors.surfaceSecondary,
-                                borderColor: colors.borderSubtle
-                              }
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.categoryChipText,
-                                { color: isSelected ? '#FFFFFF' : colors.textPrimary }
-                              ]}
-                            >
-                              {coll.title} ({coll.count})
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </ScrollView>
-                  </View>
-                )}
-
-                {/* Bookmarks List */}
-                {raindropUser && (
-                  <View style={{ marginTop: spacing.md }}>
-                    <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
-                      Geladene Lesezeichen ({raindropBookmarks.length})
-                    </Text>
-                    {raindropBookmarks.map(bm => (
-                      <View
-                        key={bm._id}
-                        style={[styles.bookmarkCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                      >
-                        <View style={{ flex: 1 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                            <Text style={[styles.bookmarkDomain, { color: '#0284C7' }]}>{bm.domain}</Text>
-                            {bm.tags.map(tag => (
-                              <View key={tag} style={[styles.tagBadge, { backgroundColor: colors.surfaceSecondary }]}>
-                                <Text style={[styles.tagBadgeText, { color: colors.textSecondary }]}>#{tag}</Text>
-                              </View>
-                            ))}
-                          </View>
-                          <Text style={[styles.bookmarkTitle, { color: colors.textPrimary }]}>{bm.title}</Text>
-                          <Text style={[styles.bookmarkExcerpt, { color: colors.textMuted }]} numberOfLines={2}>
-                            {bm.excerpt}
-                          </Text>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </ScrollView>
-            )}
-
-            {/* TAB: Music & Audio Grounding (iTunes & Spotify) */}
-            {activeTab === 'music' && (
-              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                {/* Intro / Explanation Box */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <View style={styles.sectionHeaderRow}>
-                    <Ionicons name="musical-notes" size={20} color="#EF4444" style={{ marginRight: 8 }} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                        iTunes Search API & Spotify als Empfehlungs-Datenbasis
-                      </Text>
-                      <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                        Nutzt die offene Apple iTunes Datenbank (kostenlos, 30s Audio-Vorschau) und Spotify, um fokussierende Akustik, Ambient und Sound-Synthese in atmen zu erden.
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Search Bar */}
-                  <View style={[styles.searchBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                    <Ionicons name="search" size={14} color={colors.textMuted} style={{ marginRight: 6 }} />
-                    <TextInput
-                      value={musicQuery}
-                      onChangeText={handleMusicSearch}
-                      placeholder="Künstler oder Track suchen (z.B. Brian Eno, Nils Frahm, Aphex Twin)…"
-                      placeholderTextColor={colors.textMuted}
-                      style={[styles.searchInput, { color: colors.textPrimary }]}
-                    />
-                    {isSearchingMusic && <ActivityIndicator size="small" color={colors.accent} />}
-                  </View>
-
-                  {/* Preset Pioneer Pills */}
-                  <View style={[styles.presetRow, { marginTop: 10 }]}>
-                    {[
-                      'Brian Eno',
-                      'Nils Frahm',
-                      'Jon Hopkins',
-                      'Suzanne Ciani',
-                      'Aphex Twin',
-                      'Max Richter'
-                    ].map(artist => (
-                      <TouchableOpacity
-                        key={artist}
-                        onPress={() => void handleMusicSearch(artist)}
-                        style={[
-                          styles.presetPill,
-                          {
-                            backgroundColor: musicQuery === artist ? '#EF4444' : colors.surface,
-                            borderColor: musicQuery === artist ? '#EF4444' : colors.borderSubtle
-                          }
-                        ]}
-                      >
-                        <Text style={[styles.presetPillText, { color: musicQuery === artist ? '#FFFFFF' : colors.textPrimary }]}>
-                          {artist}
+                        <Text style={[styles.sourceDomain, { color: colors.textMuted }]} numberOfLines={1}>
+                          {domain}
                         </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
 
-                {/* Track Results List */}
-                <View style={{ marginTop: spacing.md }}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
-                    Empfohlene Klang-Referenzen ({musicResults.length})
-                  </Text>
-                  {musicResults.map(track => (
-                    <MusicTrackCard key={track.id} track={track} />
-                  ))}
-                </View>
-              </ScrollView>
-            )}
+                        <View style={styles.badgesRow}>
+                          <View style={[styles.badge, { backgroundColor: colors.surfaceSecondary }]}>
+                            <Text style={[styles.badgeText, { color: colors.textSecondary }]}>
+                              {source.language?.toUpperCase() || 'DE'}
+                            </Text>
+                          </View>
+                          <View style={[styles.badge, { backgroundColor: colors.surfaceSecondary }]}>
+                            <Text style={[styles.badgeText, { color: colors.textSecondary }]} numberOfLines={1}>
+                              {topicLabel}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
 
-            {/* TAB 3: Status & Sync */}
-            {activeTab === 'sync' && (
-              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                <View style={styles.metricsGrid}>
-                  <View style={[styles.metricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Text style={[styles.metricValue, { color: colors.accent }]}>{sources.length}</Text>
-                    <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Verifizierte Quellen</Text>
-                    <Text style={[styles.metricSub, { color: colors.textMuted }]}>ÖRR, Universitäten & Creator</Text>
-                  </View>
-
-                  <View style={[styles.metricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Text style={[styles.metricValue, { color: '#10B981' }]}>110</Text>
-                    <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Kuratierte Artikel</Text>
-                    <Text style={[styles.metricSub, { color: colors.textMuted }]}>100% Schema- & Bild-Garantie</Text>
-                  </View>
-
-                  <View style={[styles.metricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Text style={[styles.metricValue, { color: '#8B5CF6' }]}>0,00 €</Text>
-                    <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Laufende Kosten</Text>
-                    <Text style={[styles.metricSub, { color: colors.textMuted }]}>Offline-first & lokale Heuristik</Text>
-                  </View>
-                </View>
-
-                {/* Live Sync Trigger Box */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    Manuelle Live-Synchronisation
-                  </Text>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                    Synchronisiert die 29 verifizierten RSS- und Atom-Feeds unmittelbar mit der lokalen Datenbank und aktualisiert die Rangordnung.
-                  </Text>
-
-                  <TouchableOpacity
-                    onPress={handleSyncNow}
-                    disabled={isSubmitting}
-                    style={[styles.primaryActionBtn, { backgroundColor: colors.accent, marginTop: spacing.md }]}
-                  >
-                    {isSubmitting ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <Ionicons name="refresh" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                        <Text style={styles.primaryActionBtnText}>Live-Feeds jetzt synchronisieren</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                {/* Sovereignty & Privacy Principles */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    Souveränitäts- & Datenschutz-Garantie
-                  </Text>
-                  <Text style={[styles.privacyText, { color: colors.textSecondary }]}>
-                    • <Text style={{ fontWeight: '700' }}>Kein Tracking & keine Werbe-Pixel:</Text> Atem lädt RSS-Feeds direkt ohne Benutzerprofile an Werbenetzwerke zu verkaufen.
-                  </Text>
-                  <Text style={[styles.privacyText, { color: colors.textSecondary }]}>
-                    • <Text style={{ fontWeight: '700' }}>Öffentlich-Rechtliche Priorität:</Text> Qualitätsjournalismus von ARD, ZDF und DLF steht im Zentrum.
-                  </Text>
-                  <Text style={[styles.privacyText, { color: colors.textSecondary }]}>
-                    • <Text style={{ fontWeight: '700' }}>Vollständige Exportierbarkeit:</Text> Alle Notizen exportierst du als Craft-Markdown, alle Feeds als OPML.
-                  </Text>
-                </View>
-              </ScrollView>
-            )}
-          </View>
-        </View>
+                      <View style={styles.sourceCardRight}>
+                        {source.isCustom && (
+                          <TouchableOpacity
+                            onPress={() => handleDeleteCustomSource(source.id)}
+                            style={styles.deleteButton}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Eigene Quelle ${source.name} löschen`}
+                          >
+                            <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
+                          </TouchableOpacity>
+                        )}
+                        <Switch
+                          value={source.enabled}
+                          onValueChange={() => handleToggleSource(source.id, source.enabled)}
+                          trackColor={{ false: colors.borderSubtle, true: colors.accent }}
+                        />
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          </ScrollView>
+        )}
       </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.md
-  },
-  card: {
-    width: '100%',
-    maxWidth: 820,
-    height: '88%',
-    maxHeight: 760,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    overflow: 'hidden',
-    display: 'flex',
-    flexDirection: 'column'
+  container: {
+    flex: 1
   },
   header: {
     flexDirection: 'row',
@@ -1827,710 +695,292 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    borderBottomWidth: 0.5
+    borderBottomWidth: 1
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
+  headerTitleGroup: {
     flex: 1
   },
-  iconEmblem: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
   headerTitle: {
-    fontSize: typography.sizes.title2,
-    fontWeight: '800'
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: -0.3
   },
   headerSubtitle: {
-    fontSize: typography.sizes.micro,
+    fontSize: 12,
     marginTop: 2
   },
-  closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  toast: {
-    position: 'absolute',
-    top: 64,
-    alignSelf: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 7,
+  closeButton: {
+    width: 36,
+    height: 36,
     borderRadius: radius.pill,
-    zIndex: 99,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 6
-  },
-  toastText: {
-    color: '#FFFFFF',
-    fontSize: typography.sizes.caption,
-    fontWeight: '700'
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: spacing.md
   },
   tabBar: {
     flexDirection: 'row',
-    borderBottomWidth: 0.5
+    borderBottomWidth: 1
   },
   tabItem: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: spacing.lg,
+    justifyContent: 'center',
+    paddingVertical: 14,
     borderBottomWidth: 2,
     borderBottomColor: 'transparent'
   },
-  tabItemText: {
-    fontSize: typography.sizes.caption,
-    fontWeight: '700'
+  activeTabItem: {},
+  tabText: {
+    fontSize: 14
   },
-  contentContainer: {
-    flex: 1
-  },
-  filterBar: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 0.5,
-    gap: spacing.xs
-  },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    borderWidth: 0.5
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: typography.sizes.caption,
-    padding: 0
-  },
-  presetRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6
-  },
-  presetPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-    borderWidth: 0.5
-  },
-  presetPillText: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '700'
-  },
-  categoryScrollBar: {
-    maxHeight: 46,
-    borderBottomWidth: 0.5
-  },
-  categoryScroll: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 8,
-    gap: 6
-  },
-  categoryChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-    borderWidth: 0.5
-  },
-  categoryChipText: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '700'
-  },
-  sourceScroll: {
-    flex: 1
-  },
-  sourceScrollContent: {
-    padding: spacing.lg,
-    gap: 8
-  },
-  sourceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  scrollContent: {
     padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 0.5
-  },
-  sourceInfo: {
-    flex: 1,
-    marginRight: spacing.md
-  },
-  sourceHeaderLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 3
-  },
-  sourceName: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '700'
-  },
-  trustTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
-    borderWidth: 0.5
-  },
-  trustTagText: {
-    fontSize: 9,
-    fontWeight: '800'
-  },
-  sourceMeta: {
-    fontSize: typography.sizes.micro
-  },
-  sourceActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10
-  },
-  deleteBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center'
+    paddingBottom: spacing.xxl
   },
   centerContainer: {
     flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
-    gap: spacing.sm
+    justifyContent: 'center',
+    padding: spacing.xl
   },
   loadingText: {
-    fontSize: typography.sizes.caption
+    marginTop: spacing.md,
+    fontSize: 14
   },
-  tabScroll: {
-    flex: 1
-  },
-  tabScrollContent: {
-    padding: spacing.lg,
-    gap: spacing.lg
-  },
-  sectionBox: {
-    padding: spacing.lg,
-    borderRadius: radius.md,
-    borderWidth: 0.5
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: spacing.md
-  },
-  sectionTitle: {
-    fontSize: typography.sizes.body,
-    fontWeight: '800',
-    marginBottom: 3
-  },
-  sectionDesc: {
-    fontSize: typography.sizes.caption,
-    lineHeight: 18
-  },
-  inputLabel: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '700',
-    marginBottom: 4,
-    marginTop: spacing.sm
-  },
-  textInput: {
-    paddingHorizontal: 12,
+  toast: {
+    position: 'absolute',
+    top: 110,
+    alignSelf: 'center',
+    paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: radius.sm,
-    borderWidth: 0.5,
-    fontSize: typography.sizes.bodySmall
+    borderRadius: radius.pill,
+    zIndex: 999
   },
-  codeTextArea: {
-    padding: 10,
-    borderRadius: radius.sm,
-    borderWidth: 0.5,
-    fontSize: typography.sizes.micro,
-    fontFamily: 'monospace',
-    height: 90,
+  toastText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12
+  },
+  // Tab 1: Topics
+  topicsGrid: {
+    gap: spacing.md
+  },
+  topicCard: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md
+  },
+  topicCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  topicIconTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: spacing.sm
+  },
+  topicTitle: {
+    fontSize: 15,
+    fontWeight: '700'
+  },
+  topicSourcesCount: {
+    fontSize: 11,
+    marginTop: 1
+  },
+  topicDescription: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: spacing.xs,
     marginBottom: spacing.sm
   },
-  topicSelectRow: {
+  presetsRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
+    gap: 8,
+    marginTop: spacing.xs
+  },
+  presetPill: {
+    flex: 1,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  presetText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  jumpButton: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    alignItems: 'flex-end'
+  },
+  jumpButtonText: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  // Tab 2: Sources
+  addCustomCard: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
     marginBottom: spacing.md
   },
-  topicSelectChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-    borderWidth: 0.5
+  addCustomHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm
   },
-  topicSelectText: {
-    fontSize: typography.sizes.micro,
+  addCustomTitle: {
+    fontSize: 15,
     fontWeight: '700'
   },
-  primaryActionBtn: {
+  input: {
+    height: 40,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    fontSize: 13,
+    marginBottom: spacing.xs
+  },
+  sectionSubtitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: spacing.xs,
+    marginBottom: 4
+  },
+  horizontalPills: {
+    flexDirection: 'row',
+    marginBottom: spacing.sm
+  },
+  filterPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    marginRight: 8
+  },
+  filterPillText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  submitButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.pill
+    height: 38,
+    borderRadius: radius.sm,
+    marginTop: 4
   },
-  primaryActionBtnText: {
+  submitButtonText: {
     color: '#FFFFFF',
-    fontSize: typography.sizes.caption,
-    fontWeight: '700'
-  },
-  secondaryActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 9,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.pill,
-    borderWidth: 0.5
-  },
-  secondaryActionBtnText: {
-    fontSize: typography.sizes.caption,
-    fontWeight: '700'
-  },
-  exportBtnRow: {
-    flexDirection: 'row',
-    gap: spacing.sm
-  },
-  exportHalfBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: radius.pill,
-    borderWidth: 0.5
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    gap: spacing.sm
-  },
-  metricCard: {
-    flex: 1,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 0.5,
-    alignItems: 'center'
-  },
-  metricValue: {
-    fontSize: typography.sizes.title1,
-    fontWeight: '900',
-    marginBottom: 2
-  },
-  metricLabel: {
-    fontSize: typography.sizes.caption,
     fontWeight: '700',
-    textAlign: 'center'
+    fontSize: 13
   },
-  metricSub: {
-    fontSize: typography.sizes.micro,
-    textAlign: 'center',
-    marginTop: 2
+  filterSection: {
+    marginBottom: spacing.md,
+    gap: spacing.xs
   },
-  privacyText: {
-    fontSize: typography.sizes.caption,
-    lineHeight: 20,
-    marginTop: 6
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 40,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.xs
   },
-  userBadgeCard: {
+  searchInput: {
+    flex: 1,
+    fontSize: 13
+  },
+  bulkActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4
+  },
+  bulkButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  bulkButtonText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  sourcesList: {
+    gap: spacing.xs
+  },
+  sourceCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 0.5
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1
   },
-  userBadgeLeft: {
+  sourceCardLeft: {
+    flex: 1,
+    marginRight: spacing.sm
+  },
+  sourceTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  sourceName: {
+    fontSize: 14,
+    fontWeight: '700',
+    flexShrink: 1
+  },
+  sourceDomain: {
+    fontSize: 11,
+    marginTop: 1
+  },
+  badgesRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 4
+  },
+  badge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.xs
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '600'
+  },
+  sourceCardRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10
   },
-  avatarCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    justifyContent: 'center',
-    alignItems: 'center'
+  deleteButton: {
+    padding: 4
   },
-  avatarLetter: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: typography.sizes.body
-  },
-  userNameText: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '800'
-  },
-  userSubText: {
-    fontSize: typography.sizes.micro,
-    marginTop: 2
-  },
-  proBadge: {
-    backgroundColor: '#10B981',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: radius.pill
-  },
-  proBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 9,
-    fontWeight: '900'
-  },
-  disconnectBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill
-  },
-  disconnectBtnText: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '700'
-  },
-  bookmarkCard: {
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 0.5,
-    marginBottom: spacing.sm
-  },
-  bookmarkDomain: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '800',
-    textTransform: 'uppercase'
-  },
-  bookmarkTitle: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '700',
-    marginBottom: 4
-  },
-  bookmarkExcerpt: {
-    fontSize: typography.sizes.caption,
-    lineHeight: 18
-  },
-  tagBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radius.sm
-  },
-  tagBadgeText: {
-    fontSize: 9,
-    fontWeight: '700'
-  },
-  hintText: {
-    fontSize: typography.sizes.micro,
-    fontStyle: 'italic'
-  },
-  newsHeaderBox: {
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    borderWidth: 0.5,
-    marginBottom: spacing.md
-  },
-  newsHeaderLeft: {
-    marginBottom: spacing.sm
-  },
-  newsHeaderTitle: {
-    fontSize: typography.sizes.body,
-    fontWeight: '700',
-    marginBottom: 2
-  },
-  newsHeaderSubtitle: {
-    fontSize: 12,
-    lineHeight: 16
-  },
-  newsActionRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs
-  },
-  generateNewsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 7,
-    borderRadius: radius.full
-  },
-  generateNewsButtonText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  settingsShortcutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: radius.full,
-    borderWidth: 0.5
-  },
-  settingsShortcutText: {
-    fontSize: 12,
-    fontWeight: '600'
-  },
-  newsFilterRow: {
-    marginBottom: spacing.md
-  },
-  newsSearchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: radius.full,
-    borderWidth: 0.5,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    marginBottom: spacing.xs
-  },
-  newsSearchInput: {
-    flex: 1,
-    fontSize: 13,
-    padding: 0
-  },
-  newsCategoryScroll: {
-    gap: spacing.xs,
-    paddingVertical: 2
-  },
-  newsCategoryChip: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    borderRadius: radius.full,
-    borderWidth: 0.5
-  },
-  newsCategoryChipText: {
-    fontSize: 11,
-    fontWeight: '600'
-  },
-  newsCardGrid: {
-    gap: spacing.sm
-  },
-  newsArticleCard: {
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    borderWidth: 0.5
-  },
-  newsCardTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs
-  },
-  newsPublisherBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 2,
-    borderRadius: radius.sm
-  },
-  newsPublisherText: {
-    fontSize: 11,
-    fontWeight: '700'
-  },
-  newsTimeText: {
-    fontSize: 11
-  },
-  newsArticleTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 20,
-    marginBottom: spacing.xs
-  },
-  newsArticleSummary: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: spacing.sm
-  },
-  newsCardActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs
-  },
-  readArticleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: radius.full
-  },
-  readArticleButtonText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700'
-  },
-  saveArticleButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: radius.full,
-    borderWidth: 0.5,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  openLinkButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: radius.full,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  newsEmptyCard: {
+  emptyContainer: {
     padding: spacing.xl,
-    borderRadius: radius.lg,
-    borderWidth: 0.5,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  newsEmptyTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginVertical: spacing.sm,
-    textAlign: 'center'
-  },
-  resetFilterBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: radius.full
-  },
-  gathererHeaderBanner: {
-    padding: spacing.md,
-    borderRadius: radius.lg,
+    borderRadius: radius.md,
     borderWidth: 1,
-    marginBottom: spacing.md
-  },
-  gathererBannerTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4
-  },
-  gathererBannerTitle: {
-    fontSize: 15,
-    fontWeight: '800'
-  },
-  gathererBannerDesc: {
-    fontSize: 12,
-    lineHeight: 16
-  },
-  gathererCard: {
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    borderWidth: 0.5
-  },
-  gathererCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 2
-  },
-  gathererCardTitle: {
-    fontSize: 14,
-    fontWeight: '700'
-  },
-  gathererCardDesc: {
-    fontSize: 12,
-    lineHeight: 16,
-    marginBottom: spacing.sm
-  },
-  gathererInputRow: {
-    flexDirection: 'row',
-    gap: spacing.xs
-  },
-  gathererInput: {
-    flex: 1,
-    borderRadius: radius.md,
-    borderWidth: 0.5,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 7,
-    fontSize: 13
-  },
-  gathererSearchBtn: {
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center'
   },
-  gathererSearchBtnText: {
-    color: '#FFFFFF',
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '700'
+  },
+  emptySubtitle: {
     fontSize: 12,
-    fontWeight: '700'
-  },
-  discoveredResultCard: {
-    marginTop: spacing.sm,
-    padding: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1
-  },
-  candidateTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start'
-  },
-  candidateInfo: {
-    flex: 1,
-    marginRight: spacing.sm
-  },
-  candidateName: {
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 2
-  },
-  candidateUrl: {
-    fontSize: 11,
-    fontWeight: '600',
-    marginBottom: 2
-  },
-  candidateDesc: {
-    fontSize: 11,
-    lineHeight: 15
-  },
-  candidateAddBtn: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: radius.full
-  },
-  candidateAddBtnText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700'
-  },
-  popularGrid: {
-    gap: spacing.xs
-  },
-  popularCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 0.5
-  },
-  popularCardContent: {
-    flex: 1,
-    marginRight: spacing.sm
-  },
-  popularTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 1
-  },
-  popularDesc: {
-    fontSize: 11,
-    lineHeight: 14
-  },
-  popularSubscribeBtn: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    borderRadius: radius.full
-  },
-  popularSubscribeText: {
-    fontSize: 11,
-    fontWeight: '700'
+    marginTop: 4,
+    textAlign: 'center'
   }
 });

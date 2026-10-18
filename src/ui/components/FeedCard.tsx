@@ -24,7 +24,10 @@ import { typography, radius, spacing } from '../theme';
 import { LinkPreviewModal } from './LinkPreviewModal';
 import { MusicTrackCard } from './MusicTrackCard';
 import { CURATED_SOUND_MASTERS, MusicTrackItem } from '../../core/music/musicRecommendationService';
-import { optimizeImageUrl } from '../../core/utils/imageQuality';
+import { optimizeImageUrl, assessEditorialImage } from '../../core/utils/imageQuality';
+import { isFeatureEnabled } from '../../core/modules/featureRegistry';
+import { QuizCheckpointCard } from './QuizCheckpointCard';
+import { generateQuizForArticle } from '../../core/quiz/quizGenerator';
 
 interface FeedCardProps {
   item: ScoredFeedItem;
@@ -74,6 +77,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const isDesktop = width >= 960;
   const {
     colors,
+    profile,
     interactions,
     toggleSaveItem,
     openArticle,
@@ -94,6 +98,11 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   };
 
   const [isComposerOpen, setIsComposerOpen] = useState(false);
+  const [isQuizOpen, setIsQuizOpen] = useState(false);
+  const isQuizFeatureEnabled = isFeatureEnabled(profile, 'bloomscroll_quizzes');
+  const cardQuiz = useMemo(() => {
+    return item.quiz || generateQuizForArticle(item);
+  }, [item]);
   const [noteText, setNoteText] = useState('');
   const [selectedTag, setSelectedTag] = useState<'einwand' | 'unterricht' | 'these' | 'notiz'>('einwand');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
@@ -156,14 +165,22 @@ export const FeedCard: React.FC<FeedCardProps> = ({
       (item.wordCount !== undefined && item.wordCount <= 95) ||
       (displayFeedText.length <= 420 && (item.articleBody || displayFeedText).length <= 460));
 
-  const showAuthenticImage = !isArtCard && !imageError && isAuthenticCardImage(item);
+  const editorialAssessment = useMemo(() => {
+    return assessEditorialImage(item.imageUrl, {
+      format: item.format,
+      title: item.title,
+      isMeme: isMemeCard
+    });
+  }, [item.imageUrl, item.format, item.title, isMemeCard]);
+
+  const showAuthenticImage = !isArtCard && !imageError && isAuthenticCardImage(item) && editorialAssessment.isValid;
   const activeVisualUri = isArtCard
     ? optimizeImageUrl(item.artMeta?.highResImageUrl || item.imageUrl || '', 1200)
     : showAuthenticImage
     ? optimizeImageUrl(item.imageUrl!) || item.imageUrl!
     : '';
 
-  // Dynamically measure real image dimensions so comics & diagrams are NEVER cropped
+  // Dynamically measure real image dimensions so comics, portraits & diagrams are NEVER cropped
   useEffect(() => {
     if (!activeVisualUri) return;
     let cancelled = false;
@@ -171,11 +188,11 @@ export const FeedCard: React.FC<FeedCardProps> = ({
       activeVisualUri,
       (w, h) => {
         if (!cancelled && w > 0 && h > 0) {
-          setNaturalAspectRatio(Math.max(0.45, Math.min(2.6, w / h)));
+          setNaturalAspectRatio(w / h);
         }
       },
       () => {
-        // Fallback handled by default aspectRatio
+        // Fallback handled by onLoad on <Image>
       }
     );
     return () => {
@@ -220,6 +237,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     }
     return true;
   }, [displayFeedText, isMemeCard, item.memeMeta]);
+
+  const isSubstantiallyLonger = (item.articleBody?.length ?? 0) > item.feedText.length * 1.25;
 
   const handleCardPress = () => {
     openArticle(item.id);
@@ -309,6 +328,30 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         </View>
 
         <View style={styles.topRightActions}>
+          {/* Live AI Curation Badge */}
+          {Boolean(item.aiAssisted) && (
+            <View
+              style={[
+                styles.provenancePill,
+                {
+                  backgroundColor: 'rgba(16, 185, 129, 0.14)',
+                  borderColor: '#10B981',
+                  marginRight: 4
+                }
+              ]}
+            >
+              <Text
+                style={[
+                  styles.provenancePillText,
+                  { color: '#10B981', fontWeight: '700' }
+                ]}
+                numberOfLines={1}
+              >
+                ✨ Live-KI veredelt
+              </Text>
+            </View>
+          )}
+
           {/* Honest Provenance Pill */}
           <View
             style={[
@@ -424,14 +467,28 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             isMemeCard
               ? { aspectRatio: naturalAspectRatio || 1.25 }
               : naturalAspectRatio
-              ? { height: undefined, aspectRatio: Math.max(1.2, Math.min(2.2, naturalAspectRatio)), maxHeight: 340 }
-              : null
+              ? naturalAspectRatio >= 1.15
+                ? { height: undefined, aspectRatio: Math.min(2.2, naturalAspectRatio), maxHeight: isDesktop ? 400 : 320 }
+                : naturalAspectRatio >= 0.85
+                ? { height: undefined, aspectRatio: naturalAspectRatio, maxHeight: 340, width: '100%', alignSelf: 'center' }
+                : { height: undefined, aspectRatio: Math.max(0.65, naturalAspectRatio), maxHeight: 380, width: '100%', alignSelf: 'center' }
+              : { height: undefined, aspectRatio: 16 / 9, maxHeight: 300, backgroundColor: colors.surfaceSecondary }
           ]}
         >
           <Image
             source={{ uri: activeVisualUri }}
-            style={[styles.cardImage, isMemeCard && styles.comicImage]}
-            resizeMode={isMemeCard ? 'contain' : 'cover'}
+            style={[
+              styles.cardImage,
+              isMemeCard && styles.comicImage,
+              { objectPosition: editorialAssessment.objectPosition || 'top center' } as any
+            ]}
+            resizeMode="contain"
+            onLoad={(e) => {
+              const { width, height } = e.nativeEvent.source;
+              if (width > 0 && height > 0) {
+                setNaturalAspectRatio(width / height);
+              }
+            }}
             onError={() => setImageError(true)}
           />
           {isMemeCard && (
@@ -489,7 +546,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         </View>
       )}
 
-      {matchedMusicTrack && <MusicTrackCard track={matchedMusicTrack} />}
+      {matchedMusicTrack && isFeatureEnabled(profile, 'sound_grounding') && <MusicTrackCard track={matchedMusicTrack} />}
 
       {/* 5. INLINE REDDIT EXPANDO: Kurz-Check (Abstract, Gegenstimme & Praxis-Transfer on demand) */}
       {isKurzCheckOpen && (
@@ -517,7 +574,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             </View>
           )}
 
-          {didacticTransfer && (
+          {didacticTransfer && isFeatureEnabled(profile, 'didactic_transfer') && (
             <View style={styles.kurzCheckSection}>
               <Text style={[styles.kurzCheckLabel, { color: '#10B981' }]}>🏫 Transfer & Praxis</Text>
               <Text style={[styles.kurzCheckText, { color: colors.textSecondary }]}>{didacticTransfer}</Text>
@@ -530,9 +587,18 @@ export const FeedCard: React.FC<FeedCardProps> = ({
               style={[styles.tieferGrabenBtn, { backgroundColor: colors.accent }]}
             >
               <Ionicons name="book-outline" size={13} color="#FFFFFF" style={{ marginRight: 5 }} />
-              <Text style={styles.tieferGrabenBtnText}>Vollständige Lektüre & Einordnung öffnen →</Text>
+              <Text style={styles.tieferGrabenBtnText}>
+                {isSubstantiallyLonger ? 'Vollständige Lektüre & Einordnung öffnen →' : 'Quell-Kontext & Sparring öffnen →'}
+              </Text>
             </TouchableOpacity>
           </View>
+        </View>
+      )}
+
+      {/* 5b. INLINE QUIZ CHECKPOINT */}
+      {isQuizOpen && isQuizFeatureEnabled && (
+        <View style={{ marginHorizontal: spacing.md, marginBottom: spacing.md }}>
+          <QuizCheckpointCard questions={[cardQuiz]} compact={true} />
         </View>
       )}
 
@@ -718,7 +784,11 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         >
           <Ionicons name="book-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
           <Text style={[styles.primaryReadBtnText, { color: colors.accent }]}>
-            {isQuick20sCard ? 'Einordnung' : `Lesen (${item.estimatedReadingMinutes}m)`}
+            {isQuick20sCard
+              ? 'Einordnung'
+              : isSubstantiallyLonger
+              ? `Lesen (${item.estimatedReadingMinutes}m)`
+              : 'Kontext & Sparring'}
           </Text>
         </TouchableOpacity>
 
@@ -749,6 +819,37 @@ export const FeedCard: React.FC<FeedCardProps> = ({
               ]}
             >
               Abstract
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* 9.3b Wissen testen Pill */}
+        {isQuizFeatureEnabled && (
+          <TouchableOpacity
+            onPress={() => setIsQuizOpen(prev => !prev)}
+            style={[
+              styles.actionChip,
+              {
+                backgroundColor: isQuizOpen ? colors.accentSubtle : colors.surfaceSecondary,
+                borderColor: isQuizOpen ? colors.accent : colors.borderSubtle
+              }
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Wissen testen"
+          >
+            <Ionicons
+              name={isQuizOpen ? 'school' : 'school-outline'}
+              size={12}
+              color={isQuizOpen ? colors.accent : colors.textSecondary}
+              style={{ marginRight: 4 }}
+            />
+            <Text
+              style={[
+                styles.actionChipText,
+                { color: isQuizOpen ? colors.accent : colors.textSecondary }
+              ]}
+            >
+              Wissen testen
             </Text>
           </TouchableOpacity>
         )}
@@ -801,14 +902,16 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         )}
 
         {/* 9.6 Right-Aligned Why? Info */}
-        <TouchableOpacity
-          onPress={() => openWhyModal(item)}
-          style={styles.whyIconBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityLabel="Warum sehe ich diesen Beitrag?"
-        >
-          <Ionicons name="sparkles-outline" size={14} color={colors.textMuted} />
-        </TouchableOpacity>
+        {isFeatureEnabled(profile, 'why_this_transparency') && (
+          <TouchableOpacity
+            onPress={() => openWhyModal(item)}
+            style={styles.whyIconBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Warum sehe ich diesen Beitrag?"
+          >
+            <Ionicons name="sparkles-outline" size={14} color={colors.textMuted} />
+          </TouchableOpacity>
+        )}
 
         {isCompleted && (
           <View style={styles.completedBadge}>
@@ -996,12 +1099,13 @@ const styles = StyleSheet.create({
   },
   imageContainer: {
     width: '100%',
-    height: 250,
     borderRadius: radius.md,
     overflow: 'hidden',
     marginVertical: 8,
     backgroundColor: '#0F172A',
-    position: 'relative'
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   comicStageContainer: {
     width: '100%',

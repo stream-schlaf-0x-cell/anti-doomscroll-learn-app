@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   TextInput,
   Modal,
   ActivityIndicator
@@ -13,11 +14,23 @@ import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing, PALETTE_METADATA, ThemePalette } from '../theme';
 import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
 import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
-import { defaultGeminiEnricher, AIProvider } from '../../core/enrichment/geminiEnricher';
 import { defaultSourceRepository } from '../../core/data/sourceRepository';
+import {
+  loadAiCredentials,
+  saveAiCredentials,
+  testAiConnection,
+  AiCredentials,
+  AiProvider,
+  DEFAULT_GEMINI_MODEL,
+  DEFAULT_OPENROUTER_MODEL,
+  OPENROUTER_MODEL_PRESETS
+} from '../../core/ai/atmenAiClient';
+import { GeminiModelSelector } from './GeminiModelSelector';
 import { NewsHubModal } from './NewsHubModal';
 import { UltraMasterModal } from './UltraMasterModal';
 import { MobilePublishModal } from './MobilePublishModal';
+import { AtmenBreathingPortal } from '../../features/breathing/AtmenBreathingPortal';
+import { HivemindStreamModal } from './HivemindStreamModal';
 
 interface DesktopRedditHeaderProps {
   searchQuery: string;
@@ -42,8 +55,6 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     setPalettePreference,
     activeTab,
     setActiveTab,
-    activeFeedOption,
-    setActiveFeedOption,
     goHome,
     selectedArticleId,
     savedArticles,
@@ -64,16 +75,29 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
   const [showNewsHubModal, setShowNewsHubModal] = useState<boolean>(false);
   const [showUltraMasterModal, setShowUltraMasterModal] = useState<boolean>(false);
   const [showMobilePublishModal, setShowMobilePublishModal] = useState<boolean>(false);
+  const [showBreathingPortal, setShowBreathingPortal] = useState<boolean>(false);
+  const [showHivemindModal, setShowHivemindModal] = useState<boolean>(false);
   const [bannerNotice, setBannerNotice] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
-  // AI Hub State
-  const [aiProvider, setAiProvider] = useState<AIProvider>(defaultGeminiEnricher.getProvider());
-  const [aiModel, setAiModel] = useState<string>(defaultGeminiEnricher.getModel());
-  const [aiEndpoint, setAiEndpoint] = useState<string>(defaultGeminiEnricher.getEndpoint());
-  const [aiKeyInput, setAiKeyInput] = useState<string>('');
-  const [testResult, setTestResult] = useState<string | null>(null);
+  // AI Hub State - Strictly synced with loadAiCredentials & saveAiCredentials (@atem:ai_credentials:v1)
+  const [aiCreds, setAiCreds] = useState<AiCredentials>({
+    provider: 'gemini',
+    apiKey: '',
+    model: DEFAULT_GEMINI_MODEL
+  });
+  const [showApiKey, setShowApiKey] = useState<boolean>(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [isTestingAI, setIsTestingAI] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (showAIModal) {
+      void (async () => {
+        const creds = await loadAiCredentials();
+        setAiCreds(creds);
+      })();
+    }
+  }, [showAIModal]);
 
   const healthOverview = defaultSourceRepository.getHealthOverview();
 
@@ -123,40 +147,31 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     }
   };
 
-  const handleSwitchAIProvider = (provider: AIProvider) => {
-    setAiProvider(provider);
-    defaultGeminiEnricher.setProvider(provider);
-    setAiModel(defaultGeminiEnricher.getModel());
-    setAiEndpoint(defaultGeminiEnricher.getEndpoint());
+  const handleSwitchAIProvider = async (provider: AiProvider) => {
+    const defaultModel = provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL;
+    const next: AiCredentials = {
+      ...aiCreds,
+      provider,
+      model: defaultModel
+    };
+    setAiCreds(next);
+    await saveAiCredentials(next);
     setTestResult(null);
   };
 
-  const handleSaveAISettings = () => {
-    if (aiKeyInput.trim()) {
-      defaultGeminiEnricher.setApiKey(aiKeyInput.trim());
-    }
-    if (aiModel.trim()) {
-      defaultGeminiEnricher.setModel(aiModel.trim());
-    }
-    if (aiEndpoint.trim()) {
-      defaultGeminiEnricher.setEndpoint(aiEndpoint.trim());
-    }
-    showToast('✓ KI-Konfiguration übernommen');
+  const handleSaveAISettings = async () => {
+    await saveAiCredentials(aiCreds);
+    showToast('✓ KI-Konfiguration dauerhaft gesichert');
   };
 
   const handleTestAI = async () => {
     setIsTestingAI(true);
     setTestResult(null);
     try {
-      if (aiKeyInput.trim()) defaultGeminiEnricher.setApiKey(aiKeyInput.trim());
-      defaultGeminiEnricher.setModel(aiModel.trim());
-      defaultGeminiEnricher.setEndpoint(aiEndpoint.trim());
-      const res = await defaultGeminiEnricher.testConnection();
-      if (res.success) {
-        setTestResult(`✓ Verbunden!\n„${res.reply}“`);
-      } else {
-        setTestResult(`Hinweis: ${res.message}\n(Atem nutzt lokale Heuristik als Null-Kosten-Garantie)`);
-      }
+      await saveAiCredentials(aiCreds);
+      const res = await testAiConnection(aiCreds);
+      setTestResult(res);
+      showToast(res.ok ? '✓ Verbindung erfolgreich' : 'Verbindungsfehler');
     } finally {
       setIsTestingAI(false);
     }
@@ -210,7 +225,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 <Text style={styles.logoSymbol}>◎</Text>
               </View>
               <Text style={[styles.brandText, { color: colors.textPrimary }]}>
-                atmen
+                Atmen
               </Text>
             </TouchableOpacity>
 
@@ -270,7 +285,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               <TextInput
                 value={searchQuery}
                 onChangeText={onSearchChange}
-                placeholder="atmen durchsuchen (Thesen, Didaktik, Quellen)…"
+                placeholder="Atmen durchsuchen (Thesen, Didaktik, Quellen)…"
                 placeholderTextColor={colors.textMuted}
                 style={[styles.searchInput, { color: colors.textPrimary }]}
                 autoCapitalize="none"
@@ -317,6 +332,34 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               </Text>
             </TouchableOpacity>
 
+            {/* 3. Atmen Breathing Portal Pill */}
+            <TouchableOpacity
+              onPress={() => setShowBreathingPortal(true)}
+              style={[styles.breathingPill, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: '#10B981' }]}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Atmen Portal öffnen"
+            >
+              <Ionicons name="leaf-outline" size={14} color="#10B981" style={{ marginRight: 4 }} />
+              <Text style={[styles.breathingPillText, { color: '#10B981', fontWeight: '700' }]}>
+                ◎ Atmen
+              </Text>
+            </TouchableOpacity>
+
+            {/* 4. Hivemind-Stream Trigger */}
+            <TouchableOpacity
+              onPress={() => setShowHivemindModal(true)}
+              style={[styles.hivemindBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Hivemind Stream generieren"
+            >
+              <Ionicons name="git-network-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+              <Text style={[styles.hivemindBadgeText, { color: colors.textPrimary, fontWeight: '600' }]}>
+                + Hivemind-Stream
+              </Text>
+            </TouchableOpacity>
+
             {/* 3. Studio & Tools Hub Button (consolidates Kurator, Master Studio, KI, Mobile QR & Karma) */}
             <TouchableOpacity
               onPress={() => setShowDevSimModal(true)}
@@ -360,10 +403,10 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 onPress={() => setActiveTab('feed')}
                 style={[styles.tabBtn, activeTab === 'feed' && { backgroundColor: colors.surface }]}
                 accessibilityRole="button"
-                accessibilityLabel="Feed öffnen"
+                accessibilityLabel="Ausgabe öffnen"
               >
                 <Ionicons
-                  name="compass-outline"
+                  name="newspaper-outline"
                   size={15}
                   color={activeTab === 'feed' ? colors.accent : colors.textMuted}
                 />
@@ -386,7 +429,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 onPress={() => setActiveTab('settings')}
                 style={[styles.tabBtn, activeTab === 'settings' && { backgroundColor: colors.surface }]}
                 accessibilityRole="button"
-                accessibilityLabel="Einstellungen öffnen"
+                accessibilityLabel="Steuerung öffnen"
               >
                 <Ionicons
                   name="options-outline"
@@ -413,12 +456,20 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         animationType="fade"
         onRequestClose={() => setShowSpaceModal(false)}
       >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowSpaceModal(false)}
-        >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <View style={styles.modalOverlay}>
+          <Pressable
+            accessibilityLabel="Hintergrund schließen"
+            onPress={() => setShowSpaceModal(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View
+            style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+            onStartShouldSetResponder={() => true}
+            // @ts-ignore - web click propagation guard
+            onClick={(e: any) => {
+              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+            }}
+          >
             <View style={styles.modalHeader}>
               <Ionicons name="planet-outline" size={20} color={colors.accent} style={{ marginRight: 8 }} />
               <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Themen-Space wählen</Text>
@@ -474,7 +525,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               );
             })}
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* 2. Erkenntnis-Karma Modal */}
@@ -484,12 +535,20 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         animationType="fade"
         onRequestClose={() => setShowKarmaModal(false)}
       >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowKarmaModal(false)}
-        >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <View style={styles.modalOverlay}>
+          <Pressable
+            accessibilityLabel="Hintergrund schließen"
+            onPress={() => setShowKarmaModal(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View
+            style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+            onStartShouldSetResponder={() => true}
+            // @ts-ignore - web click propagation guard
+            onClick={(e: any) => {
+              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+            }}
+          >
             <View style={styles.modalHeader}>
               <Ionicons name="flame" size={22} color="#FF4500" style={{ marginRight: 8 }} />
               <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Erkenntnis-Karma</Text>
@@ -517,7 +576,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               </Text>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* 3. AI Hub & Provider Modal */}
@@ -527,139 +586,157 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         animationType="fade"
         onRequestClose={() => setShowAIModal(false)}
       >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowAIModal(false)}
-        >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <View style={styles.modalOverlay}>
+          <Pressable
+            accessibilityLabel="Hintergrund schließen"
+            onPress={() => setShowAIModal(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View
+            style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, maxWidth: 640 }]}
+            onStartShouldSetResponder={() => true}
+            // @ts-ignore - web click propagation guard
+            onClick={(e: any) => {
+              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+            }}
+          >
             <View style={styles.modalHeader}>
               <Ionicons name="hardware-chip-outline" size={22} color={colors.accent} style={{ marginRight: 8 }} />
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>KI-Orchestrierung & Sparring</Text>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>KI-Orchestrierung & Modelle</Text>
               <TouchableOpacity onPress={() => setShowAIModal(false)}>
                 <Ionicons name="close" size={20} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
 
             {/* Provider Switcher */}
-            <Text style={[styles.modalSubHeader, { color: colors.textMuted }]}>KI-Modell & Sparring-Partner:</Text>
+            <Text style={[styles.modalSubHeader, { color: colors.textMuted }]}>KI-Provider wählen:</Text>
             <View style={styles.providerRow}>
               {[
-                { id: 'gemini', label: '⚡️ Gemini Flash', desc: 'Google Cloud' },
-                { id: 'ollama', label: '🦙 Local LLM', desc: 'Ollama / Offline' },
-                { id: 'openai', label: '🔮 ChatGPT / API', desc: 'OpenAI / Custom' }
+                { id: 'gemini' as const, label: '⚡️ Google Gemini', desc: 'Offiziell (3.8 Flash, Argon, Nano)' },
+                { id: 'openrouter' as const, label: '🔮 OpenRouter', desc: 'Claude 3.5 Sonnet, Llama 3.3 & mehr' }
               ].map(p => (
                 <TouchableOpacity
                   key={p.id}
-                  onPress={() => handleSwitchAIProvider(p.id as AIProvider)}
+                  onPress={() => void handleSwitchAIProvider(p.id)}
                   style={[
                     styles.providerPill,
                     {
-                      backgroundColor: aiProvider === p.id ? colors.accent : colors.surfaceSecondary,
-                      borderColor: aiProvider === p.id ? colors.accent : colors.borderSubtle
+                      backgroundColor: aiCreds.provider === p.id ? colors.accent : colors.surfaceSecondary,
+                      borderColor: aiCreds.provider === p.id ? colors.accent : colors.borderSubtle
                     }
                   ]}
                 >
-                  <Text style={[styles.providerPillText, { color: aiProvider === p.id ? '#FFFFFF' : colors.textPrimary }]}>
+                  <Text style={[styles.providerPillText, { color: aiCreds.provider === p.id ? '#FFFFFF' : colors.textPrimary }]}>
                     {p.label}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
-            {/* Settings Fields */}
-            <View style={{ gap: 8, marginTop: 12 }}>
-              <View>
-                <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Modell:</Text>
-                
-                {/* 1-Click Model Presets */}
+            {/* If Gemini: Full GeminiModelSelector */}
+            {aiCreds.provider === 'gemini' ? (
+              <GeminiModelSelector
+                selectedModelId={aiCreds.model || DEFAULT_GEMINI_MODEL}
+                onSelectModel={async mId => {
+                  const next = { ...aiCreds, model: mId };
+                  setAiCreds(next);
+                  await saveAiCredentials(next);
+                }}
+                apiKey={aiCreds.apiKey}
+                workflow="text"
+              />
+            ) : (
+              /* OpenRouter Model Selection */
+              <View style={{ marginVertical: 8 }}>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>OpenRouter Modell:</Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 6 }}>
-                  {[
-                    { id: 'gemini-3.8-flash', label: '⚡️ 3.8 Flash (Standard)', provider: 'gemini' },
-                    { id: 'gemini-3.7-flash', label: '⚡️ 3.7 Flash', provider: 'gemini' },
-                    { id: 'gemini-4-argon', label: '🧪 4 Argon (Experimental)', provider: 'gemini' },
-                    { id: 'gemini-2.5-flash', label: '⚡️ 2.5 Flash', provider: 'gemini' },
-                    { id: 'llama3.2', label: '🦙 Llama 3.2', provider: 'ollama' },
-                    { id: 'mistral', label: '🦙 Mistral', provider: 'ollama' },
-                    { id: 'gpt-4o-mini', label: '🔮 GPT-4o mini', provider: 'openai' },
-                    { id: 'gpt-4o', label: '🔮 GPT-4o', provider: 'openai' }
-                  ].filter(m => m.provider === aiProvider).map(m => (
-                    <TouchableOpacity
-                      key={m.id}
-                      onPress={() => {
-                        setAiModel(m.id);
-                        defaultGeminiEnricher.setModel(m.id);
-                        showToast(`Modell gewählt: ${m.id}`);
-                      }}
-                      style={[
-                        styles.modelPresetPill,
-                        {
-                          backgroundColor: aiModel === m.id ? colors.accent : colors.surfaceSecondary,
-                          borderColor: aiModel === m.id ? colors.accent : colors.borderSubtle
-                        }
-                      ]}
-                    >
-                      <Text style={{ fontSize: 11, fontWeight: '600', color: aiModel === m.id ? '#FFFFFF' : colors.textPrimary }}>
-                        {m.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                  {OPENROUTER_MODEL_PRESETS.map(preset => {
+                    const isSelected = (aiCreds.model || DEFAULT_OPENROUTER_MODEL) === preset.id;
+                    return (
+                      <TouchableOpacity
+                        key={preset.id}
+                        onPress={async () => {
+                          const next = { ...aiCreds, model: preset.id };
+                          setAiCreds(next);
+                          await saveAiCredentials(next);
+                        }}
+                        style={[
+                          styles.modelPresetPill,
+                          {
+                            backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
+                            borderColor: isSelected ? colors.accent : colors.borderSubtle
+                          }
+                        ]}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: isSelected ? '#FFFFFF' : colors.textPrimary }}>
+                          {preset.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-
                 <TextInput
-                  value={aiModel}
-                  onChangeText={setAiModel}
-                  placeholder="z.B. gemini-3.8-flash, gemini-3.7-flash oder gemini-4-argon"
+                  value={aiCreds.model}
+                  onChangeText={async text => {
+                    const next = { ...aiCreds, model: text };
+                    setAiCreds(next);
+                    await saveAiCredentials(next);
+                  }}
+                  placeholder={DEFAULT_OPENROUTER_MODEL}
                   placeholderTextColor={colors.textMuted}
                   style={[styles.modalInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
                 />
               </View>
+            )}
 
-              {aiProvider !== 'gemini' && (
-                <View>
-                  <Text style={[styles.inputLabel, { color: colors.textMuted }]}>Endpoint:</Text>
-                  <TextInput
-                    value={aiEndpoint}
-                    onChangeText={setAiEndpoint}
-                    placeholder="http://localhost:11434/v1"
-                    placeholderTextColor={colors.textMuted}
-                    style={[styles.modalInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
-                  />
-                </View>
-              )}
-
-              {aiProvider !== 'ollama' && (
-                <View>
-                  <Text style={[styles.inputLabel, { color: colors.textMuted }]}>API-Key (optional, lokal gesichert):</Text>
-                  <TextInput
-                    value={aiKeyInput}
-                    onChangeText={setAiKeyInput}
-                    secureTextEntry
-                    placeholder="Key einfügen für Live-KI..."
-                    placeholderTextColor={colors.textMuted}
-                    style={[styles.modalInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
-                  />
-                </View>
-              )}
+            {/* API Key Input */}
+            <View style={{ marginTop: 8 }}>
+              <Text style={[styles.inputLabel, { color: colors.textMuted }]}>
+                {aiCreds.provider === 'gemini' ? 'Google AI Studio API-Key (lokal gesichert):' : 'OpenRouter API-Key:'}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <TextInput
+                  value={aiCreds.apiKey}
+                  onChangeText={async text => {
+                    const next = { ...aiCreds, apiKey: text };
+                    setAiCreds(next);
+                    await saveAiCredentials(next);
+                  }}
+                  secureTextEntry={!showApiKey}
+                  placeholder={aiCreds.provider === 'gemini' ? 'AIzaSy...' : 'sk-or-v1-...'}
+                  placeholderTextColor={colors.textMuted}
+                  style={[styles.modalInput, { flex: 1, backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowApiKey(!showApiKey)}
+                  style={[styles.keyActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1, borderRadius: radius.md, padding: 8 }]}
+                >
+                  <Ionicons name={showApiKey ? 'eye-off-outline' : 'eye-outline'} size={18} color={colors.textMuted} />
+                </TouchableOpacity>
+              </View>
             </View>
 
-            {/* Test AI Connection Button */}
+            {/* Action Buttons */}
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
               <TouchableOpacity
                 onPress={handleTestAI}
                 disabled={isTestingAI}
-                style={[styles.modalActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+                style={[styles.modalActionBtn, { flex: 1, backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
               >
                 {isTestingAI ? (
                   <ActivityIndicator size="small" color={colors.accent} />
                 ) : (
-                  <Text style={[styles.modalActionBtnText, { color: colors.accent }]}>Test-Sparring anfordern</Text>
+                  <Text style={[styles.modalActionBtnText, { color: colors.accent, fontWeight: '700' }]}>
+                    🔑 API-Key speichern & Verbindung testen
+                  </Text>
                 )}
               </TouchableOpacity>
 
               <TouchableOpacity
                 onPress={handleSaveAISettings}
-                style={[styles.modalActionBtn, { backgroundColor: colors.accent }]}
+                style={[styles.modalActionBtn, { backgroundColor: colors.accent, paddingHorizontal: 16 }]}
               >
                 <Text style={[styles.modalActionBtnText, { color: '#FFFFFF' }]}>Speichern</Text>
               </TouchableOpacity>
@@ -667,17 +744,31 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
 
             {/* Test Result Box */}
             {testResult && (
-              <View style={[styles.testResultBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                <Text style={[styles.testResultText, { color: colors.textPrimary }]}>{testResult}</Text>
+              <View
+                style={[
+                  styles.testResultBox,
+                  {
+                    backgroundColor: testResult.ok ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                    borderColor: testResult.ok ? '#10B981' : '#EF4444',
+                    borderWidth: 1,
+                    marginTop: 10,
+                    borderRadius: radius.md,
+                    padding: 8
+                  }
+                ]}
+              >
+                <Text style={{ color: testResult.ok ? '#10B981' : '#EF4444', fontSize: 12, fontWeight: '600' }}>
+                  {testResult.message}
+                </Text>
               </View>
             )}
 
             {/* Zero-Risk Note */}
-            <Text style={[styles.modalFooterNote, { color: colors.textMuted }]}>
-              Deckel: 5,00 €/Monat. Bei Erreichen oder ohne Key schaltet Atem unterbrechungsfrei auf die lokale Heuristik um.
+            <Text style={[styles.modalFooterNote, { color: colors.textMuted, marginTop: 8 }]}>
+              Deckel: 5,00 €/Monat. Ohne Key oder bei Budgetlimit schaltet Atem unterbrechungsfrei auf die lokale Heuristik um.
             </Text>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* 4. Design-Palette Switcher Modal */}
@@ -687,12 +778,20 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         animationType="fade"
         onRequestClose={() => setShowPaletteModal(false)}
       >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowPaletteModal(false)}
-        >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <View style={styles.modalOverlay}>
+          <Pressable
+            accessibilityLabel="Hintergrund schließen"
+            onPress={() => setShowPaletteModal(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View
+            style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+            onStartShouldSetResponder={() => true}
+            // @ts-ignore - web click propagation guard
+            onClick={(e: any) => {
+              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+            }}
+          >
             <View style={styles.modalHeader}>
               <Ionicons name="color-palette-outline" size={22} color={colors.accent} style={{ marginRight: 8 }} />
               <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Design-Ästhetik wählen</Text>
@@ -740,7 +839,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               })}
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* Ultra Master Studio Modal */}
@@ -761,6 +860,19 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         onClose={() => setShowNewsHubModal(false)}
       />
 
+      {/* Atmen Breathing Portal Modal */}
+      <AtmenBreathingPortal
+        visible={showBreathingPortal}
+        onClose={() => setShowBreathingPortal(false)}
+        mode="modal"
+      />
+
+      {/* Hivemind Epistemic Stream Modal */}
+      <HivemindStreamModal
+        visible={showHivemindModal}
+        onClose={() => setShowHivemindModal(false)}
+      />
+
       {/* Feed-Kurator & Live-Sync Modal */}
       <Modal
         visible={showDevSimModal}
@@ -768,15 +880,23 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         animationType="fade"
         onRequestClose={() => setShowDevSimModal(false)}
       >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowDevSimModal(false)}
-        >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, maxWidth: 520 }]}>
+        <View style={styles.modalOverlay}>
+          <Pressable
+            accessibilityLabel="Hintergrund schließen"
+            onPress={() => setShowDevSimModal(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View
+            style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, maxWidth: 520 }]}
+            onStartShouldSetResponder={() => true}
+            // @ts-ignore - web click propagation guard
+            onClick={(e: any) => {
+              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+            }}
+          >
             <View style={styles.modalHeader}>
               <Ionicons name="sparkles" size={22} color={colors.accent} style={{ marginRight: 8 }} />
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>⚡ Studio, Kurator & Werkzeuge</Text>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Studio, Kurator & Werkzeuge</Text>
               <TouchableOpacity onPress={() => setShowDevSimModal(false)}>
                 <Ionicons name="close" size={20} color={colors.textMuted} />
               </TouchableOpacity>
@@ -789,10 +909,10 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
             <View style={[styles.karmaHeroBox, { backgroundColor: colors.surfaceSecondary, marginTop: 8 }]}>
               <Text style={[styles.karmaHeroLabel, { color: colors.accent }]}>Aktiver Redaktionsstand:</Text>
               <Text style={[styles.karmaHeroNumber, { color: colors.textPrimary, fontSize: 18 }]}>
-                📅 {activeDateSeed}
+                {activeDateSeed}
               </Text>
               <Text style={[styles.karmaHeroDesc, { color: colors.textMuted, marginTop: 4 }]}>
-                {healthOverview.deliveringSources} aktive Quellen • {healthOverview.totalItemsHarvested} Artikel im Snapshot • 🔥 {karmaScore} Erkenntnis-Karma
+                {healthOverview.deliveringSources} aktive Quellen • {healthOverview.totalItemsHarvested} Artikel im Snapshot • {karmaScore} Erkenntnis-Karma
               </Text>
             </View>
 
@@ -806,7 +926,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
               >
                 <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
-                  📡 Quellen-Zentrale ({healthOverview.deliveringSources}/{healthOverview.totalSources})
+                  Quellen-Zentrale ({healthOverview.deliveringSources}/{healthOverview.totalSources})
                 </Text>
               </TouchableOpacity>
 
@@ -818,7 +938,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
               >
                 <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
-                  ⚡ Master Studio
+                  Master Studio
                 </Text>
               </TouchableOpacity>
 
@@ -830,7 +950,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
               >
                 <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
-                  🤖 KI & Budget
+                  KI & Budget
                 </Text>
               </TouchableOpacity>
 
@@ -842,7 +962,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
               >
                 <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
-                  📱 Aufs Handy
+                  Aufs Handy
                 </Text>
               </TouchableOpacity>
 
@@ -854,7 +974,19 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
               >
                 <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
-                  📋 Craft-Export
+                  Craft-Export
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  setShowDevSimModal(false);
+                  handleDownloadCraft();
+                }}
+                style={[styles.modelPresetPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, paddingVertical: 7, paddingHorizontal: 10 }]}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
+                  Craft-Download (.md)
                 </Text>
               </TouchableOpacity>
             </View>
@@ -872,7 +1004,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 )}
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
-                    🔄 Frischer Wind (Sofort neu mischen)
+                    Frischer Wind (Sofort neu mischen)
                   </Text>
                   <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 11 }}>
                     Rotiert ungesehene Beiträge aus dem Bloomscrolling-Pool in den Vordergrund.
@@ -888,7 +1020,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 <Ionicons name="refresh" size={18} color={colors.accent} style={{ marginRight: 8 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 13 }}>
-                    ⚡ Live-Sync & Kuratieren (Stand: {activeDateSeed})
+                    Live-Sync & Kuratieren (Stand: {activeDateSeed})
                   </Text>
                   <Text style={{ color: colors.textMuted, fontSize: 11 }}>
                     Aktualisiert den öffentlichen Feed-Snapshot und die Live-Quellen.
@@ -904,16 +1036,38 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 <Ionicons name="sunny-outline" size={18} color="#8B5CF6" style={{ marginRight: 8 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 13 }}>
-                    🌅 Nächsten Tag kuratieren (+1 Tag)
+                    Nächsten Tag kuratieren (+1 Tag)
                   </Text>
                   <Text style={{ color: colors.textMuted, fontSize: 11 }}>
                     Rotiert auf den nächsten 24h-Turnus mit neuem Seed.
                   </Text>
                 </View>
               </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  void handleRefresh();
+                }}
+                disabled={isRefreshing}
+                style={[styles.simActionButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+              >
+                {isRefreshing ? (
+                  <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 8 }} />
+                ) : (
+                  <Ionicons name="cloud-download-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 13 }}>
+                    Quellen-Feeds jetzt synchronisieren
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 11 }}>
+                    Ruft alle {healthOverview.totalSources} RSS-, Atom- und JSON-Feeds direkt ab.
+                  </Text>
+                </View>
+              </TouchableOpacity>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
     </>
   );
@@ -1079,6 +1233,28 @@ const styles = StyleSheet.create({
   newsHubText: {
     fontSize: 11,
     fontWeight: '700'
+  },
+  breathingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  breathingPillText: {
+    fontSize: 11
+  },
+  hivemindBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  hivemindBadgeText: {
+    fontSize: 11
   },
   ultraMasterBadge: {
     flexDirection: 'row',
@@ -1291,6 +1467,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 0.5,
     fontSize: typography.sizes.micro
+  },
+  keyActionBtn: {
+    justifyContent: 'center',
+    alignItems: 'center'
   },
   modalActionBtn: {
     flex: 1,

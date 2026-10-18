@@ -25,10 +25,17 @@ import { Subchannel, defaultSpaceRepository } from '../../core/spaces/spaceRepos
 import { UltraMasterModal } from '../../ui/components/UltraMasterModal';
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
 import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerationProgressModal';
-import { AtemBreathingModal } from '../../ui/components/AtemBreathingModal';
+import { AtmenBreathingPortal } from '../breathing/AtmenBreathingPortal';
+import { QuizCheckpointCard } from '../../ui/components/QuizCheckpointCard';
+import { generateQuizForArticle } from '../../core/quiz/quizGenerator';
+import { HivemindStreamModal } from '../../ui/components/HivemindStreamModal';
+import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { ContinuousLiveNewsService, NewsHubFilterCategory } from '../../core/data/continuousLiveNewsService';
 import { NewsHubModal } from '../../ui/components/NewsHubModal';
 import { defaultSourceRepository } from '../../core/data/sourceRepository';
+import { defaultBatchEditionEnricher } from '../../core/enrichment/batchEnricher';
+import { loadAiCredentials } from '../../core/ai/atmenAiClient';
+import { feedRepository } from '../../core/data/feedRepository';
 
 export const FeedScreen: React.FC = () => {
   const {
@@ -42,6 +49,8 @@ export const FeedScreen: React.FC = () => {
     recordCardAppearances,
     colors,
     refreshFeed,
+    refreshLiveFeed,
+    snapshotSyncInfo,
     activeFeedOption,
     setActiveFeedOption,
     selectedEditionType,
@@ -80,15 +89,31 @@ export const FeedScreen: React.FC = () => {
   const [streamError, setStreamError] = useState<string | null>(null);
   const [streamFinished, setStreamFinished] = useState<boolean>(false);
   const [showBreathingModal, setShowBreathingModal] = useState<boolean>(false);
+  const [showHivemindModal, setShowHivemindModal] = useState<boolean>(false);
 
   // Live News Hub & Classics State
   const [liveNewsCategory, setLiveNewsCategory] = useState<NewsHubFilterCategory>('all');
+  const [liveNewsWindowMode, setLiveNewsWindowMode] = useState<'7d_quality' | '48h_fresh' | 'chronological'>('7d_quality');
   const [liveNewsItems, setLiveNewsItems] = useState<FeedItem[]>([]);
   const [liveNewsLoading, setLiveNewsLoading] = useState<boolean>(false);
-  const [liveNewsLimit, setLiveNewsLimit] = useState<number>(25);
+  const [liveNewsLimit, setLiveNewsLimit] = useState<number>(35);
   const [liveNewsLastUpdated, setLiveNewsLastUpdated] = useState<string>('Live');
   const [showNewsHubSettingsModal, setShowNewsHubSettingsModal] = useState<boolean>(false);
   const [classicsItems, setClassicsItems] = useState<FeedItem[]>([]);
+
+  const activeTopic: TopicTag | undefined = useMemo(() => {
+    if (selectedFilter === 'all') return undefined;
+    const sub = subchannels.find(
+      s => s.handle.toLowerCase() === selectedFilter.toLowerCase() || s.primaryTopic === selectedFilter
+    );
+    if (sub?.primaryTopic) return sub.primaryTopic;
+    const entry = (Object.entries(TOPIC_SPACE_MAP) as [TopicTag, (typeof TOPIC_SPACE_MAP)[TopicTag]][]).find(
+      ([_, meta]) => meta.space.toLowerCase() === selectedFilter.toLowerCase()
+    );
+    if (entry) return entry[0] as TopicTag;
+    if (selectedFilter in profile.explicitInterests) return selectedFilter as TopicTag;
+    return OnTheFlyStreamService.inferTopicFromSpace(selectedFilter);
+  }, [selectedFilter, subchannels, profile.explicitInterests]);
 
   const loadLiveNews = useCallback(async (forceRefresh = false) => {
     setLiveNewsLoading(true);
@@ -97,7 +122,9 @@ export const FeedScreen: React.FC = () => {
         category: liveNewsCategory,
         query: searchQuery,
         limit: liveNewsLimit,
-        forceRefresh
+        forceRefresh,
+        windowMode: liveNewsWindowMode,
+        topic: selectedFilter !== 'all' ? activeTopic : undefined
       });
       setLiveNewsItems(items);
       setLiveNewsLastUpdated(ContinuousLiveNewsService.getLastUpdatedTime());
@@ -106,7 +133,7 @@ export const FeedScreen: React.FC = () => {
     } finally {
       setLiveNewsLoading(false);
     }
-  }, [liveNewsCategory, searchQuery, liveNewsLimit]);
+  }, [liveNewsCategory, searchQuery, liveNewsLimit, liveNewsWindowMode, selectedFilter, activeTopic]);
 
   React.useEffect(() => {
     if (activeFeedOption === 'live_news') {
@@ -116,19 +143,27 @@ export const FeedScreen: React.FC = () => {
     }
   }, [activeFeedOption, loadLiveNews]);
 
-  const scoredLiveItems = useMemo(() => {
-    return liveNewsItems.map(item => scoreFeedItem(item, profile, interactions));
-  }, [liveNewsItems, profile, interactions]);
-
-  const scoredClassicsItems = useMemo(() => {
-    return classicsItems.map(item => scoreFeedItem(item, profile, interactions));
-  }, [classicsItems, profile, interactions]);
+  const matchesSelectedSpace = useCallback((item: FeedItem): boolean => {
+    if (selectedFilter === 'all') return true;
+    const filterLower = selectedFilter.toLowerCase();
+    if (item.space && item.space.toLowerCase() === filterLower) return true;
+    if (activeTopic) {
+      if (item.primaryTopic === activeTopic || item.topics.includes(activeTopic)) {
+        return true;
+      }
+    }
+    const raw = filterLower.replace(/^c\//, '');
+    if (raw.length > 2) {
+      const hay = `${item.title} ${item.subtitle || ''} ${item.feedText || ''} ${item.primaryTopic} ${item.topics.join(' ')}`.toLowerCase();
+      if (hay.includes(raw)) return true;
+    }
+    return false;
+  }, [selectedFilter, activeTopic]);
 
   const loadSubchannels = useCallback(async () => {
     const all = await defaultSpaceRepository.getAllSpaces();
     setSubchannels(all);
   }, []);
-
 
   React.useEffect(() => {
     void loadSubchannels();
@@ -136,7 +171,7 @@ export const FeedScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await refreshFeed();
+    await refreshLiveFeed();
     await loadSubchannels();
     if (activeFeedOption === 'live_news') {
       await loadLiveNews();
@@ -151,7 +186,7 @@ export const FeedScreen: React.FC = () => {
     setSimulatingDay(true);
     try {
       const res = await simulateDailyGeneration(0);
-      setSimToast(`✓ Ausgabe für ${res.simulatedDate} neu durchmischt & Live-Feeds synchronisiert!`);
+      setSimToast(`Ausgabe für ${res.simulatedDate} neu durchmischt & Live-Feeds synchronisiert`);
       setTimeout(() => setSimToast(null), 3000);
     } catch {
       setSimToast('Simulation fehlgeschlagen.');
@@ -165,7 +200,7 @@ export const FeedScreen: React.FC = () => {
     setSimulatingDay(true);
     try {
       const res = await simulateDailyGeneration(1);
-      setSimToast(`✓ Nächster Tag simuliert: ${res.simulatedDate} (${res.itemCount} frische Artikel)!`);
+      setSimToast(`Nächster Tag simuliert: ${res.simulatedDate} (${res.itemCount} frische Artikel)`);
       setTimeout(() => setSimToast(null), 3500);
     } catch {
       setSimToast('Simulation fehlgeschlagen.');
@@ -179,7 +214,7 @@ export const FeedScreen: React.FC = () => {
     setSimulatingDay(true);
     try {
       await shuffleFeed();
-      setSimToast('✓ Frischer Wind: Ausgabe neu rotiert!');
+      setSimToast('Frischer Wind: Ausgabe neu rotiert');
       setTimeout(() => setSimToast(null), 2500);
     } catch {
       setSimToast('Mischen fehlgeschlagen.');
@@ -189,26 +224,14 @@ export const FeedScreen: React.FC = () => {
     }
   };
 
-  const activeTopic: TopicTag | undefined = useMemo(() => {
-    if (selectedFilter === 'all') return undefined;
-    const sub = subchannels.find(s => s.handle === selectedFilter || s.primaryTopic === selectedFilter);
-    if (sub?.primaryTopic) return sub.primaryTopic;
-    const entry = (Object.entries(TOPIC_SPACE_MAP) as [TopicTag, (typeof TOPIC_SPACE_MAP)[TopicTag]][]).find(
-      ([_, meta]) => meta.space.toLowerCase() === selectedFilter.toLowerCase()
-    );
-    if (entry) return entry[0] as TopicTag;
-    if (selectedFilter in profile.explicitInterests) return selectedFilter as TopicTag;
-    return undefined;
-  }, [selectedFilter, subchannels, profile.explicitInterests]);
-
   const handleGenerateEmptyPocket = async () => {
     const targetSpace = selectedFilter === 'all'
-      ? (searchQuery ? `c/${searchQuery.toLowerCase().replace(/[^a-z0-9_]/g, '_')}` : 'c/persoenlicher_focus')
+      ? (searchQuery ? `c/${searchQuery.toLowerCase().replace(/[^a-z0-9_]/g, '_')}` : 'c/serendipity')
       : selectedFilter;
 
     setProgressSpaceName(targetSpace);
-    setStreamProgress(5);
-    setStreamStatusText('Recherche vorbereiten…');
+    setStreamProgress(10);
+    setStreamStatusText('Live-Forschung & Primärquellen abfragen…');
     setStreamError(null);
     setStreamFinished(false);
     setShowProgressModal(true);
@@ -217,9 +240,11 @@ export const FeedScreen: React.FC = () => {
     try {
       await OnTheFlyStreamService.generateStreamForPocket({
         space: targetSpace,
-        includeAiSynthesis: true,
-        includeMemes: true,
-        count: 4,
+        topic: activeTopic,
+        searchTerm: searchQuery.trim() || undefined,
+        includeAiSynthesis: false,
+        includeMemes: false,
+        count: 10,
         onProgress: (p, label) => {
           setStreamProgress(p);
           setStreamStatusText(label);
@@ -241,7 +266,11 @@ export const FeedScreen: React.FC = () => {
 
   const handleFilterChange = (filter: string | 'all') => {
     setSelectedFilter(filter);
-    setVisibleDiscoveryCount(10);
+    setVisibleDiscoveryCount(12);
+    setVisibleInfiniteCount(16);
+    if (filter !== 'all' && (activeFeedOption === 'live_news' || activeFeedOption === 'classics')) {
+      setActiveFeedOption('infinite');
+    }
   };
 
   // Helper to filter items by search query
@@ -258,53 +287,27 @@ export const FeedScreen: React.FC = () => {
     );
   }, [searchQuery]);
 
+  const scoredLiveItems = useMemo(() => {
+    const scored = liveNewsItems.filter(matchesSelectedSpace).map(item => scoreFeedItem(item, profile, interactions));
+    return filterByQuery(scored);
+  }, [liveNewsItems, matchesSelectedSpace, profile, interactions, filterByQuery]);
+
+  const scoredClassicsItems = useMemo(() => {
+    const scored = classicsItems.filter(matchesSelectedSpace).map(item => scoreFeedItem(item, profile, interactions));
+    return filterByQuery(scored);
+  }, [classicsItems, matchesSelectedSpace, profile, interactions, filterByQuery]);
+
   // Filter daily edition items
   const filteredDaily = useMemo(() => {
-    const spaceFiltered = selectedFilter === 'all'
-      ? dailyEdition
-      : dailyEdition.filter(item => {
-          if (selectedFilter.startsWith('c/')) {
-            const raw = selectedFilter.slice(2).toLowerCase();
-            const matchesSpace = item.space?.toLowerCase() === selectedFilter.toLowerCase();
-            const matchesTopic = item.primaryTopic?.toLowerCase().includes(raw) || item.topics.some(t => t.toLowerCase().includes(raw));
-            const matchesSingularity = (raw.includes('singularity') || raw.includes('beschleunigung') || raw.includes('ai')) && (item.primaryTopic === 'ai_apple' || item.topics.includes('ai_apple'));
-            const matchesDidaktik = raw.includes('didaktik') && (item.primaryTopic === 'german_didactics' || item.topics.includes('german_didactics'));
-            const matchesKlang = (raw.includes('klang') || raw.includes('musik')) && (item.primaryTopic === 'sound_synthesis' || item.topics.includes('sound_synthesis'));
-            const matchesPhil = raw.includes('philosoph') && (item.primaryTopic === 'philosophy_ethics' || item.topics.includes('philosophy_ethics'));
-            const matchesWiss = raw.includes('wiss') && (item.primaryTopic === 'science_society' || item.topics.includes('science_society'));
-            const matchesBuch = (raw.includes('buch') || raw.includes('buecher')) && (item.primaryTopic === 'book_mastery' || item.topics.includes('book_mastery'));
-            const matchesYT = (raw.includes('youtube') || raw.includes('video')) && (item.primaryTopic === 'youtube_gems' || item.topics.includes('youtube_gems'));
-            const matchesMeme = (raw.includes('meme') || raw.includes('satire')) && (item.primaryTopic === 'memes_satire' || item.topics.includes('memes_satire'));
-            return matchesSpace || matchesTopic || matchesSingularity || matchesDidaktik || matchesKlang || matchesPhil || matchesWiss || matchesBuch || matchesYT || matchesMeme;
-          }
-          return item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter as TopicTag);
-        });
+    const spaceFiltered = dailyEdition.filter(matchesSelectedSpace);
     return filterByQuery(spaceFiltered);
-  }, [dailyEdition, selectedFilter, filterByQuery]);
+  }, [dailyEdition, matchesSelectedSpace, filterByQuery]);
 
   // Filter discovery pool items
   const filteredDiscovery = useMemo(() => {
-    const spaceFiltered = selectedFilter === 'all'
-      ? discoveryItems
-      : discoveryItems.filter(item => {
-          if (selectedFilter.startsWith('c/')) {
-            const raw = selectedFilter.slice(2).toLowerCase();
-            const matchesSpace = item.space?.toLowerCase() === selectedFilter.toLowerCase();
-            const matchesTopic = item.primaryTopic?.toLowerCase().includes(raw) || item.topics.some(t => t.toLowerCase().includes(raw));
-            const matchesSingularity = (raw.includes('singularity') || raw.includes('beschleunigung') || raw.includes('ai')) && (item.primaryTopic === 'ai_apple' || item.topics.includes('ai_apple'));
-            const matchesDidaktik = raw.includes('didaktik') && (item.primaryTopic === 'german_didactics' || item.topics.includes('german_didactics'));
-            const matchesKlang = (raw.includes('klang') || raw.includes('musik')) && (item.primaryTopic === 'sound_synthesis' || item.topics.includes('sound_synthesis'));
-            const matchesPhil = raw.includes('philosoph') && (item.primaryTopic === 'philosophy_ethics' || item.topics.includes('philosophy_ethics'));
-            const matchesWiss = raw.includes('wiss') && (item.primaryTopic === 'science_society' || item.topics.includes('science_society'));
-            const matchesBuch = (raw.includes('buch') || raw.includes('buecher')) && (item.primaryTopic === 'book_mastery' || item.topics.includes('book_mastery'));
-            const matchesYT = (raw.includes('youtube') || raw.includes('video')) && (item.primaryTopic === 'youtube_gems' || item.topics.includes('youtube_gems'));
-            const matchesMeme = (raw.includes('meme') || raw.includes('satire')) && (item.primaryTopic === 'memes_satire' || item.topics.includes('memes_satire'));
-            return matchesSpace || matchesTopic || matchesSingularity || matchesDidaktik || matchesKlang || matchesPhil || matchesWiss || matchesBuch || matchesYT || matchesMeme;
-          }
-          return item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter as TopicTag);
-        });
+    const spaceFiltered = discoveryItems.filter(matchesSelectedSpace);
     return filterByQuery(spaceFiltered);
-  }, [discoveryItems, selectedFilter, filterByQuery]);
+  }, [discoveryItems, matchesSelectedSpace, filterByQuery]);
 
   // Reddit sorting algorithms
   const applySort = useCallback((items: ScoredFeedItem[], mode: SortMode) => {
@@ -341,19 +344,9 @@ export const FeedScreen: React.FC = () => {
   }, [openWebItems, profile, interactions]);
 
   const filteredOpenWeb = useMemo(() => {
-    const spaceFiltered = selectedFilter === 'all'
-      ? scoredOpenWebItems
-      : scoredOpenWebItems.filter(item => {
-          if (selectedFilter.startsWith('c/')) {
-            const raw = selectedFilter.slice(2).toLowerCase();
-            return item.space?.toLowerCase() === selectedFilter.toLowerCase() ||
-                   item.primaryTopic?.toLowerCase().includes(raw) ||
-                   item.topics.some(t => t.toLowerCase().includes(raw));
-          }
-          return item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter as TopicTag);
-        });
+    const spaceFiltered = scoredOpenWebItems.filter(matchesSelectedSpace);
     return filterByQuery(spaceFiltered);
-  }, [scoredOpenWebItems, selectedFilter, filterByQuery]);
+  }, [scoredOpenWebItems, matchesSelectedSpace, filterByQuery]);
 
   // Combined endless stream with Sliding-Window Bloom-Ranking (never clones IDs)
   const infiniteInterleavedBase = useMemo(() => {
@@ -376,20 +369,10 @@ export const FeedScreen: React.FC = () => {
     const rawClassics = ContinuousLiveNewsService.getEvergreenClassics();
     const scored = rawClassics
       .filter(item => !freshIds.has(item.id))
+      .filter(matchesSelectedSpace)
       .map(item => scoreFeedItem(item, profile, interactions));
-    const spaceFiltered = selectedFilter === 'all'
-      ? scored
-      : scored.filter(item => {
-          if (selectedFilter.startsWith('c/')) {
-            const raw = selectedFilter.slice(2).toLowerCase();
-            return item.space?.toLowerCase() === selectedFilter.toLowerCase() ||
-                   item.primaryTopic?.toLowerCase().includes(raw) ||
-                   item.topics.some(t => t.toLowerCase().includes(raw));
-          }
-          return item.primaryTopic === selectedFilter || item.topics.includes(selectedFilter as TopicTag);
-        });
-    return filterByQuery(spaceFiltered);
-  }, [infiniteInterleavedBase, profile, interactions, selectedFilter, filterByQuery]);
+    return filterByQuery(scored);
+  }, [infiniteInterleavedBase, profile, interactions, matchesSelectedSpace, filterByQuery]);
 
   const renderedInfiniteFreshItems = useMemo(() => {
     return infiniteInterleavedBase.slice(0, Math.min(visibleInfiniteCount, infiniteInterleavedBase.length));
@@ -483,6 +466,37 @@ export const FeedScreen: React.FC = () => {
       }
     }
   }, [activeFeedOption, flushVisibleCardsToChronik, totalInfiniteAvailable, sortedDiscovery.length]);
+
+  const [isCuratingLiveAi, setIsCuratingLiveAi] = useState<boolean>(false);
+
+  const handleLiveAiCurate = async () => {
+    if (isCuratingLiveAi) return;
+    setIsCuratingLiveAi(true);
+    try {
+      const creds = await loadAiCredentials();
+      const pool = (renderedInfiniteItems.length > 0 ? renderedInfiniteItems : discoveryItems).slice(0, 12);
+      if (pool.length === 0) {
+        setSimToast('Keine Artikel im aktuellen Feed-Pool zum Kuratieren gefunden.');
+        setTimeout(() => setSimToast(null), 3000);
+        return;
+      }
+      const enriched = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(pool, creds);
+      if (enriched.length > 0) {
+        feedRepository.addItems(enriched);
+        await refreshFeed();
+        setSimToast(`✨ ${enriched.length} Beiträge erfolgreich mit Live-KI veredelt!`);
+      } else {
+        setSimToast('Feed-Kuration abgeschlossen (keine neuen Beiträge freigegeben).');
+      }
+      setTimeout(() => setSimToast(null), 4000);
+    } catch (e) {
+      console.warn('Live AI Curation failed:', e);
+      setSimToast('Fehler bei der Live-KI-Kuration.');
+      setTimeout(() => setSimToast(null), 3000);
+    } finally {
+      setIsCuratingLiveAi(false);
+    }
+  };
 
   const handleLoadMoreDiscovery = () => {
     setVisibleDiscoveryCount(prev => Math.min(prev + 10, sortedDiscovery.length));
@@ -685,6 +699,15 @@ export const FeedScreen: React.FC = () => {
           {/* Feed Column (Center) */}
           {/* Feed Column (Center) */}
           <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn]}>
+            {snapshotSyncInfo && (
+              <View style={[styles.snapshotSyncBanner, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <Ionicons name="sparkles" size={12} color={colors.accent} style={{ marginRight: 6 }} />
+                <Text style={[styles.snapshotSyncText, { color: colors.textSecondary }]}>
+                  {snapshotSyncInfo}
+                </Text>
+              </View>
+            )}
+
             {/* 1. Primary Feed Mode Segmented Switcher */}
             <View style={[styles.feedModeSwitcherWrapper, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.feedModeSwitcher}>
@@ -825,6 +848,48 @@ export const FeedScreen: React.FC = () => {
               </ScrollView>
             </View>
 
+            {/* Global Active Space / Channel Banner */}
+            {selectedFilter !== 'all' && (
+              <View
+                style={[
+                  styles.activeFilterBanner,
+                  { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <View
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: colors.accent
+                    }}
+                  />
+                  <Ionicons name="filter" size={14} color={colors.accent} />
+                  <Text style={[styles.activeFilterBannerTitle, { color: colors.textPrimary }]}>
+                    Kanal aktiv:{' '}
+                    <Text style={{ color: colors.accent, fontWeight: '700' }}>
+                      {activeSpaceName}
+                    </Text>
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => handleFilterChange('all')}
+                  style={[
+                    styles.activeFilterBannerReset,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Filter aufheben"
+                >
+                  <Ionicons name="close-circle-outline" size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                  <Text style={[styles.activeFilterBannerResetText, { color: colors.textSecondary }]}>
+                    Alle Spaces
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* MODE: ENDLESS DISCOVERY STREAM */}
             {activeFeedOption === 'infinite' && (
               <>
@@ -891,6 +956,41 @@ export const FeedScreen: React.FC = () => {
                     <Text style={styles.sortEmoji}>💎</Text>
                     <Text style={[styles.sortTabText, { color: sortMode === 'gems' ? colors.accent : colors.textSecondary }]}>
                       Perlen & Kunst
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setShowHivemindModal(true)}
+                    style={[
+                      styles.sortTab,
+                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Hivemind Stream generieren"
+                  >
+                    <Ionicons name="git-network-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                    <Text style={[styles.sortTabText, { color: colors.textPrimary, fontWeight: '700' }]}>
+                      + Hivemind
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={handleLiveAiCurate}
+                    disabled={isCuratingLiveAi}
+                    style={[
+                      styles.sortTab,
+                      { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: '#10B981' }
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Live KI-Kuration starten"
+                  >
+                    {isCuratingLiveAi ? (
+                      <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 4 }} />
+                    ) : (
+                      <Ionicons name="sparkles" size={13} color="#10B981" style={{ marginRight: 4 }} />
+                    )}
+                    <Text style={[styles.sortTabText, { color: '#10B981', fontWeight: '700' }]}>
+                      ✨ Live KI-Kuration
                     </Text>
                   </TouchableOpacity>
 
@@ -961,13 +1061,49 @@ export const FeedScreen: React.FC = () => {
 
                 {renderedInfiniteItems.length === 0 ? (
                   <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                    <Ionicons name="compass-outline" size={32} color={colors.accent} style={{ marginBottom: 8 }} />
+                    <View style={[styles.emptyPocketBadge, { backgroundColor: colors.accentSubtle }]}>
+                      <Ionicons name="sparkles" size={15} color={colors.accent} />
+                      <Text style={[styles.emptyPocketBadgeText, { color: colors.accent }]}>
+                        Epistemischer Raum • On-the-Fly Entdeckung
+                      </Text>
+                    </View>
+
                     <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-                      Keine Beiträge im Stream gefunden
+                      {selectedFilter !== 'all'
+                        ? `Raum ${selectedFilter} erschließen`
+                        : (searchQuery ? `Erkenntnis-Stream zu „${searchQuery}“ generieren` : 'Neuen Erkenntnis-Stream generieren')}
                     </Text>
+
                     <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-                      Setze den Filter zurück oder suche nach einem anderen Thema.
+                      Dieser Wissensraum enthält noch keine kuratierten Beiträge. Du kannst hier auf Knopfdruck eine fundierte Recherche aus offenen Primärquellen (Wikipedia REST, OpenAlex & arXiv) generieren.
                     </Text>
+
+                    <View style={styles.pocketActionsRow}>
+                      <TouchableOpacity
+                        onPress={handleGenerateEmptyPocket}
+                        disabled={isGeneratingPocket}
+                        style={[styles.generatePocketButton, { backgroundColor: colors.accent, opacity: isGeneratingPocket ? 0.6 : 1 }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Stream jetzt generieren"
+                      >
+                        <Ionicons name="sparkles" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                        <Text style={styles.generatePocketButtonText}>
+                          {isGeneratingPocket ? 'Erschließe Primärquellen…' : 'Raum mit Live-Forschung erschließen'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => {
+                          handleFilterChange('all');
+                          setSearchQuery('');
+                        }}
+                        style={[styles.resetFilterButton, { borderColor: colors.borderSubtle }]}
+                      >
+                        <Text style={[styles.resetFilterButtonText, { color: colors.textMuted }]}>
+                          Filter zurücksetzen
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 ) : (
                   <>
@@ -990,36 +1126,16 @@ export const FeedScreen: React.FC = () => {
                           onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                         />
 
-                        {/* Mindfulness Milestone after item 6 */}
-                        {index === 5 && (
-                          <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                            <Ionicons name="leaf-outline" size={20} color="#10B981" style={{ marginRight: 10, marginTop: 2 }} />
-                            <View style={{ flex: 1 }}>
-                              <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
-                                Kognitive Atempause
-                              </Text>
-                              <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
-                                6 Gedanken aufgenommen. Nimm dir 3 tiefe Atemzüge, um das Gelesene kognitiv zu verarbeiten.
-                              </Text>
-                              <TouchableOpacity
-                                onPress={() => setShowBreathingModal(true)}
-                                style={{
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  alignSelf: 'flex-start',
-                                  marginTop: 8,
-                                  backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                                  paddingHorizontal: 12,
-                                  paddingVertical: 6,
-                                  borderRadius: radius.full
-                                }}
-                              >
-                                <Ionicons name="leaf-outline" size={13} color="#10B981" style={{ marginRight: 5 }} />
-                                <Text style={{ fontSize: 12, fontWeight: '600', color: '#10B981' }}>
-                                  Atem-Simulator starten (4-4-4-4)
-                                </Text>
-                              </TouchableOpacity>
-                            </View>
+                        {/* Bloomscrolling Quiz Checkpoint every 3 cards */}
+                        {(index + 1) % 3 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
+                          <View style={{ marginVertical: spacing.md }}>
+                            <QuizCheckpointCard
+                              questions={renderedInfiniteFreshItems
+                                .slice(Math.max(0, index - 2), index + 1)
+                                .map(a => a.quiz || generateQuizForArticle(a))}
+                              title={`Wissens-Checkpoint #${Math.floor((index + 1) / 3)}`}
+                              subtitle="Überprüfe deine Erkenntnis der letzten 3 Beiträge"
+                            />
                           </View>
                         )}
                       </View>
@@ -1060,10 +1176,30 @@ export const FeedScreen: React.FC = () => {
                                 }}
                                 onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                               />
+
+                              {/* Bloomscrolling Quiz Checkpoint every 3 cards */}
+                              {(idx + 1) % 3 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
+                                <View style={{ marginVertical: spacing.md }}>
+                                  <QuizCheckpointCard
+                                    questions={renderedInfiniteEvergreenItems
+                                      .slice(Math.max(0, idx - 2), idx + 1)
+                                      .map(a => a.quiz || generateQuizForArticle(a))}
+                                    title={`Wissens-Checkpoint #${Math.floor((globalIdx + 1) / 3)}`}
+                                    subtitle="Überprüfe deine Erkenntnis der letzten 3 Beiträge"
+                                  />
+                                </View>
+                              )}
                             </View>
                           );
                         })}
                       </>
+                    )}
+
+                    {/* End-of-Edition Reflection Gate: Inline Atmen Breathing Portal */}
+                    {isFeatureEnabled(profile, 'breathing_portal') && (
+                      <View style={{ marginVertical: spacing.lg }}>
+                        <AtmenBreathingPortal mode="inline" height={380} />
+                      </View>
                     )}
 
                     {visibleInfiniteCount < totalInfiniteAvailable ? (
@@ -1167,6 +1303,38 @@ export const FeedScreen: React.FC = () => {
                       );
                     })}
                   </ScrollView>
+
+                  {/* Window Mode Selector */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}>
+                    {[
+                      { id: '7d_quality' as const, label: '🎯 7-Tage Qualität' },
+                      { id: '48h_fresh' as const, label: '⚡️ 48h Frisch' },
+                      { id: 'chronological' as const, label: '⏱ Chronologisch' }
+                    ].map(mode => {
+                      const isModeActive = liveNewsWindowMode === mode.id;
+                      return (
+                        <TouchableOpacity
+                          key={mode.id}
+                          onPress={() => setLiveNewsWindowMode(mode.id)}
+                          style={[
+                            styles.liveNewsCategoryChip,
+                            {
+                              paddingVertical: 3,
+                              paddingHorizontal: 8,
+                              backgroundColor: isModeActive ? colors.accentSubtle : colors.surfaceSecondary,
+                              borderColor: isModeActive ? colors.accent : colors.borderSubtle
+                            }
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel={mode.label}
+                        >
+                          <Text style={[styles.liveNewsCategoryText, { fontSize: 11, color: isModeActive ? colors.accent : colors.textMuted }]}>
+                            {mode.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
                 </View>
 
                 {/* Live News Items */}
@@ -1176,6 +1344,44 @@ export const FeedScreen: React.FC = () => {
                     <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
                       Lade verifizierte Echtzeit-Feeds…
                     </Text>
+                  </View>
+                ) : scoredLiveItems.length === 0 ? (
+                  <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: 12 }]}>
+                    <Ionicons name="radio-outline" size={32} color={colors.accent} style={{ marginBottom: 8 }} />
+                    <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                      {selectedFilter !== 'all'
+                        ? `Keine aktuellen Ticker-Meldungen in ${activeSpaceName}`
+                        : 'Keine Live-Meldungen gefunden'}
+                    </Text>
+                    <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+                      {selectedFilter !== 'all'
+                        ? `Im Echtzeit-Nachrichtenticker liegen gerade keine Meldungen für ${activeSpaceName} vor. Im Wissens-Stream findest du zeitlose Primärtexte und Analysen.`
+                        : 'Setze die Filter zurück oder aktualisiere die Live-Feeds.'}
+                    </Text>
+
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
+                      {selectedFilter !== 'all' && (
+                        <TouchableOpacity
+                          onPress={() => setActiveFeedOption('infinite')}
+                          style={[styles.emptyActionBtn, { backgroundColor: colors.accent }]}
+                        >
+                          <Ionicons name="infinite" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                          <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
+                            Zu {activeSpaceName} im Stream
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+
+                      <TouchableOpacity
+                        onPress={() => handleFilterChange('all')}
+                        style={[styles.emptyActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+                      >
+                        <Ionicons name="refresh" size={14} color={colors.textPrimary} style={{ marginRight: 6 }} />
+                        <Text style={{ color: colors.textPrimary, fontWeight: '600', fontSize: 13 }}>
+                          Alle Live-Nachrichten zeigen
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 ) : (
                   <>
@@ -1717,36 +1923,16 @@ export const FeedScreen: React.FC = () => {
                       onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                     />
 
-                    {/* Mindfulness Milestone after item 5 in daily edition */}
-                    {index === 4 && (
-                      <View style={[styles.milestoneCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                        <Ionicons name="leaf-outline" size={20} color="#10B981" style={{ marginRight: 10, marginTop: 2 }} />
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.milestoneTitle, { color: colors.textPrimary }]}>
-                            Kognitive Atempause
-                          </Text>
-                          <Text style={[styles.milestoneSubtitle, { color: colors.textMuted }]}>
-                            5 Gedanken aufgenommen. Nimm dir 3 tiefe Atemzüge, um das Gelesene kognitiv zu verarbeiten.
-                          </Text>
-                          <TouchableOpacity
-                            onPress={() => setShowBreathingModal(true)}
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              alignSelf: 'flex-start',
-                              marginTop: 8,
-                              backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                              paddingHorizontal: 12,
-                              paddingVertical: 6,
-                              borderRadius: radius.full
-                            }}
-                          >
-                            <Ionicons name="leaf-outline" size={13} color="#10B981" style={{ marginRight: 5 }} />
-                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#10B981' }}>
-                              Atem-Simulator starten (4-4-4-4)
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
+                    {/* Bloomscrolling Quiz Checkpoint every 3 cards */}
+                    {(index + 1) % 3 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
+                      <View style={{ marginVertical: spacing.md }}>
+                        <QuizCheckpointCard
+                          questions={sortedDaily
+                            .slice(Math.max(0, index - 2), index + 1)
+                            .map(a => a.quiz || generateQuizForArticle(a))}
+                          title={`Tagesausgabe: Wissens-Checkpoint #${Math.floor((index + 1) / 3)}`}
+                          subtitle="Überprüfe deine Erkenntnis der letzten 3 Beiträge"
+                        />
                       </View>
                     )}
                   </View>
@@ -1788,9 +1974,29 @@ export const FeedScreen: React.FC = () => {
                         }}
                         onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                       />
+
+                      {/* Bloomscrolling Quiz Checkpoint every 3 cards */}
+                      {(index + 1) % 3 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
+                        <View style={{ marginVertical: spacing.md }}>
+                          <QuizCheckpointCard
+                            questions={renderedDiscovery
+                              .slice(Math.max(0, index - 2), index + 1)
+                              .map(a => a.quiz || generateQuizForArticle(a))}
+                            title={`Discovery: Wissens-Checkpoint #${Math.floor((index + 1) / 3)}`}
+                            subtitle="Überprüfe deine Erkenntnis der letzten 3 Beiträge"
+                          />
+                        </View>
+                      )}
                     </View>
                   );
                 })}
+
+                {/* End-of-Edition Reflection Gate: Inline Atmen Breathing Portal */}
+                {isFeatureEnabled(profile, 'breathing_portal') && (
+                  <View style={{ marginVertical: spacing.lg }}>
+                    <AtmenBreathingPortal mode="inline" height={380} />
+                  </View>
+                )}
 
                 {/* End of Section / Conscious Discovery Trigger */}
                 {visibleDiscoveryCount < sortedDiscovery.length ? (
@@ -1851,11 +2057,17 @@ export const FeedScreen: React.FC = () => {
         onCancel={() => setShowProgressModal(false)}
       />
 
-      {/* Kognitive Atempause & Mindful Breathing Simulator */}
-      <AtemBreathingModal
+      {/* Atmen Breathing Portal Modal */}
+      <AtmenBreathingPortal
         visible={showBreathingModal}
         onClose={() => setShowBreathingModal(false)}
-        targetRounds={3}
+        mode="modal"
+      />
+
+      {/* Hivemind Epistemic Stream Modal */}
+      <HivemindStreamModal
+        visible={showHivemindModal}
+        onClose={() => setShowHivemindModal(false)}
       />
 
       {/* News-Hub Sources, Gatherer & Settings Modal */}
@@ -2527,5 +2739,54 @@ const styles = StyleSheet.create({
   },
   tuningBtnText: {
     fontSize: 11
+  },
+  activeFilterBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: spacing.sm
+  },
+  activeFilterBannerTitle: {
+    fontSize: 13,
+    fontWeight: '600'
+  },
+  activeFilterBannerReset: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  activeFilterBannerResetText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  emptyActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: radius.md
+  },
+  snapshotSyncBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    marginBottom: spacing.sm,
+    alignSelf: 'center'
+  },
+  snapshotSyncText: {
+    fontSize: 12,
+    fontWeight: '600'
   }
 });

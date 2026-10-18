@@ -42,3 +42,7 @@ yarn-error.*
 
 # temp artifacts
 atem_complete_codebase.*
+atem_source_code_only.txt
+atmen_complete_codebase_*
+atmen_source_code_*
+*.dump.txt

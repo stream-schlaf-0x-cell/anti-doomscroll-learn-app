@@ -5,6 +5,9 @@ import { fetchAllFeeds } from '../src/core/ingestion/feedFetcher';
 import { normalizeFeedEntry } from '../src/core/ingestion/normalizer';
 import { deduplicateFeedItems } from '../src/core/ingestion/deduplicator';
 import { FeedItem, FeedItemSchema } from '../src/core/domain/types';
+import { BatchEditionEnricher } from '../src/core/enrichment/batchEnricher';
+import { defaultUsageLedger } from '../src/core/enrichment/ledger';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from '../src/core/ai/atmenAiClient';
 
 export interface SourceHealthRecord {
   sourceId: string;
@@ -39,8 +42,8 @@ async function runIngestionPipeline() {
     previousHealth = {};
   }
 
-  // 1. Fetch all RSS/Atom feeds concurrently
-  const fetchResults = await fetchAllFeeds(VERIFIED_FEED_SOURCES, 8, 7000);
+  // 1. Fetch all RSS/Atom feeds concurrently with high throughput for 350+ sources
+  const fetchResults = await fetchAllFeeds(VERIFIED_FEED_SOURCES, 25, 6500);
 
   let successFeedCount = 0;
   let totalRawEntries = 0;
@@ -140,16 +143,30 @@ async function runIngestionPipeline() {
   console.log(`\nWrote source health telemetry to ${SOURCE_HEALTH_PATH}`);
 
   if (interleavedItems.length > 0) {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.OPENROUTER_API_KEY || '';
+    const provider = process.env.OPENROUTER_API_KEY ? 'openrouter' : 'gemini';
+    const model = provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL;
+    const enricher = new BatchEditionEnricher(
+      defaultUsageLedger,
+      async () => ({ provider, apiKey, model })
+    );
+
+    console.log('\nApplying Batch Edition Enrichment (semantic classification & German synthesis)...');
+    const itemsToEnrich = interleavedItems.slice(0, 30);
+    const tailItems = interleavedItems.slice(30);
+    const enriched = await enricher.enrichBatch(itemsToEnrich);
+    const finalItems = [...enriched, ...tailItems];
+
     fs.mkdirSync(path.dirname(PIPELINE_OUTPUT_PATH), { recursive: true });
-    fs.writeFileSync(PIPELINE_OUTPUT_PATH, JSON.stringify(interleavedItems, null, 2), 'utf-8');
-    console.log(`Wrote ${interleavedItems.length} items to ${PIPELINE_OUTPUT_PATH}`);
+    fs.writeFileSync(PIPELINE_OUTPUT_PATH, JSON.stringify(finalItems, null, 2), 'utf-8');
+    console.log(`Wrote ${finalItems.length} items to ${PIPELINE_OUTPUT_PATH}`);
 
     fs.mkdirSync(path.dirname(PUBLIC_SNAPSHOT_PATH), { recursive: true });
     const snapshotPayload = {
       generatedAt: nowIso,
       totalCandidateSources: VERIFIED_FEED_SOURCES.length,
       activeDeliveringSources: successFeedCount,
-      items: interleavedItems,
+      items: finalItems,
       sourceHealth: sourceHealthMap
     };
     fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(snapshotPayload, null, 2), 'utf-8');

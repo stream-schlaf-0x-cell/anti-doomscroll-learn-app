@@ -11,14 +11,14 @@ import {
   Image,
   Platform,
   useWindowDimensions,
-  TextInput
+  TextInput,
+  Modal
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import {
   formatFactReviewStatus,
-  formatEditorialSynthesisType,
   formatVerifiedProvenanceLabel
 } from '../../core/domain/types';
 import { synthesizeEditorialAbstract } from '../../core/synthesis/backgroundResearchPipeline';
@@ -29,6 +29,11 @@ import { LinkPreviewModal } from '../../ui/components/LinkPreviewModal';
 import { optimizeImageUrl } from '../../core/utils/imageQuality';
 import { RaindropService } from '../../core/raindrop/raindropService';
 import { copyToClipboard } from '../../core/export/craftExport';
+import { MarkdownContent } from '../../ui/components/MarkdownContent';
+import { RabbitHoleService, RabbitHoleEntry } from '../../core/synthesis/rabbitHoleService';
+import { isFeatureEnabled } from '../../core/modules/featureRegistry';
+import { QuizCheckpointCard } from '../../ui/components/QuizCheckpointCard';
+import { generateQuizForArticle } from '../../core/quiz/quizGenerator';
 
 export const ReaderScreen: React.FC = () => {
   const {
@@ -50,6 +55,7 @@ export const ReaderScreen: React.FC = () => {
   } = useApp();
 
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const isDesktop = width >= 1024;
 
   const [scrollPercent, setScrollPercent] = useState<number>(0);
@@ -62,6 +68,9 @@ export const ReaderScreen: React.FC = () => {
   const [selectedTag, setSelectedTag] = useState<'einwand' | 'unterricht' | 'these' | 'notiz'>('einwand');
   const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
   const [readerImageAspectRatio, setReaderImageAspectRatio] = useState<number | null>(null);
+  const [showReaderImageLightbox, setShowReaderImageLightbox] = useState<boolean>(false);
+  const [rabbitHoleEntries, setRabbitHoleEntries] = useState<RabbitHoleEntry[]>([]);
+  const [loadingRabbitHole, setLoadingRabbitHole] = useState<boolean>(false);
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
@@ -75,17 +84,39 @@ export const ReaderScreen: React.FC = () => {
       uri,
       (w, h) => {
         if (!cancelled && w > 0 && h > 0) {
-          setReaderImageAspectRatio(Math.max(0.4, Math.min(2.6, w / h)));
+          setReaderImageAspectRatio(w / h);
         }
       },
       () => {
-        // Fallback handled by default height
+        // Fallback handled by onLoad on <Image>
       }
     );
     return () => {
       cancelled = true;
     };
   }, [selectedArticle?.id, selectedArticle?.imageUrl, selectedArticle?.artMeta?.highResImageUrl]);
+
+  // Load conceptually targeted companion reads (Rabbit Hole)
+  useEffect(() => {
+    if (!selectedArticle) return;
+    let isMounted = true;
+    setLoadingRabbitHole(true);
+    RabbitHoleService.discoverRabbitHole(selectedArticle, { maxItems: 4, allowLiveResearch: true })
+      .then((entries) => {
+        if (isMounted) {
+          setRabbitHoleEntries(entries);
+          setLoadingRabbitHole(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setLoadingRabbitHole(false);
+        }
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedArticle]);
 
   // Flush throttled progress on unmount
   useEffect(() => {
@@ -393,49 +424,51 @@ export const ReaderScreen: React.FC = () => {
     return (
       <View style={styles.sidebarStickyWrapper}>
         {/* Craft 1-Click Export Card */}
-        <View style={[styles.craftExportCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-          <View style={styles.craftExportHeader}>
-            <View style={[styles.craftExportIconBox, { backgroundColor: craftCopied ? '#10B98120' : colors.accentSubtle }]}>
-              <Ionicons
-                name={craftCopied ? 'checkmark-circle' : 'clipboard-outline'}
-                size={18}
-                color={craftCopied ? '#10B981' : colors.accent}
-              />
+        {isFeatureEnabled(profile, 'craft_obsidian_export') && (
+          <View style={[styles.craftExportCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            <View style={styles.craftExportHeader}>
+              <View style={[styles.craftExportIconBox, { backgroundColor: craftCopied ? '#10B98120' : colors.accentSubtle }]}>
+                <Ionicons
+                  name={craftCopied ? 'checkmark-circle' : 'clipboard-outline'}
+                  size={18}
+                  color={craftCopied ? '#10B981' : colors.accent}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.craftExportTitle, { color: colors.textPrimary }]}>
+                  Wissen für Craft & PKM
+                </Text>
+                <Text style={[styles.craftExportSubtitle, { color: colors.textMuted }]}>
+                  Sauberes Markdown inkl. Thesen & Sparring
+                </Text>
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.craftExportTitle, { color: colors.textPrimary }]}>
-                Wissen für Craft & PKM
-              </Text>
-              <Text style={[styles.craftExportSubtitle, { color: colors.textMuted }]}>
-                Sauberes Markdown inkl. Thesen & Sparring
-              </Text>
-            </View>
-          </View>
 
-          <TouchableOpacity
-            onPress={handleCopyToCraft}
-            style={[
-              styles.craftExportBtn,
-              {
-                backgroundColor: craftCopied ? '#10B981' : colors.accent,
-                borderColor: craftCopied ? '#10B981' : colors.accent
-              }
-            ]}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel="Artikel strukturiert für Craft in die Zwischenablage kopieren"
-          >
-            <Ionicons
-              name={craftCopied ? 'checkmark' : 'copy-outline'}
-              size={15}
-              color="#FFFFFF"
-              style={{ marginRight: 6 }}
-            />
-            <Text style={styles.craftExportBtnText}>
-              {craftCopied ? 'In Zwischenablage kopiert!' : '📋 Für Craft kopieren'}
-            </Text>
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity
+              onPress={handleCopyToCraft}
+              style={[
+                styles.craftExportBtn,
+                {
+                  backgroundColor: craftCopied ? '#10B981' : colors.accent,
+                  borderColor: craftCopied ? '#10B981' : colors.accent
+                }
+              ]}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Artikel strukturiert für Craft in die Zwischenablage kopieren"
+            >
+              <Ionicons
+                name={craftCopied ? 'checkmark' : 'copy-outline'}
+                size={15}
+                color="#FFFFFF"
+                style={{ marginRight: 6 }}
+              />
+              <Text style={styles.craftExportBtnText}>
+                {craftCopied ? 'In Zwischenablage kopiert!' : '📋 Für Craft kopieren'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Quick Note Composer */}
         <View style={[styles.composerCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
@@ -555,7 +588,7 @@ export const ReaderScreen: React.FC = () => {
                   <Text style={[styles.userNoteText, { color: colors.textPrimary }]}>{note.text}</Text>
 
                   {/* AI Sparring Reply Callout */}
-                  {note.sparringReply && (
+                  {isFeatureEnabled(profile, 'socratic_sparring') && note.sparringReply && (
                     <View style={[styles.sparringReplyBox, { borderLeftColor: colors.accent, backgroundColor: colors.surface }]}>
                       <View style={styles.sparringAuthorRow}>
                         <Text style={[styles.sparringAuthor, { color: colors.accent }]}>
@@ -679,29 +712,31 @@ export const ReaderScreen: React.FC = () => {
             </TouchableOpacity>
 
             {/* Craft 1-Click Export Pill Button */}
-            <TouchableOpacity
-              onPress={handleCopyToCraft}
-              style={[
-                styles.navCraftBtn,
-                {
-                  backgroundColor: craftCopied ? '#10B98122' : colors.surfaceSecondary,
-                  borderColor: craftCopied ? '#10B981' : colors.borderSubtle
-                }
-              ]}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityRole="button"
-              accessibilityLabel="In Zwischenablage für Craft kopieren"
-            >
-              <Ionicons
-                name={craftCopied ? 'checkmark' : 'clipboard-outline'}
-                size={13}
-                color={craftCopied ? '#10B981' : colors.accent}
-                style={{ marginRight: 4 }}
-              />
-              <Text style={[styles.navCraftBtnText, { color: craftCopied ? '#10B981' : colors.textPrimary }]}>
-                {craftCopied ? 'Kopiert!' : 'Craft'}
-              </Text>
-            </TouchableOpacity>
+            {isFeatureEnabled(profile, 'craft_obsidian_export') && (
+              <TouchableOpacity
+                onPress={handleCopyToCraft}
+                style={[
+                  styles.navCraftBtn,
+                  {
+                    backgroundColor: craftCopied ? '#10B98122' : colors.surfaceSecondary,
+                    borderColor: craftCopied ? '#10B981' : colors.borderSubtle
+                  }
+                ]}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel="In Zwischenablage für Craft kopieren"
+              >
+                <Ionicons
+                  name={craftCopied ? 'checkmark' : 'clipboard-outline'}
+                  size={13}
+                  color={craftCopied ? '#10B981' : colors.accent}
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={[styles.navCraftBtnText, { color: craftCopied ? '#10B981' : colors.textPrimary }]}>
+                  {craftCopied ? 'Kopiert!' : 'Craft'}
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {/* Raindrop.io 1-Click Export Button */}
             <TouchableOpacity
@@ -724,7 +759,10 @@ export const ReaderScreen: React.FC = () => {
       {/* Article Body Scroll */}
       <ScrollView
         ref={scrollViewRef}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: Math.max(insets.bottom, 16) + spacing.xxl * 2 }
+        ]}
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
         scrollEventThrottle={32}
@@ -802,7 +840,11 @@ export const ReaderScreen: React.FC = () => {
               {/* Museum-Grade Artwork Showcase OR Authentic Article Image */}
               {(selectedArticle.format === 'art_showcase' || !!selectedArticle.artMeta) &&
               (selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl) ? (
-                <View style={[styles.readerArtShowcaseContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <TouchableOpacity
+                  activeOpacity={0.95}
+                  onPress={() => setShowReaderImageLightbox(true)}
+                  style={[styles.readerArtShowcaseContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+                >
                   <View style={[styles.readerArtImageWrapper, { height: isDesktop ? 520 : 380 }]}>
                     <Image
                       source={{
@@ -813,48 +855,19 @@ export const ReaderScreen: React.FC = () => {
                       }}
                       style={styles.readerArtFullImage}
                       resizeMode="contain"
+                      onLoad={(e) => {
+                        const { width, height } = e.nativeEvent.source;
+                        if (width > 0 && height > 0) {
+                          setReaderImageAspectRatio(width / height);
+                        }
+                      }}
                     />
-                  </View>
-
-                  <View style={[styles.readerArtCuratorialPlaque, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.borderSubtle }]}>
-                    <View style={styles.readerArtPlaqueHeader}>
-                      <Ionicons name="color-palette" size={18} color="#D97706" style={{ marginRight: 8 }} />
-                      <Text style={[styles.readerArtPlaqueArtist, { color: colors.textPrimary }]}>
-                        {selectedArticle.artMeta?.artist || authorDisplay}
-                      </Text>
-                      {selectedArticle.artMeta?.year && (
-                        <Text style={[styles.readerArtPlaqueYear, { color: colors.textMuted }]}>
-                          • {selectedArticle.artMeta.year}
-                        </Text>
-                      )}
-                    </View>
-
-                    <View style={styles.readerArtDetailsGrid}>
-                      <View style={styles.readerArtDetailCol}>
-                        <Text style={[styles.readerArtDetailLabel, { color: colors.textMuted }]}>SAMMLUNG</Text>
-                        <Text style={[styles.readerArtDetailVal, { color: colors.textPrimary }]}>
-                          {selectedArticle.artMeta?.museum || publisherDisplay}
-                        </Text>
-                      </View>
-                      {selectedArticle.artMeta?.medium && (
-                        <View style={styles.readerArtDetailCol}>
-                          <Text style={[styles.readerArtDetailLabel, { color: colors.textMuted }]}>MEDIUM / TECHNIK</Text>
-                          <Text style={[styles.readerArtDetailVal, { color: colors.textPrimary }]}>
-                            {selectedArticle.artMeta.medium}
-                          </Text>
-                        </View>
-                      )}
-                      {selectedArticle.artMeta?.styleMovement && (
-                        <View style={styles.readerArtDetailCol}>
-                          <Text style={[styles.readerArtDetailLabel, { color: colors.textMuted }]}>EPOCHE / STIL</Text>
-                          <Text style={[styles.readerArtDetailVal, { color: colors.textPrimary }]}>
-                            {selectedArticle.artMeta.styleMovement}
-                          </Text>
-                        </View>
-                      )}
+                    <View style={styles.readerImageZoomBadge}>
+                      <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.readerImageZoomText}>Vollbild</Text>
                     </View>
                   </View>
-                </View>
+                </TouchableOpacity>
               ) : (
                 hasAuthenticReaderImage && (
                   <View
@@ -869,7 +882,9 @@ export const ReaderScreen: React.FC = () => {
                       }
                     ]}
                   >
-                    <View
+                    <TouchableOpacity
+                      activeOpacity={0.95}
+                      onPress={() => setShowReaderImageLightbox(true)}
                       style={[
                         selectedArticle.format === 'meme' || Boolean(selectedArticle.memeMeta)
                           ? {
@@ -878,29 +893,51 @@ export const ReaderScreen: React.FC = () => {
                               minHeight: 340,
                               maxHeight: 820,
                               padding: 16,
-                              backgroundColor: '#FFFFFF'
+                              backgroundColor: '#FFFFFF',
+                              alignItems: 'center',
+                              justifyContent: 'center'
                             }
                           : readerImageAspectRatio
-                          ? {
+                          ? readerImageAspectRatio >= 1.05
+                            ? {
+                                width: '100%',
+                                aspectRatio: Math.min(2.4, readerImageAspectRatio),
+                                maxHeight: isDesktop ? 520 : 400,
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }
+                            : {
+                                width: '100%',
+                                height: isDesktop ? 480 : 380,
+                                backgroundColor: colors.surfaceSecondary,
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }
+                          : {
                               width: '100%',
-                              aspectRatio: Math.max(1.2, Math.min(2.2, readerImageAspectRatio)),
-                              maxHeight: 460
+                              height: isDesktop ? 440 : 340,
+                              backgroundColor: colors.surfaceSecondary,
+                              alignItems: 'center',
+                              justifyContent: 'center'
                             }
-                          : undefined
                       ]}
                     >
                       <Image
                         source={{ uri: optimizeImageUrl(selectedArticle.imageUrl!) || selectedArticle.imageUrl! }}
-                        style={
-                          selectedArticle.format === 'meme' || Boolean(selectedArticle.memeMeta) || readerImageAspectRatio
-                            ? { width: '100%', height: '100%' }
-                            : styles.readerHeroImage
-                        }
-                        resizeMode={
-                          selectedArticle.format === 'meme' || Boolean(selectedArticle.memeMeta) ? 'contain' : 'cover'
-                        }
+                        style={{ width: '100%', height: '100%' }}
+                        resizeMode="contain"
+                        onLoad={(e) => {
+                          const { width, height } = e.nativeEvent.source;
+                          if (width > 0 && height > 0) {
+                            setReaderImageAspectRatio(width / height);
+                          }
+                        }}
                       />
-                    </View>
+                      <View style={styles.readerImageZoomBadge}>
+                        <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+                        <Text style={styles.readerImageZoomText}>Vollbild</Text>
+                      </View>
+                    </TouchableOpacity>
                     {selectedArticle.memeMeta?.punchline && (
                       <View
                         style={{
@@ -931,13 +968,102 @@ export const ReaderScreen: React.FC = () => {
                 )
               )}
 
-              {/* THIN EVIDENCE MODE: Kompakte Fundkarte mit Direktlink statt aufgeblasenem Artikel */}
+              {/* PRIMARY ACTION: Direkt unter dem Bild platziert für sofortigen Volltext-Zugriff */}
+              {originalUrl && (
+                <TouchableOpacity
+                  onPress={() => handleOpenSource(originalUrl)}
+                  style={[styles.primaryDirectSourceBtn, { backgroundColor: colors.accent }]}
+                  activeOpacity={0.85}
+                  accessibilityRole="link"
+                  accessibilityLabel={`Originalbeitrag bei ${publisherDisplay} im Volltext öffnen`}
+                >
+                  <Ionicons name="open-outline" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.primaryDirectSourceBtnText}>
+                    Originalbeitrag bei {publisherDisplay} im Volltext öffnen ↗
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* ELEGANTER ABSTRACT (REDAKTIONELLES ATMEN-ABSTRACT OHNE EMOJI-ÜBERLADUNG) */}
+              {abstract && (
+                <View style={[styles.abstractBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                  <View style={styles.abstractHeaderRow}>
+                    <View style={[styles.ebeneTag, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Ionicons name="sparkles-outline" size={12} color={colors.accent} style={{ marginRight: 5 }} />
+                      <Text style={[styles.ebeneTagText, { color: colors.accent }]}>
+                        REDAKTIONELLES ATMEN-ABSTRACT
+                      </Text>
+                    </View>
+                    <Text style={[styles.abstractReadingEstimate, { color: colors.textMuted }]}>
+                      Kompakte Orientierung & Kern-Synthese
+                    </Text>
+                  </View>
+
+                  {abstract.overview ? (
+                    <View style={styles.abstractSection}>
+                      <View style={styles.abstractLabelRow}>
+                        <View style={[styles.abstractIconBadge, { backgroundColor: colors.accentSubtle }]}>
+                          <Ionicons name="compass-outline" size={13} color={colors.accent} />
+                        </View>
+                        <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>KERNAUSSAGE & FOKUS</Text>
+                      </View>
+                      <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
+                        {abstract.overview}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {abstract.keyFinding ? (
+                    <View style={styles.abstractSection}>
+                      <View style={styles.abstractLabelRow}>
+                        <View style={[styles.abstractIconBadge, { backgroundColor: '#F59E0B20' }]}>
+                          <Ionicons name="bulb-outline" size={13} color="#D97706" />
+                        </View>
+                        <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>ZENTRALE ERKENNTNIS</Text>
+                      </View>
+                      <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
+                        {abstract.keyFinding}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {abstract.relevanceWhy ? (
+                    <View style={styles.abstractSection}>
+                      <View style={styles.abstractLabelRow}>
+                        <View style={[styles.abstractIconBadge, { backgroundColor: '#10B98120' }]}>
+                          <Ionicons name="sparkles-outline" size={13} color="#10B981" />
+                        </View>
+                        <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>WARUM LESENSWERT</Text>
+                      </View>
+                      <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
+                        {abstract.relevanceWhy}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {abstract.limitation ? (
+                    <View style={styles.abstractSection}>
+                      <View style={styles.abstractLabelRow}>
+                        <View style={[styles.abstractIconBadge, { backgroundColor: colors.surfaceSecondary }]}>
+                          <Ionicons name="shield-checkmark-outline" size={13} color={colors.textMuted} />
+                        </View>
+                        <Text style={[styles.abstractLabel, { color: colors.textMuted }]}>GÜLTIGKEITSGRENZE & KONTEXT</Text>
+                      </View>
+                      <Text style={[styles.abstractText, { color: colors.textMuted, fontSize: 13 }]}>
+                        {abstract.limitation}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              )}
+
+              {/* ABSCHNITT: ORIGINALAUSZUG MIT .MD-READABILITY */}
               {isThinEvidence ? (
                 <View style={[styles.abstractBox, { backgroundColor: colors.surface, borderColor: colors.accent, borderWidth: 1.5 }]}>
                   <View style={styles.abstractHeaderRow}>
                     <View style={[styles.ebeneTag, { backgroundColor: colors.accentSubtle }]}>
                       <Text style={[styles.ebeneTagText, { color: colors.accent }]}>
-                        📌 KOMPAKTE QUELL-FUNDKARTE (ORIGINALAUSZUG)
+                        KOMPAKTE QUELL-FUNDKARTE
                       </Text>
                     </View>
                     <Text style={[styles.abstractReadingEstimate, { color: colors.textMuted }]}>
@@ -945,28 +1071,20 @@ export const ReaderScreen: React.FC = () => {
                     </Text>
                   </View>
 
-                  <Text
-                    style={[
-                      styles.paragraph,
-                      {
-                        color: colors.textPrimary,
-                        fontSize: bodyFontSize,
-                        lineHeight: bodyLineHeight,
-                        marginTop: 8,
-                        marginBottom: 12
-                      }
-                    ]}
-                  >
-                    {fullArticleText}
-                  </Text>
+                  <MarkdownContent
+                    content={fullArticleText}
+                    bodyFontSize={bodyFontSize}
+                    bodyLineHeight={bodyLineHeight}
+                    colors={colors}
+                  />
 
                   {selectedArticle.externalCommunityScore && selectedArticle.externalCommunityScore.points > 0 && (
                     <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginBottom: 12 }]}>
                       <Text style={[styles.networkCardLabel, { color: colors.accent }]}>
-                        💬 Echte Community-Resonanz ({selectedArticle.externalCommunityScore.platform}):{' '}
+                        Community-Resonanz ({selectedArticle.externalCommunityScore.platform}):{' '}
                         {selectedArticle.externalCommunityScore.points} Punkte
                         {selectedArticle.externalCommunityScore.commentsCount
-                          ? ` • ${selectedArticle.externalCommunityScore.commentsCount} Diskussionsbeiträge`
+                          ? ` • ${selectedArticle.externalCommunityScore.commentsCount} Beiträge`
                           : ''}
                       </Text>
                       {selectedArticle.externalCommunityScore.discussionUrl && (
@@ -981,30 +1099,14 @@ export const ReaderScreen: React.FC = () => {
                       )}
                     </View>
                   )}
-
-                  {originalUrl && (
-                    <TouchableOpacity
-                      onPress={() => handleOpenSource(originalUrl)}
-                      style={[styles.openFullArticleButton, { backgroundColor: colors.accent, marginTop: 4 }]}
-                      activeOpacity={0.85}
-                      accessibilityRole="link"
-                      accessibilityLabel={`Direkt zur Originalquelle bei ${publisherDisplay} wechseln`}
-                    >
-                      <Ionicons name="open-outline" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
-                      <Text style={styles.openFullArticleButtonText}>
-                        🔗 Vollständigen Beitrag direkt bei {publisherDisplay} öffnen ↗
-                      </Text>
-                    </TouchableOpacity>
-                  )}
                 </View>
               ) : (
                 <>
-                  {/* ABSCHNITT 1: ORIGINALAUSZUG (Verbatim Source Text) */}
                   <View style={styles.ebene3Header}>
                     <View style={styles.ebene3BadgeRow}>
                       <View style={[styles.ebeneTag, { backgroundColor: colors.surfaceSecondary }]}>
                         <Text style={[styles.ebeneTagText, { color: colors.accent }]}>
-                          1 • ORIGINALAUSZUG ({publisherDisplay.toUpperCase()})
+                          ORIGINALAUSZUG ({publisherDisplay.toUpperCase()})
                         </Text>
                       </View>
                       <View style={[styles.synthesisTypeBadge, { backgroundColor: isExcerpt ? colors.accentSubtle : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
@@ -1016,107 +1118,64 @@ export const ReaderScreen: React.FC = () => {
                         />
                         <Text style={[styles.synthesisTypeBadgeText, { color: isExcerpt ? colors.accent : colors.textPrimary, fontWeight: '700' }]}>
                           {selectedArticle.evidenceTier === 'permitted_full_text'
-                            ? '📖 Verifizierter Volltext'
-                            : '📰 Wortgetreuer Herausgeber-Auszug'}
+                            ? 'Verifizierter Volltext'
+                            : 'Wortgetreuer Herausgeber-Auszug'}
                         </Text>
                       </View>
                     </View>
                   </View>
 
                   <View style={styles.bodyContainer}>
-                    {fullArticleText.split('\n\n').map((paragraph, index) => {
-                      const isFirst = index === 0;
-                      return (
-                        <Text
-                          key={index}
-                          style={[
-                            styles.paragraph,
-                            {
-                              color: colors.textPrimary,
-                              fontSize: isFirst ? bodyFontSize + 1 : bodyFontSize,
-                              lineHeight: isFirst ? bodyLineHeight + 3 : bodyLineHeight,
-                              fontWeight: isFirst ? '500' : '400',
-                              letterSpacing: -0.15
-                            }
-                          ]}
-                        >
-                          {paragraph}
-                        </Text>
-                      );
-                    })}
+                    <MarkdownContent
+                      content={fullArticleText}
+                      bodyFontSize={bodyFontSize}
+                      bodyLineHeight={bodyLineHeight}
+                      colors={colors}
+                    />
+                  </View>
+                </>
+              )}
 
-                    {originalUrl && (
-                      <TouchableOpacity
-                        onPress={() => handleOpenSource(originalUrl)}
-                        style={[styles.openFullArticleButton, { backgroundColor: colors.accent }]}
-                        activeOpacity={0.85}
-                        accessibilityRole="link"
-                        accessibilityLabel={`Originalartikel bei ${publisherDisplay} öffnen`}
-                      >
-                        <Ionicons name="open-outline" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
-                        <Text style={styles.openFullArticleButtonText}>
-                          🔗 Originalbeitrag bei {publisherDisplay} im Volltext öffnen ↗
-                        </Text>
-                      </TouchableOpacity>
+              {/* MUSEUM-GRADE KURATOREN-PLAKETTE: Dezent nach unten in den Archiv-Kontext versetzt */}
+              {(selectedArticle.format === 'art_showcase' || !!selectedArticle.artMeta) && selectedArticle.artMeta && (
+                <View style={[styles.readerArtCuratorialPlaqueStandalone, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                  <View style={styles.readerArtPlaqueHeader}>
+                    <Ionicons name="color-palette-outline" size={18} color="#D97706" style={{ marginRight: 8 }} />
+                    <Text style={[styles.readerArtPlaqueArtist, { color: colors.textPrimary }]}>
+                      {selectedArticle.artMeta.artist || authorDisplay}
+                    </Text>
+                    {selectedArticle.artMeta.year && (
+                      <Text style={[styles.readerArtPlaqueYear, { color: colors.textMuted }]}>
+                        • {selectedArticle.artMeta.year}
+                      </Text>
                     )}
                   </View>
 
-                  {/* ABSCHNITT 2: ATMEN-ABSTRACT (Strukturierte Orientierung) */}
-                  {abstract && (
-                    <View style={[styles.abstractBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                      <View style={styles.abstractHeaderRow}>
-                        <View style={[styles.ebeneTag, { backgroundColor: colors.surfaceSecondary }]}>
-                          <Text style={[styles.ebeneTagText, { color: colors.accent }]}>
-                            2 • ATMEN-ABSTRACT
-                          </Text>
-                        </View>
-                        <Text style={[styles.abstractReadingEstimate, { color: colors.textMuted }]}>
-                          Redaktionelle Strukturierung des Quelltexts
-                        </Text>
-                      </View>
-
-                      <View style={styles.abstractSection}>
-                        <View style={styles.abstractLabelRow}>
-                          <Text style={styles.abstractIcon}>📌</Text>
-                          <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>Worum geht es?</Text>
-                        </View>
-                        <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
-                          {abstract.overview}
-                        </Text>
-                      </View>
-
-                      <View style={styles.abstractSection}>
-                        <View style={styles.abstractLabelRow}>
-                          <Text style={styles.abstractIcon}>💡</Text>
-                          <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>Zentrale Erkenntnis</Text>
-                        </View>
-                        <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
-                          {abstract.keyFinding}
-                        </Text>
-                      </View>
-
-                      <View style={styles.abstractSection}>
-                        <View style={styles.abstractLabelRow}>
-                          <Text style={styles.abstractIcon}>🎯</Text>
-                          <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>Warum lesenswert?</Text>
-                        </View>
-                        <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
-                          {abstract.relevanceWhy}
-                        </Text>
-                      </View>
-
-                      <View style={styles.abstractSection}>
-                        <View style={styles.abstractLabelRow}>
-                          <Text style={styles.abstractIcon}>⚠️</Text>
-                          <Text style={[styles.abstractLabel, { color: colors.textPrimary }]}>Gültigkeitsgrenze & Kontext</Text>
-                        </View>
-                        <Text style={[styles.abstractText, { color: colors.textSecondary }]}>
-                          {abstract.limitation}
-                        </Text>
-                      </View>
+                  <View style={styles.readerArtDetailsGrid}>
+                    <View style={styles.readerArtDetailCol}>
+                      <Text style={[styles.readerArtDetailLabel, { color: colors.textMuted }]}>SAMMLUNG</Text>
+                      <Text style={[styles.readerArtDetailVal, { color: colors.textPrimary }]}>
+                        {selectedArticle.artMeta.museum || publisherDisplay}
+                      </Text>
                     </View>
-                  )}
-                </>
+                    {selectedArticle.artMeta.medium && (
+                      <View style={styles.readerArtDetailCol}>
+                        <Text style={[styles.readerArtDetailLabel, { color: colors.textMuted }]}>MEDIUM / TECHNIK</Text>
+                        <Text style={[styles.readerArtDetailVal, { color: colors.textPrimary }]}>
+                          {selectedArticle.artMeta.medium}
+                        </Text>
+                      </View>
+                    )}
+                    {selectedArticle.artMeta.styleMovement && (
+                      <View style={styles.readerArtDetailCol}>
+                        <Text style={[styles.readerArtDetailLabel, { color: colors.textMuted }]}>EPOCHE / STIL</Text>
+                        <Text style={[styles.readerArtDetailVal, { color: colors.textPrimary }]}>
+                          {selectedArticle.artMeta.styleMovement}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
               )}
 
               {/* ABSCHNITT 3: EIGENE EINORDNUNG & PERSPEKTIVE (Inhaltsbezogen, ohne Standardsatz-Ballast) */}
@@ -1149,7 +1208,7 @@ export const ReaderScreen: React.FC = () => {
                 )}
 
                 {/* 3.2 Lehr- & Praxis-Transfer (wenn konkret vorhanden) */}
-                {(selectedArticle.didacticTransfer || selectedArticle.didacticSeed) && (
+                {isFeatureEnabled(profile, 'didactic_transfer') && (selectedArticle.didacticTransfer || selectedArticle.didacticSeed) && (
                   <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: '#10B98140', borderLeftColor: '#10B981', borderLeftWidth: 3 }]}>
                     <View style={styles.networkCardBadgeRow}>
                       <Text style={{ fontSize: 13, marginRight: 5 }}>🏫</Text>
@@ -1189,46 +1248,113 @@ export const ReaderScreen: React.FC = () => {
                   </View>
                 )}
 
-                {/* 3.5 Echte Querverbindungen im Pool */}
-                {selectedArticle.relatedCrossReferences && selectedArticle.relatedCrossReferences.length > 0 && (
-                  <View style={{ marginTop: 14 }}>
-                    <Text style={[styles.crossRefSectionTitle, { color: colors.textPrimary }]}>
-                      Verwandte Beiträge im Inhaltspool:
-                    </Text>
-                    <View style={{ gap: 8, marginTop: 8 }}>
-                      {selectedArticle.relatedCrossReferences.map((ref) => (
-                        <TouchableOpacity
-                          key={ref.id}
-                          onPress={() => openArticle(ref.id)}
-                          style={[styles.crossRefCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                          activeOpacity={0.8}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Verwandten Artikel öffnen: ${ref.title}`}
-                        >
-                          <View style={styles.crossRefTopRow}>
-                            <View style={[styles.crossRefPill, { backgroundColor: colors.accentSubtle }]}>
-                              <Ionicons name="git-network-outline" size={11} color={colors.accent} style={{ marginRight: 4 }} />
-                              <Text style={[styles.crossRefPillText, { color: colors.accent }]}>{ref.publisher}</Text>
-                            </View>
-                            <Text style={[styles.crossRefReason, { color: colors.textMuted }]} numberOfLines={1}>
-                              {ref.connectionReason}
-                            </Text>
-                          </View>
-                          <Text style={[styles.crossRefTitle, { color: colors.textPrimary }]}>
-                            {ref.title}
-                          </Text>
-                          <Text style={[styles.crossRefInsight, { color: colors.textSecondary }]} numberOfLines={2}>
-                            {ref.insight}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
+                {/* 3.5 RABBIT HOLE: Konzeptionell hochgradig verwandte Vertiefungslektüren */}
+                {isFeatureEnabled(profile, 'cross_references') && (
+                  <View style={[styles.rabbitHoleContainer, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                    <View style={styles.rabbitHoleHeaderRow}>
+                      <View style={[styles.rabbitHoleIconBox, { backgroundColor: colors.accentSubtle }]}>
+                        <Ionicons name="telescope-outline" size={17} color={colors.accent} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.rabbitHoleTitle, { color: colors.textPrimary }]}>
+                          Rabbit Hole: Tiefer in dieses Thema einsteigen
+                        </Text>
+                        <Text style={[styles.rabbitHoleSubtitle, { color: colors.textMuted }]}>
+                          Gezielte Vertiefungslektüren & Studien basierend auf den Kernkonzepten dieses Beitrags
+                        </Text>
+                      </View>
                     </View>
+
+                    {rabbitHoleEntries.length > 0 ? (
+                      <View style={styles.rabbitHoleList}>
+                        {rabbitHoleEntries.map((entry, idx) => {
+                          const entryPublisher = entry.item.sourceReferences?.[0]?.publisher || entry.item.sourceBroadcasterName || 'Quelle';
+                          const entryUrl = entry.item.canonicalUrl || entry.item.sourceReferences?.[0]?.originalUrl;
+                          return (
+                            <View
+                              key={entry.item.id || idx}
+                              style={[styles.rabbitHoleCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+                            >
+                              <View style={styles.rabbitHoleCardTop}>
+                                <View style={[styles.rabbitHolePill, { backgroundColor: colors.accentSubtle }]}>
+                                  <Ionicons name="git-network-outline" size={11} color={colors.accent} style={{ marginRight: 4 }} />
+                                  <Text style={[styles.rabbitHolePillText, { color: colors.accent }]}>
+                                    {entry.conceptPill}
+                                  </Text>
+                                </View>
+                                <Text style={[styles.rabbitHolePublisher, { color: colors.textMuted }]}>
+                                  {entryPublisher}
+                                </Text>
+                              </View>
+
+                              <Text style={[styles.rabbitHoleCardTitle, { color: colors.textPrimary }]}>
+                                {entry.item.title}
+                              </Text>
+
+                              <Text style={[styles.rabbitHoleCardReason, { color: colors.textSecondary }]} numberOfLines={2}>
+                                {entry.relevanceReason}
+                              </Text>
+
+                              <View style={styles.rabbitHoleCardActions}>
+                                <TouchableOpacity
+                                  onPress={() => openArticle(entry.item.id)}
+                                  style={[styles.rabbitHoleActionBtn, { backgroundColor: colors.accent }]}
+                                  activeOpacity={0.8}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`In Atmen öffnen: ${entry.item.title}`}
+                                >
+                                  <Ionicons name="book-outline" size={12} color="#FFFFFF" style={{ marginRight: 5 }} />
+                                  <Text style={styles.rabbitHoleActionBtnText}>In Atmen lesen</Text>
+                                </TouchableOpacity>
+
+                                {entryUrl && (
+                                  <TouchableOpacity
+                                    onPress={() => handleOpenSource(entryUrl)}
+                                    style={[styles.rabbitHoleSourceBtn, { borderColor: colors.borderSubtle }]}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Ionicons name="open-outline" size={12} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                                    <Text style={[styles.rabbitHoleSourceBtnText, { color: colors.textSecondary }]}>
+                                      Originalquelle ↗
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ) : (
+                      <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                        <Text style={{ fontSize: 13, color: colors.textMuted, fontStyle: 'italic' }}>
+                          {loadingRabbitHole
+                            ? 'Erschließe gedankliche Querbezüge und durchsuche den Wissenspool…'
+                            : 'Vertiefungslektüren werden zusammengestellt…'}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 )}
               </View>
 
+              {/* Wissen testen / Bloomscrolling Quiz Checkpoint */}
+              {isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
+                <View style={{ marginBottom: spacing.lg }}>
+                  <QuizCheckpointCard
+                    questions={[selectedArticle.quiz || generateQuizForArticle(selectedArticle)]}
+                    title="Wissen testen: Kernverständnis"
+                    subtitle="Überprüfe deine Erkenntnis aus diesem Beitrag mit einer schnellen Frage"
+                  />
+                </View>
+              )}
+
               {/* Socratic Sparring Options */}
-              <DeepeningCard options={selectedArticle.deepeningOptions} />
+              {isFeatureEnabled(profile, 'socratic_sparring') && (
+                <DeepeningCard options={selectedArticle.deepeningOptions} />
+              )}
+
+              {/* Dialectic Discussion Thread */}
+              {renderDiscussionThread()}
 
               {/* ABSCHNITT 4: QUELLE & HERKUNFT (Klare Provenienz & Direktlinks) */}
               <View style={[styles.provenanceBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
@@ -1489,6 +1615,75 @@ export const ReaderScreen: React.FC = () => {
           snippet={selectedArticle?.feedText || selectedArticle?.subtitle}
           estimatedMinutes={selectedArticle?.estimatedReadingMinutes}
         />
+      )}
+
+      {/* Lightbox Modal for Authentic Article Images and Museum Artworks */}
+      {showReaderImageLightbox && (selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl) && (
+        <Modal
+          visible={showReaderImageLightbox}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowReaderImageLightbox(false)}
+        >
+          <View style={styles.readerLightboxBackdrop}>
+            <View style={styles.readerLightboxTopBar}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.readerLightboxTitle} numberOfLines={1}>
+                  {selectedArticle.title}
+                </Text>
+                <Text style={styles.readerLightboxSub} numberOfLines={1}>
+                  {selectedArticle.imageCredit || selectedArticle.artMeta?.artist || publisherDisplay}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowReaderImageLightbox(false)}
+                style={styles.readerLightboxCloseBtn}
+                accessibilityLabel="Vollbild schließen"
+              >
+                <Ionicons name="close" size={22} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={styles.readerLightboxScrollContent}
+              maximumZoomScale={3}
+              minimumZoomScale={1}
+              centerContent
+            >
+              <View
+                style={[
+                  styles.readerLightboxCanvas,
+                  (selectedArticle.format === 'meme' || Boolean(selectedArticle.memeMeta)) && {
+                    backgroundColor: '#FFFFFF',
+                    padding: 16,
+                    borderRadius: radius.md
+                  }
+                ]}
+              >
+                <Image
+                  source={{
+                    uri: optimizeImageUrl(
+                      selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl || '',
+                      1600
+                    )
+                  }}
+                  style={[
+                    styles.readerLightboxImage,
+                    readerImageAspectRatio ? { aspectRatio: readerImageAspectRatio } : { height: 540 }
+                  ]}
+                  resizeMode="contain"
+                />
+              </View>
+
+              {selectedArticle.memeMeta?.punchline && (
+                <View style={styles.readerLightboxPunchlineBox}>
+                  <Text style={styles.readerLightboxPunchlineLabel}>🎁 Bonus-Punchline (Alt-Text):</Text>
+                  <Text style={styles.readerLightboxPunchlineText}>„{selectedArticle.memeMeta.punchline}“</Text>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </Modal>
       )}
     </SafeAreaView>
   );
@@ -2473,6 +2668,228 @@ const styles = StyleSheet.create({
   readerArtImpulseText: {
     fontSize: 13,
     lineHeight: 19,
+    fontStyle: 'italic'
+  },
+  primaryDirectSourceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: radius.md,
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4
+  },
+  primaryDirectSourceBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.1
+  },
+  abstractIconBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8
+  },
+  readerArtCuratorialPlaqueStandalone: {
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginVertical: spacing.lg
+  },
+  rabbitHoleContainer: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  rabbitHoleHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginBottom: spacing.md
+  },
+  rabbitHoleIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  rabbitHoleTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: -0.2
+  },
+  rabbitHoleSubtitle: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2
+  },
+  rabbitHoleList: {
+    gap: spacing.md,
+    marginTop: spacing.xs
+  },
+  rabbitHoleCard: {
+    padding: spacing.md,
+    borderRadius: radius.sm,
+    borderWidth: 1
+  },
+  rabbitHoleCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6
+  },
+  rabbitHolePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.xs
+  },
+  rabbitHolePillText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  rabbitHolePublisher: {
+    fontSize: 11
+  },
+  rabbitHoleCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+    marginBottom: 4
+  },
+  rabbitHoleCardReason: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 10
+  },
+  rabbitHoleCardActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap'
+  },
+  rabbitHoleActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.xs
+  },
+  rabbitHoleActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  rabbitHoleSourceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.xs,
+    borderWidth: 1
+  },
+  rabbitHoleSourceBtnText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  readerImageZoomBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255, 255, 255, 0.25)'
+  },
+  readerImageZoomText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  readerLightboxBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(9, 13, 22, 0.95)'
+  },
+  readerLightboxTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.12)'
+  },
+  readerLightboxTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700'
+  },
+  readerLightboxSub: {
+    color: 'rgba(255, 255, 255, 0.68)',
+    fontSize: 12,
+    marginTop: 2
+  },
+  readerLightboxCloseBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.14)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 12
+  },
+  readerLightboxScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20
+  },
+  readerLightboxCanvas: {
+    width: '100%',
+    maxWidth: 1040,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  readerLightboxImage: {
+    width: '100%',
+    maxHeight: 820
+  },
+  readerLightboxPunchlineBox: {
+    marginTop: 16,
+    maxWidth: 820,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)'
+  },
+  readerLightboxPunchlineLabel: {
+    color: '#F59E0B',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 2
+  },
+  readerLightboxPunchlineText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontStyle: 'italic'
   }
 });
