@@ -1,24 +1,17 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { VERIFIED_FEED_SOURCES } from '../src/core/ingestion/sources';
+import { FeedItem } from '../src/core/domain/types';
 import { fetchAllFeeds } from '../src/core/ingestion/feedFetcher';
-import { normalizeFeedEntry } from '../src/core/ingestion/normalizer';
 import { deduplicateFeedItems } from '../src/core/ingestion/deduplicator';
-import { FeedItem, FeedItemSchema } from '../src/core/domain/types';
+import { normalizePipelineResults } from '../src/core/ingestion/pipelineCandidates';
+import { parseSnapshotPayload } from '../src/core/feed/snapshotPayload';
+import { SourceHealthInfo } from '../src/core/ingestion/sourceHealth';
 import { BatchEditionEnricher } from '../src/core/enrichment/batchEnricher';
 import { defaultUsageLedger } from '../src/core/enrichment/ledger';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from '../src/core/ai/atmenAiClient';
 
-export interface SourceHealthRecord {
-  sourceId: string;
-  name: string;
-  url: string;
-  fetchSuccess: boolean;
-  lastSuccessAt?: string;
-  lastError?: string;
-  itemCount: number;
-  durationMs: number;
-}
+export type SourceHealthRecord = SourceHealthInfo;
 
 const PIPELINE_OUTPUT_PATH = path.resolve(__dirname, '../src/core/data/pipeline-output.json');
 const SOURCE_HEALTH_PATH = path.resolve(__dirname, '../src/core/data/source-health.json');
@@ -45,58 +38,10 @@ async function runIngestionPipeline() {
   // 1. Fetch all RSS/Atom feeds concurrently with high throughput for 350+ sources
   const fetchResults = await fetchAllFeeds(VERIFIED_FEED_SOURCES, 25, 6500);
 
-  let successFeedCount = 0;
-  let totalRawEntries = 0;
-  const normalizedCandidates: FeedItem[] = [];
-  const sourceHealthMap: Record<string, SourceHealthRecord> = {};
-
-  for (const res of fetchResults) {
-    const prev = previousHealth[res.source.id];
-    if (res.success && res.entries.length > 0) {
-      successFeedCount++;
-      totalRawEntries += res.entries.length;
-      console.log(`  [OK]   ${res.source.name.padEnd(42)} -> ${res.entries.length} entries (${res.durationMs}ms)`);
-
-      // Take up to 4 newest items per source so no single feed dominates the pool
-      const topEntries = res.entries.slice(0, 4);
-      let validForSource = 0;
-
-      for (const entry of topEntries) {
-        try {
-          const item = normalizeFeedEntry(entry, res.source, editionDate);
-          const validated = FeedItemSchema.safeParse(item);
-          if (validated.success) {
-            normalizedCandidates.push(validated.data);
-            validForSource++;
-          }
-        } catch {
-          // Skip malformed individual item
-        }
-      }
-
-      sourceHealthMap[res.source.id] = {
-        sourceId: res.source.id,
-        name: res.source.name,
-        url: res.source.url,
-        fetchSuccess: validForSource > 0,
-        lastSuccessAt: validForSource > 0 ? res.fetchedAt : prev?.lastSuccessAt,
-        lastError: validForSource === 0 ? 'Keine validen Einträge nach Normalisierung' : undefined,
-        itemCount: validForSource,
-        durationMs: res.durationMs
-      };
-    } else {
-      console.warn(`  [WARN] ${res.source.name.padEnd(42)} -> FAILED: ${res.error}`);
-      sourceHealthMap[res.source.id] = {
-        sourceId: res.source.id,
-        name: res.source.name,
-        url: res.source.url,
-        fetchSuccess: false,
-        lastSuccessAt: prev?.lastSuccessAt,
-        lastError: res.error || 'Abruf fehlgeschlagen',
-        itemCount: 0,
-        durationMs: res.durationMs
-      };
-    }
+  const { normalizedCandidates, sourceHealth: sourceHealthMap, totalRawEntries, successFeedCount } = normalizePipelineResults(fetchResults, previousHealth, editionDate);
+  for (const result of fetchResults) {
+    const health = sourceHealthMap[result.source.id];
+    console.log(`  [${health.fetchSuccess ? 'OK' : 'INFO'}] ${result.source.name} -> ${health.itemCount} valid items${health.lastError ? ` (${health.lastError})` : ''}`);
   }
 
   // 2. Deduplicate across canonical URL, content hash & normalized title
@@ -162,14 +107,15 @@ async function runIngestionPipeline() {
     console.log(`Wrote ${finalItems.length} items to ${PIPELINE_OUTPUT_PATH}`);
 
     fs.mkdirSync(path.dirname(PUBLIC_SNAPSHOT_PATH), { recursive: true });
-    const snapshotPayload = {
+    const snapshotPayload = parseSnapshotPayload({
       generatedAt: nowIso,
       totalCandidateSources: VERIFIED_FEED_SOURCES.length,
       activeDeliveringSources: successFeedCount,
       items: finalItems,
       sourceHealth: sourceHealthMap
-    };
-    fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(snapshotPayload, null, 2), 'utf-8');
+    });
+    if (!snapshotPayload) throw new Error('No valid items fit the startup snapshot budget');
+    fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(snapshotPayload), 'utf-8');
     console.log(`Wrote public snapshot to ${PUBLIC_SNAPSHOT_PATH}`);
   } else {
     console.warn('\nNo live items fetched (offline environment). Existing pipeline-output.json preserved.');

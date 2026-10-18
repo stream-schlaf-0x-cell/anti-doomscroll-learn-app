@@ -20,7 +20,7 @@ import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
 import { DesktopSidebar } from '../../ui/components/DesktopSidebar';
 import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
-import { ScoredFeedItem, scoreFeedItem, interleaveForAddictiveLearning } from '../../core/domain/ranking';
+import { ScoredFeedItem, scoreFeedItem, sortFeedForDisplay, FeedSortMode } from '../../core/domain/ranking';
 import { Subchannel, defaultSpaceRepository } from '../../core/spaces/spaceRepository';
 import { UltraMasterModal } from '../../ui/components/UltraMasterModal';
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
@@ -38,7 +38,16 @@ import { loadAiCredentials } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
 import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
-import { FeedOperationResult } from '../../core/feed/FeedOperationManager';
+import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
+import { holdFeedPresentation } from '../../core/feed/feedPresentation';
+
+function useReadingStableFeed(items: ScoredFeedItem[], reading: boolean, scope: string): ScoredFeedItem[] {
+  const latest = useMemo(() => ({ items, scope }), [items, scope]);
+  const [previous, setPrevious] = useState(latest);
+  const presented = holdFeedPresentation(previous, latest, reading);
+  React.useEffect(() => setPrevious(presented), [presented]);
+  return presented.items;
+}
 
 export const FeedScreen: React.FC = () => {
   const {
@@ -53,6 +62,7 @@ export const FeedScreen: React.FC = () => {
     colors,
     isDark,
     refreshFeed,
+    recomputeFeed,
     refreshLiveFeed,
     snapshotSyncInfo,
     activeFeedOption,
@@ -76,8 +86,23 @@ export const FeedScreen: React.FC = () => {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
 
-  type SortMode = 'hot' | 'new' | 'top' | 'gems';
-  const [sortMode, setSortMode] = useState<SortMode>('hot');
+  const [sortMode, setSortMode] = useState<FeedSortMode>('hot');
+  const [isScrolledDown, setIsScrolledDown] = useState<boolean>(false);
+  const scrollYRef = React.useRef<number>(0);
+  const [pinnedIds, setPinnedIds] = useState<string[]>(() => defaultFeedOperationManager.getPinnedItemIds());
+  const [pendingChangeIds, setPendingChangeIds] = useState<string[]>([]);
+  const [lastOperationResult, setLastOperationResult] = useState<FeedOperationResult | null>(null);
+  React.useEffect(() => defaultFeedOperationManager.subscribe(result => {
+    setLastOperationResult(result);
+    setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
+    if (scrollYRef.current > 180) {
+      setPendingChangeIds(previous => [...new Set([...previous, ...result.insertedIds, ...result.updatedIds])]);
+    }
+  }), []);
+  React.useEffect(() => {
+    if (!isScrolledDown) setPendingChangeIds([]);
+  }, [isScrolledDown]);
+  const presentationScope = `${activeFeedOption}:${selectedFilter}:${searchQuery}:${sortMode}:${selectedEditionType}`;
   const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
   const [visibleInfiniteCount, setVisibleInfiniteCount] = useState<number>(12);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -291,10 +316,11 @@ export const FeedScreen: React.FC = () => {
     );
   }, [searchQuery]);
 
-  const scoredLiveItems = useMemo(() => {
+  const latestScoredLiveItems = useMemo(() => {
     const scored = liveNewsItems.filter(matchesSelectedSpace).map(item => scoreFeedItem(item, profile, interactions));
     return filterByQuery(scored);
   }, [liveNewsItems, matchesSelectedSpace, profile, interactions, filterByQuery]);
+  const scoredLiveItems = useReadingStableFeed(latestScoredLiveItems, isScrolledDown, `${presentationScope}:${liveNewsCategory}:${liveNewsWindowMode}`);
 
   const scoredClassicsItems = useMemo(() => {
     const scored = classicsItems.filter(matchesSelectedSpace).map(item => scoreFeedItem(item, profile, interactions));
@@ -313,34 +339,13 @@ export const FeedScreen: React.FC = () => {
     return filterByQuery(spaceFiltered);
   }, [discoveryItems, matchesSelectedSpace, filterByQuery]);
 
-  // Reddit sorting algorithms
-  const applySort = useCallback((items: ScoredFeedItem[], mode: SortMode) => {
-    const list = [...items];
-    switch (mode) {
-      case 'new':
-        return list.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-      case 'top':
-        return list.sort((a, b) => {
-          const scoreA = (a.externalCommunityScore?.points ?? 0) + (a.score || 0) * 100;
-          const scoreB = (b.externalCommunityScore?.points ?? 0) + (b.score || 0) * 100;
-          return scoreB - scoreA;
-        });
-      case 'gems':
-        return list.sort((a, b) => {
-          const isGemA = a.format === 'art_showcase' || a.format === 'youtube_gem' || a.format === 'book_masterpiece' || a.format === 'meme' || a.format === 'opportunity_radar';
-          const isGemB = b.format === 'art_showcase' || b.format === 'youtube_gem' || b.format === 'book_masterpiece' || b.format === 'meme' || b.format === 'opportunity_radar';
-          if (isGemA && !isGemB) return -1;
-          if (!isGemA && isGemB) return 1;
-          return (b.score || 0) - (a.score || 0);
-        });
-      case 'hot':
-      default:
-        return list.sort((a, b) => (b.score || 0) - (a.score || 0));
-    }
-  }, []);
-
-  const sortedDaily = useMemo(() => applySort(filteredDaily, sortMode), [filteredDaily, sortMode, applySort]);
-  const sortedDiscovery = useMemo(() => applySort(filteredDiscovery, sortMode), [filteredDiscovery, sortMode, applySort]);
+  const latestSortedDaily = useMemo(() => sortFeedForDisplay(filteredDaily, sortMode, { pinnedIds }), [filteredDaily, sortMode, pinnedIds]);
+  const sortedDaily = useReadingStableFeed(latestSortedDaily, isScrolledDown, presentationScope);
+  const latestSortedDiscovery = useMemo(() => {
+    const dailyIds = new Set(sortedDaily.map(item => item.id));
+    return sortFeedForDisplay(filteredDiscovery.filter(item => !dailyIds.has(item.id)), sortMode, { pinnedIds });
+  }, [filteredDiscovery, sortedDaily, sortMode, pinnedIds]);
+  const sortedDiscovery = useReadingStableFeed(latestSortedDiscovery, isScrolledDown, presentationScope);
 
   // OpenWeb harvested candidates scored and filtered
   const scoredOpenWebItems = useMemo(() => {
@@ -353,7 +358,7 @@ export const FeedScreen: React.FC = () => {
   }, [scoredOpenWebItems, matchesSelectedSpace, filterByQuery]);
 
   // Combined endless stream with Sliding-Window Bloom-Ranking (never clones IDs)
-  const infiniteInterleavedBase = useMemo(() => {
+  const latestInfiniteInterleavedBase = useMemo(() => {
     const combined = [...filteredDaily, ...filteredOpenWeb, ...filteredDiscovery];
     const seen = new Set<string>();
     const unique = combined.filter(item => {
@@ -361,11 +366,9 @@ export const FeedScreen: React.FC = () => {
       seen.add(item.id);
       return true;
     });
-    if (sortMode === 'hot') {
-      return interleaveForAddictiveLearning(unique);
-    }
-    return applySort(unique, sortMode);
-  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, sortMode, applySort]);
+    return sortFeedForDisplay(unique, sortMode, { pinnedIds, interleave: true });
+  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, sortMode, pinnedIds]);
+  const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
   // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
   const evergreenFallbackItems = useMemo(() => {
@@ -417,14 +420,11 @@ export const FeedScreen: React.FC = () => {
 
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
-  const scrollYRef = React.useRef<number>(0);
   const scrollViewRef = React.useRef<ScrollView>(null);
   const viewportHeightRef = React.useRef<number>(820);
   const recordedViewportIdsRef = React.useRef<Set<string>>(new Set());
 
-  const [isScrolledDown, setIsScrolledDown] = useState<boolean>(false);
   const [curationStage, setCurationStage] = useState<string>('');
-  const [lastOperationResult, setLastOperationResult] = useState<FeedOperationResult | null>(null);
   const [showReportModal, setShowReportModal] = useState<boolean>(false);
 
   const flushVisibleCardsToChronik = useCallback(() => {
@@ -498,21 +498,17 @@ export const FeedScreen: React.FC = () => {
 
       setCurationStage('2/3: Duplikate und Rauschen filtern …');
       const enriched = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(pool, creds);
+      const telemetry = defaultBatchEditionEnricher.getLastBatchReport();
 
       setCurationStage('3/3: Ergebnisse bewerten und einfügen …');
       if (feedRepository.executeContentOperation) {
-        const opResult = await feedRepository.executeContentOperation('ai_curation', enriched, { pinInserted: true });
+        const opResult = await feedRepository.executeContentOperation('ai_curation', enriched, { pinInserted: true, telemetry });
         setLastOperationResult(opResult);
       } else {
-        feedRepository.addItems(enriched);
+        feedRepository.addItems?.(enriched);
       }
 
-      await refreshFeed();
-
-      // If user is near top, smoothly scroll to top so new top-pinned articles are immediately visible
-      if (scrollYRef.current < 150) {
-        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-      }
+      await recomputeFeed();
     } catch (e) {
       console.warn('Live AI Curation failed:', e);
       setSimToast('Fehler bei der Live-KI-Kuration.');
@@ -531,7 +527,7 @@ export const FeedScreen: React.FC = () => {
     setVisibleInfiniteCount(prev => Math.min(prev + 12, totalInfiniteAvailable));
   };
 
-  const healthOverview = useMemo(() => defaultSourceRepository.getHealthOverview(), []);
+  const healthOverview = defaultSourceRepository.getHealthOverview();
 
   const [activeCardIndex, setActiveCardIndex] = useState<number>(0);
   const [expandedCardIds, setExpandedCardIds] = useState<Record<string, boolean>>({});
@@ -706,6 +702,26 @@ export const FeedScreen: React.FC = () => {
         </View>
       )}
 
+      <View style={styles.operationStatusArea} pointerEvents="box-none">
+        <View style={styles.operationStatusOverlay} pointerEvents="box-none">
+        <FeedOperationBanner
+          isRunning={isCuratingLiveAi}
+          currentStage={curationStage}
+          lastResult={lastOperationResult}
+          pendingChangeCount={pendingChangeIds.length}
+          isScrolledDown={isScrolledDown}
+          onOpenReport={() => setShowReportModal(true)}
+          onScrollToTop={() => {
+            setPendingChangeIds([]);
+            setIsScrolledDown(false);
+            scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+          }}
+          colors={colors}
+          isDark={isDark}
+        />
+        </View>
+      </View>
+
       {/* Main Feed Scroll (Desktop Centered & Two-Column Layout) */}
       <ScrollView
         ref={scrollViewRef}
@@ -724,18 +740,6 @@ export const FeedScreen: React.FC = () => {
         <View style={[styles.mainLayoutWrapper, isDesktop && styles.desktopLayoutWrapper]}>
           {/* Feed Column (Center) */}
           <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn]}>
-            {/* Real-time Living Feed Curation Progress & Banner */}
-            <FeedOperationBanner
-              isRunning={isCuratingLiveAi}
-              currentStage={curationStage}
-              lastResult={lastOperationResult}
-              isScrolledDown={isScrolledDown}
-              onOpenReport={() => setShowReportModal(true)}
-              onScrollToTop={() => scrollViewRef.current?.scrollTo({ y: 0, animated: true })}
-              colors={colors}
-              isDark={isDark}
-            />
-
             {snapshotSyncInfo && (
               <View style={[styles.snapshotSyncBanner, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                 <Ionicons name="sparkles" size={12} color={colors.accent} style={{ marginRight: 6 }} />
@@ -1271,7 +1275,7 @@ export const FeedScreen: React.FC = () => {
                     <View style={styles.liveNewsTitleRow}>
                       <View style={styles.liveGreenDot} />
                       <Text style={[styles.liveNewsTitle, { color: colors.textPrimary }]}>
-                        Echtzeit-Ticker ({scoredLiveItems.length} verifizierte Meldungen)
+                        Echtzeit-Ticker ({scoredLiveItems.length} Meldungen)
                       </Text>
                       <Text style={[styles.liveNewsLastUpdatedText, { color: colors.textMuted }]}>
                         • {liveNewsLastUpdated}
@@ -2131,6 +2135,19 @@ export const FeedScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1
+  },
+  operationStatusArea: {
+    width: '100%',
+    maxWidth: 780,
+    alignSelf: 'center',
+    height: 0,
+    zIndex: 20
+  },
+  operationStatusOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0
   },
   filterBarContainer: {
     borderBottomWidth: 0.5,

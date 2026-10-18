@@ -1,4 +1,4 @@
-import { FeedItem, TopicTag } from '../domain/types';
+import { FeedItem, FeedItemSchema, TOPIC_SPACE_MAP, TopicTag } from '../domain/types';
 import { REAL_KNOWLEDGE_VAULT, EVERGREEN_INTERNET_CLASSICS } from './realKnowledgeVault';
 import { VERIFIED_FEED_SOURCES } from '../ingestion/sources';
 import { fetchAllFeeds } from '../ingestion/feedFetcher';
@@ -7,6 +7,9 @@ import { OpenWebHarvester } from '../ingestion/openWebHarvester';
 import { appStorage } from './storage';
 import { defaultSourceRepository } from './sourceRepository';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
+import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
+import { parseSnapshotPayload } from '../feed/snapshotPayload';
+import { getSourceKind } from '../ingestion/sourceHealth';
 
 let staticPipelineItems: FeedItem[] = [];
 if (typeof process !== 'undefined' && process.versions?.node) {
@@ -33,22 +36,7 @@ if (typeof process !== 'undefined' && process.versions?.node) {
 
 export type NewsHubFilterCategory = 'all' | 'oerr' | 'tech' | 'science' | 'didactic' | 'culture';
 
-export interface PublicFeedSnapshot {
-  generatedAt: string;
-  totalCandidateSources: number;
-  activeDeliveringSources: number;
-  items: FeedItem[];
-  sourceHealth?: Record<string, {
-    sourceId: string;
-    name: string;
-    url: string;
-    fetchSuccess: boolean;
-    lastSuccessAt?: string;
-    lastError?: string;
-    itemCount: number;
-    durationMs?: number;
-  }>;
-}
+export type { SnapshotPayload as PublicFeedSnapshot } from '../feed/snapshotPayload';
 
 const PUBLIC_SNAPSHOT_CACHE_KEY = '@atem:public_feed_snapshot:v1';
 
@@ -66,24 +54,25 @@ const PUBLIC_SNAPSHOT_CACHE_KEY = '@atem:public_feed_snapshot:v1';
 export class ContinuousLiveNewsService {
   private static liveIngestedItems: FeedItem[] = [];
   private static lastFetchTimestamp: number = 0;
-  private static lastFormattedUpdate: string = 'Gerade aktualisiert';
-  private static snapshotStatus: 'live_snapshot' | 'cached_snapshot' | 'offline_fallback' = 'offline_fallback';
+  private static lastFormattedUpdate: string = 'Offline · gespeicherte Inhalte';
+  private static snapshotStatus: 'live_snapshot' | 'stale_snapshot' | 'cached_snapshot' | 'offline_fallback' = 'offline_fallback';
   private static readonly CACHE_TTL_MS = 1000 * 60 * 5; // 5 minutes
 
   public static getLastUpdatedTime(): string {
     return this.lastFormattedUpdate;
   }
 
-  public static getSnapshotStatus(): 'live_snapshot' | 'cached_snapshot' | 'offline_fallback' {
+  public static getSnapshotStatus(): 'live_snapshot' | 'stale_snapshot' | 'cached_snapshot' | 'offline_fallback' {
     return this.snapshotStatus;
   }
 
   private static updateTimestampLabel(customIso?: string): void {
-    const d = customIso ? new Date(customIso) : new Date();
-    const validDate = isNaN(d.getTime()) ? new Date() : d;
-    const hh = validDate.getHours().toString().padStart(2, '0');
-    const mm = validDate.getMinutes().toString().padStart(2, '0');
-    this.lastFormattedUpdate = `Heute, ${hh}:${mm} Uhr`;
+    const date = customIso ? new Date(customIso) : new Date();
+    if (!Number.isFinite(date.getTime())) {
+      this.lastFormattedUpdate = 'Ausgabedatum unbekannt';
+      return;
+    }
+    this.lastFormattedUpdate = `${date.toLocaleDateString('de-DE')}, ${date.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr`;
   }
 
   private static fetchWithTimeout(url: string, timeoutMs = 3500): Promise<Response> {
@@ -113,14 +102,12 @@ export class ContinuousLiveNewsService {
     );
     const cleanImageUrl = isStockUnsplash ? undefined : item.imageUrl;
     const isWiki = (item.sourceDomain || '').includes('wikipedia.org');
-    const pubMs = new Date(item.publishedAt).getTime();
-    const safePublishedAt = !isNaN(pubMs) && pubMs <= Date.now() ? item.publishedAt : new Date().toISOString();
     const safeFormat = item.format === 'art_showcase' && !cleanImageUrl ? 'sourced_update' : item.format;
 
     return {
       ...item,
       format: safeFormat,
-      publishedAt: safePublishedAt,
+      space: item.space || TOPIC_SPACE_MAP[item.primaryTopic].space,
       imageUrl: cleanImageUrl,
       hasAuthenticImage: Boolean(cleanImageUrl),
       upvotesCount: 0,
@@ -136,49 +123,51 @@ export class ContinuousLiveNewsService {
    * with local storage caching and honest offline fallback.
    */
   public static async loadPublicFeedSnapshot(): Promise<FeedItem[]> {
-    if (typeof window !== 'undefined' && Boolean(window.location?.href)) {
-      try {
-        const snapshotUrl = new URL('./feed-snapshot.json', window.location.href).toString();
-        const res = await this.fetchWithTimeout(snapshotUrl, 3500);
-        if (res.ok) {
-          const data: PublicFeedSnapshot = await res.json();
-          if (data && Array.isArray(data.items) && data.items.length > 0) {
-            this.snapshotStatus = 'live_snapshot';
-            if (data.generatedAt) {
-              this.updateTimestampLabel(data.generatedAt);
-            }
-            try {
-              await appStorage.setItem(PUBLIC_SNAPSHOT_CACHE_KEY, JSON.stringify({
-                generatedAt: data.generatedAt,
-                items: data.items.slice(0, 140)
-              }));
-            } catch {
-              // Storage quota ignore
-            }
-            return data.items.map(i => this.sanitizeProvenanceItem(i));
-          }
-        }
-      } catch {
-        // Proceed to cached snapshot fallback
+    const remoteUrl = typeof window !== 'undefined' && window.location?.href
+      ? new URL('./feed-snapshot.json', window.location.href).toString() : undefined;
+    try {
+      const result = await defaultSnapshotLoader.loadSnapshot(remoteUrl, 3500);
+      if (result.success && result.items.length) {
+        const age = result.generatedAt ? Date.now() - Date.parse(result.generatedAt) : Infinity;
+        this.snapshotStatus = age >= -5 * 60_000 && age <= 24 * 60 * 60_000 ? 'live_snapshot' : 'stale_snapshot';
+        if (result.generatedAt) this.updateTimestampLabel(result.generatedAt);
+        else this.lastFormattedUpdate = 'Ausgabedatum unbekannt';
+        try {
+          await appStorage.setItem(PUBLIC_SNAPSHOT_CACHE_KEY, JSON.stringify({
+            generatedAt: result.generatedAt, items: result.items, sourceHealth: result.sourceHealth,
+            totalCandidateSources: result.totalCandidateSources
+          }));
+        } catch { /* Reading stays available when storage is full. */ }
+        return result.items.map(item => this.sanitizeProvenanceItem(item));
       }
-    }
+    } catch { /* Try the persisted snapshot. */ }
 
-    // Try cached snapshot in local storage
     try {
       const cachedRaw = await appStorage.getItem(PUBLIC_SNAPSHOT_CACHE_KEY);
-      if (cachedRaw) {
-        const parsed = JSON.parse(cachedRaw);
-        if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
-          this.snapshotStatus = 'cached_snapshot';
-          return parsed.items.map((i: FeedItem) => this.sanitizeProvenanceItem(i));
-        }
+      const snapshot = cachedRaw ? parseSnapshotPayload(JSON.parse(cachedRaw)) : null;
+      if (snapshot) {
+        this.snapshotStatus = 'cached_snapshot';
+        if (snapshot.generatedAt) {
+          this.updateTimestampLabel(snapshot.generatedAt);
+          this.lastFormattedUpdate = `Offline · Ausgabe ${this.lastFormattedUpdate}`;
+        } else this.lastFormattedUpdate = 'Offline · Ausgabedatum unbekannt';
+        await defaultSourceRepository.recordSnapshotHealth(snapshot.sourceHealth, snapshot.generatedAt);
+        return snapshot.items.map(item => this.sanitizeProvenanceItem(item));
       }
-    } catch {
-      // Proceed to bundled offline fallback
-    }
+    } catch { /* Try bundled offline content. */ }
 
     this.snapshotStatus = 'offline_fallback';
-    return staticPipelineItems.map(i => this.sanitizeProvenanceItem(i));
+    this.lastFormattedUpdate = 'Offline · gespeicherte Inhalte';
+    return this.validatedItems(staticPipelineItems);
+  }
+
+  private static validatedItems(items: FeedItem[]): FeedItem[] {
+    const valid: FeedItem[] = [];
+    for (const item of items) {
+      const parsed = FeedItemSchema.safeParse(item);
+      if (parsed.success) valid.push(this.sanitizeProvenanceItem(parsed.data));
+    }
+    return valid;
   }
 
   /**
@@ -509,7 +498,7 @@ export class ContinuousLiveNewsService {
         ...(openWebSettled.status === 'fulfilled'
           ? openWebSettled.value.allHarvested.filter(i => i.format !== 'art_showcase' && i.sourceTrustLevel !== 'museum_collection')
           : []),
-        ...(snapshotSettled.status === 'fulfilled' ? snapshotSettled.value : [])
+
       ];
 
       // On native / Node environments, also fetch a quick subset of RSS feeds directly
@@ -517,7 +506,7 @@ export class ContinuousLiveNewsService {
       const isWebBrowser = typeof window !== 'undefined' && typeof (window as any).document !== 'undefined';
       if (!isWebBrowser) {
         try {
-          const prioritySources = VERIFIED_FEED_SOURCES.slice(0, 12);
+          const prioritySources = VERIFIED_FEED_SOURCES.filter(source => getSourceKind(source) === 'feed').slice(0, 12);
           const results = await fetchAllFeeds(prioritySources, 4, 3500);
           const today = new Date().toISOString().slice(0, 10);
           for (const res of results) {
@@ -535,7 +524,9 @@ export class ContinuousLiveNewsService {
         }
       }
 
-      const merged = [...corsLiveItems, ...rssItems];
+      const freshItems = this.validatedItems([...corsLiveItems, ...rssItems]);
+      const snapshotItems = snapshotSettled.status === 'fulfilled' ? snapshotSettled.value : [];
+      const merged = [...freshItems, ...snapshotItems];
       if (merged.length > 0) {
         const seen = new Set<string>();
         this.liveIngestedItems = merged.filter(item => {
@@ -545,14 +536,16 @@ export class ContinuousLiveNewsService {
           return true;
         });
         this.lastFetchTimestamp = now;
-        this.updateTimestampLabel();
+        if (freshItems.length > 0) this.updateTimestampLabel();
         return this.liveIngestedItems;
       }
     } catch {
       // Fallback below
     }
 
-    return staticPipelineItems.map(i => this.sanitizeProvenanceItem(i));
+    this.snapshotStatus = 'offline_fallback';
+    this.lastFormattedUpdate = 'Offline · gespeicherte Inhalte';
+    return this.validatedItems(staticPipelineItems);
   }
 
   /**
@@ -685,17 +678,7 @@ export class ContinuousLiveNewsService {
       disabledNames = [];
     }
 
-    const todayStr = new Date().toISOString().split('T')[0];
-    const refreshedStatic = staticPipelineItems.map((item, idx) => {
-      const sanitized = this.sanitizeProvenanceItem(item);
-      if (idx < 10 && !sanitized.id.includes('heise_1')) {
-        return {
-          ...sanitized,
-          publishedAt: `${todayStr}T07:${(59 - idx * 3).toString().padStart(2, '0')}:00Z`
-        };
-      }
-      return sanitized;
-    });
+    const refreshedStatic = this.validatedItems(staticPipelineItems);
 
     const combined = [
       ...liveItems,

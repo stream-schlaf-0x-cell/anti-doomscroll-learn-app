@@ -25,6 +25,7 @@ import { appearanceHistoryService, AppearanceRecord } from '../data/appearanceHi
 import { BackupService } from '../data/backupService';
 import { RaindropService } from '../raindrop/raindropService';
 import { FeatureModuleId } from '../modules/featureRegistry';
+import { refreshLocalEdition } from './localFeedRefresh';
 
 export type StartupState =
   | { status: 'loading' }
@@ -105,6 +106,7 @@ interface AppContextValue {
   repeatOnboarding: () => Promise<void>;
   clearAllLocalData: () => Promise<void>;
   refreshFeed: () => Promise<void>;
+  recomputeFeed: () => Promise<void>;
   shuffleSeed: number;
   shuffleFeed: () => Promise<void>;
   updateEditionPreferences: (prefs: Partial<EditionPreferences>) => Promise<void>;
@@ -218,41 +220,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     customShuffleOffset?: number
   ) => {
     const currentVersion = ++feedRecomputeVersion.current;
+    const isCurrent = () => currentVersion === feedRecomputeVersion.current;
     try {
       const edition = targetEdition ?? selectedEditionTypeRef.current;
       const seed = customDateSeed ?? activeDateSeedRef.current;
       const offset = customShuffleOffset ?? shuffleSeedRef.current;
-      const [daily, disc] = await Promise.all([
-        feedRepository.getEditionFeed(edition, prof, inter, seed, offset),
-        feedRepository.getDiscoveryItems(prof, inter)
-      ]);
-      if (currentVersion === feedRecomputeVersion.current) {
-        setDailyEdition(daily);
-        setDiscoveryItems(disc);
-      }
+
+      const shouldLoadWeather = edition === 'morning' && prof.editionPreferences?.weatherEnabled !== false;
+      const city = prof.editionPreferences?.weatherCity || 'dresden';
+
+      await refreshLocalEdition({
+        loadDaily: () => feedRepository.getEditionFeed(edition, prof, inter, seed, offset),
+        loadDiscovery: () => feedRepository.getDiscoveryItems(prof, inter),
+        onFeed: ({ daily, discovery }) => {
+          setDailyEdition(daily as ScoredFeedItem[]);
+          setDiscoveryItems(discovery as ScoredFeedItem[]);
+        },
+        loadWeather: shouldLoadWeather ? () => WeatherService.getWeatherForCity(city) : undefined,
+        onWeather: weather => {
+          setWeatherData(weather as WeatherData | null);
+        },
+        isCurrent
+      });
 
       // Non-blocking background harvest of open-web items
       void OpenWebHarvester.harvestAllOpenWeb().then(openWeb => {
-        if (currentVersion === feedRecomputeVersion.current && openWeb?.allHarvested) {
+        if (isCurrent() && openWeb?.allHarvested) {
           setOpenWebItems(openWeb.allHarvested);
         }
       }).catch(() => {});
-
-      if (edition === 'morning' && prof.editionPreferences?.weatherEnabled !== false) {
-        const city = prof.editionPreferences?.weatherCity || 'dresden';
-        const weather = await WeatherService.getWeatherForCity(city);
-        if (currentVersion === feedRecomputeVersion.current) {
-          setWeatherData(weather);
-        }
-      } else {
-        if (currentVersion === feedRecomputeVersion.current) {
-          setWeatherData(null);
-        }
-      }
     } catch (err) {
       console.warn('Feed-Berechnung fehlgeschlagen:', err);
     }
   }, []);
+
+  const recomputeFeed = useCallback(async () => {
+    await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
+  }, [scheduleFeedRecompute]);
 
   const shuffleFeed = useCallback(async () => {
     const nextOffset = shuffleSeedRef.current + 1;
@@ -1094,6 +1098,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         repeatOnboarding,
         clearAllLocalData,
         refreshFeed,
+        recomputeFeed,
         shuffleSeed,
         shuffleFeed,
         updateEditionPreferences,

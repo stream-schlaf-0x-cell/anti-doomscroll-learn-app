@@ -2,6 +2,8 @@ import { VERIFIED_FEED_SOURCES } from '../ingestion/sources';
 import { RawFeedSource, ReliabilityTier, SourceDomain } from '../ingestion/types';
 import { TopicTag } from '../domain/types';
 import { AtemStorage, appStorage } from './storage';
+import { getSourceKind, isDeliveringHealth, parseSourceHealth, SourceHealthInfo, SourceHealthStatus, SourceKind } from '../ingestion/sourceHealth';
+export type { SourceHealthInfo } from '../ingestion/sourceHealth';
 
 export type SourceCategory =
   | 'oerr'
@@ -18,22 +20,11 @@ export type SourceCategory =
   | 'open_source'
   | 'custom';
 
-export interface SourceHealthInfo {
-  sourceId: string;
-  name: string;
-  url: string;
-  fetchSuccess: boolean;
-  lastSuccessAt?: string;
-  lastError?: string;
-  itemCount: number;
-  durationMs?: number;
-}
-
 let bundledSourceHealth: Record<string, SourceHealthInfo> = {};
 try {
   const loaded = require('./source-health.json');
   if (loaded && typeof loaded === 'object') {
-    bundledSourceHealth = loaded as Record<string, SourceHealthInfo>;
+    bundledSourceHealth = parseSourceHealth(loaded);
   }
 } catch {
   bundledSourceHealth = {};
@@ -66,6 +57,8 @@ export interface FeedSourceItem {
   isDelivering?: boolean;
   itemCount?: number;
   health?: SourceHealthInfo;
+  healthStatus?: SourceHealthStatus;
+  sourceKind?: SourceKind;
 }
 
 export const CATEGORY_METADATA: Record<SourceCategory, {
@@ -262,6 +255,7 @@ interface SourcesStatePayload {
 }
 
 export class SourceRepository {
+  private observedHealth: Record<string, SourceHealthInfo> = { ...bundledSourceHealth };
   constructor(private storage: AtemStorage = appStorage) {}
 
   private async loadState(): Promise<SourcesStatePayload> {
@@ -269,12 +263,14 @@ export class SourceRepository {
       const raw = await this.storage.getItem(SOURCES_STATE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
+        const persistedHealth = parseSourceHealth(parsed.sourceHealthOverrides);
+        this.observedHealth = { ...bundledSourceHealth, ...this.observedHealth, ...persistedHealth };
         return {
           disabledIds: Array.isArray(parsed.disabledIds) ? parsed.disabledIds : [],
           enabledIds: Array.isArray(parsed.enabledIds) ? parsed.enabledIds : [],
           customSources: Array.isArray(parsed.customSources) ? parsed.customSources : [],
           lastSyncTimestamp: parsed.lastSyncTimestamp,
-          sourceHealthOverrides: parsed.sourceHealthOverrides || {}
+          sourceHealthOverrides: persistedHealth
         };
       }
     } catch (e) {
@@ -290,129 +286,70 @@ export class SourceRepository {
   /**
    * Synchronous summary of candidate source health across the catalog.
    */
-  getHealthOverview(): {
-    totalSources: number;
-    deliveringCount: number;
-    failingCount: number;
-    totalItems: number;
-    deliveringSources: number;
-    failingSources: number;
-    totalItemsHarvested: number;
-    activeDefaultSourcesCount: number;
-    reserveSourcesCount: number;
-  } {
-    const totalSources = VERIFIED_FEED_SOURCES.length;
+  getHealthOverview() {
     let deliveringCount = 0;
     let failingCount = 0;
+    let unknownCount = 0;
+    let referenceCount = 0;
     let totalItems = 0;
-    let activeDefaultSourcesCount = 0;
-    let reserveSourcesCount = 0;
-
-    for (const s of VERIFIED_FEED_SOURCES) {
-      if (s.defaultEnabled !== false) {
-        activeDefaultSourcesCount++;
-      } else {
-        reserveSourcesCount++;
-      }
-      const h = bundledSourceHealth[s.id] || {
-        sourceId: s.id,
-        name: s.name,
-        url: s.url,
-        fetchSuccess: true,
-        lastSuccessAt: new Date('2026-10-17T12:00:00Z').toISOString(),
-        itemCount: 4
-      };
-      const ok = h.fetchSuccess && (h.itemCount === undefined || h.itemCount > 0);
-      if (ok) {
+    for (const source of VERIFIED_FEED_SOURCES) {
+      const health = this.observedHealth[source.id];
+      if (getSourceKind(source) === 'reference') referenceCount++;
+      else if (!health) unknownCount++;
+      else if (isDeliveringHealth(health)) {
         deliveringCount++;
-        totalItems += h.itemCount || 4;
-      } else {
-        failingCount++;
-      }
+        totalItems += health.itemCount;
+      } else failingCount++;
     }
-
+    const activeDefaultSourcesCount = VERIFIED_FEED_SOURCES.filter(source => source.defaultEnabled !== false).length;
     return {
-      totalSources,
-      deliveringCount,
-      failingCount,
-      totalItems,
-      deliveringSources: deliveringCount,
-      failingSources: failingCount,
-      totalItemsHarvested: totalItems,
-      activeDefaultSourcesCount,
-      reserveSourcesCount
+      totalSources: VERIFIED_FEED_SOURCES.length,
+      deliveringCount, failingCount, unknownCount, referenceCount, totalItems,
+      deliveringSources: deliveringCount, failingSources: failingCount,
+      totalItemsHarvested: totalItems, activeDefaultSourcesCount,
+      reserveSourcesCount: VERIFIED_FEED_SOURCES.length - activeDefaultSourcesCount
     };
   }
 
-  /**
-   * Retrieves all verified sources + custom user sources with live enabled/disabled status
-   * and per-source delivery health telemetry.
-   */
+  /** Returns catalog candidates and custom feeds with measured or explicitly unknown health. */
   async getAllSources(): Promise<FeedSourceItem[]> {
     const state = await this.loadState();
     const disabledSet = new Set(state.disabledIds);
     const enabledSet = new Set(state.enabledIds || []);
-    const overrides = state.sourceHealthOverrides || {};
-
-    const verifiedItems: FeedSourceItem[] = VERIFIED_FEED_SOURCES.map(s => {
-      const { category, trustBadge } = categorizeVerifiedSource(s);
-      const isDefaultActive = s.defaultEnabled !== false;
-      const isEnabled = isDefaultActive ? !disabledSet.has(s.id) : enabledSet.has(s.id);
-
-      const health: SourceHealthInfo = overrides[s.id] || bundledSourceHealth[s.id] || {
-        sourceId: s.id,
-        name: s.name,
-        url: s.url,
-        fetchSuccess: true,
-        lastSuccessAt: new Date('2026-10-17T12:00:00Z').toISOString(),
-        itemCount: 4
-      };
-
-      const fetchSuccess = health.fetchSuccess;
-      const itemCount = health.itemCount ?? 4;
-      const isDelivering = fetchSuccess && itemCount > 0;
-      const lastSuccessFormatted = health.lastSuccessAt
-        ? new Date(health.lastSuccessAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-        : undefined;
-
+    const catalogItems: FeedSourceItem[] = VERIFIED_FEED_SOURCES.map(source => {
+      const { category, trustBadge } = categorizeVerifiedSource(source);
+      const sourceKind = getSourceKind(source);
+      const health = this.observedHealth[source.id];
+      const isDelivering = sourceKind === 'feed' && isDeliveringHealth(health);
+      const healthStatus: SourceHealthStatus = sourceKind === 'reference' ? 'reference'
+        : !health ? 'unknown' : isDelivering ? 'delivering' : 'failing';
+      const lastSynced = healthStatus === 'reference' ? 'Referenzseite · kein RSS-Feed'
+        : healthStatus === 'unknown' ? 'Abruf noch nicht geprüft'
+        : isDelivering ? `Letzter Erfolg: ${new Date(health!.lastSuccessAt!).toLocaleString('de-DE')}`
+        : `Abruf-Fehler: ${health?.lastError || 'Keine gültigen Einträge'}`;
       return {
-        id: s.id,
-        name: s.name,
-        url: s.url,
-        category,
-        primaryTopic: s.primaryTopic,
-        topics: s.topics,
-        defaultAuthor: s.defaultAuthor,
-        language: s.language,
-        enabled: isEnabled,
-        defaultEnabled: s.defaultEnabled,
-        reliabilityTier: s.reliabilityTier,
-        sourceDomain: s.sourceDomain,
-        homepageUrl: s.homepageUrl,
-        description: s.description,
-        isCustom: false,
-        trustBadge,
-        articleCount: itemCount,
-        itemCount,
-        lastSynced: isDelivering
-          ? (lastSuccessFormatted || state.lastSyncTimestamp || 'Liefert aktiv')
-          : `Abruf-Fehler: ${health.lastError || 'Nicht erreichbar'}`,
-        fetchSuccess,
-        lastSuccessAt: health.lastSuccessAt,
-        lastError: health.lastError,
-        isDelivering,
-        health
+        ...source, category, trustBadge,
+        enabled: source.defaultEnabled !== false ? !disabledSet.has(source.id) : enabledSet.has(source.id),
+        isCustom: false, sourceKind, healthStatus, health,
+        fetchSuccess: sourceKind === 'reference' ? undefined : health?.fetchSuccess,
+        itemCount: sourceKind === 'reference' ? 0 : health?.itemCount ?? 0,
+        articleCount: sourceKind === 'reference' ? 0 : health?.itemCount ?? 0,
+        lastSynced, lastSuccessAt: health?.lastSuccessAt,
+        lastError: health?.lastError, isDelivering
       };
     });
-
-    const customItems: FeedSourceItem[] = state.customSources.map(c => ({
-      ...c,
-      enabled: !disabledSet.has(c.id),
-      fetchSuccess: c.fetchSuccess ?? true,
-      isDelivering: c.isDelivering ?? true
-    }));
-
-    return [...verifiedItems, ...customItems];
+    const customItems: FeedSourceItem[] = state.customSources.map(source => {
+      const health = this.observedHealth[source.id];
+      return {
+        ...source, enabled: !disabledSet.has(source.id), sourceKind: 'feed', health,
+        fetchSuccess: health?.fetchSuccess, isDelivering: isDeliveringHealth(health),
+        itemCount: health?.itemCount ?? 0,
+        lastSuccessAt: health?.lastSuccessAt, lastError: health?.lastError,
+        healthStatus: !health ? 'unknown' : isDeliveringHealth(health) ? 'delivering' : 'failing',
+        lastSynced: !health ? 'Abruf noch nicht geprüft' : health.lastSuccessAt || health.lastError
+      };
+    });
+    return [...catalogItems, ...customItems];
   }
 
   /**
@@ -420,7 +357,7 @@ export class SourceRepository {
    */
   async getActiveDeliveringSources(): Promise<FeedSourceItem[]> {
     const all = await this.getAllSources();
-    return all.filter(s => s.enabled && s.isDelivering !== false);
+    return all.filter(s => s.enabled && s.isDelivering === true);
   }
 
   /**
@@ -428,14 +365,31 @@ export class SourceRepository {
    */
   async getDisabledDomains(): Promise<string[]> {
     const all = await this.getAllSources();
-    const disabled = all.filter(s => !s.enabled);
+    const enabledDomains = new Set<string>();
+    for (const s of all) {
+      if (s.enabled && s.url) {
+        try {
+          const host = new URL(s.url).hostname.replace(/^www\./, '').toLowerCase();
+          enabledDomains.add(host);
+        } catch {
+          // Ignore invalid URL
+        }
+      }
+    }
+
+    const state = await this.loadState();
+    const disabledSet = new Set(state.disabledIds);
     const domains = new Set<string>();
-    for (const s of disabled) {
-      try {
-        const host = new URL(s.url).hostname.replace(/^www\./, '').toLowerCase();
-        domains.add(host);
-      } catch {
-        // Ignore invalid URL
+    for (const s of all) {
+      if (!s.enabled && disabledSet.has(s.id) && s.url) {
+        try {
+          const host = new URL(s.url).hostname.replace(/^www\./, '').toLowerCase();
+          if (!enabledDomains.has(host)) {
+            domains.add(host);
+          }
+        } catch {
+          // Ignore invalid URL
+        }
       }
     }
     return Array.from(domains);
@@ -446,18 +400,30 @@ export class SourceRepository {
    */
   async getDisabledNames(): Promise<string[]> {
     const all = await this.getAllSources();
-    return all.filter(s => !s.enabled).map(s => s.name.toLowerCase());
+    const state = await this.loadState();
+    const disabledSet = new Set(state.disabledIds);
+    return all.filter(s => !s.enabled && disabledSet.has(s.id)).map(s => s.name.toLowerCase());
   }
 
   /**
    * Updates health telemetry for a specific source after a fetch attempt.
    */
   async recordSourceHealth(info: SourceHealthInfo): Promise<void> {
+    await this.recordSnapshotHealth({ [info.sourceId]: info }, info.checkedAt);
+  }
+
+  /** One storage write per measured snapshot; reader hydration survives a storage quota failure. */
+  async recordSnapshotHealth(value: unknown, checkedAt?: string): Promise<void> {
+    const records = parseSourceHealth(value);
     const state = await this.loadState();
-    const overrides = state.sourceHealthOverrides || {};
-    overrides[info.sourceId] = info;
-    state.sourceHealthOverrides = overrides;
-    await this.saveState(state);
+    for (const [id, info] of Object.entries(records)) {
+      const next = { ...info, checkedAt: info.checkedAt || checkedAt };
+      const previous = this.observedHealth[id];
+      if (previous?.checkedAt && next.checkedAt && Date.parse(previous.checkedAt) > Date.parse(next.checkedAt)) continue;
+      this.observedHealth[id] = next;
+    }
+    state.sourceHealthOverrides = { ...state.sourceHealthOverrides, ...this.observedHealth };
+    try { await this.saveState(state); } catch { /* In-memory measured health remains available. */ }
   }
 
   /**
@@ -577,8 +543,9 @@ export class SourceRepository {
       isCustom: true,
       trustBadge: 'Eigene Quelle',
       createdAt: new Date().toISOString(),
-      fetchSuccess: true,
-      isDelivering: true
+      healthStatus: 'unknown',
+      sourceKind: 'feed',
+      isDelivering: false
     };
 
     state.customSources.push(newSource);
@@ -639,8 +606,9 @@ export class SourceRepository {
         isCustom: true,
         trustBadge: 'OPML Import',
         createdAt: new Date().toISOString(),
-        fetchSuccess: true,
-        isDelivering: true
+        healthStatus: 'unknown',
+        sourceKind: 'feed',
+        isDelivering: false
       };
 
       state.customSources.push(newSource);

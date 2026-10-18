@@ -1,4 +1,5 @@
 import { appStorage, AtemStorage } from '../data/storage';
+import { AiHttpError, boundedOutputTokens, fetchAiJson, normalizeAiProxyUrl, parseAiResult, ParsedAiResult } from './aiTransport';
 import {
   EnrichmentUsageLedger,
   defaultUsageLedger,
@@ -24,6 +25,8 @@ export interface AiCredentials {
   apiKey?: string;
   model?: string;
   proxyUrl?: string;
+  /** Deliberate opt-in to unencrypted local persistence. Session memory is the default. */
+  persistApiKey?: boolean;
 }
 
 export const DEFAULT_AI_CREDENTIALS: AiCredentials = {
@@ -122,32 +125,64 @@ export class AiCredentialsMissingError extends Error {
   }
 }
 
+// Keys are scoped to this application session. Metadata remains in local storage.
+const sessionApiKeys = new WeakMap<AtemStorage, string>();
+
+export function hasAiConfiguration(credentials: AiCredentials): boolean {
+  return Boolean(credentials.apiKey?.trim() || credentials.proxyUrl?.trim());
+}
+
+function normalizeCredentials(credentials: AiCredentials): AiCredentials {
+  return {
+    provider: credentials.provider === 'openrouter' ? 'openrouter' : 'gemini',
+    apiKey: credentials.apiKey?.trim() ?? '',
+    model: credentials.model?.trim() || (credentials.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL),
+    proxyUrl: normalizeAiProxyUrl(credentials.proxyUrl),
+    persistApiKey: credentials.persistApiKey === true
+  };
+}
+
 export async function loadAiCredentials(storage: AtemStorage = appStorage): Promise<AiCredentials> {
   const raw = await storage.getItem(AI_CREDENTIALS_STORAGE_KEY);
-  if (!raw) return { ...DEFAULT_AI_CREDENTIALS };
+  if (!raw) {
+    sessionApiKeys.delete(storage);
+    return { ...DEFAULT_AI_CREDENTIALS };
+  }
+  let parsed: Record<string, unknown>;
   try {
-    const parsed = JSON.parse(raw);
-    return {
-      provider: parsed.provider === 'openrouter' ? 'openrouter' : 'gemini',
-      apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey : '',
-      model: typeof parsed.model === 'string' && parsed.model ? parsed.model : (
-        parsed.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL
-      )
-    };
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...DEFAULT_AI_CREDENTIALS };
+    parsed = value as Record<string, unknown>;
   } catch {
     return { ...DEFAULT_AI_CREDENTIALS };
   }
+  const persistedKey = typeof parsed.apiKey === 'string' ? parsed.apiKey.trim() : '';
+  const credentials: AiCredentials = {
+    provider: parsed.provider === 'openrouter' ? 'openrouter' : 'gemini',
+    apiKey: persistedKey || sessionApiKeys.get(storage) || '',
+    model: typeof parsed.model === 'string' && parsed.model ? parsed.model : (parsed.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL),
+    // Preserve invalid legacy configuration so calls fail closed until the user corrects it.
+    proxyUrl: typeof parsed.proxyUrl === 'string' ? parsed.proxyUrl : undefined,
+    persistApiKey: parsed.persistApiKey === true
+  };
+  if (persistedKey && !credentials.persistApiKey) {
+    // Migrate legacy plaintext keys without making them unusable during this session.
+    sessionApiKeys.set(storage, persistedKey);
+    await storage.setItem(AI_CREDENTIALS_STORAGE_KEY, JSON.stringify({ ...credentials, apiKey: '' }));
+  }
+  return credentials;
 }
 
-export async function saveAiCredentials(
-  credentials: AiCredentials,
-  storage: AtemStorage = appStorage
-): Promise<void> {
-  await storage.setItem(AI_CREDENTIALS_STORAGE_KEY, JSON.stringify(credentials));
+export async function saveAiCredentials(credentials: AiCredentials, storage: AtemStorage = appStorage): Promise<void> {
+  const normalized = normalizeCredentials(credentials);
+  await storage.setItem(AI_CREDENTIALS_STORAGE_KEY, JSON.stringify({ ...normalized, apiKey: normalized.persistApiKey ? normalized.apiKey : '' }));
+  if (normalized.apiKey) sessionApiKeys.set(storage, normalized.apiKey);
+  else sessionApiKeys.delete(storage);
 }
 
 export async function clearAiCredentials(storage: AtemStorage = appStorage): Promise<void> {
   await storage.removeItem(AI_CREDENTIALS_STORAGE_KEY);
+  sessionApiKeys.delete(storage);
 }
 
 export interface AiCallResponse {
@@ -167,6 +202,8 @@ export interface AiCallOptions {
   credentials?: AiCredentials;
   ledger?: EnrichmentUsageLedger;
   itemId?: string;
+  /** May shorten the 15-second transport deadline, but cannot extend it. */
+  timeoutMs?: number;
 }
 
 /**
@@ -175,8 +212,8 @@ export interface AiCallOptions {
 export async function testAiConnection(
   credentials: AiCredentials
 ): Promise<{ ok: boolean; message: string; latencyMs?: number }> {
-  if (!credentials.apiKey?.trim()) {
-    return { ok: false, message: 'Bitte gib einen gültigen API-Schlüssel ein.' };
+  if (!hasAiConfiguration(credentials)) {
+    return { ok: false, message: 'Bitte gib einen API-Schlüssel oder eine eigene HTTPS-Proxy-Adresse ein.' };
   }
 
   const start = Date.now();
@@ -185,6 +222,7 @@ export async function testAiConnection(
       jsonMode: true,
       credentials,
       itemId: 'connection-test',
+      maxTokens: 32,
       // We pass an isolated in-memory ledger for connection testing so test calls don't block
       ledger: new EnrichmentUsageLedger('', false)
     });
@@ -215,222 +253,76 @@ export async function testAiConnection(
 /**
  * Unified AI call method strictly governed by EnrichmentUsageLedger.
  */
-export async function callAiModel(
-  prompt: string,
-  options: AiCallOptions = {}
-): Promise<AiCallResponse> {
-  const credentials = options.credentials ?? (await loadAiCredentials());
+export async function callAiModel(prompt: string, options: AiCallOptions = {}): Promise<AiCallResponse> {
+  const credentials = options.credentials ?? await loadAiCredentials();
   const apiKey = credentials.apiKey?.trim();
-  const effectiveProxyUrl = credentials.proxyUrl?.trim() || (typeof process !== 'undefined' ? process.env.ATMEN_AI_PROXY_URL : undefined);
-
-  if (!apiKey && !effectiveProxyUrl) {
-    throw new AiCredentialsMissingError();
-  }
-
-  const ledger = options.ledger ?? defaultUsageLedger;
-
-  // 1. Check budget ceiling and reserve
-  const estimatedInputTokens = Math.ceil(prompt.length / 3.5);
-  const estimatedOutputTokens = options.maxTokens ?? 500;
-  const estimatedCost = calculateCostEur(estimatedInputTokens, estimatedOutputTokens);
-
-  const reservationId = await ledger.reserveSpend(estimatedCost);
-  if (!reservationId) {
-    throw new AiBudgetExceededError(
-      `Monatliches KI-Budget-Limit (${MONTHLY_BUDGET_CEILING_EUR.toFixed(2)} €) erreicht oder gesperrt.`
-    );
-  }
-
-  const model = credentials.model?.trim() || (
-    credentials.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL
-  );
-
+  // No hidden environment fallback: transport selection is explicit and persisted in settings.
+  const proxyUrl = normalizeAiProxyUrl(credentials.proxyUrl);
+  if (!apiKey && !proxyUrl) throw new AiCredentialsMissingError();
+  const maxTokens = boundedOutputTokens(options.maxTokens);
+  const model = credentials.model?.trim() || (credentials.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL);
   if (credentials.provider === 'gemini') {
-    const val = validateModelChoice(model, 'text');
-    if (!val.valid) {
-      await ledger.releaseReservation(reservationId);
-      throw new Error(val.reason || `Das Modell „${model}“ ist nicht für Text-Generierung unterstützt.`);
-    }
+    const validation = validateModelChoice(model, 'text');
+    if (!validation.valid) throw new Error(validation.reason || 'Das gewählte Modell unterstützt diese Textanfrage nicht.');
   }
+  const ledger = options.ledger ?? defaultUsageLedger;
+  const estimatedInputTokens = Math.ceil((prompt.length + (options.systemInstruction?.length ?? 0)) / 3.5);
+  const reservationId = await ledger.reserveSpend(calculateCostEur(estimatedInputTokens, maxTokens));
+  if (!reservationId) throw new AiBudgetExceededError(`Monatliches KI-Budget-Limit (${MONTHLY_BUDGET_CEILING_EUR.toFixed(2)} €) erreicht oder gesperrt.`);
 
   try {
-    let resultText = '';
-    let inTokens = estimatedInputTokens;
-    let outTokens = estimatedOutputTokens;
+    let result: ParsedAiResult;
     let effectiveModel = model;
-
-    // Optional proxy dispatch if configured
-    if (effectiveProxyUrl) {
+    if (proxyUrl) {
+      const json = await fetchAiJson(`${proxyUrl}/curate`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'x-provider-api-key': apiKey } : {}) },
+        body: JSON.stringify({ provider: credentials.provider, prompt, systemInstruction: options.systemInstruction, jsonMode: options.jsonMode, model, maxTokens })
+      }, options.timeoutMs);
+      // A configured proxy is the exclusive route. Failure never triggers a direct paid call.
+      result = parseAiResult(json, 'proxy');
+      effectiveModel = result.model || model;
+    } else if (credentials.provider === 'gemini') {
+      const body = JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        ...(options.systemInstruction ? { systemInstruction: { parts: [{ text: options.systemInstruction }] } } : {}),
+        generationConfig: { maxOutputTokens: maxTokens, ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}) }
+      });
+      const sendGemini = (chosenModel: string) => fetchAiJson(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(chosenModel)}:generateContent`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey! }, body },
+        options.timeoutMs
+      );
+      let json: unknown;
       try {
-        const proxyRes = await fetch(`${effectiveProxyUrl}/curate`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(apiKey ? { 'x-gemini-key': apiKey } : {})
-          },
-          body: JSON.stringify({
-            prompt,
-            systemInstruction: options.systemInstruction,
-            jsonMode: options.jsonMode,
-            model
-          })
-        });
-        if (proxyRes.ok) {
-          const json = await proxyRes.json();
-          if (json.text) {
-            resultText = json.text;
-            if (json.usage) {
-              inTokens = json.usage.promptTokenCount ?? inTokens;
-              outTokens = json.usage.candidatesTokenCount ?? outTokens;
-            }
-            const actualCost = calculateCostEur(inTokens, outTokens);
-            await ledger.commitReservation(reservationId, {
-              itemId: options.itemId ?? 'live-ai-call',
-              model: effectiveModel,
-              inputTokens: inTokens,
-              outputTokens: outTokens,
-              costEur: actualCost
-            });
-            return {
-              text: resultText,
-              usage: {
-                inputTokens: inTokens,
-                outputTokens: outTokens,
-                costEur: actualCost
-              },
-              modelUsed: effectiveModel
-            };
-          }
-        }
-      } catch {
-        // Fall back to direct call
-      }
-    }
-
-    if (credentials.provider === 'gemini') {
-      if (!apiKey) {
-        throw new AiCredentialsMissingError();
-      }
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-      const requestBody: Record<string, unknown> = {
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: prompt }]
-          }
-        ]
-      };
-
-      if (options.systemInstruction) {
-        requestBody.systemInstruction = {
-          parts: [{ text: options.systemInstruction }]
-        };
-      }
-
-      if (options.jsonMode) {
-        requestBody.generationConfig = {
-          responseMimeType: 'application/json'
-        };
-      }
-
-      let response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      // Guardrail: Automatic retry fallback to gemini-2.5-flash if HTTP 404 returned
-      if (response.status === 404 && model !== 'gemini-2.5-flash') {
+        json = await sendGemini(model);
+      } catch (error) {
+        // A missing model is an explicit, bounded compatibility fallback; no retry for rate limits/errors.
+        if (!(error instanceof AiHttpError) || error.status !== 404 || model === 'gemini-2.5-flash') throw error;
         effectiveModel = 'gemini-2.5-flash';
-        const fallbackEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
-        response = await fetch(fallbackEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(requestBody)
-        });
+        json = await sendGemini(effectiveModel);
       }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Gemini API Fehler (${response.status}): ${errorText.slice(0, 300)}`);
-      }
-
-      const json = await response.json();
-      resultText = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-      if (json?.usageMetadata) {
-        inTokens = json.usageMetadata.promptTokenCount ?? inTokens;
-        outTokens = json.usageMetadata.candidatesTokenCount ?? outTokens;
-      }
+      result = parseAiResult(json, 'gemini');
     } else {
-      // OpenRouter provider
-      const endpoint = 'https://openrouter.ai/api/v1/chat/completions';
-      const messages: { role: string; content: string }[] = [];
-
-      if (options.systemInstruction) {
-        messages.push({ role: 'system', content: options.systemInstruction });
-      }
-      messages.push({ role: 'user', content: prompt });
-
-      const requestBody: Record<string, unknown> = {
-        model,
-        messages
-      };
-
-      if (options.jsonMode) {
-        requestBody.response_format = { type: 'json_object' };
-      }
-
-      const response = await fetch(endpoint, {
+      const messages = [
+        ...(options.systemInstruction ? [{ role: 'system', content: options.systemInstruction }] : []),
+        { role: 'user', content: prompt }
+      ];
+      const json = await fetchAiJson('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://atmen.app',
-          'X-Title': 'Atmen'
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`OpenRouter API Fehler (${response.status}): ${errorText.slice(0, 300)}`);
-      }
-
-      const json = await response.json();
-      resultText = json?.choices?.[0]?.message?.content ?? '';
-      if (json?.usage) {
-        inTokens = json.usage.prompt_tokens ?? inTokens;
-        outTokens = json.usage.completion_tokens ?? outTokens;
-      }
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://atmen.app', 'X-Title': 'Atmen' },
+        body: JSON.stringify({ model, messages, max_tokens: maxTokens, ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}) })
+      }, options.timeoutMs);
+      result = parseAiResult(json, 'openrouter');
     }
-
-    // 2. Commit actual spend against reservation
-    const costEur = calculateCostEur(inTokens, outTokens);
-    await ledger.commitReservation(reservationId, {
-      itemId: options.itemId ?? 'live-ai-call',
-      model: effectiveModel,
-      inputTokens: inTokens,
-      outputTokens: outTokens,
-      costEur
-    });
-
-    return {
-      text: resultText,
-      usage: {
-        inputTokens: inTokens,
-        outputTokens: outTokens,
-        costEur
-      },
-      modelUsed: effectiveModel
-    };
-  } catch (err) {
-    // Release reserved funds if network or API failed
+    const inputTokens = result.inputTokens ?? estimatedInputTokens;
+    const outputTokens = result.outputTokens ?? maxTokens;
+    const costEur = calculateCostEur(inputTokens, outputTokens);
+    await ledger.commitReservation(reservationId, { itemId: options.itemId ?? 'live-ai-call', model: effectiveModel, inputTokens, outputTokens, costEur });
+    return { text: result.text, usage: { inputTokens, outputTokens, costEur }, modelUsed: effectiveModel };
+  } catch (error) {
     await ledger.releaseReservation(reservationId);
-    throw err;
+    throw error;
   }
 }

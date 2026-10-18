@@ -42,7 +42,7 @@ describe('Bloomscrolling Iteration: 72 Sources, Sliding-Window Ranking & 7 Verif
 
     const allWithHealth = await defaultSourceRepository.getAllSources();
     const delivering = allWithHealth.filter(s => s.isDelivering);
-    const failing = allWithHealth.filter(s => !s.isDelivering);
+    const failing = allWithHealth.filter(s => s.healthStatus === 'failing');
 
     assert.strictEqual(delivering.length, overview.deliveringCount);
     assert.strictEqual(failing.length, overview.failingCount);

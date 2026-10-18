@@ -27,7 +27,7 @@ import {
   OPENROUTER_MODEL_PRESETS,
   loadAiCredentials,
   saveAiCredentials,
-  clearAiCredentials,
+  hasAiConfiguration,
   testAiConnection
 } from '../../core/ai/atmenAiClient';
 import { defaultUsageLedger, MONTHLY_BUDGET_CEILING_EUR } from '../../core/enrichment/ledger';
@@ -61,6 +61,7 @@ export const SettingsScreen: React.FC = () => {
 
   // BYOK AI Credentials & Ledger State
   const [aiCreds, setAiCreds] = useState<AiCredentials>(DEFAULT_AI_CREDENTIALS);
+  const [proxyUrlInput, setProxyUrlInput] = useState('');
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
   const [isTestingAi, setIsTestingAi] = useState<boolean>(false);
   const [aiTestResult, setAiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -75,6 +76,7 @@ export const SettingsScreen: React.FC = () => {
     void (async () => {
       const creds = await loadAiCredentials();
       setAiCreds(creds);
+      setProxyUrlInput(creds.proxyUrl ?? '');
       const summary = await defaultUsageLedger.getSummary();
       setLedgerSummary(summary);
     })();
@@ -94,8 +96,12 @@ export const SettingsScreen: React.FC = () => {
       model: defaultModel
     };
     setAiCreds(next);
-    await saveAiCredentials(next);
-    setAiTestResult(null);
+    try {
+      await saveAiCredentials(next);
+      setAiTestResult(null);
+    } catch {
+      setAiTestResult({ ok: false, message: 'KI-Einstellungen konnten nicht gespeichert werden.' });
+    }
   };
 
   const handleSelectModel = async (model: string) => {
@@ -104,8 +110,12 @@ export const SettingsScreen: React.FC = () => {
       model: model.trim()
     };
     setAiCreds(next);
-    await saveAiCredentials(next);
-    setAiTestResult(null);
+    try {
+      await saveAiCredentials(next);
+      setAiTestResult(null);
+    } catch {
+      setAiTestResult({ ok: false, message: 'KI-Einstellungen konnten nicht gespeichert werden.' });
+    }
   };
 
   const handleChangeCustomModel = async (text: string) => {
@@ -114,8 +124,12 @@ export const SettingsScreen: React.FC = () => {
       model: text
     };
     setAiCreds(next);
-    await saveAiCredentials(next);
-    setAiTestResult(null);
+    try {
+      await saveAiCredentials(next);
+      setAiTestResult(null);
+    } catch {
+      setAiTestResult({ ok: false, message: 'KI-Einstellungen konnten nicht gespeichert werden.' });
+    }
   };
 
   const handleChangeApiKey = async (text: string) => {
@@ -124,8 +138,12 @@ export const SettingsScreen: React.FC = () => {
       apiKey: text
     };
     setAiCreds(next);
-    await saveAiCredentials(next);
-    setAiTestResult(null);
+    try {
+      await saveAiCredentials(next);
+      setAiTestResult(null);
+    } catch {
+      setAiTestResult({ ok: false, message: 'KI-Einstellungen konnten nicht gespeichert werden.' });
+    }
   };
 
   const handleClearApiKey = async () => {
@@ -134,8 +152,35 @@ export const SettingsScreen: React.FC = () => {
       apiKey: ''
     };
     setAiCreds(next);
-    await clearAiCredentials();
-    setAiTestResult(null);
+    try {
+      await saveAiCredentials(next);
+      setAiTestResult({ ok: true, message: 'API-Schlüssel aus Sitzung und lokalem Speicher gelöscht.' });
+    } catch {
+      setAiTestResult({ ok: false, message: 'Schlüssel konnte nicht gelöscht werden. Bitte erneut versuchen.' });
+    }
+  };
+
+  const handlePersistApiKey = async (persistApiKey: boolean) => {
+    const next = { ...aiCreds, persistApiKey };
+    try {
+      await saveAiCredentials(next);
+      setAiCreds(next);
+      setAiTestResult(null);
+    } catch {
+      setAiTestResult({ ok: false, message: 'Speicherwahl konnte nicht übernommen werden.' });
+    }
+  };
+
+  const handleSaveProxyUrl = async () => {
+    try {
+      await saveAiCredentials({ ...aiCreds, proxyUrl: proxyUrlInput });
+      const saved = await loadAiCredentials();
+      setAiCreds(saved);
+      setProxyUrlInput(saved.proxyUrl ?? '');
+      setAiTestResult({ ok: true, message: saved.proxyUrl ? 'Proxy-Adresse gespeichert. Anfragen laufen ausschließlich über diesen Proxy.' : 'Direkter BYOK-Zugriff ausgewählt.' });
+    } catch (error) {
+      setAiTestResult({ ok: false, message: error instanceof Error ? error.message : 'Proxy-Adresse konnte nicht gespeichert werden.' });
+    }
   };
 
   const handleTestAiConnection = async () => {
@@ -609,7 +654,7 @@ export const SettingsScreen: React.FC = () => {
             KI-Gehirn & Modell-Auswahl (Gemini / OpenRouter)
           </Text>
           <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Bring Your Own Key (BYOK). Dein API-Schlüssel wird ausschließlich lokal verschlüsselt gespeichert und niemals exportiert.
+            Bring Your Own Key (BYOK): Die veröffentlichte Web-App hat keinen eigenen KI-Server. Mit deinem Schlüssel werden Anfragen direkt an den gewählten Anbieter gesendet; dort können Kosten entstehen. Ohne KI-Konfiguration bleibt der lokale Lesemodus verfügbar.
           </Text>
 
           <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
@@ -772,16 +817,56 @@ export const SettingsScreen: React.FC = () => {
               )}
             </View>
 
+            <View style={[styles.toggleRow, { marginTop: 12 }]}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>Schlüssel auf diesem Gerät merken</Text>
+                <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, lineHeight: 17 }}>
+                  {aiCreds.persistApiKey
+                    ? 'Aktiv: Der Schlüssel wird unverschlüsselt im lokalen App- bzw. Browserspeicher abgelegt. Nur auf einem eigenen, vertrauenswürdigen Gerät verwenden.'
+                    : 'Standard: nur im Arbeitsspeicher dieser Sitzung. Nach Neuladen oder App-Neustart erneut eingeben. Früher gespeicherte Schlüssel werden beim Laden in diese Sitzung übernommen und aus dem dauerhaften Speicher entfernt.'}
+                </Text>
+              </View>
+              <Switch
+                value={aiCreds.persistApiKey === true}
+                onValueChange={value => void handlePersistApiKey(value)}
+                accessibilityLabel="API-Schlüssel unverschlüsselt auf diesem Gerät speichern"
+              />
+            </View>
+
+            <Text style={[styles.inputLabel, { color: colors.textSecondary, marginTop: 16 }]}>Eigener KI-Proxy (optional, HTTPS-Basisadresse):</Text>
+            <View style={[styles.keyInputRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+              <TextInput
+                style={[styles.keyInput, { color: colors.textPrimary }]}
+                value={proxyUrlInput}
+                onChangeText={setProxyUrlInput}
+                placeholder="https://dein-server.example/api/ai"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                accessibilityLabel="Eigene KI-Proxy-Basisadresse"
+              />
+            </View>
+            <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, lineHeight: 17, marginTop: 6 }}>
+              Ein eigener Proxy erhält Anfrage und ggf. deinen API-Schlüssel. Er muss separat eingerichtet sein. Bei Proxy-Fehlern erfolgt kein direkter Anbieteraufruf. Leere Adresse wählt direkten BYOK-Zugriff.
+            </Text>
+            <TouchableOpacity
+              onPress={() => void handleSaveProxyUrl()}
+              style={[styles.testConnectionBtn, { backgroundColor: colors.surfaceSecondary, marginTop: 8, alignSelf: 'flex-start' }]}
+              accessibilityLabel="KI-Proxy-Adresse speichern"
+            >
+              <Text style={[styles.testConnectionBtnText, { color: colors.textPrimary }]}>Proxy-Adresse speichern</Text>
+            </TouchableOpacity>
+
             {/* Test Connection Button */}
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 10, flexWrap: 'wrap' }}>
               <TouchableOpacity
                 onPress={handleTestAiConnection}
-                disabled={isTestingAi || !aiCreds.apiKey?.trim()}
+                disabled={isTestingAi || !hasAiConfiguration(aiCreds)}
                 style={[
                   styles.testConnectionBtn,
                   {
-                    backgroundColor: aiCreds.apiKey?.trim() ? colors.accent : colors.surfaceSecondary,
-                    opacity: isTestingAi || !aiCreds.apiKey?.trim() ? 0.6 : 1
+                    backgroundColor: hasAiConfiguration(aiCreds) ? colors.accent : colors.surfaceSecondary,
+                    opacity: isTestingAi || !hasAiConfiguration(aiCreds) ? 0.6 : 1
                   }
                 ]}
               >
@@ -790,7 +875,7 @@ export const SettingsScreen: React.FC = () => {
                 ) : (
                   <Ionicons name="flash-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
                 )}
-                <Text style={styles.testConnectionBtnText}>Verbindung testen</Text>
+                <Text style={styles.testConnectionBtnText}>Verbindung testen (API-Aufruf)</Text>
               </TouchableOpacity>
 
               {aiTestResult && (
@@ -826,11 +911,11 @@ export const SettingsScreen: React.FC = () => {
             <View style={[styles.ledgerBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: 16 }]}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <Text style={{ fontSize: typography.sizes.bodySmall, fontWeight: '700', color: colors.textPrimary }}>
-                  Enrichment Monatsbudget (Gedeckelt)
+                  KI-Monatsbudget (Schätzung)
                 </Text>
                 <View style={[styles.badgeActive, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
                   <Text style={[styles.badgeActiveText, { color: '#10B981' }]}>
-                    {ledgerSummary?.isBudgetExceeded ? 'Budget erreicht' : 'Gedeckelt & Sicher'}
+                    {ledgerSummary?.isBudgetExceeded ? 'Budget erreicht' : 'Schätzlimit aktiv'}
                   </Text>
                 </View>
               </View>
@@ -849,16 +934,16 @@ export const SettingsScreen: React.FC = () => {
 
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, marginBottom: 8 }}>
                 <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted }}>
-                  Verbraucht: {(ledgerSummary?.totalCostEur ?? 0).toFixed(2)} € ({Math.round(((ledgerSummary?.totalCostEur ?? 0) / MONTHLY_BUDGET_CEILING_EUR) * 100)}%)
+                  Geschätzt: {(ledgerSummary?.totalCostEur ?? 0).toFixed(2)} € ({Math.round(((ledgerSummary?.totalCostEur ?? 0) / MONTHLY_BUDGET_CEILING_EUR) * 100)}%)
                 </Text>
                 <Text style={{ fontSize: typography.sizes.micro, color: colors.accent, fontWeight: '600' }}>
-                  Limit: {MONTHLY_BUDGET_CEILING_EUR.toFixed(2)} € / Monat
+                  Schätzlimit: {MONTHLY_BUDGET_CEILING_EUR.toFixed(2)} € / Monat
                 </Text>
               </View>
 
               <Text style={{ fontSize: typography.sizes.micro, color: colors.textSecondary, lineHeight: 17 }}>
                 • Anfragen diesen Monat: {ledgerSummary?.totalCalls ?? 0} Aufrufe ({((ledgerSummary?.totalInputTokens ?? 0) + (ledgerSummary?.totalOutputTokens ?? 0)).toLocaleString()} Tokens).{'\n'}
-                • Null-Kosten-Garantie: Wenn kein Key hinterlegt ist oder 5,00 € erreicht werden, schaltet Atmen automatisch auf deterministische Veredelung um.
+                • Die App begrenzt Anfragen anhand pauschaler Kostenschätzungen. Preise und Abrechnung hängen vom Anbieter und Modell ab; dies ist keine verbindliche Ausgabenobergrenze. Setze ein Kostenlimit auch beim Anbieter. Ohne KI-Konfiguration oder bei Fehlern nutzt Atmen lokale Verarbeitung.
               </Text>
             </View>
           </View>

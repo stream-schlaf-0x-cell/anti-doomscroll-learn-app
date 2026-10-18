@@ -1,9 +1,10 @@
 import { FeedItem, FeedItemSchema } from '../domain/types';
-import { FeedOperationResult, defaultFeedOperationManager, FeedOperationType } from './FeedOperationManager';
+import { FeedOperationResult, defaultFeedOperationManager, FeedOperationType, FeedOperationTelemetry } from './FeedOperationManager';
 
 export interface MergeOptions {
   operationType?: FeedOperationType;
   pinInserted?: boolean;
+  telemetry?: FeedOperationTelemetry;
   onProgress?: (stage: string, progressFraction: number) => void;
 }
 
@@ -56,9 +57,11 @@ export class FeedMergeService {
     const updated: FeedItem[] = [];
     const insertedIds: string[] = [];
     const updatedIds: string[] = [];
-    const rejectedReasons: Record<string, number> = {};
+    const rejectedReasons: Record<string, number> = options.telemetry?.rejectedCount
+      ? { gatekeeper: options.telemetry.rejectedCount }
+      : {};
     let duplicateCount = 0;
-    let rejectedCount = 0;
+    let rejectedCount = options.telemetry?.rejectedCount ?? 0;
 
     options.onProgress?.('2/3: Duplikate und Rauschen filtern …', 0.66);
 
@@ -85,15 +88,23 @@ export class FeedMergeService {
         // Check if content genuinely changed
         const isContentChanged =
           validatedItem.articleBody !== existingMatch.articleBody ||
+          validatedItem.body !== existingMatch.body ||
+          validatedItem.title !== existingMatch.title ||
+          validatedItem.subtitle !== existingMatch.subtitle ||
+          validatedItem.feedText !== existingMatch.feedText ||
           validatedItem.keyInsight !== existingMatch.keyInsight ||
           validatedItem.didacticTransfer !== existingMatch.didacticTransfer ||
-          (validatedItem.curationScore ?? 0) > (existingMatch.curationScore ?? 0);
+          validatedItem.primaryTopic !== existingMatch.primaryTopic ||
+          validatedItem.topics.join('|') !== existingMatch.topics.join('|') ||
+          validatedItem.curationScore !== existingMatch.curationScore;
 
         if (isContentChanged) {
           const mergedItem: FeedItem = {
             ...existingMatch,
             ...validatedItem,
-            id: existingMatch.id // Keep established ID
+            id: existingMatch.id, // Keep established ID
+            isNewlyCurated: true,
+            curatedAt: new Date().toISOString()
           };
           existingMap.set(existingMatch.id, mergedItem);
           updated.push(mergedItem);
@@ -128,12 +139,12 @@ export class FeedMergeService {
       .filter(item => !insertedIds.includes(item.id))
       .map(item => existingMap.get(item.id) || item);
 
-    const mergedItems = [...inserted, ...remainingItems];
+    const mergedItems = [...inserted.map(item => existingMap.get(item.id) || item), ...remainingItems];
 
     const operationResult = opManager.completeOperation(
       {
-        fetchedCount: candidates.length,
-        candidateCount: candidates.length,
+        fetchedCount: options.telemetry?.candidateCount ?? candidates.length,
+        candidateCount: options.telemetry?.candidateCount ?? candidates.length,
         insertedCount: inserted.length,
         updatedCount: updated.length,
         duplicateCount,
@@ -141,8 +152,9 @@ export class FeedMergeService {
         insertedIds,
         updatedIds,
         rejectedReasons,
-        usedAI: opType === 'ai_curation' || opType === 'hivemind_generation',
-        usedFallback: false,
+        usedAI: options.telemetry?.usedAI ?? false,
+        usedFallback: options.telemetry?.usedFallback ?? false,
+        cacheHits: options.telemetry?.cacheHits ?? 0,
         errors: []
       },
       { pinNewItems: options.pinInserted !== false }

@@ -27,6 +27,7 @@ export interface RawFeedSource {
   reliabilityTier?: ReliabilityTier;
   sourceDomain?: SourceDomain;
   defaultEnabled?: boolean;
+  sourceKind?: 'feed' | 'reference';
   homepageUrl?: string;
   description?: string;
 }

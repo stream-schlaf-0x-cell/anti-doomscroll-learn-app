@@ -58,7 +58,8 @@ describe('Phase 2.5: Intelligence, Studio & Body Sharding Architecture', () => {
         {
           provider: 'openrouter',
           apiKey: 'sk-or-test-key-12345',
-          model: 'google/gemini-3.8-flash'
+          model: 'google/gemini-3.8-flash',
+          persistApiKey: true
         },
         storage
       );

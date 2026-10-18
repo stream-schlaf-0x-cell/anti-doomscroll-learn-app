@@ -35,7 +35,18 @@ export interface FeedOperationResult {
 
   usedAI: boolean;
   usedFallback: boolean;
+  cacheHits: number;
   errors: string[];
+}
+
+/** Measurements from the curation stage before the approved items reach the merge. */
+export interface FeedOperationTelemetry {
+  candidateCount: number;
+  approvedCount: number;
+  rejectedCount: number;
+  usedAI: boolean;
+  usedFallback: boolean;
+  cacheHits: number;
 }
 
 export type OperationProgressCallback = (stage: string, progressFraction: number) => void;
@@ -48,6 +59,7 @@ export class FeedOperationManager {
   private operationHistory: FeedOperationResult[] = [];
   private pinnedItemIds = new Set<string>();
   private pinnedItemTimestampMap = new Map<string, number>();
+  private pinnedItemOrder: string[] = [];
   private listeners = new Set<(lastResult: FeedOperationResult) => void>();
   private activeOperation: FeedOperationResult | null = null;
 
@@ -70,8 +82,9 @@ export class FeedOperationManager {
       insertedIds: [],
       updatedIds: [],
       rejectedReasons: {},
-      usedAI: type === 'ai_curation' || type === 'hivemind_generation',
+      usedAI: false,
       usedFallback: false,
+      cacheHits: 0,
       errors: []
     };
     this.activeOperation = op;
@@ -98,9 +111,11 @@ export class FeedOperationManager {
       durationMs: now - startTime
     };
 
-    // If requested and user-initiated, pin the newly inserted items at the top
-    if (options?.pinNewItems !== false && finalized.insertedIds.length > 0) {
-      for (const id of finalized.insertedIds) {
+    // Manual re-curation can improve existing articles without creating new IDs.
+    if (options?.pinNewItems !== false && finalized.operationType !== 'background_sync') {
+      const changedIds = [...new Set([...finalized.insertedIds, ...finalized.updatedIds])];
+      this.pinnedItemOrder = [...changedIds, ...this.pinnedItemOrder.filter(id => !changedIds.includes(id))];
+      for (const id of changedIds) {
         this.pinnedItemIds.add(id);
         this.pinnedItemTimestampMap.set(id, now);
       }
@@ -139,11 +154,8 @@ export class FeedOperationManager {
    * Returns all pinned item IDs sorted by newest first.
    */
   public getPinnedItemIds(): string[] {
-    return Array.from(this.pinnedItemIds).sort((a, b) => {
-      const tA = this.pinnedItemTimestampMap.get(a) || 0;
-      const tB = this.pinnedItemTimestampMap.get(b) || 0;
-      return tB - tA;
-    });
+    this.expireOldPins();
+    return this.pinnedItemOrder.filter(id => this.pinnedItemIds.has(id));
   }
 
   /**
@@ -165,6 +177,7 @@ export class FeedOperationManager {
   public unpinItem(id: string): void {
     this.pinnedItemIds.delete(id);
     this.pinnedItemTimestampMap.delete(id);
+    this.pinnedItemOrder = this.pinnedItemOrder.filter(pinnedId => pinnedId !== id);
   }
 
   /**
@@ -173,6 +186,7 @@ export class FeedOperationManager {
   public clearPins(): void {
     this.pinnedItemIds.clear();
     this.pinnedItemTimestampMap.clear();
+    this.pinnedItemOrder = [];
   }
 
   /**

@@ -168,3 +168,10 @@ describe('SourceRepository & News Hub Ingestion Engine', () => {
   });
 });
 
+
+it('does not let inactive reference pages block the domain of an enabled feed', async () => {
+  const repo = new SourceRepository(new AtemStorage(new MemoryStorageDriver()));
+  const domains = await repo.getDisabledDomains();
+  assert.equal(domains.includes('tagesschau.de'), false);
+  assert.equal(domains.includes('spiegel.de'), false);
+});

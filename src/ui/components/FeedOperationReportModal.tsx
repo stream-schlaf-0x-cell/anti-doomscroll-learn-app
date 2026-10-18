@@ -54,6 +54,11 @@ export const FeedOperationReportModal: React.FC<FeedOperationReportModalProps> =
             {/* Stats Grid */}
             <View style={styles.statsGrid}>
               <View style={[styles.statBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                <Text style={[styles.statNumber, { color: colors.accent }]}>{result.updatedCount}</Text>
+                <Text style={[styles.statLabel, { color: colors.textMuted }]}>Aktualisiert</Text>
+              </View>
+
+              <View style={[styles.statBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                 <Text style={[styles.statNumber, { color: colors.accent }]}>{result.candidateCount}</Text>
                 <Text style={[styles.statLabel, { color: colors.textMuted }]}>Artikel geprüft</Text>
               </View>
@@ -79,8 +84,18 @@ export const FeedOperationReportModal: React.FC<FeedOperationReportModalProps> =
               <View style={styles.detailRow}>
                 <Text style={[styles.detailKey, { color: colors.textSecondary }]}>KI verwendet</Text>
                 <Text style={[styles.detailValue, { color: colors.textPrimary }]}>
-                  {result.usedAI ? 'Ja (Gemini / Gatekeeper)' : 'Nein (Deterministischer Filter)'}
+                  {result.usedAI ? 'Ja, in diesem Durchlauf' : 'Nein, in diesem Durchlauf'}
                 </Text>
+              </View>
+
+              <View style={styles.detailRow}>
+                <Text style={[styles.detailKey, { color: colors.textSecondary }]}>Lokal wiederverwendet</Text>
+                <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{result.cacheHits} Ergebnisse</Text>
+              </View>
+
+              <View style={styles.detailRow}>
+                <Text style={[styles.detailKey, { color: colors.textSecondary }]}>Ersatzverfahren verwendet</Text>
+                <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{result.usedFallback ? 'Ja' : 'Nein'}</Text>
               </View>
 
               <View style={styles.detailRow}>
@@ -114,7 +129,7 @@ export const FeedOperationReportModal: React.FC<FeedOperationReportModalProps> =
                   </Text>
                   {Object.entries(result.rejectedReasons).map(([reason, count]) => (
                     <Text key={reason} style={[styles.reasonItem, { color: colors.textMuted }]}>
-                      • {reason === 'schema_invalid' ? 'Ungültiges Datenformat' : reason}: {count}
+                      • {reason === 'schema_invalid' ? 'Ungültiges Datenformat' : reason === 'gatekeeper' ? 'Inhaltliche Vorauswahl' : reason}: {count}
                     </Text>
                   ))}
                 </View>

@@ -7,7 +7,7 @@ import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPi
 import { defaultBatchEditionEnricher } from '../enrichment/batchEnricher';
 import { ArticleIndex } from '../feed/articleIndex';
 import { RelatedContentService } from '../feed/RelatedContentService';
-import { FeedMergeService } from '../feed/FeedMergeService';
+import { FeedMergeService, MergeOptions } from '../feed/FeedMergeService';
 import { defaultFeedOperationManager, FeedOperationResult, FeedOperationType } from '../feed/FeedOperationManager';
 import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
 
@@ -80,6 +80,8 @@ export function enrichSocialFeedItem(rawItem: FeedItem, options?: { lazyCrossRef
   };
 }
 
+export type ContentOperationOptions = Pick<MergeOptions, 'pinInserted' | 'telemetry'>;
+
 export interface IFeedRepository {
   getDailyEdition(profile: UserProfile, interactions?: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
   getEditionFeed(
@@ -97,7 +99,7 @@ export interface IFeedRepository {
   getAllItems?(): FeedItem[];
   hydrateFromPublicSnapshot?(remoteUrl?: string): Promise<{ success: boolean; itemCount: number; snapshotDate?: string }>;
   curateAndAddItems?(items: FeedItem[]): Promise<FeedItem[]>;
-  executeContentOperation?(type: FeedOperationType, candidates: FeedItem[], options?: { pinInserted?: boolean }): Promise<FeedOperationResult>;
+  executeContentOperation?(type: FeedOperationType, candidates: FeedItem[], options?: ContentOperationOptions): Promise<FeedOperationResult>;
 }
 
 export class LocalFeedRepository implements IFeedRepository {
@@ -179,17 +181,38 @@ export class LocalFeedRepository implements IFeedRepository {
 
   setItems(items: FeedItem[]): void {
     const map = new Map<string, FeedItem>();
+    const canonicalMap = new Map<string, string>();
+
     for (const item of items) {
-      map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
-    }
-    for (const item of REAL_KNOWLEDGE_VAULT) {
-      if (!map.has(item.id)) {
-        map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
+      const enriched = enrichSocialFeedItem(item, { lazyCrossReferences: true });
+      map.set(item.id, enriched);
+      if (item.canonicalUrl) {
+        canonicalMap.set(item.canonicalUrl.toLowerCase(), item.id);
       }
     }
-    for (const dyn of this.dynamicItems) {
-      map.set(dyn.id, dyn);
+    for (const item of REAL_KNOWLEDGE_VAULT) {
+      const canon = item.canonicalUrl?.toLowerCase();
+      if (!map.has(item.id) && (!canon || !canonicalMap.has(canon))) {
+        map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
+        if (canon) canonicalMap.set(canon, item.id);
+      }
     }
+    const survivingDynamic: FeedItem[] = [];
+    for (const dyn of this.dynamicItems) {
+      const canon = dyn.canonicalUrl?.toLowerCase();
+      const existingIdForCanon = canon ? canonicalMap.get(canon) : undefined;
+      if (map.has(dyn.id)) {
+        map.set(dyn.id, dyn);
+        survivingDynamic.push(dyn);
+      } else if (existingIdForCanon) {
+        // Duplicate canonical URL under a different ID is not resurrected
+      } else {
+        map.set(dyn.id, dyn);
+        if (canon) canonicalMap.set(canon, dyn.id);
+        survivingDynamic.push(dyn);
+      }
+    }
+    this.dynamicItems = survivingDynamic;
     this.items = Array.from(map.values());
     this.articleIndex.buildIndex(this.items);
     this.relatedService.setIndex(this.articleIndex);
@@ -203,11 +226,7 @@ export class LocalFeedRepository implements IFeedRepository {
     });
 
     this.items = mergeResult.mergedItems;
-    for (const item of enrichedNew) {
-      if (!this.dynamicItems.some(d => d.id === item.id)) {
-        this.dynamicItems.push(item);
-      }
-    }
+    this.rememberMergedChanges(mergeResult.operationResult);
     this.articleIndex.buildIndex(this.items);
     this.relatedService.setIndex(this.articleIndex);
     this.persistDynamicItems();
@@ -220,7 +239,8 @@ export class LocalFeedRepository implements IFeedRepository {
   private applyPinnedItems(
     rankedItems: ScoredFeedItem[],
     profile: UserProfile,
-    interactions: Record<string, ReadingInteraction> = {}
+    interactions: Record<string, ReadingInteraction> = {},
+    excludedIds: Set<string> = new Set()
   ): ScoredFeedItem[] {
     const pinnedIds = defaultFeedOperationManager.getPinnedItemIds();
     if (pinnedIds.length === 0) return rankedItems;
@@ -230,13 +250,11 @@ export class LocalFeedRepository implements IFeedRepository {
 
     // Find pinned items in this.items
     for (const id of pinnedIds) {
+      if (excludedIds.has(id)) continue;
       const match = this.items.find(i => i.id === id);
       if (match) {
         const scored = scoreFeedItem(match, profile, interactions);
-        topPinned.push({
-          ...scored,
-          isNewlyCurated: true
-        });
+        topPinned.push(scored);
       }
     }
 
@@ -278,7 +296,7 @@ export class LocalFeedRepository implements IFeedRepository {
 
     const remainingItems = this.items.filter(item => !excludeSet.has(item.id));
     const ranked = rankAndInterleaveFeed(remainingItems, profile, interactions);
-    return this.applyPinnedItems(ranked, profile, interactions);
+    return this.applyPinnedItems(ranked, profile, interactions, excludeSet);
   }
 
   async getItemById(id: string): Promise<FeedItem | null> {
@@ -347,18 +365,15 @@ export class LocalFeedRepository implements IFeedRepository {
 
     const mergeResult = FeedMergeService.merge(this.items, enrichedCurated, {
       operationType: 'ai_curation',
-      pinInserted: true
+      pinInserted: true,
+      telemetry: defaultBatchEditionEnricher.getLastBatchReport()
     });
 
     this.items = mergeResult.mergedItems;
-    for (const item of enrichedCurated) {
-      if (!this.dynamicItems.some(d => d.id === item.id)) {
-        this.dynamicItems.push(item);
-      }
-    }
+    this.rememberMergedChanges(mergeResult.operationResult);
     this.articleIndex.buildIndex(this.items);
     this.relatedService.setIndex(this.articleIndex);
-    this.persistDynamicItems();
+    await this.persistDynamicItems();
 
     return curated;
   }
@@ -369,25 +384,31 @@ export class LocalFeedRepository implements IFeedRepository {
   async executeContentOperation(
     type: FeedOperationType,
     candidates: FeedItem[],
-    options?: { pinInserted?: boolean }
+    options?: ContentOperationOptions
   ): Promise<FeedOperationResult> {
     const enrichedCandidates = candidates.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
     const mergeResult = FeedMergeService.merge(this.items, enrichedCandidates, {
       operationType: type,
-      pinInserted: options?.pinInserted !== false
+      pinInserted: options?.pinInserted !== false,
+      telemetry: options?.telemetry
     });
 
     this.items = mergeResult.mergedItems;
-    for (const item of enrichedCandidates) {
-      if (!this.dynamicItems.some(d => d.id === item.id)) {
-        this.dynamicItems.push(item);
-      }
-    }
+    this.rememberMergedChanges(mergeResult.operationResult);
     this.articleIndex.buildIndex(this.items);
     this.relatedService.setIndex(this.articleIndex);
-    this.persistDynamicItems();
+    await this.persistDynamicItems();
 
     return mergeResult.operationResult;
+  }
+
+  private rememberMergedChanges(result: FeedOperationResult): void {
+    const changed = new Set([...result.insertedIds, ...result.updatedIds]);
+    const dynamic = new Map(this.dynamicItems.map(item => [item.id, item]));
+    for (const item of this.items) {
+      if (changed.has(item.id)) dynamic.set(item.id, item);
+    }
+    this.dynamicItems = [...dynamic.values()];
   }
 }
 

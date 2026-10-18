@@ -222,7 +222,7 @@ describe('Living Feed Engine & Layered Architecture Tests', () => {
       assert.equal(res.statusCode, 200);
       assert.ok(res.body.serverProxyActive);
       assert.ok(typeof res.body.masterKeyConfigured === 'boolean');
-      assert.ok(res.body.supportedEndpoints.length > 0);
+      assert.ok(Array.isArray(res.body.supportedEndpoints) && res.body.supportedEndpoints.length > 0);
     });
 
     it('rejects oversized payloads with 413 Payload Too Large', async () => {
@@ -239,7 +239,7 @@ describe('Living Feed Engine & Layered Architecture Tests', () => {
       });
 
       assert.equal(res.statusCode, 413);
-      assert.match(res.body.error, /Payload zu groß/);
+      assert.match(String(res.body.error), /Payload zu groß/);
     });
 
     it('rejects missing body with 400 Bad Request', async () => {
@@ -251,7 +251,7 @@ describe('Living Feed Engine & Layered Architecture Tests', () => {
       });
 
       assert.equal(res.statusCode, 400);
-      assert.match(res.body.error, /Ungültiger oder leerer/);
+      assert.match(String(res.body.error), /Ungültiger oder leerer/);
     });
   });
 });

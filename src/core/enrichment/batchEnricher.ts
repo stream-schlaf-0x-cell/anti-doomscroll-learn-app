@@ -1,5 +1,8 @@
 import { FeedItem, TopicTag, TopicTagSchema } from '../domain/types';
-import { callAiModel, AiCredentials, loadAiCredentials } from '../ai/atmenAiClient';
+import { callAiModel, AiCredentials, loadAiCredentials, hasAiConfiguration } from '../ai/atmenAiClient';
+import { z } from 'zod';
+import { EnrichmentCache, StorageDriverCacheStorage, CacheKeyParams } from './cache';
+import { pureJsSha256 } from '../ingestion/normalizer';
 import { EnrichmentUsageLedger, defaultUsageLedger } from './ledger';
 import { synthesizeDidacticTransfer } from '../synthesis/backgroundResearchPipeline';
 
@@ -22,6 +25,27 @@ export interface EnrichedItemData {
   topics: TopicTag[];
   didacticTransfer: string;
 }
+
+export interface BatchCurationReport {
+  candidateCount: number;
+  approvedCount: number;
+  rejectedCount: number;
+  usedAI: boolean;
+  usedFallback: boolean;
+  cacheHits: number;
+}
+
+const BATCH_PROMPT_VERSION = 'curation-v2';
+const BatchDecisionSchema = z.object({
+  id: z.string().min(1),
+  curationScore: z.number().min(0).max(10),
+  rejectionReason: z.string().max(1000).optional(),
+  feedText: z.string().max(10000).default(''),
+  keyInsight: z.string().max(2000).default(''),
+  primaryTopic: TopicTagSchema,
+  topics: z.array(TopicTagSchema).max(3).default([]),
+  didacticTransfer: z.string().max(4000).default('')
+});
 
 export interface GatekeeperEvaluation {
   score: number; // 0 to 10
@@ -223,10 +247,50 @@ export function classifyTopicDeterministically(
 }
 
 export class BatchEditionEnricher {
+  private runQueue: Promise<unknown> = Promise.resolve();
+  private lastBatchReport: BatchCurationReport = {
+    candidateCount: 0, approvedCount: 0, rejectedCount: 0,
+    usedAI: false, usedFallback: false, cacheHits: 0
+  };
+
   constructor(
     private readonly ledger: EnrichmentUsageLedger = defaultUsageLedger,
-    private readonly credentialsLoader: () => Promise<AiCredentials> = loadAiCredentials
+    private readonly credentialsLoader: () => Promise<AiCredentials> = loadAiCredentials,
+    private readonly cache: EnrichmentCache<unknown> = new EnrichmentCache<unknown>(
+      new StorageDriverCacheStorage<unknown>(undefined, '@atem:batch_curation_cache:v1')
+    )
   ) {}
+
+  getLastBatchReport(): BatchCurationReport {
+    return { ...this.lastBatchReport };
+  }
+
+  private cacheKey(item: FeedItem, credentials: AiCredentials): CacheKeyParams {
+    const sourceText = item.articleBody || item.body || item.feedText || '';
+    const publisher = item.sourceReferences[0]?.publisher || item.sourceDomain || '';
+    return {
+      contentHash: pureJsSha256(JSON.stringify([item.canonicalUrl || '', item.title, item.subtitle, publisher, sourceText])),
+      task: 'batch_curation', schemaVersion: 'v2', promptVersion: BATCH_PROMPT_VERSION,
+      modelId: `${credentials.provider}:${credentials.model || 'default'}`,
+      language: detectLanguage(`${item.title} ${sourceText.slice(0, 1000)}`)
+    };
+  }
+
+  private applyDecision(original: FeedItem, decision: EnrichedItemData): FeedItem {
+    const topics = decision.topics.includes(decision.primaryTopic)
+      ? decision.topics : [decision.primaryTopic, ...decision.topics].slice(0, 3);
+    return {
+      ...original,
+      feedText: decision.feedText || original.feedText,
+      keyInsight: decision.keyInsight || original.keyInsight || original.subtitle,
+      primaryTopic: decision.primaryTopic,
+      topics,
+      didacticTransfer: decision.didacticTransfer || original.didacticTransfer,
+      didacticSeed: decision.didacticTransfer || original.didacticSeed,
+      curationScore: decision.curationScore,
+      aiAssisted: true
+    };
+  }
 
   /**
    * Deterministic evaluation of signal vs noise.
@@ -250,19 +314,23 @@ export class BatchEditionEnricher {
    * Preserves source language: if source article is English, stays English; if German, stays German.
    * Falls back gracefully to deterministic heuristics when offline or unconfigured.
    */
-  async gatekeepAndEnrichBatch(items: FeedItem[], overrideCredentials?: AiCredentials): Promise<FeedItem[]> {
-    if (items.length === 0) return [];
-
-    const batchSize = 12;
-    const curatedList: FeedItem[] = [];
-
-    for (let i = 0; i < items.length; i += batchSize) {
-      const chunk = items.slice(i, i + batchSize);
-      const chunkCurated = await this.processChunk(chunk, overrideCredentials);
-      curatedList.push(...chunkCurated);
-    }
-
-    return curatedList;
+  gatekeepAndEnrichBatch(items: FeedItem[], overrideCredentials?: AiCredentials): Promise<FeedItem[]> {
+    // Serialize runs through this shared curator so simultaneous clicks reuse completed cache writes.
+    const run = this.runQueue.then(async () => {
+      this.lastBatchReport = {
+        candidateCount: items.length, approvedCount: 0, rejectedCount: 0,
+        usedAI: false, usedFallback: false, cacheHits: 0
+      };
+      const curated: FeedItem[] = [];
+      for (let i = 0; i < items.length; i += 12) {
+        curated.push(...await this.processChunk(items.slice(i, i + 12), overrideCredentials));
+      }
+      this.lastBatchReport.approvedCount = curated.length;
+      this.lastBatchReport.rejectedCount = items.length - curated.length;
+      return curated;
+    });
+    this.runQueue = run.catch(() => undefined);
+    return run;
   }
 
   /**
@@ -280,28 +348,56 @@ export class BatchEditionEnricher {
       try {
         credentials = await this.credentialsLoader();
       } catch {
+        this.lastBatchReport.usedFallback = true;
         return this.fallbackDeterministicGatekeep(items);
       }
     }
 
-    if (!credentials.apiKey?.trim()) {
+    if (!hasAiConfiguration(credentials)) {
+      this.lastBatchReport.usedFallback = true;
       return this.fallbackDeterministicGatekeep(items);
     }
 
+    const cachedDecisions = new Map<string, EnrichedItemData>();
+    const cacheKeys = new Map<string, CacheKeyParams>();
+    const pending: FeedItem[] = [];
+    for (const item of items) {
+      const key = this.cacheKey(item, credentials);
+      cacheKeys.set(item.id, key);
+      const cached = BatchDecisionSchema.safeParse(await this.cache.get(key));
+      if (cached.success) {
+        cachedDecisions.set(item.id, { ...cached.data, id: item.id });
+        this.lastBatchReport.cacheHits++;
+      } else {
+        pending.push(item);
+      }
+    }
+    const fromDecisions = (decisions: Map<string, EnrichedItemData>): FeedItem[] => {
+      const approved: FeedItem[] = [];
+      for (const original of items) {
+        const decision = decisions.get(original.id);
+        if (decision) {
+          if (decision.curationScore >= 7) approved.push(this.applyDecision(original, decision));
+        } else {
+          this.lastBatchReport.usedFallback = true;
+          approved.push(...this.fallbackDeterministicGatekeep([original]));
+        }
+      }
+      return approved;
+    };
+    if (pending.length === 0) return fromDecisions(cachedDecisions);
     const canSpend = await this.ledger.canSpend(0.005);
-    if (!canSpend) {
-      return this.fallbackDeterministicGatekeep(items);
-    }
+    if (!canSpend) return fromDecisions(cachedDecisions);
 
-    const payload = items.map(it => {
-      const rawText = (it.feedText || it.subtitle || it.body || '').trim();
+    const payload = pending.map(it => {
+      const rawText = (it.articleBody || it.body || it.feedText || it.subtitle || '').trim();
       const excerpt = rawText.length > 280 ? rawText.slice(0, 277) + '…' : rawText;
       const detectedLang = detectLanguage(`${it.title} ${excerpt}`);
       return {
         id: it.id,
-        title: it.title,
-        subtitle: it.subtitle,
-        publisher: it.sourceReferences[0]?.publisher || it.sourceDomain || '',
+        title: it.title.slice(0, 240),
+        subtitle: it.subtitle?.slice(0, 280),
+        publisher: (it.sourceReferences[0]?.publisher || it.sourceDomain || '').slice(0, 120),
         currentTopic: it.primaryTopic,
         sourceLanguage: detectedLang,
         excerpt
@@ -343,7 +439,7 @@ Antworte AUSSCHLIESSLICH als JSON-Array von Objekten:
   }
 ]`;
 
-    const prompt = `Hier sind die ${items.length} Kandidaten zur Kuration und Signal-vs-Noise-Prüfung:\n${JSON.stringify(payload, null, 2)}`;
+    const prompt = `Hier sind die ${pending.length} Kandidaten zur Kuration und Signal-vs-Noise-Prüfung:\n${JSON.stringify(payload, null, 2)}`;
 
     try {
       const response = await callAiModel(prompt, {
@@ -355,77 +451,24 @@ Antworte AUSSCHLIESSLICH als JSON-Array von Objekten:
         itemId: `ai-gatekeeper-${Date.now()}`
       });
 
-      const parsed = JSON.parse(response.text);
+      this.lastBatchReport.usedAI = true;
+      const parsed: unknown = JSON.parse(response.text);
       if (Array.isArray(parsed)) {
-        const resultMap = new Map<string, EnrichedItemData>();
+        const wantedIds = new Set(pending.map(item => item.id));
+        const decisions = new Map(cachedDecisions);
         for (const entry of parsed) {
-          if (entry && typeof entry === 'object' && entry.id) {
-            const score = typeof entry.curationScore === 'number' ? entry.curationScore : 5;
-            const rawTopic = entry.primaryTopic;
-            const validPrimary: TopicTag = TopicTagSchema.safeParse(rawTopic).success
-              ? rawTopic
-              : 'science_society';
-
-            const rawTopics = Array.isArray(entry.topics) ? entry.topics : [validPrimary];
-            const validTopics: TopicTag[] = rawTopics.filter(
-              (t: unknown): t is TopicTag => TopicTagSchema.safeParse(t).success
-            );
-            if (!validTopics.includes(validPrimary)) {
-              validTopics.unshift(validPrimary);
-            }
-
-            resultMap.set(entry.id, {
-              id: entry.id,
-              curationScore: score,
-              rejectionReason: typeof entry.rejectionReason === 'string' ? entry.rejectionReason : undefined,
-              feedText: typeof entry.feedText === 'string' ? entry.feedText : '',
-              keyInsight: typeof entry.keyInsight === 'string' ? entry.keyInsight : '',
-              primaryTopic: validPrimary,
-              topics: validTopics,
-              didacticTransfer: typeof entry.didacticTransfer === 'string' ? entry.didacticTransfer : ''
-            });
-          }
+          const validated = BatchDecisionSchema.safeParse(entry);
+          if (!validated.success || !wantedIds.has(validated.data.id)) continue;
+          decisions.set(validated.data.id, validated.data);
+          const key = cacheKeys.get(validated.data.id);
+          if (key) await this.cache.set(key, validated.data);
         }
-
-        const approved: FeedItem[] = [];
-        for (const original of items) {
-          const aiResult = resultMap.get(original.id);
-          if (aiResult) {
-            // Filter out low-score items (< 7)
-            if (aiResult.curationScore >= 7) {
-              approved.push({
-                ...original,
-                feedText: aiResult.feedText || original.feedText,
-                keyInsight: aiResult.keyInsight || original.keyInsight || original.subtitle,
-                primaryTopic: aiResult.primaryTopic,
-                topics: aiResult.topics.length > 0 ? aiResult.topics : original.topics,
-                didacticTransfer: aiResult.didacticTransfer || original.didacticTransfer,
-                didacticSeed: aiResult.didacticTransfer || original.didacticSeed,
-                curationScore: aiResult.curationScore,
-                aiAssisted: true
-              });
-            }
-          } else {
-            // Missing from AI response: evaluate deterministically
-            const evalResult = this.evaluateSignalVsNoise(original);
-            if (evalResult.passed) {
-              const enriched = this.enrichDeterministically(original);
-              approved.push({
-                ...enriched,
-                curationScore: evalResult.score,
-                curationReason: evalResult.reason
-              });
-            }
-          }
-        }
-
-        return approved;
+        return fromDecisions(decisions);
       }
     } catch {
-      // Fallback on AI error
+      // Network and schema failures stay retryable; never cache a heuristic as an AI answer.
     }
-
-    return this.fallbackDeterministicGatekeep(items);
+    return fromDecisions(cachedDecisions);
   }
 
   /**

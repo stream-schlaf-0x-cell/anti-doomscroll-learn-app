@@ -13,6 +13,8 @@ export interface FeedOperationBannerProps {
   lastResult?: FeedOperationResult | null;
   /** Whether the user is currently scrolled down */
   isScrolledDown?: boolean;
+  /** Unique inserted or updated articles waiting while the reader stays in place. */
+  pendingChangeCount?: number;
   /** Triggered when the user taps "Details/Bericht ansehen" */
   onOpenReport?: () => void;
   /** Triggered when the user taps the floating scroll-to-top button */
@@ -26,6 +28,7 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
   currentStage,
   lastResult,
   isScrolledDown = false,
+  pendingChangeCount = 0,
   onOpenReport,
   onScrollToTop,
   colors,
@@ -33,21 +36,23 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
 }) => {
   const [showToast, setShowToast] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string>('');
-  const [insertedCount, setInsertedCount] = useState<number>(0);
 
   // Handle toast appearance on new completed result
   useEffect(() => {
     if (!lastResult) return;
-    if (lastResult.status === 'completed' || lastResult.status === 'partial') {
+    if (lastResult.status === 'completed' || lastResult.status === 'partial' || lastResult.status === 'failed') {
       const count = lastResult.insertedCount;
-      setInsertedCount(count);
 
-      if (count > 0) {
-        setToastMessage(`✨ ${count} neue Artikel hinzugefügt`);
+      if (lastResult.status === 'failed') {
+        setToastMessage('Aktualisierung fehlgeschlagen. Details im Bericht.');
+      } else if (count > 0) {
+        setToastMessage(`${count} neue Artikel hinzugefügt${lastResult.updatedCount ? ` · ${lastResult.updatedCount} aktualisiert` : ''}`);
       } else if (lastResult.updatedCount > 0) {
         setToastMessage(`✓ ${lastResult.updatedCount} Artikel aktualisiert`);
       } else {
-        setToastMessage(`✓ Feed ist auf dem neuesten Stand (${lastResult.duplicateCount} geprüft)`);
+        setToastMessage(lastResult.rejectedCount > 0
+          ? `${lastResult.candidateCount} Artikel geprüft · keine Änderungen`
+          : `${lastResult.duplicateCount} Artikel geprüft · bereits vorhanden`);
       }
 
       setShowToast(true);
@@ -62,11 +67,11 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
   return (
     <>
       {/* 1. Active Ingestion / Curation Progress Banner */}
-      {isRunning && (
+      {isRunning && !isScrolledDown && (
         <View style={[styles.progressBanner, { backgroundColor: colors.surface, borderColor: colors.accent }]}>
           <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 10 }} />
           <View style={{ flex: 1 }}>
-            <Text style={[styles.progressTitle, { color: colors.textPrimary }]}>
+            <Text accessibilityLiveRegion="polite" style={[styles.progressTitle, { color: colors.textPrimary }]}>
               {currentStage || 'Artikel werden kuratiert …'}
             </Text>
             <Text style={[styles.progressSubtitle, { color: colors.textMuted }]}>
@@ -77,10 +82,10 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
       )}
 
       {/* 2. Success Toast with Inspectable Report Link */}
-      {!isRunning && showToast && (
+      {!isRunning && showToast && !isScrolledDown && (
         <View style={[styles.toastContainer, { backgroundColor: colors.surface, borderColor: colors.accent }]}>
           <View style={styles.toastContent}>
-            <Text style={[styles.toastText, { color: colors.textPrimary }]}>{toastMessage}</Text>
+            <Text accessibilityLiveRegion="polite" style={[styles.toastText, { color: colors.textPrimary }]}>{toastMessage}</Text>
             {onOpenReport && (
               <TouchableOpacity
                 onPress={onOpenReport}
@@ -95,8 +100,10 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
           </View>
           <TouchableOpacity
             onPress={() => setShowToast(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Statusmeldung schließen"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            style={{ marginLeft: 6 }}
+            style={styles.dismissBtn}
           >
             <Ionicons name="close" size={16} color={colors.textMuted} />
           </TouchableOpacity>
@@ -104,16 +111,16 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
       )}
 
       {/* 3. Floating "Neue Beiträge anzeigen ↑" Pill when Scrolled Down */}
-      {isScrolledDown && insertedCount > 0 && onScrollToTop && (
+      {isScrolledDown && pendingChangeCount > 0 && onScrollToTop && (
         <TouchableOpacity
           onPress={onScrollToTop}
           activeOpacity={0.9}
           style={[styles.floatingPill, { backgroundColor: colors.accent, shadowColor: isDark ? '#38BDF8' : '#0284C7' }]}
           accessibilityRole="button"
-          accessibilityLabel="Neue Beiträge am Anfang anzeigen"
+          accessibilityLabel={`${pendingChangeCount} neue oder aktualisierte Beiträge am Anfang anzeigen`}
         >
           <Ionicons name="arrow-up" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
-          <Text style={styles.floatingPillText}>{insertedCount} neue Beiträge anzeigen</Text>
+          <Text accessibilityLiveRegion="polite" style={styles.floatingPillText}>{pendingChangeCount} neue / aktualisierte Beiträge anzeigen</Text>
         </TouchableOpacity>
       )}
     </>
@@ -165,6 +172,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between'
   },
   toastText: {
+    flex: 1,
     fontFamily: typography.fontFamilies.sans,
     fontSize: typography.sizes.bodySmall,
     fontWeight: '600'
@@ -174,6 +182,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
+    minHeight: 44,
     borderRadius: radius.full,
     marginLeft: spacing.sm
   },
@@ -183,14 +192,15 @@ const styles = StyleSheet.create({
     marginRight: 2
   },
   floatingPill: {
-    position: 'absolute',
-    top: 60,
     alignSelf: 'center',
     zIndex: 9999,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
     paddingHorizontal: 16,
+    minHeight: 44,
+    maxWidth: '95%',
+    marginTop: spacing.sm,
     borderRadius: radius.full,
     shadowOpacity: 0.35,
     shadowRadius: 8,
@@ -198,10 +208,18 @@ const styles = StyleSheet.create({
     elevation: 8
   },
   floatingPillText: {
+    flexShrink: 1,
     color: '#FFFFFF',
     fontFamily: typography.fontFamilies.sans,
     fontSize: typography.sizes.bodySmall,
     fontWeight: '700'
+  },
+  dismissBtn: {
+    width: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6
   }
 });
 

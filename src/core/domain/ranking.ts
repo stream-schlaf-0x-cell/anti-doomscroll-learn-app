@@ -543,8 +543,36 @@ export function rankBloomScrollFeed(items: ScoredFeedItem[]): ScoredFeedItem[] {
  * Alias kept for backward compatibility across components and tests.
  * Uses the sliding-window Bloom-Ranking algorithm.
  */
-export function interleaveForAddictiveLearning(items: ScoredFeedItem[]): ScoredFeedItem[] {
-  return rankBloomScrollFeed(items);
+export function interleaveForAddictiveLearning(items: ScoredFeedItem[], pinnedIds: readonly string[] = []): ScoredFeedItem[] {
+  return sortFeedForDisplay(items, 'hot', { pinnedIds, interleave: true });
+}
+
+export type FeedSortMode = 'hot' | 'new' | 'top' | 'gems';
+
+/** The final presentation boundary: pin order wins over every score and diversity rule. */
+export function sortFeedForDisplay(
+  items: ScoredFeedItem[],
+  mode: FeedSortMode,
+  options: { pinnedIds?: readonly string[]; interleave?: boolean } = {}
+): ScoredFeedItem[] {
+  const unique = new Map(items.map(item => [item.id, item]));
+  const pinned = (options.pinnedIds ?? []).flatMap(id => {
+    const item = unique.get(id);
+    if (!item) return [];
+    unique.delete(id);
+    return [item];
+  });
+  const remaining = [...unique.values()];
+  const isGem = (item: ScoredFeedItem) => ['art_showcase', 'youtube_gem', 'book_masterpiece', 'meme', 'opportunity_radar'].includes(item.format);
+  const sorted = mode === 'hot' && options.interleave
+    ? rankBloomScrollFeed(remaining)
+    : remaining.sort((a, b) => {
+      if (mode === 'new') return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+      if (mode === 'top') return ((b.externalCommunityScore?.points ?? 0) + b.score * 100) - ((a.externalCommunityScore?.points ?? 0) + a.score * 100);
+      if (mode === 'gems' && isGem(a) !== isGem(b)) return isGem(a) ? -1 : 1;
+      return b.score - a.score;
+    });
+  return [...pinned, ...sorted];
 }
 
 /**

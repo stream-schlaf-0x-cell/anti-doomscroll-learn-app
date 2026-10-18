@@ -1,20 +1,20 @@
 import { EnrichmentResult } from './types';
 import { appStorage, AtemStorage } from '../data/storage';
 
-export interface ICacheStorage {
-  load(): Promise<Record<string, EnrichmentResult>>;
-  save(data: Record<string, EnrichmentResult>): Promise<void>;
+export interface ICacheStorage<T = EnrichmentResult> {
+  load(): Promise<Record<string, T>>;
+  save(data: Record<string, T>): Promise<void>;
   clear(): Promise<void>;
 }
 
-export class MemoryCacheStorage implements ICacheStorage {
-  private data: Record<string, EnrichmentResult> = {};
+export class MemoryCacheStorage<T = EnrichmentResult> implements ICacheStorage<T> {
+  private data: Record<string, T> = {};
 
-  async load(): Promise<Record<string, EnrichmentResult>> {
+  async load(): Promise<Record<string, T>> {
     return { ...this.data };
   }
 
-  async save(data: Record<string, EnrichmentResult>): Promise<void> {
+  async save(data: Record<string, T>): Promise<void> {
     this.data = { ...data };
   }
 
@@ -23,14 +23,17 @@ export class MemoryCacheStorage implements ICacheStorage {
   }
 }
 
-export class StorageDriverCacheStorage implements ICacheStorage {
+export class StorageDriverCacheStorage<T = EnrichmentResult> implements ICacheStorage<T> {
   private static STORAGE_KEY = '@atem:enrichment_cache:v1';
 
-  constructor(private readonly storage: AtemStorage = appStorage) {}
+  constructor(
+    private readonly storage: AtemStorage = appStorage,
+    private readonly storageKey = StorageDriverCacheStorage.STORAGE_KEY
+  ) {}
 
-  async load(): Promise<Record<string, EnrichmentResult>> {
+  async load(): Promise<Record<string, T>> {
     try {
-      const raw = await this.storage.getItem(StorageDriverCacheStorage.STORAGE_KEY);
+      const raw = await this.storage.getItem(this.storageKey);
       if (!raw) return {};
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
@@ -42,9 +45,9 @@ export class StorageDriverCacheStorage implements ICacheStorage {
     }
   }
 
-  async save(data: Record<string, EnrichmentResult>): Promise<void> {
+  async save(data: Record<string, T>): Promise<void> {
     try {
-      await this.storage.setItem(StorageDriverCacheStorage.STORAGE_KEY, JSON.stringify(data));
+      await this.storage.setItem(this.storageKey, JSON.stringify(data));
     } catch {
       // Non-fatal fallback
     }
@@ -52,7 +55,7 @@ export class StorageDriverCacheStorage implements ICacheStorage {
 
   async clear(): Promise<void> {
     try {
-      await this.storage.removeItem(StorageDriverCacheStorage.STORAGE_KEY);
+      await this.storage.removeItem(this.storageKey);
     } catch {
       // Non-fatal fallback
     }
@@ -69,27 +72,27 @@ export interface CacheKeyParams {
   personalizationScope?: string;
 }
 
-export class EnrichmentCache {
-  private cache: Record<string, EnrichmentResult> = {};
-  private storage: ICacheStorage;
+export class EnrichmentCache<T = EnrichmentResult> {
+  private cache: Record<string, T> = {};
+  private storage: ICacheStorage<T>;
 
   constructor(
-    _filePathOrStorage?: string | ICacheStorage,
+    _filePathOrStorage?: string | ICacheStorage<T>,
     useFilePersistence?: boolean,
-    storageOverride?: ICacheStorage
+    storageOverride?: ICacheStorage<T>
   ) {
     if (typeof _filePathOrStorage === 'object' && _filePathOrStorage !== null && 'load' in _filePathOrStorage) {
       this.storage = _filePathOrStorage;
     } else if (storageOverride) {
       this.storage = storageOverride;
     } else if (useFilePersistence === false) {
-      this.storage = new MemoryCacheStorage();
+      this.storage = new MemoryCacheStorage<T>();
     } else {
-      this.storage = new StorageDriverCacheStorage();
+      this.storage = new StorageDriverCacheStorage<T>();
     }
   }
 
-  private async load(): Promise<Record<string, EnrichmentResult>> {
+  private async load(): Promise<Record<string, T>> {
     try {
       const loaded = await this.storage.load();
       if (loaded && Object.keys(loaded).length > 0) {
@@ -112,28 +115,28 @@ export class EnrichmentCache {
   makeKey(contentHashOrParams: string | CacheKeyParams, promptVersion?: string): string {
     if (typeof contentHashOrParams === 'object') {
       const p = contentHashOrParams;
-      return `${p.contentHash}:${p.task || 'enrich'}:${p.schemaVersion || 'v1'}:${p.promptVersion || 'v1'}:${p.modelId || 'default'}:${p.language || 'de'}`;
+      return `${p.contentHash}:${p.task || 'enrich'}:${p.schemaVersion || 'v1'}:${p.promptVersion || 'v1'}:${p.modelId || 'default'}:${p.language || 'de'}:${p.personalizationScope || 'shared'}`;
     }
     return `${contentHashOrParams}:${promptVersion || 'v1'}`;
   }
 
-  async get(contentHashOrParams: string | CacheKeyParams, promptVersion?: string): Promise<EnrichmentResult | null> {
+  async get(contentHashOrParams: string | CacheKeyParams, promptVersion?: string): Promise<T | null> {
     const all = await this.load();
     const key = this.makeKey(contentHashOrParams, promptVersion);
     return all[key] ?? null;
   }
 
-  async set(contentHashOrParams: string | CacheKeyParams, resultOrPromptVersion: any, maybeResult?: EnrichmentResult): Promise<void> {
+  async set(contentHashOrParams: string | CacheKeyParams, resultOrPromptVersion: any, maybeResult?: T): Promise<void> {
     await this.load();
     let key: string;
-    let result: EnrichmentResult;
+    let result: T;
 
     if (typeof contentHashOrParams === 'object') {
       key = this.makeKey(contentHashOrParams);
-      result = resultOrPromptVersion as EnrichmentResult;
+      result = resultOrPromptVersion as T;
     } else {
       key = this.makeKey(contentHashOrParams, resultOrPromptVersion as string);
-      result = maybeResult as EnrichmentResult;
+      result = maybeResult as T;
     }
 
     this.cache[key] = result;
