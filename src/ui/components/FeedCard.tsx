@@ -329,7 +329,28 @@ export const FeedCard: React.FC<FeedCardProps> = ({
 
         <View style={styles.topRightActions}>
           {/* Live AI Curation Badge */}
-          {Boolean(item.aiAssisted) && (
+          {Boolean(item.isNewlyCurated) ? (
+            <View
+              style={[
+                styles.provenancePill,
+                {
+                  backgroundColor: colors.accentSubtle,
+                  borderColor: colors.accent,
+                  marginRight: 4
+                }
+              ]}
+            >
+              <Text
+                style={[
+                  styles.provenancePillText,
+                  { color: colors.accent, fontWeight: '700' }
+                ]}
+                numberOfLines={1}
+              >
+                ✨ Frisch kuratiert · vor wenigen Sekunden
+              </Text>
+            </View>
+          ) : Boolean(item.aiAssisted) && (
             <View
               style={[
                 styles.provenancePill,

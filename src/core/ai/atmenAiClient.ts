@@ -23,6 +23,7 @@ export interface AiCredentials {
   provider: AiProvider;
   apiKey?: string;
   model?: string;
+  proxyUrl?: string;
 }
 
 export const DEFAULT_AI_CREDENTIALS: AiCredentials = {
@@ -220,8 +221,9 @@ export async function callAiModel(
 ): Promise<AiCallResponse> {
   const credentials = options.credentials ?? (await loadAiCredentials());
   const apiKey = credentials.apiKey?.trim();
+  const effectiveProxyUrl = credentials.proxyUrl?.trim() || (typeof process !== 'undefined' ? process.env.ATMEN_AI_PROXY_URL : undefined);
 
-  if (!apiKey) {
+  if (!apiKey && !effectiveProxyUrl) {
     throw new AiCredentialsMissingError();
   }
 
@@ -257,7 +259,58 @@ export async function callAiModel(
     let outTokens = estimatedOutputTokens;
     let effectiveModel = model;
 
+    // Optional proxy dispatch if configured
+    if (effectiveProxyUrl) {
+      try {
+        const proxyRes = await fetch(`${effectiveProxyUrl}/curate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { 'x-gemini-key': apiKey } : {})
+          },
+          body: JSON.stringify({
+            prompt,
+            systemInstruction: options.systemInstruction,
+            jsonMode: options.jsonMode,
+            model
+          })
+        });
+        if (proxyRes.ok) {
+          const json = await proxyRes.json();
+          if (json.text) {
+            resultText = json.text;
+            if (json.usage) {
+              inTokens = json.usage.promptTokenCount ?? inTokens;
+              outTokens = json.usage.candidatesTokenCount ?? outTokens;
+            }
+            const actualCost = calculateCostEur(inTokens, outTokens);
+            await ledger.commitReservation(reservationId, {
+              itemId: options.itemId ?? 'live-ai-call',
+              model: effectiveModel,
+              inputTokens: inTokens,
+              outputTokens: outTokens,
+              costEur: actualCost
+            });
+            return {
+              text: resultText,
+              usage: {
+                inputTokens: inTokens,
+                outputTokens: outTokens,
+                costEur: actualCost
+              },
+              modelUsed: effectiveModel
+            };
+          }
+        }
+      } catch {
+        // Fall back to direct call
+      }
+    }
+
     if (credentials.provider === 'gemini') {
+      if (!apiKey) {
+        throw new AiCredentialsMissingError();
+      }
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
       const requestBody: Record<string, unknown> = {

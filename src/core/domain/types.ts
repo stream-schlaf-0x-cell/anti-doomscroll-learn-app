@@ -450,7 +450,9 @@ export const FeedItemSchema = z.object({
     discussionUrl: z.string().url().optional()
   }).optional(),
   curationScore: z.number().min(0).max(10).optional(),
-  curationReason: z.string().optional()
+  curationReason: z.string().optional(),
+  isNewlyCurated: z.boolean().optional(),
+  curatedAt: z.string().optional()
 });
 export const ArtMetaSchema = z.object({
   artist: z.string(),

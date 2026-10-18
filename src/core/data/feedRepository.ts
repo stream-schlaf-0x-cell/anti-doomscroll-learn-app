@@ -1,24 +1,37 @@
-import { FeedItem, FeedItemSchema, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP, DayEditionType } from '../domain/types';
+import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP, DayEditionType } from '../domain/types';
 import { INITIAL_FIXTURES } from './fixtures';
-import { rankAndInterleaveFeed, rankEditionFeed, ScoredFeedItem } from '../domain/ranking';
+import { rankAndInterleaveFeed, rankEditionFeed, ScoredFeedItem, scoreFeedItem } from '../domain/ranking';
 import { AtemStorage, appStorage } from './storage';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
 import { defaultBatchEditionEnricher } from '../enrichment/batchEnricher';
+import { ArticleIndex } from '../feed/articleIndex';
+import { RelatedContentService } from '../feed/RelatedContentService';
+import { FeedMergeService } from '../feed/FeedMergeService';
+import { defaultFeedOperationManager, FeedOperationResult, FeedOperationType } from '../feed/FeedOperationManager';
+import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
 
-// Safely load curated pipeline output if present
-let pipelineItems: FeedItem[] = [];
-try {
-  const loaded = require('./pipeline-output.json');
-  if (Array.isArray(loaded)) {
-    pipelineItems = loaded as FeedItem[];
+// Dynamic, non-static load of pipeline output in Node.js test / CLI environments
+// Uses eval('require') so Metro / Expo Web bundler DOES NOT bundle 1.8 MB of JSON into the client JS
+let nodePipelineItems: FeedItem[] = [];
+if (typeof process !== 'undefined' && process.versions?.node && !(process as any).browser) {
+  try {
+    const fsMod = eval('require')('fs');
+    const pathMod = eval('require')('path');
+    const pipelinePath = pathMod.resolve(__dirname, 'pipeline-output.json');
+    if (fsMod.existsSync(pipelinePath)) {
+      const parsed = JSON.parse(fsMod.readFileSync(pipelinePath, 'utf-8'));
+      if (Array.isArray(parsed)) {
+        nodePipelineItems = parsed as FeedItem[];
+      }
+    }
+  } catch {
+    nodePipelineItems = [];
   }
-} catch {
-  pipelineItems = [];
 }
 
-function enrichSocialFeedItem(rawItem: FeedItem): FeedItem {
-  const item = enrichItemWithInstantResearch(rawItem);
+export function enrichSocialFeedItem(rawItem: FeedItem, options?: { lazyCrossReferences?: boolean }): FeedItem {
+  const item = enrichItemWithInstantResearch(rawItem, options);
 
   const topic = item.primaryTopic || 'philosophy_ethics';
   const topicMeta = TOPIC_SPACE_MAP[topic];
@@ -61,9 +74,9 @@ function enrichSocialFeedItem(rawItem: FeedItem): FeedItem {
     hasAuthenticImage,
     sourceTrustLevel,
     factReviewStatus,
-    upvotesCount: 0,
-    awardsCount: { gold: 0, brain: 0, spark: 0 },
-    comments: []
+    upvotesCount: item.upvotesCount || 0,
+    awardsCount: item.awardsCount || { gold: 0, brain: 0, spark: 0 },
+    comments: item.comments || []
   };
 }
 
@@ -84,42 +97,51 @@ export interface IFeedRepository {
   getAllItems?(): FeedItem[];
   hydrateFromPublicSnapshot?(remoteUrl?: string): Promise<{ success: boolean; itemCount: number; snapshotDate?: string }>;
   curateAndAddItems?(items: FeedItem[]): Promise<FeedItem[]>;
+  executeContentOperation?(type: FeedOperationType, candidates: FeedItem[], options?: { pinInserted?: boolean }): Promise<FeedOperationResult>;
 }
 
 export class LocalFeedRepository implements IFeedRepository {
   private items: FeedItem[];
   private dynamicItems: FeedItem[] = [];
   private storage: AtemStorage;
+  private articleIndex: ArticleIndex;
+  private relatedService: RelatedContentService;
 
   constructor(customItems?: FeedItem[], storage: AtemStorage = appStorage) {
     this.storage = storage;
+    this.articleIndex = new ArticleIndex();
+    this.relatedService = new RelatedContentService(this.articleIndex);
+
     if (customItems) {
-      this.items = customItems.map(enrichSocialFeedItem);
+      this.items = customItems.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
     } else {
       const map = new Map<string, FeedItem>();
 
-      // 1. Real Ingested Pipeline Items (50+ live verified feeds)
-      for (const item of pipelineItems) {
+      // 1. Pipeline items in Node environment
+      for (const item of nodePipelineItems) {
         if (!map.has(item.id)) {
-          map.set(item.id, enrichSocialFeedItem(item));
+          map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
         }
       }
 
       // 2. Real Grounded Knowledge Vault & Timeless Classics
       for (const item of REAL_KNOWLEDGE_VAULT) {
         if (!map.has(item.id)) {
-          map.set(item.id, enrichSocialFeedItem(item));
+          map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
         }
       }
 
-      // 3. Initial Curated Fixtures
+      // 3. Initial Curated Bootstrap Fixtures
       for (const item of INITIAL_FIXTURES) {
         if (!map.has(item.id)) {
-          map.set(item.id, enrichSocialFeedItem(item));
+          map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
         }
       }
       this.items = Array.from(map.values());
     }
+
+    this.articleIndex.buildIndex(this.items);
+    this.relatedService.setIndex(this.articleIndex);
     this.initDynamicItems();
   }
 
@@ -129,7 +151,7 @@ export class LocalFeedRepository implements IFeedRepository {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          this.dynamicItems = parsed.map(enrichSocialFeedItem);
+          this.dynamicItems = parsed.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
           const map = new Map<string, FeedItem>();
           for (const item of this.items) {
             map.set(item.id, item);
@@ -138,6 +160,8 @@ export class LocalFeedRepository implements IFeedRepository {
             map.set(dyn.id, dyn);
           }
           this.items = Array.from(map.values());
+          this.articleIndex.buildIndex(this.items);
+          this.relatedService.setIndex(this.articleIndex);
         }
       }
     } catch {
@@ -156,37 +180,68 @@ export class LocalFeedRepository implements IFeedRepository {
   setItems(items: FeedItem[]): void {
     const map = new Map<string, FeedItem>();
     for (const item of items) {
-      map.set(item.id, enrichSocialFeedItem(item));
+      map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
     }
     for (const item of REAL_KNOWLEDGE_VAULT) {
       if (!map.has(item.id)) {
-        map.set(item.id, enrichSocialFeedItem(item));
+        map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
       }
     }
     for (const dyn of this.dynamicItems) {
       map.set(dyn.id, dyn);
     }
     this.items = Array.from(map.values());
+    this.articleIndex.buildIndex(this.items);
+    this.relatedService.setIndex(this.articleIndex);
   }
 
   addItems(newItems: FeedItem[]): void {
-    const map = new Map<string, FeedItem>();
-    for (const item of this.items) {
-      map.set(item.id, item);
-    }
-    for (const item of newItems) {
-      const enriched = enrichSocialFeedItem(item);
-      map.set(item.id, enriched);
+    const enrichedNew = newItems.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
+    const mergeResult = FeedMergeService.merge(this.items, enrichedNew, {
+      operationType: 'manual_refresh',
+      pinInserted: false
+    });
+
+    this.items = mergeResult.mergedItems;
+    for (const item of enrichedNew) {
       if (!this.dynamicItems.some(d => d.id === item.id)) {
-        this.dynamicItems.push(enriched);
+        this.dynamicItems.push(item);
       }
     }
-    this.items = Array.from(map.values());
+    this.articleIndex.buildIndex(this.items);
+    this.relatedService.setIndex(this.articleIndex);
     this.persistDynamicItems();
   }
 
   getAllItems(): FeedItem[] {
     return [...this.items];
+  }
+
+  private applyPinnedItems(
+    rankedItems: ScoredFeedItem[],
+    profile: UserProfile,
+    interactions: Record<string, ReadingInteraction> = {}
+  ): ScoredFeedItem[] {
+    const pinnedIds = defaultFeedOperationManager.getPinnedItemIds();
+    if (pinnedIds.length === 0) return rankedItems;
+
+    const pinnedSet = new Set(pinnedIds);
+    const topPinned: ScoredFeedItem[] = [];
+
+    // Find pinned items in this.items
+    for (const id of pinnedIds) {
+      const match = this.items.find(i => i.id === id);
+      if (match) {
+        const scored = scoreFeedItem(match, profile, interactions);
+        topPinned.push({
+          ...scored,
+          isNewlyCurated: true
+        });
+      }
+    }
+
+    const unpinnedRanked = rankedItems.filter(i => !pinnedSet.has(i.id));
+    return [...topPinned, ...unpinnedRanked];
   }
 
   async getDailyEdition(
@@ -195,7 +250,8 @@ export class LocalFeedRepository implements IFeedRepository {
   ): Promise<ScoredFeedItem[]> {
     const dailyPool = this.items.filter(item => item.isDailyEdition);
     const rankedDaily = rankAndInterleaveFeed(dailyPool, profile, interactions);
-    return rankedDaily.slice(0, 12);
+    const withPinned = this.applyPinnedItems(rankedDaily, profile, interactions);
+    return withPinned.slice(0, 12);
   }
 
   async getEditionFeed(
@@ -205,7 +261,8 @@ export class LocalFeedRepository implements IFeedRepository {
     dateSeed?: string,
     shuffleOffset?: number
   ): Promise<ScoredFeedItem[]> {
-    return rankEditionFeed(this.items, editionType, profile, interactions, dateSeed, shuffleOffset);
+    const ranked = rankEditionFeed(this.items, editionType, profile, interactions, dateSeed, shuffleOffset);
+    return this.applyPinnedItems(ranked, profile, interactions);
   }
 
   async getDiscoveryItems(
@@ -220,12 +277,23 @@ export class LocalFeedRepository implements IFeedRepository {
     })();
 
     const remainingItems = this.items.filter(item => !excludeSet.has(item.id));
-    return rankAndInterleaveFeed(remainingItems, profile, interactions);
+    const ranked = rankAndInterleaveFeed(remainingItems, profile, interactions);
+    return this.applyPinnedItems(ranked, profile, interactions);
   }
 
   async getItemById(id: string): Promise<FeedItem | null> {
-    const found = this.items.find(item => item.id === id);
-    return found ?? null;
+    const found = this.articleIndex.getItem(id) || this.items.find(item => item.id === id);
+    if (!found) return null;
+
+    // Lazily attach related cross references if missing
+    if (!found.relatedCrossReferences || found.relatedCrossReferences.length === 0) {
+      const lazyRefs = this.relatedService.getRelatedArticles(found);
+      return {
+        ...found,
+        relatedCrossReferences: lazyRefs
+      };
+    }
+    return found;
   }
 
   async searchItems(
@@ -247,53 +315,22 @@ export class LocalFeedRepository implements IFeedRepository {
   }
 
   /**
-   * Fetches the latest serverless feed snapshot (from raw GitHub or local public dir)
-   * with a 6-second timeout and safely merges validated items into storage.
+   * Fetches the latest serverless feed snapshot using SnapshotLoader
+   * and safely merges validated items into storage.
    */
   async hydrateFromPublicSnapshot(
     remoteUrl?: string
   ): Promise<{ success: boolean; itemCount: number; snapshotDate?: string }> {
-    const url = remoteUrl?.trim() || (
-      typeof window !== 'undefined'
-        ? './feed-snapshot.json'
-        : 'https://raw.githubusercontent.com/username/anti-doomscroll-learn-app/main/public/feed-snapshot.json'
-    );
-
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-      const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        return { success: false, itemCount: 0 };
-      }
-
-      const json = await response.json();
-      const rawItems = Array.isArray(json?.items) ? json.items : (Array.isArray(json) ? json : []);
-      const validated: FeedItem[] = [];
-
-      for (const raw of rawItems) {
-        const safe = FeedItemSchema.safeParse(raw);
-        if (safe.success) {
-          validated.push(safe.data);
-        }
-      }
-
-      if (validated.length > 0) {
-        this.addItems(validated);
-        const snapshotDate = json?.generatedAt
-          ? new Date(json.generatedAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
-          : new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
-
+      const res = await defaultSnapshotLoader.loadSnapshot(remoteUrl);
+      if (res.success && res.items.length > 0) {
+        this.addItems(res.items);
         return {
           success: true,
-          itemCount: validated.length,
-          snapshotDate
+          itemCount: res.itemCount,
+          snapshotDate: res.snapshotDate
         };
       }
-
       return { success: false, itemCount: 0 };
     } catch {
       return { success: false, itemCount: 0 };
@@ -301,12 +338,56 @@ export class LocalFeedRepository implements IFeedRepository {
   }
 
   /**
-   * Passes candidate items through the AI Signal-vs-Noise Gatekeeper and adds them to storage.
+   * Passes candidate items through the AI Signal-vs-Noise Gatekeeper,
+   * merges with atomic deduplication, and guarantees top-pinning for new additions.
    */
   async curateAndAddItems(items: FeedItem[]): Promise<FeedItem[]> {
     const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(items);
-    this.addItems(curated);
+    const enrichedCurated = curated.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
+
+    const mergeResult = FeedMergeService.merge(this.items, enrichedCurated, {
+      operationType: 'ai_curation',
+      pinInserted: true
+    });
+
+    this.items = mergeResult.mergedItems;
+    for (const item of enrichedCurated) {
+      if (!this.dynamicItems.some(d => d.id === item.id)) {
+        this.dynamicItems.push(item);
+      }
+    }
+    this.articleIndex.buildIndex(this.items);
+    this.relatedService.setIndex(this.articleIndex);
+    this.persistDynamicItems();
+
     return curated;
+  }
+
+  /**
+   * Executes a typed content operation, reporting full telemetry.
+   */
+  async executeContentOperation(
+    type: FeedOperationType,
+    candidates: FeedItem[],
+    options?: { pinInserted?: boolean }
+  ): Promise<FeedOperationResult> {
+    const enrichedCandidates = candidates.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
+    const mergeResult = FeedMergeService.merge(this.items, enrichedCandidates, {
+      operationType: type,
+      pinInserted: options?.pinInserted !== false
+    });
+
+    this.items = mergeResult.mergedItems;
+    for (const item of enrichedCandidates) {
+      if (!this.dynamicItems.some(d => d.id === item.id)) {
+        this.dynamicItems.push(item);
+      }
+    }
+    this.articleIndex.buildIndex(this.items);
+    this.relatedService.setIndex(this.articleIndex);
+    this.persistDynamicItems();
+
+    return mergeResult.operationResult;
   }
 }
 

@@ -59,6 +59,16 @@ export class StorageDriverCacheStorage implements ICacheStorage {
   }
 }
 
+export interface CacheKeyParams {
+  contentHash: string;
+  task?: string;
+  schemaVersion?: string;
+  promptVersion?: string;
+  modelId?: string;
+  language?: string;
+  personalizationScope?: string;
+}
+
 export class EnrichmentCache {
   private cache: Record<string, EnrichmentResult> = {};
   private storage: ICacheStorage;
@@ -99,19 +109,33 @@ export class EnrichmentCache {
     }
   }
 
-  makeKey(contentHash: string, promptVersion: string): string {
-    return `${contentHash}:${promptVersion}`;
+  makeKey(contentHashOrParams: string | CacheKeyParams, promptVersion?: string): string {
+    if (typeof contentHashOrParams === 'object') {
+      const p = contentHashOrParams;
+      return `${p.contentHash}:${p.task || 'enrich'}:${p.schemaVersion || 'v1'}:${p.promptVersion || 'v1'}:${p.modelId || 'default'}:${p.language || 'de'}`;
+    }
+    return `${contentHashOrParams}:${promptVersion || 'v1'}`;
   }
 
-  async get(contentHash: string, promptVersion: string): Promise<EnrichmentResult | null> {
+  async get(contentHashOrParams: string | CacheKeyParams, promptVersion?: string): Promise<EnrichmentResult | null> {
     const all = await this.load();
-    const key = this.makeKey(contentHash, promptVersion);
+    const key = this.makeKey(contentHashOrParams, promptVersion);
     return all[key] ?? null;
   }
 
-  async set(contentHash: string, promptVersion: string, result: EnrichmentResult): Promise<void> {
+  async set(contentHashOrParams: string | CacheKeyParams, resultOrPromptVersion: any, maybeResult?: EnrichmentResult): Promise<void> {
     await this.load();
-    const key = this.makeKey(contentHash, promptVersion);
+    let key: string;
+    let result: EnrichmentResult;
+
+    if (typeof contentHashOrParams === 'object') {
+      key = this.makeKey(contentHashOrParams);
+      result = resultOrPromptVersion as EnrichmentResult;
+    } else {
+      key = this.makeKey(contentHashOrParams, resultOrPromptVersion as string);
+      result = maybeResult as EnrichmentResult;
+    }
+
     this.cache[key] = result;
     await this.save();
   }

@@ -9,12 +9,25 @@ import { defaultSourceRepository } from './sourceRepository';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
 
 let staticPipelineItems: FeedItem[] = [];
-try {
-  const loaded = require('./pipeline-output.json');
-  if (Array.isArray(loaded)) {
-    staticPipelineItems = loaded as FeedItem[];
+if (typeof process !== 'undefined' && process.versions?.node) {
+  try {
+    const fsMod = eval('require')('fs');
+    const pathMod = eval('require')('path');
+    const pipelinePath = pathMod.resolve(__dirname, 'pipeline-output.json');
+    if (fsMod.existsSync(pipelinePath)) {
+      const loaded = JSON.parse(fsMod.readFileSync(pipelinePath, 'utf8'));
+      if (Array.isArray(loaded)) {
+        staticPipelineItems = loaded as FeedItem[];
+      } else {
+        staticPipelineItems = REAL_KNOWLEDGE_VAULT;
+      }
+    } else {
+      staticPipelineItems = REAL_KNOWLEDGE_VAULT;
+    }
+  } catch {
+    staticPipelineItems = REAL_KNOWLEDGE_VAULT;
   }
-} catch {
+} else {
   staticPipelineItems = REAL_KNOWLEDGE_VAULT;
 }
 

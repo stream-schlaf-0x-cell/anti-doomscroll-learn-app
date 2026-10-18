@@ -300,7 +300,11 @@ export function synthesizeDeepeningArticle(options: {
 /**
  * Enriches any raw feed item with content-specific orientation while preserving 100% honest source text.
  */
-export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
+export function enrichItemWithInstantResearch(
+  item: FeedItem,
+  options?: { lazyCrossReferences?: boolean } | number
+): FeedItem {
+  const isLazy = typeof options === 'object' && options?.lazyCrossReferences === true;
   const primaryTopic = item.primaryTopic || 'philosophy_ethics';
   const rawContent = item.articleBody || item.feedText || item.body || item.title;
 
@@ -338,6 +342,8 @@ export function enrichItemWithInstantResearch(item: FeedItem): FeedItem {
 
   const relatedCrossReferences = item.relatedCrossReferences && item.relatedCrossReferences.length > 0
     ? item.relatedCrossReferences
+    : isLazy
+    ? undefined
     : findRelatedNetworkPosts(item);
 
   return {

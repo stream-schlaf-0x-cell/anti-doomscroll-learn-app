@@ -11,6 +11,7 @@ import { ReaderScreen } from './src/features/reader/ReaderScreen';
 import { LibraryScreen } from './src/features/library/LibraryScreen';
 import { SettingsScreen } from './src/features/settings/SettingsScreen';
 import { WhyThisModal } from './src/ui/components/WhyThisModal';
+import { AtmenLogo } from './src/ui/components/AtmenLogo';
 import { typography, radius } from './src/ui/theme';
 
 const MainNavigator: React.FC = () => {
@@ -38,10 +39,8 @@ const MainNavigator: React.FC = () => {
   if (startupState.status === 'loading') {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={colors.accent} />
-        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-          Tagesausgabe wird vorbereitet…
-        </Text>
+        <AtmenLogo size={44} isDark={isDark} variant="full" showSubtitle={true} subtitleText="Tagesausgabe wird vorbereitet…" style={{ marginBottom: 20 }} />
+        <ActivityIndicator size="small" color={colors.accent} />
       </View>
     );
   }
@@ -126,13 +125,7 @@ const MainNavigator: React.FC = () => {
               accessibilityRole="button"
               accessibilityLabel="Zurück zur Ausgabe"
             >
-              <View style={[styles.desktopBrandEmblem, { backgroundColor: colors.accent }]}>
-                <Text style={styles.desktopBrandSymbol}>◎</Text>
-              </View>
-              <View>
-                <Text style={[styles.desktopBrandTitle, { color: colors.textPrimary }]}>Atmen</Text>
-                <Text style={[styles.desktopBrandSubtitle, { color: colors.textMuted }]}>Dein ruhiger Wissens-Feed</Text>
-              </View>
+              <AtmenLogo size={24} isDark={isDark} showSubtitle={true} subtitleText="Dein ruhiger Wissens-Feed" />
             </TouchableOpacity>
 
             {/* Navigation Pills */}

@@ -294,16 +294,17 @@ export class BatchEditionEnricher {
     }
 
     const payload = items.map(it => {
-      const snippet = (it.body?.slice(0, 800) || it.feedText || it.subtitle || '').trim();
-      const detectedLang = detectLanguage(`${it.title} ${snippet}`);
+      const rawText = (it.feedText || it.subtitle || it.body || '').trim();
+      const excerpt = rawText.length > 280 ? rawText.slice(0, 277) + '…' : rawText;
+      const detectedLang = detectLanguage(`${it.title} ${excerpt}`);
       return {
         id: it.id,
         title: it.title,
         subtitle: it.subtitle,
-        snippet,
-        publisher: it.sourceReferences[0]?.publisher || '',
+        publisher: it.sourceReferences[0]?.publisher || it.sourceDomain || '',
         currentTopic: it.primaryTopic,
-        sourceLanguage: detectedLang
+        sourceLanguage: detectedLang,
+        excerpt
       };
     });
 

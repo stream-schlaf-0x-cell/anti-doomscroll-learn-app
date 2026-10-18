@@ -36,6 +36,9 @@ import { defaultSourceRepository } from '../../core/data/sourceRepository';
 import { defaultBatchEditionEnricher } from '../../core/enrichment/batchEnricher';
 import { loadAiCredentials } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
+import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
+import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
+import { FeedOperationResult } from '../../core/feed/FeedOperationManager';
 
 export const FeedScreen: React.FC = () => {
   const {
@@ -48,6 +51,7 @@ export const FeedScreen: React.FC = () => {
     clearAppearanceHistory,
     recordCardAppearances,
     colors,
+    isDark,
     refreshFeed,
     refreshLiveFeed,
     snapshotSyncInfo,
@@ -414,8 +418,14 @@ export const FeedScreen: React.FC = () => {
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
   const scrollYRef = React.useRef<number>(0);
+  const scrollViewRef = React.useRef<ScrollView>(null);
   const viewportHeightRef = React.useRef<number>(820);
   const recordedViewportIdsRef = React.useRef<Set<string>>(new Set());
+
+  const [isScrolledDown, setIsScrolledDown] = useState<boolean>(false);
+  const [curationStage, setCurationStage] = useState<string>('');
+  const [lastOperationResult, setLastOperationResult] = useState<FeedOperationResult | null>(null);
+  const [showReportModal, setShowReportModal] = useState<boolean>(false);
 
   const flushVisibleCardsToChronik = useCallback(() => {
     if (activeFeedOption === 'history') return;
@@ -455,6 +465,10 @@ export const FeedScreen: React.FC = () => {
     if (layoutMeasurement.height > 0) {
       viewportHeightRef.current = layoutMeasurement.height;
     }
+
+    const isDown = contentOffset.y > 180;
+    setIsScrolledDown(isDown);
+
     flushVisibleCardsToChronik();
 
     const paddingToBottom = 800;
@@ -472,29 +486,40 @@ export const FeedScreen: React.FC = () => {
   const handleLiveAiCurate = async () => {
     if (isCuratingLiveAi) return;
     setIsCuratingLiveAi(true);
+    setCurationStage('1/3: Artikelkandidaten prüfen …');
     try {
       const creds = await loadAiCredentials();
-      const pool = (renderedInfiniteItems.length > 0 ? renderedInfiniteItems : discoveryItems).slice(0, 12);
+      const pool = (renderedInfiniteItems.length > 0 ? renderedInfiniteItems : discoveryItems).slice(0, 15);
       if (pool.length === 0) {
         setSimToast('Keine Artikel im aktuellen Feed-Pool zum Kuratieren gefunden.');
         setTimeout(() => setSimToast(null), 3000);
         return;
       }
+
+      setCurationStage('2/3: Duplikate und Rauschen filtern …');
       const enriched = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(pool, creds);
-      if (enriched.length > 0) {
-        feedRepository.addItems(enriched);
-        await refreshFeed();
-        setSimToast(`✨ ${enriched.length} Beiträge erfolgreich mit Live-KI veredelt!`);
+
+      setCurationStage('3/3: Ergebnisse bewerten und einfügen …');
+      if (feedRepository.executeContentOperation) {
+        const opResult = await feedRepository.executeContentOperation('ai_curation', enriched, { pinInserted: true });
+        setLastOperationResult(opResult);
       } else {
-        setSimToast('Feed-Kuration abgeschlossen (keine neuen Beiträge freigegeben).');
+        feedRepository.addItems(enriched);
       }
-      setTimeout(() => setSimToast(null), 4000);
+
+      await refreshFeed();
+
+      // If user is near top, smoothly scroll to top so new top-pinned articles are immediately visible
+      if (scrollYRef.current < 150) {
+        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      }
     } catch (e) {
       console.warn('Live AI Curation failed:', e);
       setSimToast('Fehler bei der Live-KI-Kuration.');
       setTimeout(() => setSimToast(null), 3000);
     } finally {
       setIsCuratingLiveAi(false);
+      setCurationStage('');
     }
   };
 
@@ -683,6 +708,7 @@ export const FeedScreen: React.FC = () => {
 
       {/* Main Feed Scroll (Desktop Centered & Two-Column Layout) */}
       <ScrollView
+        ref={scrollViewRef}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
@@ -697,8 +723,19 @@ export const FeedScreen: React.FC = () => {
       >
         <View style={[styles.mainLayoutWrapper, isDesktop && styles.desktopLayoutWrapper]}>
           {/* Feed Column (Center) */}
-          {/* Feed Column (Center) */}
           <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn]}>
+            {/* Real-time Living Feed Curation Progress & Banner */}
+            <FeedOperationBanner
+              isRunning={isCuratingLiveAi}
+              currentStage={curationStage}
+              lastResult={lastOperationResult}
+              isScrolledDown={isScrolledDown}
+              onOpenReport={() => setShowReportModal(true)}
+              onScrollToTop={() => scrollViewRef.current?.scrollTo({ y: 0, animated: true })}
+              colors={colors}
+              isDark={isDark}
+            />
+
             {snapshotSyncInfo && (
               <View style={[styles.snapshotSyncBanner, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                 <Ionicons name="sparkles" size={12} color={colors.accent} style={{ marginRight: 6 }} />
@@ -2077,6 +2114,15 @@ export const FeedScreen: React.FC = () => {
           setShowNewsHubSettingsModal(false);
           void loadLiveNews();
         }}
+      />
+
+      {/* Inspectable Curation Operation Telemetry Modal */}
+      <FeedOperationReportModal
+        visible={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        result={lastOperationResult}
+        colors={colors}
+        isDark={isDark}
       />
     </View>
   );
