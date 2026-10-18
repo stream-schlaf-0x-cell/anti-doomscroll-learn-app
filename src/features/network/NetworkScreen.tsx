@@ -6,10 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Modal,
-  Alert,
-  Platform,
-  useWindowDimensions
+  Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
@@ -24,8 +21,6 @@ import { TOPIC_SPACE_MAP, TopicTag } from '../../core/domain/types';
 
 export const NetworkScreen: React.FC = () => {
   const { colors, isDark, profile, savedArticles, openArticle } = useApp();
-  const { width } = useWindowDimensions();
-  const isDesktop = width >= 960;
 
   const [thoughts, setThoughts] = useState<UserThoughtNode[]>([]);
   const [connections, setConnections] = useState<KnowledgeConnection[]>([]);

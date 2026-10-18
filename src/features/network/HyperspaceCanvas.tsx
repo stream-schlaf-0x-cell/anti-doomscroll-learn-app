@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { View, StyleSheet, Platform, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemeColors } from '../../ui/theme';
@@ -236,7 +236,6 @@ export const HyperspaceCanvas: React.FC<Props> = ({
         if (proj.scale > 0.85 || isHovered || isSelected) {
           ctx.font = `${isHovered || isSelected ? 'bold ' : ''}11px -apple-system, BlinkMacSystemFont, sans-serif`;
           ctx.fillStyle = isDark ? '#E2E8F0' : '#1E293B';
-          const maxTextWidth = 140;
           let label = node.title;
           if (label.length > 24) label = label.slice(0, 22) + '…';
           ctx.fillText(label, proj.sx + radius + 5, proj.sy + 4);
