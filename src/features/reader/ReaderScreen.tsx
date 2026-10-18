@@ -34,6 +34,7 @@ import { RabbitHoleService, RabbitHoleEntry } from '../../core/synthesis/rabbitH
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { QuizCheckpointCard } from '../../ui/components/QuizCheckpointCard';
 import { generateQuizForArticle } from '../../core/quiz/quizGenerator';
+import { AtmenSymbol } from '../../ui/components/AtmenSymbol';
 
 export const ReaderScreen: React.FC = () => {
   const {
@@ -644,9 +645,7 @@ export const ReaderScreen: React.FC = () => {
             accessibilityRole="button"
             accessibilityLabel="Zurück zur Startseite"
           >
-            <View style={[styles.brandEmblem, { backgroundColor: colors.accent }]}>
-              <Text style={styles.brandEmblemGlyph}>◎</Text>
-            </View>
+            <AtmenSymbol size={26} isDark={isDark} style={{ marginRight: 8 }} />
             <Text style={[styles.brandTitle, { color: colors.textPrimary }]}>
               atmen <Text style={{ fontWeight: '400', fontStyle: 'italic', color: colors.textMuted }}>magazin</Text>
             </Text>

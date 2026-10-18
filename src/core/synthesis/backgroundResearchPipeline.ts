@@ -3,14 +3,8 @@ import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 import { INITIAL_FIXTURES } from '../data/fixtures';
 import { TOPIC_DIALECTICS } from './dialecticTemplates';
 
-// Safely access pipeline output items if available
-let cachedPipelineItems: FeedItem[] = [];
-try {
-  const p = require('../data/pipeline-output.json');
-  if (Array.isArray(p)) cachedPipelineItems = p as FeedItem[];
-} catch {
-  cachedPipelineItems = [];
-}
+// Lightweight pool items (decoupled from massive compile-time JSON)
+const cachedPipelineItems: FeedItem[] = [];
 
 /**
  * Background Research & Content-Specific Contextualization Pipeline
@@ -387,6 +381,8 @@ const ACRONYM_WHITELIST = new Set([
  * Discovers up to 2-3 genuine cross-reference connections in the local knowledge pool.
  * Uses whole-word tokenization and strict stopword filtering to prevent substring false positives.
  */
+const candidateTokenCache = new Map<string, Set<string>>();
+
 export function findRelatedNetworkPosts(item: FeedItem, customPool?: FeedItem[]): RelatedCrossReference[] {
   const pool = customPool && customPool.length > 0
     ? customPool
@@ -407,13 +403,18 @@ export function findRelatedNetworkPosts(item: FeedItem, customPool?: FeedItem[])
 
     const sharesPrimary = candidate.primaryTopic === topic;
     const sharesSecondary = candidate.topics?.includes(topic);
-    const candidateTokens = new Set(
-      `${candidate.title} ${candidate.subtitle || ''} ${candidate.feedText || ''}`
-        .toLowerCase()
-        .replace(/[^a-zäöüß0-9\s]/g, ' ')
-        .split(/\s+/)
-        .filter(Boolean)
-    );
+
+    let candidateTokens = candidateTokenCache.get(candidate.id);
+    if (!candidateTokens) {
+      candidateTokens = new Set(
+        `${candidate.title} ${candidate.subtitle || ''} ${candidate.feedText || ''}`
+          .toLowerCase()
+          .replace(/[^a-zäöüß0-9\s]/g, ' ')
+          .split(/\s+/)
+          .filter(Boolean)
+      );
+      candidateTokenCache.set(candidate.id, candidateTokens);
+    }
     const matchedWords = titleWords.filter(w => candidateTokens.has(w));
 
     if (!sharesPrimary && !sharesSecondary && matchedWords.length === 0) continue;

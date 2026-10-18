@@ -515,14 +515,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {
         // Fallback
       }
-      try {
-        const fresh = require('../data/pipeline-output.json');
-        if (Array.isArray(fresh) && (feedRepository as any).setItems) {
-          (feedRepository as any).setItems(fresh);
-        }
-      } catch {
-        // Fallback
-      }
       await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
     } catch (err) {
       console.warn('Feed-Aktualisierung fehlgeschlagen:', err);

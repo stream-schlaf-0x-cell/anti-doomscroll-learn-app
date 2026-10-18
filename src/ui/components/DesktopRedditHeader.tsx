@@ -27,6 +27,7 @@ import {
   OPENROUTER_MODEL_PRESETS
 } from '../../core/ai/atmenAiClient';
 import { GeminiModelSelector } from './GeminiModelSelector';
+import { AtmenSymbol } from './AtmenSymbol';
 import { NewsHubModal } from './NewsHubModal';
 import { UltraMasterModal } from './UltraMasterModal';
 import { MobilePublishModal } from './MobilePublishModal';
@@ -221,10 +222,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               accessibilityRole="button"
               accessibilityLabel="Zurück zur Home Startseite"
             >
-              {/* atmen Circular Aperture Emblem */}
-              <View style={[styles.logoEmblem, { backgroundColor: colors.accent }]}>
-                <Text style={styles.logoSymbol}>◎</Text>
-              </View>
+              {/* atmen Blue Chevron Arch Emblem */}
+              <AtmenSymbol size={28} isDark={isDark} style={{ marginRight: 8 }} />
               <Text style={[styles.brandText, { color: colors.textPrimary }]}>
                 Atmen
               </Text>
@@ -343,7 +342,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
             >
               <Ionicons name="leaf-outline" size={14} color="#10B981" style={{ marginRight: 4 }} />
               <Text style={[styles.breathingPillText, { color: '#10B981', fontWeight: '700' }]}>
-                ◎ Atmen
+                Atmen
               </Text>
             </TouchableOpacity>
 

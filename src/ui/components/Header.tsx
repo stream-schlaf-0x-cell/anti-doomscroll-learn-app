@@ -6,6 +6,7 @@ import { typography, spacing } from '../theme';
 import { UltraMasterModal } from './UltraMasterModal';
 import { MobilePublishModal } from './MobilePublishModal';
 import { AtmenBreathingPortal } from '../../features/breathing/AtmenBreathingPortal';
+import { AtmenSymbol } from './AtmenSymbol';
 
 interface HeaderProps {
   title?: string;
@@ -14,7 +15,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  title = '◎ atmen',
+  title = 'atmen',
   subtitle = 'atmen network • Raum für Erkenntnis & Souveränität',
   showThemeToggle = true
 }) => {
@@ -39,6 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
               accessibilityRole="button"
               accessibilityLabel="Zurück zur Home Startseite"
             >
+              <AtmenSymbol size={22} isDark={isDark} style={{ marginRight: 6 }} />
               <Text style={[styles.logoText, { color: colors.textPrimary }]}>
                 {title}
               </Text>

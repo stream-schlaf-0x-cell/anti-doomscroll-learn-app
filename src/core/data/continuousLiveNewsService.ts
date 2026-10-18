@@ -15,7 +15,7 @@ try {
     staticPipelineItems = loaded as FeedItem[];
   }
 } catch {
-  staticPipelineItems = [];
+  staticPipelineItems = REAL_KNOWLEDGE_VAULT;
 }
 
 export type NewsHubFilterCategory = 'all' | 'oerr' | 'tech' | 'science' | 'didactic' | 'culture';

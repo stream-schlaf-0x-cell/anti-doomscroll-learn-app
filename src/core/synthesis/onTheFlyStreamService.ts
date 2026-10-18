@@ -22,15 +22,8 @@ import { generateQuizForArticle } from '../quiz/quizGenerator';
 import { callAiModel, loadAiCredentials } from '../ai/atmenAiClient';
 export { TOPIC_DIALECTICS, DialecticTemplate };
 
-let pipelineNewsItems: FeedItem[] = [];
-try {
-  const loaded = require('../data/pipeline-output.json');
-  if (Array.isArray(loaded)) {
-    pipelineNewsItems = loaded as FeedItem[];
-  }
-} catch {
-  pipelineNewsItems = [];
-}
+// Lightweight pool items (decoupled from massive compile-time JSON)
+const pipelineNewsItems: FeedItem[] = [];
 
 export interface PocketGenerationOptions {
   space: string;

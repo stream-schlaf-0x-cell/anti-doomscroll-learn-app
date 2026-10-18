@@ -9,6 +9,7 @@ import { EnrichmentLedgerSummary } from '../../core/enrichment/types';
 import { defaultSourceRepository } from '../../core/data/sourceRepository';
 import { TOPIC_SPACE_MAP, TopicTag } from '../../core/domain/types';
 import { NewsHubModal } from './NewsHubModal';
+import { AtmenSymbol } from './AtmenSymbol';
 
 interface DesktopSidebarProps {
   articleCount?: number;
@@ -69,7 +70,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
       {/* 1. c/atmen Bloomscrolling Community Card */}
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
         <View style={[styles.communityBanner, { backgroundColor: colors.accent }]}>
-          <Text style={styles.bannerEmoji}>◎</Text>
+          <AtmenSymbol size={22} isDark={true} style={{ marginRight: 8 }} />
           <Text style={styles.bannerTag}>BLOOMSCROLLING</Text>
         </View>
 

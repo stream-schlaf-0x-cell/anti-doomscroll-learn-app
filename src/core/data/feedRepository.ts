@@ -6,7 +6,7 @@ import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
 import { defaultBatchEditionEnricher } from '../enrichment/batchEnricher';
 
-// Safely load pipeline output if present
+// Safely load curated pipeline output if present
 let pipelineItems: FeedItem[] = [];
 try {
   const loaded = require('./pipeline-output.json');
