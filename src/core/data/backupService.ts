@@ -1,4 +1,3 @@
-import { Platform } from 'react-native';
 import {
   UserProfile,
   UserProfileSchema,
@@ -10,7 +9,6 @@ import {
 import { appStorage, AtemStorage } from './storage';
 import { USER_PROFILE_STORAGE_KEY } from './userProfileRepository';
 import { INTERACTIONS_STORAGE_KEY, SAVED_ARTICLES_STORAGE_KEY } from './libraryRepository';
-import { RaindropService } from '../raindrop/raindropService';
 
 export const AUTO_BACKUP_STORAGE_KEY = '@atem:auto_backup:v1';
 
@@ -20,6 +18,10 @@ export interface AtemBackupSnapshot {
   profile: UserProfile;
   interactions: Record<string, ReadingInteraction>;
   savedArticles: FeedItem[];
+  thoughts?: any[];
+  connections?: any[];
+  investigations?: any[];
+  rules?: any[];
   customSpacesRaw?: string | null;
   pinnedSpacesRaw?: string | null;
   raindropToken?: string | null;
@@ -29,8 +31,10 @@ export interface AtemBackupSnapshot {
  * BackupService
  *
  * Ensures that local user progress (profile, reading notes, saved bookmarks,
- * custom spaces, and Raindrop token) is automatically backed up locally on every
- * session and can be exported/imported as a portable JSON file across updates and devices.
+ * custom spaces, thoughts, connections, investigations, and automation rules)
+ * is automatically backed up locally on every session and can be exported/imported
+ * as a portable JSON file across updates and devices.
+ * Strict Privacy & Safety: Never exports API keys or third-party service tokens.
  */
 export class BackupService {
   /**
@@ -38,13 +42,26 @@ export class BackupService {
    */
   public static async saveAutoBackup(storage: AtemStorage = appStorage): Promise<AtemBackupSnapshot | null> {
     try {
-      const [rawProfile, rawInteractions, rawSaved, customSpacesRaw, pinnedSpacesRaw, raindropToken] = await Promise.all([
+      const [
+        rawProfile,
+        rawInteractions,
+        rawSaved,
+        customSpacesRaw,
+        pinnedSpacesRaw,
+        rawThoughts,
+        rawConnections,
+        rawInvestigations,
+        rawRules
+      ] = await Promise.all([
         storage.getItem(USER_PROFILE_STORAGE_KEY),
         storage.getItem(INTERACTIONS_STORAGE_KEY),
         storage.getItem(SAVED_ARTICLES_STORAGE_KEY),
         storage.getItem('@atem:custom_subchannels'),
         storage.getItem('@atem:pinned_space_ids'),
-        RaindropService.getStoredToken(storage)
+        storage.getItem('@atem:user_thoughts:v1'),
+        storage.getItem('@atem:knowledge_connections:v1'),
+        storage.getItem('@atem:investigations:v1'),
+        storage.getItem('@atem:automation_rules:v1')
       ]);
 
       if (!rawProfile && !rawInteractions && !rawSaved) {
@@ -78,15 +95,50 @@ export class BackupService {
         }
       }
 
+      let thoughts: any[] | undefined = undefined;
+      if (rawThoughts) {
+        try {
+          const parsed = JSON.parse(rawThoughts);
+          if (Array.isArray(parsed)) thoughts = parsed;
+        } catch {}
+      }
+
+      let connections: any[] | undefined = undefined;
+      if (rawConnections) {
+        try {
+          const parsed = JSON.parse(rawConnections);
+          if (Array.isArray(parsed)) connections = parsed;
+        } catch {}
+      }
+
+      let investigations: any[] | undefined = undefined;
+      if (rawInvestigations) {
+        try {
+          const parsed = JSON.parse(rawInvestigations);
+          if (Array.isArray(parsed)) investigations = parsed;
+        } catch {}
+      }
+
+      let rules: any[] | undefined = undefined;
+      if (rawRules) {
+        try {
+          const parsed = JSON.parse(rawRules);
+          if (Array.isArray(parsed)) rules = parsed;
+        } catch {}
+      }
+
       const snapshot: AtemBackupSnapshot = {
-        version: 1,
+        version: 2,
         exportedAt: new Date().toISOString(),
         profile: profileParsed.data,
         interactions,
         savedArticles,
         customSpacesRaw,
         pinnedSpacesRaw,
-        raindropToken
+        thoughts,
+        connections,
+        investigations,
+        rules
       };
 
       await storage.setItem(AUTO_BACKUP_STORAGE_KEY, JSON.stringify(snapshot));
@@ -132,7 +184,7 @@ export class BackupService {
   ): Promise<string> {
     const snap = await this.saveAutoBackup(storage);
     const payload: AtemBackupSnapshot = snap || {
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       profile: UserProfileSchema.parse({ explicitInterests: {} }),
       interactions: {},
@@ -141,14 +193,14 @@ export class BackupService {
 
     const jsonString = JSON.stringify(payload, null, 2);
 
-    if (triggerBrowserDownload && Platform.OS === 'web' && typeof document !== 'undefined') {
+    if (triggerBrowserDownload && typeof window !== 'undefined' && typeof document !== 'undefined') {
       try {
         const blob = new Blob([jsonString], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         const dateStr = new Date().toISOString().slice(0, 10);
         a.href = url;
-        a.download = `atmen-backup-${dateStr}.json`;
+        a.download = `atmen-backup-v2-${dateStr}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -171,6 +223,10 @@ export class BackupService {
     success: boolean;
     restoredSavedCount: number;
     restoredNotesCount: number;
+    restoredThoughtsCount?: number;
+    restoredConnectionsCount?: number;
+    restoredInvestigationsCount?: number;
+    restoredRulesCount?: number;
     error?: string;
   }> {
     try {
@@ -226,8 +282,29 @@ export class BackupService {
       if (typeof parsed.pinnedSpacesRaw === 'string') {
         await storage.setItem('@atem:pinned_space_ids', parsed.pinnedSpacesRaw);
       }
-      if (typeof parsed.raindropToken === 'string' && parsed.raindropToken.trim()) {
-        await RaindropService.setStoredToken(parsed.raindropToken, storage);
+
+      let restoredThoughtsCount = 0;
+      if (Array.isArray(parsed.thoughts)) {
+        await storage.setItem('@atem:user_thoughts:v1', JSON.stringify(parsed.thoughts));
+        restoredThoughtsCount = parsed.thoughts.length;
+      }
+
+      let restoredConnectionsCount = 0;
+      if (Array.isArray(parsed.connections)) {
+        await storage.setItem('@atem:knowledge_connections:v1', JSON.stringify(parsed.connections));
+        restoredConnectionsCount = parsed.connections.length;
+      }
+
+      let restoredInvestigationsCount = 0;
+      if (Array.isArray(parsed.investigations)) {
+        await storage.setItem('@atem:investigations:v1', JSON.stringify(parsed.investigations));
+        restoredInvestigationsCount = parsed.investigations.length;
+      }
+
+      let restoredRulesCount = 0;
+      if (Array.isArray(parsed.rules)) {
+        await storage.setItem('@atem:automation_rules:v1', JSON.stringify(parsed.rules));
+        restoredRulesCount = parsed.rules.length;
       }
 
       await this.saveAutoBackup(storage);
@@ -235,7 +312,11 @@ export class BackupService {
       return {
         success: true,
         restoredSavedCount: validSaved.length,
-        restoredNotesCount
+        restoredNotesCount,
+        restoredThoughtsCount,
+        restoredConnectionsCount,
+        restoredInvestigationsCount,
+        restoredRulesCount
       };
     } catch (e: any) {
       return {

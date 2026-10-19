@@ -1,5 +1,13 @@
 import { FeedItem, TopicTag, TopicTagSchema } from '../domain/types';
-import { callAiModel, AiCredentials, loadAiCredentials, hasAiConfiguration } from '../ai/atmenAiClient';
+import {
+  callAiModel,
+  AiCredentials,
+  loadAiCredentials,
+  hasAiConfiguration,
+  AiCredentialsMissingError,
+  AiBudgetExceededError
+} from '../ai/atmenAiClient';
+import { AiHttpError } from '../ai/aiTransport';
 import { z } from 'zod';
 import { EnrichmentCache, StorageDriverCacheStorage, CacheKeyParams } from './cache';
 import { pureJsSha256 } from '../ingestion/normalizer';
@@ -26,6 +34,19 @@ export interface EnrichedItemData {
   didacticTransfer: string;
 }
 
+export type CurationErrorClass =
+  | 'no_credentials'
+  | 'budget_exceeded'
+  | 'auth_error'
+  | 'rate_limit'
+  | 'model_not_found'
+  | 'timeout'
+  | 'network_error'
+  | 'response_invalid'
+  | 'no_approved_candidates'
+  | 'cache_only'
+  | 'local_fallback';
+
 export interface BatchCurationReport {
   candidateCount: number;
   approvedCount: number;
@@ -33,6 +54,9 @@ export interface BatchCurationReport {
   usedAI: boolean;
   usedFallback: boolean;
   cacheHits: number;
+  errorClass?: CurationErrorClass;
+  errorMessage?: string;
+  modelUsed?: string;
 }
 
 const BATCH_PROMPT_VERSION = 'curation-v2';
@@ -318,12 +342,17 @@ export class BatchEditionEnricher {
     // Serialize runs through this shared curator so simultaneous clicks reuse completed cache writes.
     const run = this.runQueue.then(async () => {
       this.lastBatchReport = {
-        candidateCount: items.length, approvedCount: 0, rejectedCount: 0,
-        usedAI: false, usedFallback: false, cacheHits: 0
+        candidateCount: items.length,
+        approvedCount: 0,
+        rejectedCount: 0,
+        usedAI: false,
+        usedFallback: false,
+        cacheHits: 0
       };
       const curated: FeedItem[] = [];
-      for (let i = 0; i < items.length; i += 12) {
-        curated.push(...await this.processChunk(items.slice(i, i + 12), overrideCredentials));
+      const CHUNK_SIZE = 6;
+      for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+        curated.push(...await this.processChunk(items.slice(i, i + CHUNK_SIZE), overrideCredentials));
       }
       this.lastBatchReport.approvedCount = curated.length;
       this.lastBatchReport.rejectedCount = items.length - curated.length;
@@ -347,14 +376,18 @@ export class BatchEditionEnricher {
     } else {
       try {
         credentials = await this.credentialsLoader();
-      } catch {
+      } catch (err: any) {
         this.lastBatchReport.usedFallback = true;
+        this.lastBatchReport.errorClass = 'no_credentials';
+        this.lastBatchReport.errorMessage = err?.message || 'Keine KI-Zugangsdaten konfiguriert.';
         return this.fallbackDeterministicGatekeep(items);
       }
     }
 
     if (!hasAiConfiguration(credentials)) {
       this.lastBatchReport.usedFallback = true;
+      this.lastBatchReport.errorClass = 'no_credentials';
+      this.lastBatchReport.errorMessage = 'Kein API-Schlüssel konfiguriert.';
       return this.fallbackDeterministicGatekeep(items);
     }
 
@@ -385,9 +418,18 @@ export class BatchEditionEnricher {
       }
       return approved;
     };
-    if (pending.length === 0) return fromDecisions(cachedDecisions);
+
+    if (pending.length === 0) {
+      return fromDecisions(cachedDecisions);
+    }
+
     const canSpend = await this.ledger.canSpend(0.005);
-    if (!canSpend) return fromDecisions(cachedDecisions);
+    if (!canSpend) {
+      this.lastBatchReport.usedFallback = true;
+      this.lastBatchReport.errorClass = 'budget_exceeded';
+      this.lastBatchReport.errorMessage = 'Monatliches KI-Budget von 5,00 € erreicht oder gesperrt.';
+      return fromDecisions(cachedDecisions);
+    }
 
     const payload = pending.map(it => {
       const rawText = (it.articleBody || it.body || it.feedText || it.subtitle || '').trim();
@@ -407,30 +449,29 @@ export class BatchEditionEnricher {
     const systemInstruction = `Du bist die intellektuelle Chefredaktion und der Signal-vs-Noise Gatekeeper der Wissens- und Bildungs-App "Atmen".
 Deine Aufgabe ist zweistufig:
 1. Signal-vs-Noise Gatekeeper:
-   Bewerte jeden eingehenden Beitrag unbestechlich auf einer Skala von 0 bis 10 nach folgenden Kriterien:
+   Bewerte jeden eingehenden Beitrag unbestechlich auf einer Skala von 0 bis 10:
    - Intellektuelle Tiefe, Substanz, Erkenntnisgewinn, Evidenz, zeitlose Relevanz.
    - Punktabzug (Score < 7) für: Clickbait, Affiliate-Deals/Shopping-Tipps, tagespolitischen Boulevard, Empörung, Parteiengezänk, PR-Meldungen oder einzeilige Stummeltexte ohne Kontext.
    - Ein Score von mindestens 7 (7 bis 10) ist die zwingende Hürde für die Aufnahme in Atmen.
 
-2. Veredelung & Anreicherung (nur für Beiträge mit curationScore >= 7):
-   - "feedText": Formuliere einen flüssigen, hochsubstantiellen Lesetext (80-130 Wörter).
+2. Veredelung (nur für Beiträge mit curationScore >= 7):
+   - "feedText": Prägnanter, hochsubstanzieller Lesetext (50-80 Wörter).
    - "keyInsight": Prägnante 1-Satz-Kernthese.
-   - "primaryTopic": Exakte semantische Zuordnung aus: ${VALID_TOPICS.join(', ')}. Achte darauf, Biologie/Ökologie/Physik als science_society zuzuordnen und nicht als ai_apple.
+   - "primaryTopic": Exakte semantische Zuordnung aus: ${VALID_TOPICS.join(', ')}.
    - "topics": 1 bis 3 passende Themen-Tags.
-   - "didacticTransfer": Ein konkreter pädagogischer oder kontemplativer Reflexionsimpuls.
+   - "didacticTransfer": Ein konkreter pädagogischer oder kontemplativer Reflexionsimpuls (1-2 Sätze).
 
-SPRACH-REGEL (ABSOLUT STRIKT):
-Behalte die Ausgangssprache des Originalartikels bei!
-- Wenn der Quellartikel ENGLISCH ist (sourceLanguage === "en"), verfasse feedText, keyInsight und didacticTransfer natürlich auf ENGLISCH.
-- Wenn der Quellartikel DEUTSCH ist (sourceLanguage === "de"), verfasse feedText, keyInsight und didacticTransfer auf DEUTSCH.
-- Übersetze NIEMALS englische Artikel ins Deutsche und niemals deutsche ins Englische!
+Für abgelehnte Beiträge (Score < 7): Setze feedText, keyInsight und didacticTransfer auf "" und gib einen kurzen rejectionReason an.
 
-Antworte AUSSCHLIESSLICH als JSON-Array von Objekten:
+SPRACH-REGEL:
+Behalte die Ausgangssprache des Originalartikels bei! (sourceLanguage === "en" -> Englisch, sourceLanguage === "de" -> Deutsch).
+
+Antworte AUSSCHLIESSLICH als JSON-Array:
 [
   {
     "id": "item-id",
-    "curationScore": 8, // Zahl 0-10
-    "rejectionReason": "", // leer bei score >= 7, sonst kurzer Grund z.B. "Affiliate-Deal"
+    "curationScore": 8,
+    "rejectionReason": "",
     "feedText": "...",
     "keyInsight": "...",
     "primaryTopic": "...",
@@ -445,28 +486,70 @@ Antworte AUSSCHLIESSLICH als JSON-Array von Objekten:
       const response = await callAiModel(prompt, {
         systemInstruction,
         jsonMode: true,
-        maxTokens: 3500,
+        maxTokens: 2500,
+        timeoutMs: 25_000,
         credentials,
         ledger: this.ledger,
         itemId: `ai-gatekeeper-${Date.now()}`
       });
 
       this.lastBatchReport.usedAI = true;
+      this.lastBatchReport.modelUsed = response.modelUsed || credentials.model;
       const parsed: unknown = JSON.parse(response.text);
       if (Array.isArray(parsed)) {
         const wantedIds = new Set(pending.map(item => item.id));
         const decisions = new Map(cachedDecisions);
+        let approvedCount = 0;
         for (const entry of parsed) {
           const validated = BatchDecisionSchema.safeParse(entry);
           if (!validated.success || !wantedIds.has(validated.data.id)) continue;
           decisions.set(validated.data.id, validated.data);
+          if (validated.data.curationScore >= 7) approvedCount++;
           const key = cacheKeys.get(validated.data.id);
           if (key) await this.cache.set(key, validated.data);
         }
+        if (approvedCount === 0 && parsed.length > 0) {
+          this.lastBatchReport.errorClass = 'no_approved_candidates';
+          this.lastBatchReport.errorMessage = 'Kein Kandidat erreichte die Qualitätshürde (Score >= 7).';
+        }
         return fromDecisions(decisions);
+      } else {
+        this.lastBatchReport.usedFallback = true;
+        this.lastBatchReport.errorClass = 'response_invalid';
+        this.lastBatchReport.errorMessage = 'Antwort des KI-Modells war kein JSON-Array.';
       }
-    } catch {
-      // Network and schema failures stay retryable; never cache a heuristic as an AI answer.
+    } catch (err: any) {
+      this.lastBatchReport.usedFallback = true;
+      if (err instanceof AiCredentialsMissingError) {
+        this.lastBatchReport.errorClass = 'no_credentials';
+        this.lastBatchReport.errorMessage = 'Kein API-Schlüssel konfiguriert.';
+      } else if (err instanceof AiBudgetExceededError) {
+        this.lastBatchReport.errorClass = 'budget_exceeded';
+        this.lastBatchReport.errorMessage = err.message || 'Monatliches KI-Budget erreicht.';
+      } else if (err instanceof AiHttpError) {
+        if (err.status === 401 || err.status === 403) {
+          this.lastBatchReport.errorClass = 'auth_error';
+          this.lastBatchReport.errorMessage = `Authentifizierungsfehler (${err.status}): Bitte API-Schlüssel prüfen.`;
+        } else if (err.status === 429) {
+          this.lastBatchReport.errorClass = 'rate_limit';
+          this.lastBatchReport.errorMessage = 'Rate-Limit des KI-Anbieters erreicht (HTTP 429).';
+        } else if (err.status === 404) {
+          this.lastBatchReport.errorClass = 'model_not_found';
+          this.lastBatchReport.errorMessage = 'Modell beim Anbieter nicht verfügbar (404).';
+        } else {
+          this.lastBatchReport.errorClass = 'network_error';
+          this.lastBatchReport.errorMessage = `KI-Serverfehler (HTTP ${err.status}).`;
+        }
+      } else if (err?.message?.includes('Zeitüberschreitung') || err?.name === 'AbortError') {
+        this.lastBatchReport.errorClass = 'timeout';
+        this.lastBatchReport.errorMessage = 'Zeitüberschreitung der KI-Anfrage (Timeout nach 25s).';
+      } else if (err instanceof SyntaxError || err?.message?.includes('JSON')) {
+        this.lastBatchReport.errorClass = 'response_invalid';
+        this.lastBatchReport.errorMessage = 'Antwort des KI-Modells war fehlerhaftes JSON.';
+      } else {
+        this.lastBatchReport.errorClass = 'network_error';
+        this.lastBatchReport.errorMessage = err?.message || 'Netzwerkfehler bei der KI-Anfrage.';
+      }
     }
     return fromDecisions(cachedDecisions);
   }

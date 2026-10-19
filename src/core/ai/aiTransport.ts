@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const AI_REQUEST_TIMEOUT_MS = 15_000;
+export const AI_REQUEST_TIMEOUT_MS = 30_000;
 export const AI_MAX_OUTPUT_TOKENS = 4096;
 export const AI_DEFAULT_OUTPUT_TOKENS = 500;
 export const AI_MAX_REQUEST_BYTES = 120 * 1024;

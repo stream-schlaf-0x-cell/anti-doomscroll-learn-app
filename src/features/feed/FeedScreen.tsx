@@ -93,7 +93,16 @@ export const FeedScreen: React.FC = () => {
   const [sortMode, setSortMode] = useState<FeedSortMode>('hot');
   const [isScrolledDown, setIsScrolledDown] = useState<boolean>(false);
   const scrollYRef = React.useRef<number>(0);
+  const scrollViewRef = React.useRef<ScrollView>(null);
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => defaultFeedOperationManager.getPinnedItemIds());
+
+  const handleSortChange = useCallback((mode: FeedSortMode) => {
+    defaultFeedOperationManager.clearAutomaticPins();
+    setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
+    setSortMode(mode);
+    setActiveCardIndex(0);
+    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+  }, []);
   const [pendingChangeIds, setPendingChangeIds] = useState<string[]>([]);
   const [lastOperationResult, setLastOperationResult] = useState<FeedOperationResult | null>(null);
   React.useEffect(() => defaultFeedOperationManager.subscribe(result => {
@@ -187,6 +196,15 @@ export const FeedScreen: React.FC = () => {
         windowMode: liveNewsWindowMode
       });
       setLiveNewsItems(items);
+      if (forceRefresh) {
+        const newCount = ContinuousLiveNewsService.getLastRefreshNewCount();
+        if (newCount > 0) {
+          setSimToast(`${newCount} neue Live-Meldungen geladen`);
+        } else {
+          setSimToast('Geprüft vor wenigen Sekunden – keine neuen Meldungen');
+        }
+        setTimeout(() => setSimToast(null), 3000);
+      }
     } catch {
       // Non-fatal
     } finally {
@@ -480,7 +498,6 @@ export const FeedScreen: React.FC = () => {
 
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
-  const scrollViewRef = React.useRef<ScrollView>(null);
   const viewportHeightRef = React.useRef<number>(820);
   const recordedViewportIdsRef = React.useRef<Set<string>>(new Set());
 
@@ -544,31 +561,97 @@ export const FeedScreen: React.FC = () => {
   const handleLiveAiCurate = async () => {
     if (isCuratingLiveAi) return;
     setIsCuratingLiveAi(true);
-    setCurationStage('1/3: Artikelkandidaten prüfen …');
+    setCurationStage('1/3: Frische Artikelkandidaten beschaffen …');
+    // Start tracking the operation from the user's click to accurately record total duration
+    const initialOp = defaultFeedOperationManager.startOperation('ai_curation');
+    const operationId = initialOp.operationId;
+
     try {
       const creds = await loadAiCredentials();
-      const pool = (renderedInfiniteItems.length > 0 ? renderedInfiniteItems : discoveryItems).slice(0, 15);
-      if (pool.length === 0) {
-        setSimToast('Keine Artikel im aktuellen Feed-Pool zum Kuratieren gefunden.');
+
+      // Collect IDs and canonical URLs currently visible or pinned in the feed
+      const visibleIds = new Set(renderedInfiniteItems.slice(0, visibleInfiniteCount).map(i => i.id));
+      const pinnedSet = new Set(defaultFeedOperationManager.getPinnedItemIds());
+      const seenUrls = new Set<string>();
+      for (const item of renderedInfiniteItems.slice(0, visibleInfiniteCount)) {
+        if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
+      }
+
+      // Procure genuine unrendered candidates from discovery, open web, and live news pools
+      const candidatePool: FeedItem[] = [];
+      const sourcesToHarvest: FeedItem[] = [...openWebItems, ...discoveryItems, ...liveNewsItems];
+      for (const item of sourcesToHarvest) {
+        if (!visibleIds.has(item.id) && !pinnedSet.has(item.id)) {
+          if (!item.canonicalUrl || !seenUrls.has(item.canonicalUrl)) {
+            if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
+            candidatePool.push(item);
+          }
+        }
+      }
+
+      // If local pools are low on unrendered candidates, fetch fresh live news stream
+      if (candidatePool.length < 6) {
+        try {
+          const freshLive = await ContinuousLiveNewsService.getLiveStream({ limit: 20, forceRefresh: false });
+          for (const item of freshLive) {
+            if (!visibleIds.has(item.id) && !pinnedSet.has(item.id)) {
+              if (!item.canonicalUrl || !seenUrls.has(item.canonicalUrl)) {
+                if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
+                candidatePool.push(item);
+              }
+            }
+          }
+        } catch {
+          // Ignore network errors during supplementary pool fetching
+        }
+      }
+
+      // If unrendered pool is still empty, include uncurated visible items to improve them
+      if (candidatePool.length === 0) {
+        const uncuratedVisible = renderedInfiniteItems.filter(i => !i.aiAssisted).slice(0, 6);
+        candidatePool.push(...uncuratedVisible);
+      }
+
+      if (candidatePool.length === 0) {
+        const finishedOp = defaultFeedOperationManager.completeOperation({
+          candidateCount: 0,
+          insertedCount: 0,
+          updatedCount: 0,
+          status: 'completed'
+        });
+        setLastOperationResult(finishedOp);
+        setSimToast('Keine neuen Kandidaten gefunden. Alle verfügbaren Beiträge sind bereits geprüft.');
         setTimeout(() => setSimToast(null), 3000);
         return;
       }
 
-      setCurationStage('2/3: Duplikate und Rauschen filtern …');
-      const enriched = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(pool, creds);
+      // Cap batch to 8 candidates to maintain responsive speed and stay well within budget/token limits
+      const candidatesToEnrich = candidatePool.slice(0, 8);
+
+      setCurationStage('2/3: KI-Signalprüfung & Kuration …');
+      const enriched = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(candidatesToEnrich, creds);
       const telemetry = defaultBatchEditionEnricher.getLastBatchReport();
 
       setCurationStage('3/3: Ergebnisse bewerten und einfügen …');
       if (feedRepository.executeContentOperation) {
-        const opResult = await feedRepository.executeContentOperation('ai_curation', enriched, { pinInserted: true, telemetry });
+        const opResult = await feedRepository.executeContentOperation('ai_curation', enriched, {
+          pinInserted: true,
+          pinUpdated: false,
+          telemetry,
+          operationId
+        });
         setLastOperationResult(opResult);
       } else {
         feedRepository.addItems?.(enriched);
       }
 
       await recomputeFeed();
-    } catch (e) {
+      if (scrollYRef.current <= 180) {
+        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      }
+    } catch (e: any) {
       console.warn('Live AI Curation failed:', e);
+      defaultFeedOperationManager.failOperation(e?.message || 'Fehler bei der Live-KI-Kuration.');
       setSimToast('Fehler bei der Live-KI-Kuration.');
       setTimeout(() => setSimToast(null), 3000);
     } finally {
@@ -1007,7 +1090,7 @@ export const FeedScreen: React.FC = () => {
                 {/* Reddit Sort Filter Bar: Hot, New, Top, Gems */}
                 <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                   <TouchableOpacity
-                    onPress={() => setSortMode('hot')}
+                    onPress={() => handleSortChange('hot')}
                     style={[
                       styles.sortTab,
                       sortMode === 'hot' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
@@ -1020,7 +1103,7 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => setSortMode('new')}
+                    onPress={() => handleSortChange('new')}
                     style={[
                       styles.sortTab,
                       sortMode === 'new' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
@@ -1033,7 +1116,7 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => setSortMode('top')}
+                    onPress={() => handleSortChange('top')}
                     style={[
                       styles.sortTab,
                       sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
@@ -1046,7 +1129,7 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => setSortMode('gems')}
+                    onPress={() => handleSortChange('gems')}
                     style={[
                       styles.sortTab,
                       sortMode === 'gems' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
@@ -1923,7 +2006,7 @@ export const FeedScreen: React.FC = () => {
                 {/* Reddit Sort Filter Bar: Hot, New, Top, Gems */}
                 <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                   <TouchableOpacity
-                    onPress={() => setSortMode('hot')}
+                    onPress={() => handleSortChange('hot')}
                     style={[
                       styles.sortTab,
                       sortMode === 'hot' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
@@ -1936,7 +2019,7 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => setSortMode('new')}
+                    onPress={() => handleSortChange('new')}
                     style={[
                       styles.sortTab,
                       sortMode === 'new' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
@@ -1949,7 +2032,7 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => setSortMode('top')}
+                    onPress={() => handleSortChange('top')}
                     style={[
                       styles.sortTab,
                       sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
@@ -1962,7 +2045,7 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => setSortMode('gems')}
+                    onPress={() => handleSortChange('gems')}
                     style={[
                       styles.sortTab,
                       sortMode === 'gems' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }

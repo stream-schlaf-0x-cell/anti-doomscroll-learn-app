@@ -127,6 +127,13 @@ export class AiCredentialsMissingError extends Error {
 
 // Keys are scoped to this application session. Metadata remains in local storage.
 const sessionApiKeys = new WeakMap<AtemStorage, string>();
+let sessionEffectiveGeminiModel: string | null = null;
+let sessionEffectiveOpenRouterModel: string | null = null;
+
+export function resetSessionEffectiveModels(): void {
+  sessionEffectiveGeminiModel = null;
+  sessionEffectiveOpenRouterModel = null;
+}
 
 export function hasAiConfiguration(credentials: AiCredentials): boolean {
   return Boolean(credentials.apiKey?.trim() || credentials.proxyUrl?.trim());
@@ -296,13 +303,33 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
         options.timeoutMs
       );
       let json: unknown;
-      try {
-        json = await sendGemini(model);
-      } catch (error) {
-        // A missing model is an explicit, bounded compatibility fallback; no retry for rate limits/errors.
-        if (!(error instanceof AiHttpError) || error.status !== 404 || model === 'gemini-2.5-flash') throw error;
-        effectiveModel = 'gemini-2.5-flash';
-        json = await sendGemini(effectiveModel);
+      const geminiCandidateModels = Array.from(new Set([
+        ...(sessionEffectiveGeminiModel ? [sessionEffectiveGeminiModel] : []),
+        model,
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash'
+      ]));
+
+      let lastError: unknown;
+      let callSuccess = false;
+      for (const candidate of geminiCandidateModels) {
+        try {
+          json = await sendGemini(candidate);
+          effectiveModel = candidate;
+          sessionEffectiveGeminiModel = candidate;
+          callSuccess = true;
+          break;
+        } catch (error) {
+          lastError = error;
+          if (error instanceof AiHttpError && error.status === 404) {
+            continue;
+          }
+          throw error;
+        }
+      }
+      if (!callSuccess) {
+        throw (lastError || new Error(`Kein kompatibles Gemini-Modell erreichbar.`));
       }
       result = parseAiResult(json, 'gemini');
     } else {
@@ -310,11 +337,40 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
         ...(options.systemInstruction ? [{ role: 'system', content: options.systemInstruction }] : []),
         { role: 'user', content: prompt }
       ];
-      const json = await fetchAiJson('https://openrouter.ai/api/v1/chat/completions', {
+      const sendOpenRouter = (chosenModel: string) => fetchAiJson('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://atmen.app', 'X-Title': 'Atmen' },
-        body: JSON.stringify({ model, messages, max_tokens: maxTokens, ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}) })
+        body: JSON.stringify({ model: chosenModel, messages, max_tokens: maxTokens, ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}) })
       }, options.timeoutMs);
+
+      let json: unknown;
+      const openRouterCandidates = Array.from(new Set([
+        ...(sessionEffectiveOpenRouterModel ? [sessionEffectiveOpenRouterModel] : []),
+        model,
+        'google/gemini-2.5-flash',
+        'openai/gpt-4o-mini'
+      ]));
+
+      let lastError: unknown;
+      let callSuccess = false;
+      for (const candidate of openRouterCandidates) {
+        try {
+          json = await sendOpenRouter(candidate);
+          effectiveModel = candidate;
+          sessionEffectiveOpenRouterModel = candidate;
+          callSuccess = true;
+          break;
+        } catch (error) {
+          lastError = error;
+          if (error instanceof AiHttpError && (error.status === 404 || error.status === 400)) {
+            continue;
+          }
+          throw error;
+        }
+      }
+      if (!callSuccess) {
+        throw (lastError || new Error(`Kein kompatibles OpenRouter-Modell erreichbar.`));
+      }
       result = parseAiResult(json, 'openrouter');
     }
     const inputTokens = result.inputTokens ?? estimatedInputTokens;

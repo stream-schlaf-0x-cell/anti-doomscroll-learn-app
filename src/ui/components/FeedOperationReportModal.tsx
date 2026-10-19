@@ -112,15 +112,37 @@ export const FeedOperationReportModal: React.FC<FeedOperationReportModalProps> =
                       color:
                         result.status === 'completed'
                           ? colors.success || '#10B981'
+                          : result.status === 'fallback'
+                          ? '#F59E0B'
                           : result.status === 'partial'
                           ? '#F59E0B'
                           : colors.danger
                     }
                   ]}
                 >
-                  {result.status === 'completed' ? 'Erfolgreich' : result.status === 'partial' ? 'Teilweise' : 'Fehlgeschlagen'}
+                  {result.status === 'completed'
+                    ? 'Erfolgreich'
+                    : result.status === 'fallback'
+                    ? 'Ersatzverfahren (Lokal)'
+                    : result.status === 'partial'
+                    ? 'Teilweise'
+                    : 'Fehlgeschlagen'}
                 </Text>
               </View>
+
+              {result.modelUsed && (
+                <View style={styles.detailRow}>
+                  <Text style={[styles.detailKey, { color: colors.textSecondary }]}>Modell</Text>
+                  <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{result.modelUsed}</Text>
+                </View>
+              )}
+
+              {result.errorMessage && (
+                <View style={[styles.errorBox, { backgroundColor: colors.surfaceSecondary, borderColor: '#F59E0B', marginTop: 10 }]}>
+                  <Text style={[styles.errorTitle, { color: '#F59E0B' }]}>Hinweis zur Ausführung:</Text>
+                  <Text style={[styles.errorText, { color: colors.textSecondary }]}>{result.errorMessage}</Text>
+                </View>
+              )}
 
               {result.rejectedReasons && Object.keys(result.rejectedReasons).length > 0 && (
                 <View style={{ marginTop: 8 }}>

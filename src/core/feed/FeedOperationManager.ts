@@ -12,6 +12,7 @@ export type FeedOperationStatus =
   | 'completed'
   | 'partial'
   | 'failed'
+  | 'fallback'
   | 'cancelled';
 
 export interface FeedOperationResult {
@@ -37,6 +38,9 @@ export interface FeedOperationResult {
   usedFallback: boolean;
   cacheHits: number;
   errors: string[];
+  errorClass?: string;
+  errorMessage?: string;
+  modelUsed?: string;
 }
 
 /** Measurements from the curation stage before the approved items reach the merge. */
@@ -47,6 +51,9 @@ export interface FeedOperationTelemetry {
   usedAI: boolean;
   usedFallback: boolean;
   cacheHits: number;
+  errorClass?: string;
+  errorMessage?: string;
+  modelUsed?: string;
 }
 
 export type OperationProgressCallback = (stage: string, progressFraction: number) => void;
@@ -58,6 +65,7 @@ export type OperationProgressCallback = (stage: string, progressFraction: number
 export class FeedOperationManager {
   private operationHistory: FeedOperationResult[] = [];
   private pinnedItemIds = new Set<string>();
+  private automaticPinnedIds = new Set<string>();
   private pinnedItemTimestampMap = new Map<string, number>();
   private pinnedItemOrder: string[] = [];
   private listeners = new Set<(lastResult: FeedOperationResult) => void>();
@@ -67,6 +75,9 @@ export class FeedOperationManager {
    * Starts tracking a new feed operation.
    */
   public startOperation(type: FeedOperationType, operationId?: string): FeedOperationResult {
+    if (this.activeOperation && operationId && this.activeOperation.operationId === operationId) {
+      return this.activeOperation;
+    }
     const id = operationId || `op-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const op: FeedOperationResult = {
       operationId: id,
@@ -96,28 +107,50 @@ export class FeedOperationManager {
    */
   public completeOperation(
     resultUpdates: Partial<FeedOperationResult>,
-    options?: { pinNewItems?: boolean }
+    options?: { pinNewItems?: boolean; pinUpdatedItems?: boolean }
   ): FeedOperationResult {
     const current = this.activeOperation || this.startOperation('manual_refresh');
     const now = Date.now();
     const startTime = new Date(current.startedAt).getTime() || now;
     const completedAt = new Date(now).toISOString();
 
+    const determinedStatus: FeedOperationStatus =
+      resultUpdates.status ||
+      (resultUpdates.usedFallback && !resultUpdates.usedAI
+        ? 'fallback'
+        : resultUpdates.errors && resultUpdates.errors.length > 0
+        ? 'partial'
+        : 'completed');
+
     const finalized: FeedOperationResult = {
       ...current,
       ...resultUpdates,
-      status: resultUpdates.status || (resultUpdates.errors && resultUpdates.errors.length > 0 ? 'partial' : 'completed'),
+      status: determinedStatus,
       completedAt,
       durationMs: now - startTime
     };
 
-    // Manual re-curation can improve existing articles without creating new IDs.
+    // Only genuinely new items receive automatic top-pinning (capped at 4 items)
+    // Updated existing items are capped at 4 total automatic pins to keep feed sortable
     if (options?.pinNewItems !== false && finalized.operationType !== 'background_sync') {
-      const changedIds = [...new Set([...finalized.insertedIds, ...finalized.updatedIds])];
-      this.pinnedItemOrder = [...changedIds, ...this.pinnedItemOrder.filter(id => !changedIds.includes(id))];
-      for (const id of changedIds) {
-        this.pinnedItemIds.add(id);
-        this.pinnedItemTimestampMap.set(id, now);
+      const itemsToPin: string[] = [];
+      if (finalized.insertedIds && finalized.insertedIds.length > 0) {
+        itemsToPin.push(...finalized.insertedIds.slice(0, 4));
+      }
+      if (options?.pinUpdatedItems !== false && finalized.updatedIds && finalized.updatedIds.length > 0) {
+        const remainingCap = Math.max(0, 4 - itemsToPin.length);
+        if (remainingCap > 0) {
+          itemsToPin.push(...finalized.updatedIds.slice(0, remainingCap));
+        }
+      }
+      const uniqueToPin = [...new Set(itemsToPin)];
+      if (uniqueToPin.length > 0) {
+        this.pinnedItemOrder = [...uniqueToPin, ...this.pinnedItemOrder.filter(id => !uniqueToPin.includes(id))];
+        for (const id of uniqueToPin) {
+          this.pinnedItemIds.add(id);
+          this.automaticPinnedIds.add(id);
+          this.pinnedItemTimestampMap.set(id, now);
+        }
       }
     }
 
@@ -129,6 +162,18 @@ export class FeedOperationManager {
 
     this.notifyListeners(finalized);
     return finalized;
+  }
+
+  /**
+   * Clears automatic freshness pins without removing intentional user pins.
+   */
+  public clearAutomaticPins(): void {
+    for (const id of this.automaticPinnedIds) {
+      this.pinnedItemIds.delete(id);
+      this.pinnedItemTimestampMap.delete(id);
+    }
+    this.pinnedItemOrder = this.pinnedItemOrder.filter(id => !this.automaticPinnedIds.has(id));
+    this.automaticPinnedIds.clear();
   }
 
   /**

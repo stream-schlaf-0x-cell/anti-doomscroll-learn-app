@@ -9,7 +9,8 @@ import {
   Modal,
   ActivityIndicator,
   Switch,
-  TextInput
+  TextInput,
+  Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, TOPIC_METADATA, ReadingPreferenceDuration } from '../../core/domain/types';
@@ -32,6 +33,7 @@ import {
 } from '../../core/ai/atmenAiClient';
 import { defaultUsageLedger, MONTHLY_BUDGET_CEILING_EUR } from '../../core/enrichment/ledger';
 import { EnrichmentLedgerSummary } from '../../core/enrichment/types';
+import { BackupService } from '../../core/data/backupService';
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -251,6 +253,57 @@ export const SettingsScreen: React.FC = () => {
     if (ok) {
       setCraftNotice('✓ Download gestartet (atem-archiv.md)');
       setTimeout(() => setCraftNotice(null), 3000);
+    }
+  };
+
+  // Backup V2 State & Handlers
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
+  const [isExportingBackup, setIsExportingBackup] = useState<boolean>(false);
+  const [showImportModal, setShowImportModal] = useState<boolean>(false);
+  const [importJsonText, setImportJsonText] = useState<string>('');
+  const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [importStatus, setImportStatus] = useState<{ ok?: boolean; message?: string } | null>(null);
+
+  const handleExportBackupJson = async () => {
+    setIsExportingBackup(true);
+    try {
+      await BackupService.exportBackupJson(true);
+      setBackupNotice('✓ V2-Backup heruntergeladen (atmen-backup-v2-*.json)');
+      setTimeout(() => setBackupNotice(null), 4000);
+    } catch {
+      setBackupNotice('Export fehlgeschlagen.');
+      setTimeout(() => setBackupNotice(null), 3000);
+    } finally {
+      setIsExportingBackup(false);
+    }
+  };
+
+  const handleImportBackupJson = async () => {
+    if (!importJsonText.trim()) {
+      setImportStatus({ ok: false, message: 'Bitte füge den Inhalt deiner Backup-JSON-Datei ein.' });
+      return;
+    }
+    setIsImporting(true);
+    try {
+      const result = await BackupService.importBackupJson(importJsonText.trim());
+      if (result.success) {
+        setImportStatus({
+          ok: true,
+          message: `✓ Backup erfolgreich wiederhergestellt: ${result.restoredSavedCount} Artikel, ${result.restoredNotesCount} Notizen${result.restoredThoughtsCount ? `, ${result.restoredThoughtsCount} Gedanken` : ''}.`
+        });
+        setTimeout(() => {
+          setShowImportModal(false);
+          setImportJsonText('');
+          setImportStatus(null);
+          void refreshLiveFeed();
+        }, 2200);
+      } else {
+        setImportStatus({ ok: false, message: result.error || 'Wiederherstellung fehlgeschlagen.' });
+      }
+    } catch (e: any) {
+      setImportStatus({ ok: false, message: e?.message || 'Ungültiges JSON-Format.' });
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -1073,6 +1126,59 @@ export const SettingsScreen: React.FC = () => {
           </View>
         </View>
 
+        {/* Section: Datensicherung & Portabilität (V2 Backup) */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Datensicherung & Portabilität (V2 Backup)
+          </Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Sichere dein gesamtes lokales Wissen (Profil, Notizen, Lese-Chronik, gespeicherte Artikel, Gedanken, Wissensverbindungen und Regeln) als portable JSON-Datei.
+            API-Schlüssel und Tokens werden aus Datenschutzgründen niemals exportiert.
+          </Text>
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            <View style={{ padding: spacing.md }}>
+              <Text style={{ fontSize: typography.sizes.bodySmall, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 }}>
+                Lokales Wissen portieren oder sichern
+              </Text>
+              <Text style={{ fontSize: typography.sizes.micro, color: colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
+                Vollständig abwärtskompatibles V2-JSON-Format. Funktioniert geräte- und browserübergreifend.
+              </Text>
+
+              {backupNotice && (
+                <View style={{ backgroundColor: colors.accentSubtle, padding: 10, borderRadius: radius.md, marginBottom: 12, flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="checkmark-circle-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
+                  <Text style={{ fontSize: typography.sizes.micro, color: colors.accent, fontWeight: '700' }}>{backupNotice}</Text>
+                </View>
+              )}
+
+              <View style={styles.exportButtonRow}>
+                <TouchableOpacity
+                  onPress={handleExportBackupJson}
+                  disabled={isExportingBackup}
+                  style={[styles.exportActionBtn, { backgroundColor: colors.accent }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="V2 Backup als JSON-Datei herunterladen"
+                >
+                  <Ionicons name="download-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.exportActionBtnText}>
+                    {isExportingBackup ? 'Exportiere…' : 'Backup herunterladen (.json)'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setShowImportModal(true)}
+                  style={[styles.exportActionBtn, { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.borderSubtle }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Backup-JSON wiederherstellen"
+                >
+                  <Ionicons name="cloud-upload-outline" size={16} color={colors.textPrimary} style={{ marginRight: 6 }} />
+                  <Text style={[styles.exportActionBtnText, { color: colors.textPrimary }]}>Backup wiederherstellen</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+
         {/* Section: Verified Quality Sources */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
@@ -1264,6 +1370,130 @@ export const SettingsScreen: React.FC = () => {
                 ) : (
                   <Text style={styles.modalConfirmBtnText}>
                     Unwiderruflich löschen
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal for Backup JSON Import */}
+      <Modal
+        visible={showImportModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => !isImporting && setShowImportModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable
+            accessibilityLabel="Hintergrund schließen"
+            onPress={() => !isImporting && setShowImportModal(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View
+            style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, maxHeight: '80%' }]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.modalHeader}>
+              <View style={[styles.warningIconCircle, { backgroundColor: colors.accentSubtle }]}>
+                <Ionicons name="cloud-upload" size={24} color={colors.accent} />
+              </View>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
+                Backup wiederherstellen
+              </Text>
+            </View>
+
+            <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>
+              Füge hier den Inhalt deiner gesicherten Atmen-Backup-Datei (.json) ein. Daten werden vor dem Überschreiben schema-geprüft:
+            </Text>
+
+            <TextInput
+              style={[
+                styles.keyInput,
+                {
+                  backgroundColor: colors.surfaceSecondary,
+                  borderColor: colors.borderSubtle,
+                  borderWidth: 1,
+                  borderRadius: radius.md,
+                  color: colors.textPrimary,
+                  height: 120,
+                  textAlignVertical: 'top',
+                  fontSize: 12,
+                  fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+                  padding: 8
+                }
+              ]}
+              multiline
+              numberOfLines={6}
+              placeholder='{"version": 2, "profile": { ... }, ...}'
+              placeholderTextColor={colors.textMuted}
+              value={importJsonText}
+              onChangeText={setImportJsonText}
+              editable={!isImporting}
+            />
+
+            {importStatus && (
+              <View
+                style={{
+                  backgroundColor: importStatus.ok ? colors.accentSubtle : 'rgba(239, 68, 68, 0.1)',
+                  borderColor: importStatus.ok ? colors.accent : colors.danger,
+                  borderWidth: 1,
+                  borderRadius: radius.md,
+                  padding: 10,
+                  marginTop: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center'
+                }}
+              >
+                <Ionicons
+                  name={importStatus.ok ? 'checkmark-circle-outline' : 'alert-circle-outline'}
+                  size={16}
+                  color={importStatus.ok ? colors.accent : colors.danger}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  style={{
+                    fontSize: typography.sizes.micro,
+                    color: importStatus.ok ? colors.accent : colors.danger,
+                    fontWeight: '700',
+                    flex: 1
+                  }}
+                >
+                  {importStatus.message}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowImportModal(false);
+                  setImportJsonText('');
+                  setImportStatus(null);
+                }}
+                disabled={isImporting}
+                style={[styles.modalCancelBtn, { backgroundColor: colors.surfaceSecondary }]}
+                accessibilityRole="button"
+                accessibilityLabel="Abbrechen"
+              >
+                <Text style={[styles.modalCancelBtnText, { color: colors.textPrimary }]}>
+                  Abbrechen
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleImportBackupJson}
+                disabled={isImporting || !importJsonText.trim()}
+                style={[styles.modalConfirmBtn, { backgroundColor: colors.accent, opacity: !importJsonText.trim() ? 0.5 : 1 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Wiederherstellen"
+              >
+                {isImporting ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.modalConfirmBtnText}>
+                    Wiederherstellen
                   </Text>
                 )}
               </TouchableOpacity>

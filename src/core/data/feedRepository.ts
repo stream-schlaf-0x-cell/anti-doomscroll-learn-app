@@ -80,7 +80,7 @@ export function enrichSocialFeedItem(rawItem: FeedItem, options?: { lazyCrossRef
   };
 }
 
-export type ContentOperationOptions = Pick<MergeOptions, 'pinInserted' | 'telemetry'>;
+export type ContentOperationOptions = Pick<MergeOptions, 'pinInserted' | 'pinUpdated' | 'telemetry' | 'operationId'>;
 
 export interface IFeedRepository {
   getDailyEdition(profile: UserProfile, interactions?: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
@@ -410,7 +410,9 @@ export class LocalFeedRepository implements IFeedRepository {
     const enrichedCandidates = candidates.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
     const mergeResult = FeedMergeService.merge(this.items, enrichedCandidates, {
       operationType: type,
+      operationId: options?.operationId,
       pinInserted: options?.pinInserted !== false,
+      pinUpdated: options?.pinUpdated === true,
       telemetry: options?.telemetry
     });
 

@@ -550,28 +550,64 @@ export function interleaveForAddictiveLearning(items: ScoredFeedItem[], pinnedId
 
 export type FeedSortMode = 'hot' | 'new' | 'top' | 'gems';
 
-/** The final presentation boundary: pin order wins over every score and diversity rule. */
+/** The final presentation boundary: pin order wins over every score and diversity rule unless ignorePins is true. */
 export function sortFeedForDisplay(
   items: ScoredFeedItem[],
   mode: FeedSortMode,
-  options: { pinnedIds?: readonly string[]; interleave?: boolean } = {}
+  options: { pinnedIds?: readonly string[]; interleave?: boolean; ignorePins?: boolean } = {}
 ): ScoredFeedItem[] {
   const unique = new Map(items.map(item => [item.id, item]));
-  const pinned = (options.pinnedIds ?? []).flatMap(id => {
+  const pinned = (options.ignorePins ? [] : (options.pinnedIds ?? [])).flatMap(id => {
     const item = unique.get(id);
     if (!item) return [];
     unique.delete(id);
     return [item];
   });
   const remaining = [...unique.values()];
-  const isGem = (item: ScoredFeedItem) => ['art_showcase', 'youtube_gem', 'book_masterpiece', 'meme', 'opportunity_radar'].includes(item.format);
+  const isGem = (item: ScoredFeedItem) =>
+    Boolean(item.isEvergreenGem) ||
+    ['art_showcase', 'youtube_gem', 'book_masterpiece', 'meme', 'opportunity_radar', 'long_invitation', 'surprising_connection'].includes(item.format) ||
+    ['museum_collection', 'encyclopedia', 'peer_reviewed'].includes(item.sourceTrustLevel || '');
+
   const sorted = mode === 'hot' && options.interleave
     ? rankBloomScrollFeed(remaining)
     : remaining.sort((a, b) => {
-      if (mode === 'new') return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
-      if (mode === 'top') return ((b.externalCommunityScore?.points ?? 0) + b.score * 100) - ((a.externalCommunityScore?.points ?? 0) + a.score * 100);
-      if (mode === 'gems' && isGem(a) !== isGem(b)) return isGem(a) ? -1 : 1;
-      return b.score - a.score;
+      if (mode === 'new') {
+        const timeA = new Date(a.publishedAt).getTime();
+        const timeB = new Date(b.publishedAt).getTime();
+        const validA = !isNaN(timeA) && timeA > 0;
+        const validB = !isNaN(timeB) && timeB > 0;
+        if (validA && validB && timeB !== timeA) return timeB - timeA;
+        if (validA && !validB) return -1;
+        if (!validA && validB) return 1;
+        return b.id.localeCompare(a.id);
+      }
+      if (mode === 'top') {
+        const pointsA = a.externalCommunityScore?.points ?? 0;
+        const pointsB = b.externalCommunityScore?.points ?? 0;
+        const qualityA = (a.curationScore ?? 7) * 10 +
+          (pointsA > 0 ? Math.min(50, Math.log10(pointsA + 1) * 20) : 0) +
+          (a.evidenceTier === 'permitted_full_text' ? 10 : 0);
+        const qualityB = (b.curationScore ?? 7) * 10 +
+          (pointsB > 0 ? Math.min(50, Math.log10(pointsB + 1) * 20) : 0) +
+          (b.evidenceTier === 'permitted_full_text' ? 10 : 0);
+        if (qualityB !== qualityA) return qualityB - qualityA;
+        const timeA = new Date(a.publishedAt).getTime() || 0;
+        const timeB = new Date(b.publishedAt).getTime() || 0;
+        if (timeB !== timeA) return timeB - timeA;
+        return b.id.localeCompare(a.id);
+      }
+      if (mode === 'gems') {
+        const gemA = isGem(a);
+        const gemB = isGem(b);
+        if (gemA !== gemB) return gemA ? -1 : 1;
+        const scoreA = (a.curationScore ?? 7) * 10 + (a.wordCount >= 200 ? 10 : 0);
+        const scoreB = (b.curationScore ?? 7) * 10 + (b.wordCount >= 200 ? 10 : 0);
+        if (scoreB !== scoreA) return scoreB - scoreA;
+        return b.id.localeCompare(a.id);
+      }
+      if (b.score !== a.score) return b.score - a.score;
+      return b.id.localeCompare(a.id);
     });
   return [...pinned, ...sorted];
 }

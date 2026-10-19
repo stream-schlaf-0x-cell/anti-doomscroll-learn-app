@@ -40,11 +40,20 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
   // Handle toast appearance on new completed result
   useEffect(() => {
     if (!lastResult) return;
-    if (lastResult.status === 'completed' || lastResult.status === 'partial' || lastResult.status === 'failed') {
+    if (lastResult.status === 'completed' || lastResult.status === 'partial' || lastResult.status === 'failed' || lastResult.status === 'fallback') {
       const count = lastResult.insertedCount;
 
       if (lastResult.status === 'failed') {
         setToastMessage('Aktualisierung fehlgeschlagen. Details im Bericht.');
+      } else if (lastResult.status === 'fallback') {
+        const errHint = lastResult.errorMessage ? ` (${lastResult.errorMessage})` : '';
+        if (count > 0) {
+          setToastMessage(`Ersatzverfahren: ${count} neue Artikel lokal ausgewählt${errHint}`);
+        } else if (lastResult.updatedCount > 0) {
+          setToastMessage(`Ersatzverfahren: ${lastResult.updatedCount} lokal aktualisiert${errHint}`);
+        } else {
+          setToastMessage(`Ersatzverfahren verwendet${errHint}: Keine neuen Beiträge.`);
+        }
       } else if (count > 0) {
         setToastMessage(`${count} neue Artikel hinzugefügt${lastResult.updatedCount ? ` · ${lastResult.updatedCount} aktualisiert` : ''}`);
       } else if (lastResult.updatedCount > 0) {

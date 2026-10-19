@@ -9,6 +9,7 @@ import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPi
 import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
 import { parseSnapshotPayload } from '../feed/snapshotPayload';
 import { getSourceKind } from '../ingestion/sourceHealth';
+import { classifyTopicDeterministically } from '../enrichment/batchEnricher';
 
 let staticPipelineItems: FeedItem[] = [];
 if (typeof process !== 'undefined' && process.versions?.node) {
@@ -59,6 +60,26 @@ export interface LiveNewsUpdateEvent {
 
 export type LiveNewsSubscriber = (event: LiveNewsUpdateEvent) => void;
 
+export function mapTagesschauRessortToTopic(ressort: string, title = '', content = ''): TopicTag {
+  const r = (ressort || '').toLowerCase();
+  if (r.includes('wirtschaft') || r.includes('finanzen') || r.includes('unternehmen') || r.includes('boerse')) {
+    return 'opportunities_growth';
+  }
+  if (r.includes('wissen') || r.includes('forschung') || r.includes('technologie') || r.includes('digital')) {
+    return 'science_society';
+  }
+  if (r.includes('kultur') || r.includes('kunst') || r.includes('literatur') || r.includes('film')) {
+    return 'art_aesthetics';
+  }
+  if (r.includes('sport') || r.includes('gesundheit') || r.includes('medizin')) {
+    return 'health_biohacking';
+  }
+  if (r.includes('inland') || r.includes('politik') || r.includes('ausland') || r.includes('investigativ')) {
+    return 'philosophy_ethics';
+  }
+  return classifyTopicDeterministically(title, content, 'science_society');
+}
+
 /**
  * ContinuousLiveNewsService
  *
@@ -75,12 +96,17 @@ export class ContinuousLiveNewsService {
   private static lastFetchTimestamp: number = 0;
   private static lastDirectFetchTimestamp: number = 0;
   private static lastCheckAttemptTimestamp: number = 0;
+  private static lastRefreshNewCount: number = 0;
   private static reachableLiveSources: Set<NewsProviderId> = new Set();
   private static activeRefreshPromise: Promise<FeedItem[]> | null = null;
   private static listeners = new Set<LiveNewsSubscriber>();
   private static lastFormattedUpdate: string = 'Offline · gespeicherte Inhalte';
   private static snapshotStatus: 'live_snapshot' | 'stale_snapshot' | 'cached_snapshot' | 'offline_fallback' = 'offline_fallback';
   private static readonly CACHE_TTL_MS = 1000 * 60 * 5; // 5 minutes
+
+  public static getLastRefreshNewCount(): number {
+    return this.lastRefreshNewCount;
+  }
 
   public static subscribe(listener: LiveNewsSubscriber): () => void {
     this.listeners.add(listener);
@@ -230,7 +256,7 @@ export class ContinuousLiveNewsService {
   /**
    * 1. Native CORS-Open Connector: Tagesschau API v2 (`https://www.tagesschau.de/api2u/news/`)
    */
-  public static async fetchTagesschauLiveJson(limit = 10): Promise<FeedItem[]> {
+  public static async fetchTagesschauLiveJson(limit = 40): Promise<FeedItem[]> {
     try {
       const response = await this.fetchWithTimeout('https://www.tagesschau.de/api2u/news/', 3500);
       if (!response.ok) return [];
@@ -272,7 +298,8 @@ export class ContinuousLiveNewsService {
           undefined;
 
         const ressort = (entry.ressort || '').toLowerCase();
-        const primaryTopic: TopicTag = ressort === 'wissen' ? 'science_society' : 'science_society';
+        const primaryTopic: TopicTag = mapTagesschauRessortToTopic(ressort, entry.title, effectiveBody);
+        const secondaryTopic: TopicTag = primaryTopic === 'philosophy_ethics' ? 'science_society' : 'philosophy_ethics';
         const publishedAt = entry.date || nowIso;
         const originalUrl = entry.detailsweb || entry.shareURL || 'https://www.tagesschau.de';
 
@@ -285,7 +312,7 @@ export class ContinuousLiveNewsService {
           feedText: feedText.slice(0, 480),
           articleBody: effectiveBody,
           body: feedText.slice(0, 480),
-          topics: [primaryTopic, 'philosophy_ethics'],
+          topics: [primaryTopic, secondaryTopic],
           primaryTopic,
           sourceReferences: [
             {
@@ -339,7 +366,7 @@ export class ContinuousLiveNewsService {
   /**
    * 2. Native CORS-Open Connector: Hacker News Algolia Live Stream
    */
-  public static async fetchHackerNewsLiveJson(limit = 8): Promise<FeedItem[]> {
+  public static async fetchHackerNewsLiveJson(limit = 25): Promise<FeedItem[]> {
     try {
       const response = await this.fetchWithTimeout(
         `https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=${limit}`,
@@ -590,20 +617,37 @@ export class ContinuousLiveNewsService {
 
     this.activeRefreshPromise = (async () => {
       this.lastCheckAttemptTimestamp = Date.now();
+      this.lastRefreshNewCount = 0;
       this.reachableLiveSources.clear();
 
       const tasks: Promise<any>[] = [
-        this.fetchTagesschauLiveJson(15)
-          .then(items => this.integrateProviderItems(items, 'tagesschau'))
+        this.fetchTagesschauLiveJson(40)
+          .then(items => {
+            const count = this.integrateProviderItems(items, 'tagesschau');
+            this.lastRefreshNewCount += count;
+            return count;
+          })
           .catch(() => 0),
-        this.fetchHackerNewsLiveJson(12)
-          .then(items => this.integrateProviderItems(items, 'hackernews'))
+        this.fetchHackerNewsLiveJson(25)
+          .then(items => {
+            const count = this.integrateProviderItems(items, 'hackernews');
+            this.lastRefreshNewCount += count;
+            return count;
+          })
           .catch(() => 0),
         this.fetchWikipediaCurrentNewsJson()
-          .then(items => this.integrateProviderItems(items, 'wikinews'))
+          .then(items => {
+            const count = this.integrateProviderItems(items, 'wikinews');
+            this.lastRefreshNewCount += count;
+            return count;
+          })
           .catch(() => 0),
         this.loadPublicFeedSnapshot()
-          .then(items => this.integrateProviderItems(items, 'snapshot'))
+          .then(items => {
+            const count = this.integrateProviderItems(items, 'snapshot');
+            this.lastRefreshNewCount += count;
+            return count;
+          })
           .catch(() => 0)
       ];
 
@@ -626,7 +670,9 @@ export class ContinuousLiveNewsService {
                   }
                 }
               }
-              return this.integrateProviderItems(rssItems, 'rss');
+              const count = this.integrateProviderItems(rssItems, 'rss');
+              this.lastRefreshNewCount += count;
+              return count;
             } catch {
               return 0;
             }
@@ -826,15 +872,25 @@ export class ContinuousLiveNewsService {
     if (windowMode === 'chronological' || windowMode === '48h_fresh') {
       // STRICT CHRONOLOGICAL: No domain-interleaving; newest publication time stays #1!
       const maxAgeHours = windowMode === '48h_fresh' ? 48 : 24;
-      const recent = unique.filter(item => {
+      let recent = unique.filter(item => {
         const pubMs = new Date(item.publishedAt).getTime();
         if (!pubMs || isNaN(pubMs)) return false;
         const ageHours = (nowMs - pubMs) / (1000 * 60 * 60);
         return ageHours >= -0.5 && ageHours <= maxAgeHours;
       });
 
-      // Strict adherence to time window: no secret expansion to all items if < 5!
-      unique = recent;
+      // When the 24h window has 0 items (e.g. public snapshot is 27h+ old), gracefully expand to 48h
+      if (recent.length === 0 && maxAgeHours < 48) {
+        recent = unique.filter(item => {
+          const pubMs = new Date(item.publishedAt).getTime();
+          if (!pubMs || isNaN(pubMs)) return false;
+          const ageHours = (nowMs - pubMs) / (1000 * 60 * 60);
+          return ageHours >= -0.5 && ageHours <= 48;
+        });
+      }
+
+      // If still empty, fall back to recent valid items so the ticker never shows an empty void
+      unique = recent.length > 0 ? recent : unique.slice(0, 30);
 
       unique.sort((a, b) => {
         const timeA = new Date(a.publishedAt).getTime() || 0;

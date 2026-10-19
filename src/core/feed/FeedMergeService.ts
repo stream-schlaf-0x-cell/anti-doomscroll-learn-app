@@ -3,7 +3,9 @@ import { FeedOperationResult, defaultFeedOperationManager, FeedOperationType, Fe
 
 export interface MergeOptions {
   operationType?: FeedOperationType;
+  operationId?: string;
   pinInserted?: boolean;
+  pinUpdated?: boolean;
   telemetry?: FeedOperationTelemetry;
   onProgress?: (stage: string, progressFraction: number) => void;
 }
@@ -34,7 +36,7 @@ export class FeedMergeService {
   ): MergeExecutionResult {
     const opType = options.operationType || 'manual_refresh';
     const opManager = defaultFeedOperationManager;
-    opManager.startOperation(opType);
+    opManager.startOperation(opType, options.operationId);
 
     options.onProgress?.('1/3: Artikelkandidaten prüfen …', 0.33);
 
@@ -155,9 +157,15 @@ export class FeedMergeService {
         usedAI: options.telemetry?.usedAI ?? false,
         usedFallback: options.telemetry?.usedFallback ?? false,
         cacheHits: options.telemetry?.cacheHits ?? 0,
-        errors: []
+        errorClass: options.telemetry?.errorClass,
+        errorMessage: options.telemetry?.errorMessage,
+        modelUsed: options.telemetry?.modelUsed,
+        errors: options.telemetry?.errorMessage ? [options.telemetry.errorMessage] : []
       },
-      { pinNewItems: options.pinInserted !== false }
+      {
+        pinNewItems: options.pinInserted !== false,
+        pinUpdatedItems: options.pinUpdated === true
+      }
     );
 
     return {
