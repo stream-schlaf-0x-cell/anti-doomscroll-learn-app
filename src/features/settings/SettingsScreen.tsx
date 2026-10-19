@@ -40,6 +40,11 @@ export const SettingsScreen: React.FC = () => {
     profile,
     interactions,
     savedArticles,
+    spaces,
+    removeFeedbackBoost,
+    removeFeedbackPenalty,
+    updateFeedMixRatio,
+    clearFeedbackMemory,
     updateTopicWeight,
     updateDurationPreference,
     setFontSize,
@@ -55,6 +60,56 @@ export const SettingsScreen: React.FC = () => {
     refreshLiveFeed,
     snapshotSyncInfo
   } = useApp();
+
+  const [resetMemoryNotice, setResetMemoryNotice] = useState<string | null>(null);
+
+  const interactionList = Object.values(interactions || {});
+  const upvoteCount = interactionList.filter(i => (i.voteScore || 0) > 0).length;
+  const downvoteCount = interactionList.filter(i => (i.voteScore || 0) < 0).length;
+  const readCount = interactionList.filter(i => (i.progressPercent && i.progressPercent >= 20) || (i.furthestPositionPercent && i.furthestPositionPercent >= 20)).length;
+  const notesCount = interactionList.reduce((acc, i) => acc + (i.userNotes?.length || 0), 0);
+  const savedCount = (savedArticles || []).length;
+  const customChannelsCount = (spaces || []).filter(s => s.isCustom).length;
+
+  const currentMix = profile?.feedMixRatio || { focusRatio: 0.60, socraticRatio: 0.20, serendipityRatio: 0.20 };
+  const focusPct = Math.round(currentMix.focusRatio * 100);
+  const socraticPct = Math.round(currentMix.socraticRatio * 100);
+  const serendipityPct = Math.round(currentMix.serendipityRatio * 100);
+
+  const feedbackMem = profile?.feedbackMemory || {};
+  const boostedItems: Array<{ category: 'topic' | 'author' | 'keyword' | 'domain' | 'space'; key: string; label: string; count: number }> = [];
+  Object.entries(feedbackMem.boostedTopics || {}).forEach(([k, v]) => {
+    boostedItems.push({ category: 'topic', key: k, label: `Thema: ${TOPIC_METADATA[k as TopicTag]?.label || k}`, count: v });
+  });
+  Object.entries(feedbackMem.boostedAuthors || {}).forEach(([k, v]) => {
+    boostedItems.push({ category: 'author', key: k, label: `Autor: ${k}`, count: v });
+  });
+  Object.entries(feedbackMem.boostedDomains || {}).forEach(([k, v]) => {
+    boostedItems.push({ category: 'domain', key: k, label: `Quelle: ${k}`, count: v });
+  });
+  Object.entries(feedbackMem.boostedSpaces || {}).forEach(([k, v]) => {
+    boostedItems.push({ category: 'space', key: k, label: `Kanal: ${k}`, count: v });
+  });
+  Object.entries(feedbackMem.boostedKeywords || {}).forEach(([k, v]) => {
+    boostedItems.push({ category: 'keyword', key: k, label: `#${k}`, count: v });
+  });
+
+  const penalizedItems: Array<{ category: 'topic' | 'author' | 'keyword' | 'domain' | 'space'; key: string; label: string; count: number }> = [];
+  Object.entries(feedbackMem.penalizedTopics || {}).forEach(([k, v]) => {
+    penalizedItems.push({ category: 'topic', key: k, label: `Thema: ${TOPIC_METADATA[k as TopicTag]?.label || k}`, count: v });
+  });
+  Object.entries(feedbackMem.penalizedAuthors || {}).forEach(([k, v]) => {
+    penalizedItems.push({ category: 'author', key: k, label: `Autor: ${k}`, count: v });
+  });
+  Object.entries(feedbackMem.penalizedDomains || {}).forEach(([k, v]) => {
+    penalizedItems.push({ category: 'domain', key: k, label: `Quelle: ${k}`, count: v });
+  });
+  Object.entries(feedbackMem.penalizedSpaces || {}).forEach(([k, v]) => {
+    penalizedItems.push({ category: 'space', key: k, label: `Kanal: ${k}`, count: v });
+  });
+  Object.entries(feedbackMem.penalizedKeywords || {}).forEach(([k, v]) => {
+    penalizedItems.push({ category: 'keyword', key: k, label: `#${k}`, count: v });
+  });
 
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
   const [showNewsHub, setShowNewsHub] = useState<boolean>(false);
@@ -343,6 +398,217 @@ export const SettingsScreen: React.FC = () => {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Section: Algorithmus-Spiegel (Live-Profil) */}
+        <View style={styles.section}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="sparkles" size={18} color={colors.accent} />
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                Dein Algorithmus-Spiegel (Live-Profil)
+              </Text>
+            </View>
+          </View>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Transparente Einsicht in alle gelernten Signale deiner Interaktionen. 100% lokal, ohne geheime Tracker.
+          </Text>
+
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
+            {/* Live Interaction Counters */}
+            <View style={styles.mirrorStatsGrid}>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: colors.accent }]}>{readCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>📖 Gelesen</Text>
+              </View>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: '#10B981' }]}>{upvoteCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>▲ Upvotes</Text>
+              </View>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: '#EF4444' }]}>{downvoteCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>▼ Downvotes</Text>
+              </View>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: '#38BDF8' }]}>{savedCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>★ Gespeichert</Text>
+              </View>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: '#F59E0B' }]}>{notesCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>✍️ Notizen</Text>
+              </View>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: '#8B5CF6' }]}>{customChannelsCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>🪐 Spaces</Text>
+              </View>
+            </View>
+
+            {/* Feed-Mischverhältnis Bar & Presets */}
+            <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>
+                  Feed-Mischverhältnis (Fokus / Reibung / Entdeckung)
+                </Text>
+                <Text style={{ fontSize: 11, fontWeight: '600', color: colors.textMuted }}>
+                  {focusPct}% / {socraticPct}% / {serendipityPct}%
+                </Text>
+              </View>
+
+              {/* Multi-color ratio bar */}
+              <View style={styles.ratioBarTrack}>
+                <View style={[styles.ratioBarSegment, { width: `${focusPct}%`, backgroundColor: '#10B981' }]} />
+                <View style={[styles.ratioBarSegment, { width: `${socraticPct}%`, backgroundColor: '#F59E0B' }]} />
+                <View style={[styles.ratioBarSegment, { width: `${serendipityPct}%`, backgroundColor: '#8B5CF6' }]} />
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, marginBottom: 10 }}>
+                <Text style={{ fontSize: 10, color: '#10B981', fontWeight: '600' }}>● Fokus ({focusPct}%)</Text>
+                <Text style={{ fontSize: 10, color: '#F59E0B', fontWeight: '600' }}>● Sokratisch ({socraticPct}%)</Text>
+                <Text style={{ fontSize: 10, color: '#8B5CF6', fontWeight: '600' }}>● Entdecker ({serendipityPct}%)</Text>
+              </View>
+
+              {/* Preset buttons */}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                <TouchableOpacity
+                  onPress={() => updateFeedMixRatio(0.60, 0.20, 0.20)}
+                  style={[
+                    styles.presetPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    focusPct === 60 && socraticPct === 20 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
+                  ]}
+                >
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>⚖️ Ausgewogen (60/20/20)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => updateFeedMixRatio(0.80, 0.10, 0.10)}
+                  style={[
+                    styles.presetPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    focusPct === 80 && socraticPct === 10 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
+                  ]}
+                >
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>🎯 Tiefer Fokus (80/10/10)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => updateFeedMixRatio(0.40, 0.40, 0.20)}
+                  style={[
+                    styles.presetPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    focusPct === 40 && socraticPct === 40 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
+                  ]}
+                >
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>⚡ Sokratische Reibung (40/40/20)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => updateFeedMixRatio(0.40, 0.20, 0.40)}
+                  style={[
+                    styles.presetPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    focusPct === 40 && socraticPct === 20 && serendipityPct === 40 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
+                  ]}
+                >
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>🧭 Entdecker (40/20/40)</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* ▲ Boosted Signals Section */}
+            <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <Ionicons name="arrow-up-circle" size={16} color="#10B981" />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>
+                  ▲ Verstärkte Signale ({boostedItems.length})
+                </Text>
+              </View>
+              {boostedItems.length === 0 ? (
+                <Text style={{ fontSize: 11, color: colors.textMuted, fontStyle: 'italic', marginVertical: 4 }}>
+                  Noch keine aktiven Verstärkungen. Mit ▲ aufgewertete Beiträge verankern Themen, Autoren & Quellen hier.
+                </Text>
+              ) : (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                  {boostedItems.map((item, idx) => (
+                    <View
+                      key={`${item.category}-${item.key}-${idx}`}
+                      style={[styles.signalPill, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.3)' }]}
+                    >
+                      <Text style={[styles.signalPillText, { color: '#059669' }]}>
+                        ▲ {item.label} (+{item.count})
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => removeFeedbackBoost(item.category, item.key)}
+                        style={styles.signalRemoveBtn}
+                        accessibilityLabel={`${item.label} Verstärkung aufheben`}
+                      >
+                        <Ionicons name="close" size={12} color="#059669" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* ▼ Penalized Signals Section */}
+            <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <Ionicons name="arrow-down-circle" size={16} color="#EF4444" />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>
+                  ▼ Gedämpfte Signale ({penalizedItems.length})
+                </Text>
+              </View>
+              {penalizedItems.length === 0 ? (
+                <Text style={{ fontSize: 11, color: colors.textMuted, fontStyle: 'italic', marginVertical: 4 }}>
+                  Keine Dämpfungen aktiv. Mit ▼ abgewertete Beiträge dämpfen Relevanz deterministisch.
+                </Text>
+              ) : (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                  {penalizedItems.map((item, idx) => (
+                    <View
+                      key={`${item.category}-${item.key}-${idx}`}
+                      style={[styles.signalPill, { backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)' }]}
+                    >
+                      <Text style={[styles.signalPillText, { color: '#DC2626' }]}>
+                        ▼ {item.label} (-{item.count})
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => removeFeedbackPenalty(item.category, item.key)}
+                        style={styles.signalRemoveBtn}
+                        accessibilityLabel={`${item.label} Dämpfung aufheben`}
+                      >
+                        <Ionicons name="close" size={12} color="#DC2626" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* Reset feedback memory button */}
+            {(boostedItems.length > 0 || penalizedItems.length > 0) && (
+              <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
+                <TouchableOpacity
+                  onPress={async () => {
+                    await clearFeedbackMemory();
+                    setResetMemoryNotice('✓ Lern-Historie & Signale zurückgesetzt');
+                    setTimeout(() => setResetMemoryNotice(null), 3000);
+                  }}
+                  style={[styles.resetMemoryBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                >
+                  <Ionicons name="refresh-outline" size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary }}>
+                    Lern-Historie & Signale zurücksetzen
+                  </Text>
+                </TouchableOpacity>
+                {resetMemoryNotice && (
+                  <Text style={{ fontSize: 11, color: colors.accent, marginTop: 4, fontWeight: '600' }}>
+                    {resetMemoryNotice}
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        </View>
+
         {/* Section: News-Hub & Quellen-Zentrale */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
@@ -1914,6 +2180,78 @@ const styles = StyleSheet.create({
   },
   ledgerBox: {
     padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  mirrorStatsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 6
+  },
+  mirrorStatCard: {
+    flex: 1,
+    minWidth: '28%',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  mirrorStatNumber: {
+    fontSize: 18,
+    fontWeight: '800'
+  },
+  mirrorStatLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2
+  },
+  ratioBarTrack: {
+    height: 10,
+    borderRadius: 5,
+    overflow: 'hidden',
+    flexDirection: 'row',
+    width: '100%',
+    backgroundColor: '#E5E7EB'
+  },
+  ratioBarSegment: {
+    height: '100%'
+  },
+  presetPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  presetPillText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  signalPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 10,
+    paddingRight: 6,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  signalPillText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  signalRemoveBtn: {
+    padding: 3,
+    marginLeft: 4,
+    borderRadius: 8
+  },
+  resetMemoryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: radius.md,
     borderWidth: 1
   }

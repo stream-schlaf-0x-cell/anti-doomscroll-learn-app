@@ -14,13 +14,26 @@ import { defaultGraphRepository } from '../../core/graph/graphRepository';
 import { defaultAutomationEngine } from '../../core/automation/automationEngine';
 import { UserThoughtNode, KnowledgeConnection, ThoughtNodeType, ConnectionRelation } from '../../core/graph/types';
 import { AutomationRule } from '../../core/automation/types';
-import { HyperspaceCanvas, HyperspaceNode, HyperspaceEdge } from './HyperspaceCanvas';
+import { HyperspaceCanvas, HyperspaceNode, HyperspaceEdge, GalaxyMode } from './HyperspaceCanvas';
 import { copyToClipboard } from '../../core/export/craftExport';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
-import { TOPIC_SPACE_MAP, TopicTag } from '../../core/domain/types';
+import { TOPIC_SPACE_MAP, TopicTag, UserNote } from '../../core/domain/types';
+import { conductEditorialResearchTeamInquiry } from '../../core/ingestion/autonomousResearcherService';
+import { AtmenBreathingPortal } from '../breathing/AtmenBreathingPortal';
 
 export const NetworkScreen: React.FC = () => {
-  const { colors, isDark, profile, savedArticles, openArticle, openInvestigation } = useApp();
+  const {
+    colors,
+    isDark,
+    profile,
+    savedArticles,
+    interactions,
+    spaces,
+    dailyEdition,
+    discoveryItems,
+    openArticle,
+    openInvestigation
+  } = useApp();
 
   const [thoughts, setThoughts] = useState<UserThoughtNode[]>([]);
   const [connections, setConnections] = useState<KnowledgeConnection[]>([]);
@@ -43,6 +56,12 @@ export const NetworkScreen: React.FC = () => {
   const [selectedNode, setSelectedNode] = useState<UserThoughtNode | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [automationResult, setAutomationResult] = useState<string | null>(null);
+
+  const [galaxyMode, setGalaxyMode] = useState<GalaxyMode>('orbital');
+  const [galaxyFilter, setGalaxyFilter] = useState<'all' | 'channels' | 'favorites' | 'notes' | 'anchor'>('all');
+  const [selectedGalaxyNode, setSelectedGalaxyNode] = useState<HyperspaceNode | null>(null);
+  const [showBreathingPortal, setShowBreathingPortal] = useState<boolean>(false);
+  const [isResearchingEditorial, setIsResearchingEditorial] = useState<boolean>(false);
 
   const isHyperspaceEnabled = isFeatureEnabled(profile, 'hyperspace_3d');
 
@@ -151,23 +170,112 @@ export const NetworkScreen: React.FC = () => {
     }
   };
 
-  // Convert thoughts and saved articles into HyperspaceNodes
-  const hyperspaceNodes: HyperspaceNode[] = [
-    ...thoughts.map(t => ({
-      id: t.id,
-      title: t.title,
-      type: t.type,
-      color: t.type === 'question' ? '#F59E0B' : t.type === 'thesis' ? '#EF4444' : '#8B5CF6',
-      space: t.space
-    })),
-    ...savedArticles.map(a => ({
-      id: a.id,
-      title: a.title,
-      type: 'article' as const,
-      color: TOPIC_SPACE_MAP[a.primaryTopic as TopicTag]?.color || '#3B82F6',
-      space: a.space
-    }))
+  // Map every particle 1:1 to real user interactions/channels
+  const channelNodes: HyperspaceNode[] = (spaces || []).map(sp => ({
+    id: `channel-${sp.handle}`,
+    title: sp.title || sp.handle,
+    subtitle: sp.handle,
+    type: 'channel_core',
+    color: sp.accentColor || '#38BDF8',
+    space: sp.handle,
+    reasonText: sp.isCustom ? 'Eigener Wissensraum (Gravitationszentrum)' : 'Standard-Themenraum',
+    interactionDepth: 5
+  }));
+
+  const savedNodes: HyperspaceNode[] = (savedArticles || []).map(a => ({
+    id: `saved-${a.id}`,
+    articleId: a.id,
+    title: a.title,
+    subtitle: a.sourceDomain || a.primaryTopic,
+    type: 'upvoted_saved',
+    color: '#38BDF8',
+    space: a.space,
+    reasonText: '★ Gespeicherter Primärtext in deiner Bibliothek',
+    interactionDepth: 4
+  }));
+
+  const interactionList = Object.values(interactions || {});
+  const upvotedNodes: HyperspaceNode[] = interactionList
+    .filter(i => (i.voteScore || 0) > 0 && !(savedArticles || []).some(s => s.id === i.itemId))
+    .map(i => {
+      const matched = (dailyEdition || []).find(d => d.id === i.itemId) || (discoveryItems || []).find(d => d.id === i.itemId);
+      return {
+        id: `upvote-${i.itemId}`,
+        articleId: i.itemId,
+        title: matched?.title || `Upvote: ${i.itemId.slice(0, 24)}`,
+        subtitle: matched?.sourceDomain || 'Upvote',
+        type: 'upvoted_saved' as const,
+        color: '#10B981',
+        space: matched?.space,
+        reasonText: '▲ Durch Upvote im Orbit verankert',
+        interactionDepth: 3
+      };
+    });
+
+  const noteNodes: HyperspaceNode[] = [];
+  interactionList.forEach(i => {
+    if (i.userNotes && i.userNotes.length > 0) {
+      const matched = (savedArticles || []).find(s => s.id === i.itemId) || (dailyEdition || []).find(d => d.id === i.itemId);
+      i.userNotes.forEach((n: UserNote, idx: number) => {
+        noteNodes.push({
+          id: `note-${i.itemId}-${idx}`,
+          articleId: i.itemId,
+          title: `Notiz: ${n.text.slice(0, 32)}…`,
+          subtitle: matched?.title || 'Randnotiz',
+          type: 'user_note',
+          color: '#F59E0B',
+          space: matched?.space,
+          reasonText: `✍️ Randnotiz (${n.tag || 'Notiz'})`,
+          noteText: n.text,
+          interactionDepth: 4
+        });
+      });
+    }
+  });
+
+  const thoughtNodes: HyperspaceNode[] = thoughts.map(t => ({
+    id: t.id,
+    title: t.title,
+    subtitle: t.type.toUpperCase(),
+    type: t.type,
+    color: t.type === 'question' ? '#F59E0B' : t.type === 'thesis' ? '#EF4444' : '#8B5CF6',
+    space: t.space,
+    noteText: t.body,
+    reasonText: `Eigener Eintrag: ${t.type.toUpperCase()}`,
+    interactionDepth: 4
+  }));
+
+  const breathingAnchorNode: HyperspaceNode = {
+    id: 'atmen-breathing-core',
+    title: 'Atmen Kern-Anker (0.1 Hz)',
+    subtitle: '6 Atemzüge / Minute',
+    type: 'reading_anchor',
+    color: '#10B981',
+    reasonText: 'Kohärente Atemfrequenz (0.1 Hz / 6 Atemzüge pro Minute)',
+    interactionDepth: 5
+  };
+
+  const allInteractionNodes: HyperspaceNode[] = [
+    breathingAnchorNode,
+    ...channelNodes,
+    ...savedNodes,
+    ...upvotedNodes,
+    ...noteNodes,
+    ...thoughtNodes
   ];
+
+  const filteredGalaxyNodes = allInteractionNodes.filter(n => {
+    if (galaxyFilter === 'channels') return n.type === 'channel_core';
+    if (galaxyFilter === 'favorites') return n.type === 'upvoted_saved';
+    if (galaxyFilter === 'notes') return n.type === 'user_note' || n.type === 'thought' || n.type === 'thesis' || n.type === 'question';
+    if (galaxyFilter === 'anchor') return n.id === 'atmen-breathing-core';
+    return true;
+  });
+
+  const totalCount = allInteractionNodes.length;
+  const channelCount = channelNodes.length;
+  const favCount = savedNodes.length + upvotedNodes.length;
+  const noteCount = noteNodes.length + thoughtNodes.length;
 
   const hyperspaceEdges: HyperspaceEdge[] = connections.map(c => ({
     id: c.id,
@@ -178,13 +286,44 @@ export const NetworkScreen: React.FC = () => {
   }));
 
   const handleNodeClick = (node: HyperspaceNode) => {
-    if (node.type === 'article') {
-      openArticle(node.id);
-      return;
+    setSelectedGalaxyNode(node);
+    if (node.type === 'thought' || node.type === 'question' || node.type === 'thesis') {
+      const foundThought = thoughts.find(t => t.id === node.id);
+      if (foundThought) {
+        setSelectedNode(foundThought);
+      }
     }
-    const foundThought = thoughts.find(t => t.id === node.id);
-    if (foundThought) {
-      setSelectedNode(foundThought);
+  };
+
+  const handleOpenInReader = (node: HyperspaceNode) => {
+    if (node.articleId) {
+      openArticle(node.articleId);
+    } else if (node.id === 'atmen-breathing-core') {
+      setShowBreathingPortal(true);
+    } else if (node.type === 'article') {
+      openArticle(node.id);
+    } else if (node.type === 'thought' || node.type === 'question' || node.type === 'thesis') {
+      const foundThought = thoughts.find(t => t.id === node.id);
+      if (foundThought) {
+        setSelectedNode(foundThought);
+      }
+    } else {
+      showToast('Dieser Knoten ist kein verknüpfter Artikel.');
+    }
+  };
+
+  const handleEditorialResearch = async (node: HyperspaceNode) => {
+    setIsResearchingEditorial(true);
+    try {
+      const query = node.subtitle && node.subtitle.length > 3 && !node.subtitle.startsWith('c/')
+        ? node.subtitle
+        : node.title.replace(/^Notiz:\s*/, '');
+      const results = await conductEditorialResearchTeamInquiry(query, { space: node.space || 'c/recherche' });
+      showToast(`✓ ${results.length} Primärquellen aus OpenAlex, Wikipedia & RSS recherchiert!`);
+    } catch {
+      showToast('Recherche-Anfrage konnte nicht abgeschlossen werden.');
+    } finally {
+      setIsResearchingEditorial(false);
     }
   };
 
@@ -252,13 +391,208 @@ export const NetworkScreen: React.FC = () => {
         {/* Main View: 3D or 2D */}
         {viewMode === '3d' && isHyperspaceEnabled ? (
           <View style={styles.canvasWrapper}>
+            {/* 3D Geometry Preset Switcher Bar */}
+            <View style={[styles.galaxyControlsBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+              <View style={styles.presetSelectorGroup}>
+                <TouchableOpacity
+                  onPress={() => setGalaxyMode('orbital')}
+                  style={[
+                    styles.galaxyPresetBtn,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    galaxyMode === 'orbital' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                >
+                  <Ionicons name="planet-outline" size={14} color={galaxyMode === 'orbital' ? colors.accent : colors.textSecondary} style={{ marginRight: 4 }} />
+                  <Text style={[styles.galaxyPresetBtnText, { color: galaxyMode === 'orbital' ? colors.accent : colors.textPrimary }]}>
+                    🌌 Galaxie
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setGalaxyMode('lotus')}
+                  style={[
+                    styles.galaxyPresetBtn,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    galaxyMode === 'lotus' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                >
+                  <Ionicons name="flower-outline" size={14} color={galaxyMode === 'lotus' ? colors.accent : colors.textSecondary} style={{ marginRight: 4 }} />
+                  <Text style={[styles.galaxyPresetBtnText, { color: galaxyMode === 'lotus' ? colors.accent : colors.textPrimary }]}>
+                    🪷 Lotus
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setGalaxyMode('torus')}
+                  style={[
+                    styles.galaxyPresetBtn,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    galaxyMode === 'torus' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                >
+                  <Ionicons name="sync-outline" size={14} color={galaxyMode === 'torus' ? colors.accent : colors.textSecondary} style={{ marginRight: 4 }} />
+                  <Text style={[styles.galaxyPresetBtnText, { color: galaxyMode === 'torus' ? colors.accent : colors.textPrimary }]}>
+                    🌀 Torus
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Filter Pills Bar */}
+            <View style={{ marginBottom: 12 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterPillsRow}>
+                <TouchableOpacity
+                  onPress={() => setGalaxyFilter('all')}
+                  style={[
+                    styles.filterPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    galaxyFilter === 'all' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                >
+                  <Text style={[styles.filterPillText, { color: galaxyFilter === 'all' ? colors.accent : colors.textPrimary }]}>
+                    Alle ({totalCount})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setGalaxyFilter('channels')}
+                  style={[
+                    styles.filterPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    galaxyFilter === 'channels' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                >
+                  <Text style={[styles.filterPillText, { color: galaxyFilter === 'channels' ? colors.accent : colors.textPrimary }]}>
+                    🪐 Spaces ({channelCount})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setGalaxyFilter('favorites')}
+                  style={[
+                    styles.filterPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    galaxyFilter === 'favorites' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                >
+                  <Text style={[styles.filterPillText, { color: galaxyFilter === 'favorites' ? colors.accent : colors.textPrimary }]}>
+                    ▲/★ Favoriten ({favCount})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setGalaxyFilter('notes')}
+                  style={[
+                    styles.filterPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    galaxyFilter === 'notes' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                >
+                  <Text style={[styles.filterPillText, { color: galaxyFilter === 'notes' ? colors.accent : colors.textPrimary }]}>
+                    ✍️ Notizen ({noteCount})
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setGalaxyFilter('anchor')}
+                  style={[
+                    styles.filterPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    galaxyFilter === 'anchor' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                >
+                  <Text style={[styles.filterPillText, { color: galaxyFilter === 'anchor' ? colors.accent : colors.textPrimary }]}>
+                    🧘 Atem-Anker
+                  </Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+
+            {/* 3D Hyperspace Canvas */}
             <HyperspaceCanvas
-              nodes={hyperspaceNodes}
+              nodes={filteredGalaxyNodes}
               edges={hyperspaceEdges}
               onSelectNode={handleNodeClick}
               colors={colors}
               isDark={isDark}
+              galaxyMode={galaxyMode}
             />
+
+            {/* Bottom Galaxy Node Inspector Card */}
+            {selectedGalaxyNode && (
+              <View style={[styles.inspectorCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <View style={styles.inspectorHeader}>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <View style={[styles.inspectorBadge, { backgroundColor: (selectedGalaxyNode.color || colors.accent) + '22', borderColor: selectedGalaxyNode.color || colors.accent }]}>
+                        <Text style={[styles.inspectorBadgeText, { color: selectedGalaxyNode.color || colors.accent }]}>
+                          {selectedGalaxyNode.type.toUpperCase()}
+                        </Text>
+                      </View>
+                      {selectedGalaxyNode.space && (
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: colors.accent }}>
+                          {selectedGalaxyNode.space}
+                        </Text>
+                      )}
+                    </View>
+                    <Text style={[styles.inspectorTitle, { color: colors.textPrimary }]} numberOfLines={2}>
+                      {selectedGalaxyNode.title}
+                    </Text>
+                    {selectedGalaxyNode.reasonText && (
+                      <Text style={[styles.inspectorReason, { color: colors.textMuted }]}>
+                        {selectedGalaxyNode.reasonText}
+                      </Text>
+                    )}
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setSelectedGalaxyNode(null)}
+                    style={[styles.inspectorCloseBtn, { backgroundColor: colors.surfaceSecondary }]}
+                    accessibilityLabel="Knoten-Inspektor schließen"
+                  >
+                    <Ionicons name="close" size={16} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+
+                {selectedGalaxyNode.noteText && (
+                  <View style={[styles.inspectorNoteBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                    <Ionicons name="document-text-outline" size={14} color={colors.accent} style={{ marginRight: 6, marginTop: 2 }} />
+                    <Text style={[styles.inspectorNoteText, { color: colors.textPrimary }]}>
+                      {selectedGalaxyNode.noteText}
+                    </Text>
+                  </View>
+                )}
+
+                {/* 3 Action Buttons */}
+                <View style={styles.inspectorActionsRow}>
+                  <TouchableOpacity
+                    onPress={() => handleOpenInReader(selectedGalaxyNode)}
+                    style={[styles.inspectorActionBtn, { backgroundColor: colors.accent }]}
+                  >
+                    <Ionicons name="book-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.inspectorActionBtnText}>Im Reader öffnen</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => handleEditorialResearch(selectedGalaxyNode)}
+                    disabled={isResearchingEditorial}
+                    style={[styles.inspectorActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+                  >
+                    <Ionicons name="sparkles" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+                    <Text style={[styles.inspectorActionBtnText, { color: colors.textPrimary }]}>
+                      {isResearchingEditorial ? 'Recherchiert …' : 'Redaktions-Recherche'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setShowBreathingPortal(true)}
+                    style={[styles.inspectorActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+                  >
+                    <Ionicons name="leaf-outline" size={14} color="#10B981" style={{ marginRight: 6 }} />
+                    <Text style={[styles.inspectorActionBtnText, { color: '#10B981' }]}>Atem-Pause</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
         ) : null}
 
@@ -457,7 +791,7 @@ export const NetworkScreen: React.FC = () => {
 
             <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Ausgangs-Knoten:</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-              {hyperspaceNodes.map(n => (
+              {allInteractionNodes.map(n => (
                 <TouchableOpacity
                   key={`src-${n.id}`}
                   style={[
@@ -475,7 +809,7 @@ export const NetworkScreen: React.FC = () => {
 
             <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Ziel-Knoten:</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-              {hyperspaceNodes.map(n => (
+              {allInteractionNodes.map(n => (
                 <TouchableOpacity
                   key={`tgt-${n.id}`}
                   style={[
@@ -588,6 +922,13 @@ export const NetworkScreen: React.FC = () => {
           </View>
         </Modal>
       )}
+
+      {/* Atmen Breathing Portal Modal */}
+      <AtmenBreathingPortal
+        visible={showBreathingPortal}
+        mode="modal"
+        onClose={() => setShowBreathingPortal(false)}
+      />
     </View>
   );
 };
@@ -954,6 +1295,117 @@ const styles = StyleSheet.create({
     borderWidth: 1
   },
   deleteBtnText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  galaxyControlsBar: {
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 10
+  },
+  presetSelectorGroup: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap'
+  },
+  galaxyPresetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1
+  },
+  galaxyPresetBtnText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  filterPillsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 2
+  },
+  filterPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1
+  },
+  filterPillText: {
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  inspectorCard: {
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 3
+  },
+  inspectorHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start'
+  },
+  inspectorBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1
+  },
+  inspectorBadgeText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  inspectorTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 20
+  },
+  inspectorReason: {
+    fontSize: 11,
+    marginTop: 3
+  },
+  inspectorCloseBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  inspectorNoteBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 10
+  },
+  inspectorNoteText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16
+  },
+  inspectorActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+    flexWrap: 'wrap'
+  },
+  inspectorActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8
+  },
+  inspectorActionBtnText: {
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600'
   }

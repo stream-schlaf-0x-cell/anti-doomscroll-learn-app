@@ -126,7 +126,7 @@ export class OnTheFlyStreamService {
           isDemonstration: false,
           aiAssisted: false,
           factReviewStatus: 'scientific_paper',
-          provenanceSummary: `${venue} (OpenAlex)`,
+          provenanceSummary: '🔬 Peer-Reviewed Studie (OpenAlex · Original-Abstract)',
           wordCount: abstractText.split(/\s+/).length,
           evidenceTier: 'publisher_excerpt',
           contentOrigin: 'live_ingested',
@@ -135,6 +135,11 @@ export class OnTheFlyStreamService {
           space: spaceHandle,
           flair: 'Fachpublikation',
           keyInsight: sentences[0]?.trim() || title,
+          perspectiveDetails: {
+            claim: title,
+            humanSource: authors || venue,
+            counterPerspective: `Methodische Einschränkung: Die Einordnung basiert auf dem Original-Abstract der Autoren in ${venue}. Vollständige Datensätze und Replikationen sollten herangezogen werden.`
+          },
           upvotesCount: 0,
           awardsCount: { gold: 0, brain: 0, spark: 0 },
           sourceTrustLevel: 'peer_reviewed',
@@ -207,7 +212,7 @@ export class OnTheFlyStreamService {
             isDemonstration: false,
             aiAssisted: false,
             factReviewStatus: 'encyclopedia_entry',
-            provenanceSummary: 'Wikipedia Enzyklopädie',
+            provenanceSummary: '📖 Enzyklopädisches Fundament (Wikipedia)',
             wordCount: extract.split(/\s+/).length,
             evidenceTier: 'publisher_excerpt',
             contentOrigin: 'live_ingested',
@@ -217,6 +222,11 @@ export class OnTheFlyStreamService {
             space: spaceHandle,
             flair: 'Enzyklopädie',
             keyInsight: extract.split('. ')[0] + '.',
+            perspectiveDetails: {
+              claim: summary.title || hit.title,
+              humanSource: 'Wikipedia-Autoren',
+              counterPerspective: 'Enzyklopädischer Konsensartikel: Gibt den aktuellen Forschungsstand wieder, ersetzt jedoch nicht die Konsultation kontroverser Primärquellen.'
+            },
             upvotesCount: 0,
             awardsCount: { gold: 0, brain: 0, spark: 0 },
             sourceTrustLevel: 'encyclopedia',
@@ -299,7 +309,7 @@ export class OnTheFlyStreamService {
           isDemonstration: false,
           aiAssisted: false,
           factReviewStatus: 'community_discussion',
-          provenanceSummary: `${domain} via Hacker News`,
+          provenanceSummary: `🏛️ Redaktionelle Primärquelle (${domain}) · Community-Fund`,
           wordCount: summaryText.split(/\s+/).length,
           evidenceTier: hit?.story_text ? 'publisher_excerpt' : 'metadata_only',
           contentOrigin: 'live_ingested',
@@ -308,6 +318,11 @@ export class OnTheFlyStreamService {
           space: spaceHandle,
           flair: 'Community-Fund',
           keyInsight: title,
+          perspectiveDetails: {
+            claim: title,
+            humanSource: domain,
+            counterPerspective: 'Community-Diskussion: Reflektiert die Resonanz auf Hacker News, stellt jedoch keine begutachtete Primärstudie dar.'
+          },
           upvotesCount: 0,
           externalCommunityScore: points > 0 ? {
             points,

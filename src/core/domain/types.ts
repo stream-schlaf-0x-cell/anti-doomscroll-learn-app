@@ -698,14 +698,31 @@ export const UserProfileSchema = z.object({
     boostedAuthors: z.record(z.string(), z.number()).default({}),
     penalizedAuthors: z.record(z.string(), z.number()).default({}),
     boostedKeywords: z.record(z.string(), z.number()).default({}),
-    penalizedKeywords: z.record(z.string(), z.number()).default({})
+    penalizedKeywords: z.record(z.string(), z.number()).default({}),
+    boostedDomains: z.record(z.string(), z.number()).default({}),
+    penalizedDomains: z.record(z.string(), z.number()).default({}),
+    boostedSpaces: z.record(z.string(), z.number()).default({}),
+    penalizedSpaces: z.record(z.string(), z.number()).default({})
   }).default({
     boostedTopics: {},
     penalizedTopics: {},
     boostedAuthors: {},
     penalizedAuthors: {},
     boostedKeywords: {},
-    penalizedKeywords: {}
+    penalizedKeywords: {},
+    boostedDomains: {},
+    penalizedDomains: {},
+    boostedSpaces: {},
+    penalizedSpaces: {}
+  }),
+  feedMixRatio: z.object({
+    focusRatio: z.number().min(0).max(1).default(0.60),
+    socraticRatio: z.number().min(0).max(1).default(0.20),
+    serendipityRatio: z.number().min(0).max(1).default(0.20)
+  }).default({
+    focusRatio: 0.60,
+    socraticRatio: 0.20,
+    serendipityRatio: 0.20
   }),
   behavioralSignals: z.object({
     recentOpenedIds: z.array(z.string()).default([]),

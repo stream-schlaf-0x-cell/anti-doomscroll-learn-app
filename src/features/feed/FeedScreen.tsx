@@ -82,6 +82,7 @@ export const FeedScreen: React.FC = () => {
     recordCardAppearances,
     colors,
     isDark,
+    setActiveTab,
     refreshFeed,
     recomputeFeed,
     refreshLiveFeed,
@@ -1506,6 +1507,21 @@ export const FeedScreen: React.FC = () => {
                     <Ionicons name="sparkles" size={13} color="#10B981" style={{ marginRight: 4 }} />
                     <Text style={[styles.sortTabText, { color: '#10B981', fontWeight: '700' }]}>
                       {isCuratingLiveAi ? 'Kuriert …' : 'Live KI-Kuration'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setActiveTab('settings')}
+                    style={[
+                      styles.sortTab,
+                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Algorithmus-Spiegel öffnen"
+                  >
+                    <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                    <Text style={[styles.sortTabText, { color: colors.textPrimary, fontWeight: '700' }]}>
+                      Spiegel
                     </Text>
                   </TouchableOpacity>
 

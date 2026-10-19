@@ -1156,7 +1156,16 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
     boostedAuthors: {},
     penalizedAuthors: {},
     boostedKeywords: {},
-    penalizedKeywords: {}
+    penalizedKeywords: {},
+    boostedDomains: {},
+    penalizedDomains: {},
+    boostedSpaces: {},
+    penalizedSpaces: {}
+  },
+  feedMixRatio: {
+    focusRatio: 0.60,
+    socraticRatio: 0.20,
+    serendipityRatio: 0.20
   },
   behavioralSignals: {
     recentOpenedIds: [],

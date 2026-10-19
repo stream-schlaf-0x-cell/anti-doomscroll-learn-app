@@ -265,6 +265,38 @@ export function scoreFeedItem(
       authorBoost = Math.min(0.25, boostA * 0.12) - Math.min(0.30, penA * 0.15);
       feedbackAdjustment += authorBoost;
     }
+
+    const domain = (item.sourceDomain || item.sourceReferences[0]?.publisher || '').toLowerCase();
+    if (domain) {
+      const boostD = memory.boostedDomains?.[domain] ?? 0;
+      const penD = memory.penalizedDomains?.[domain] ?? 0;
+      feedbackAdjustment += Math.min(0.25, boostD * 0.10) - Math.min(0.30, penD * 0.15);
+    }
+
+    if (item.space) {
+      const spaceKey = item.space.toLowerCase();
+      const boostS = memory.boostedSpaces?.[spaceKey] ?? 0;
+      const penS = memory.penalizedSpaces?.[spaceKey] ?? 0;
+      feedbackAdjustment += Math.min(0.20, boostS * 0.10) - Math.min(0.25, penS * 0.12);
+    }
+
+    if (memory.boostedKeywords) {
+      const titleLower = item.title.toLowerCase();
+      for (const [kw, count] of Object.entries(memory.boostedKeywords)) {
+        if (titleLower.includes(kw.toLowerCase())) {
+          feedbackAdjustment += Math.min(0.15, (count || 1) * 0.06);
+        }
+      }
+    }
+
+    if (memory.penalizedKeywords) {
+      const titleLower = item.title.toLowerCase();
+      for (const [kw, count] of Object.entries(memory.penalizedKeywords)) {
+        if (titleLower.includes(kw.toLowerCase())) {
+          feedbackAdjustment -= Math.min(0.25, (count || 1) * 0.10);
+        }
+      }
+    }
   }
   if (interaction?.feedback === 'more_like_this') feedbackAdjustment += 0.40;
   if (interaction?.feedback === 'less_like_this') feedbackAdjustment -= 0.50;
@@ -303,9 +335,15 @@ export function scoreFeedItem(
     rawScore *= 0.72;
   }
 
-  // Anti-Doomscroll Sensationalism Dampener: reduces clickbait utility without punishing serious crisis reporting
-  if (manipulativeDampener > 0) {
-    rawScore *= (1 - manipulativeDampener);
+  // Feed Mix Ratio (Algorithmus-Spiegel: Fokus vs. Sokratische Reibung vs. Serendipity)
+  if (profile.feedMixRatio) {
+    if (item.isChallengingPerspective) {
+      rawScore *= (0.75 + profile.feedMixRatio.socraticRatio * 1.25);
+    } else if (item.isDemonstration || item.space === 'c/serendipity' || item.format === 'art_showcase' || item.format === 'meme') {
+      rawScore *= (0.75 + profile.feedMixRatio.serendipityRatio * 1.25);
+    } else {
+      rawScore *= (0.75 + profile.feedMixRatio.focusRatio * 0.45);
+    }
   }
 
   const totalScore = Math.round(rawScore * 1000) / 1000;

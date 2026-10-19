@@ -31,6 +31,22 @@ import { refreshLocalEdition } from './localFeedRefresh';
 import { defaultGraphRepository } from '../graph/graphRepository';
 import { BoundedIdSet } from '../feed/boundedIdSet';
 import { defaultFeedOperationManager } from '../feed/FeedOperationManager';
+import { runInPlaceDataMigration } from '../data/migrationService';
+
+function extractSalientKeywords(title: string): string[] {
+  const STOPWORDS = new Set([
+    'eine', 'einer', 'eines', 'einem', 'einen', 'oder', 'aber', 'wenn', 'dann', 'weil',
+    'dass', 'dies', 'diese', 'dieser', 'dieses', 'über', 'unter', 'nach', 'vor',
+    'nicht', 'auch', 'noch', 'schon', 'durch', 'für', 'gegen', 'ohne', 'beim',
+    'what', 'with', 'from', 'this', 'that', 'about', 'into', 'over', 'after'
+  ]);
+  return title
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 4 && !STOPWORDS.has(w))
+    .slice(0, 2);
+}
 
 export type StartupState =
   | { status: 'loading' }
@@ -135,6 +151,10 @@ interface AppContextValue {
   deleteSpace: (id: string) => Promise<boolean>;
   togglePinSpace: (id: string) => Promise<Subchannel[]>;
   selectSpace: (handleOrTag: string) => void;
+  removeFeedbackBoost: (category: 'topic' | 'author' | 'keyword' | 'domain' | 'space', key: string) => Promise<void>;
+  removeFeedbackPenalty: (category: 'topic' | 'author' | 'keyword' | 'domain' | 'space', key: string) => Promise<void>;
+  updateFeedMixRatio: (focusRatio: number, socraticRatio: number, serendipityRatio: number) => Promise<void>;
+  clearFeedbackMemory: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -533,6 +553,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       } catch {
         // Non-fatal
+      }
+
+      // Work Package 1: In-Place Version Auto-Migration for already-onboarded devices
+      try {
+        await runInPlaceDataMigration(appStorage, feedRepository);
+      } catch (migErr) {
+        console.warn('In-place auto-migration skipped:', migErr);
       }
 
       // 1. Instant reveal: Calculate local feed in < 5ms and unlock the UI immediately!
@@ -982,8 +1009,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         item = await libraryRepository.getSavedArticle(id);
       }
       if (item && (direction === 'up' || direction === 'down')) {
-        const eventType = direction === 'up' ? 'upvote' : 'downvote';
-        const res = await RecursiveLearningEngine.recordInteractionEvent(latestProfileRef.current, item, eventType);
+        const isUp = direction === 'up';
+        const primaryTopic = item.primaryTopic || 'philosophy_ethics';
+        const author = item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '';
+        const domain = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || '').toLowerCase();
+        const space = item.space ? item.space.toLowerCase() : '';
+        const keywords = extractSalientKeywords(item.title);
+
+        const committed = await userProfileRepository.updateProfile(curr => {
+          const mem = { ...curr.feedbackMemory };
+          if (isUp) {
+            mem.boostedTopics = { ...mem.boostedTopics, [primaryTopic]: (mem.boostedTopics[primaryTopic] || 0) + 1 };
+            if (author) mem.boostedAuthors = { ...mem.boostedAuthors, [author]: (mem.boostedAuthors[author] || 0) + 1 };
+            if (domain) mem.boostedDomains = { ...mem.boostedDomains, [domain]: (mem.boostedDomains[domain] || 0) + 1 };
+            if (space) mem.boostedSpaces = { ...mem.boostedSpaces, [space]: (mem.boostedSpaces[space] || 0) + 1 };
+            if (keywords.length > 0) {
+              const kwMap = { ...mem.boostedKeywords };
+              keywords.forEach(kw => { kwMap[kw] = (kwMap[kw] || 0) + 1; });
+              mem.boostedKeywords = kwMap;
+            }
+          } else {
+            mem.penalizedTopics = { ...mem.penalizedTopics, [primaryTopic]: (mem.penalizedTopics[primaryTopic] || 0) + 1 };
+            if (author) mem.penalizedAuthors = { ...mem.penalizedAuthors, [author]: (mem.penalizedAuthors[author] || 0) + 1 };
+            if (domain) mem.penalizedDomains = { ...mem.penalizedDomains, [domain]: (mem.penalizedDomains[domain] || 0) + 1 };
+            if (space) mem.penalizedSpaces = { ...mem.penalizedSpaces, [space]: (mem.penalizedSpaces[space] || 0) + 1 };
+            if (keywords.length > 0) {
+              const kwMap = { ...mem.penalizedKeywords };
+              keywords.forEach(kw => { kwMap[kw] = (kwMap[kw] || 0) + 1; });
+              mem.penalizedKeywords = kwMap;
+            }
+          }
+          return {
+            ...curr,
+            feedbackMemory: mem
+          };
+        });
+
+        latestProfileRef.current = committed;
+        setProfile(committed);
+
+        const eventType = isUp ? 'upvote' : 'downvote';
+        const res = await RecursiveLearningEngine.recordInteractionEvent(committed, item, eventType);
         if (res.event) {
           latestProfileRef.current = res.updatedProfile;
           setProfile(res.updatedProfile);
@@ -994,6 +1060,120 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
     } catch {
       setErrorMessage('Bewertung konnte nicht gespeichert werden.');
+    }
+  }, [scheduleFeedRecompute]);
+
+  const removeFeedbackBoost = useCallback(async (
+    category: 'topic' | 'author' | 'keyword' | 'domain' | 'space',
+    key: string
+  ) => {
+    try {
+      const fieldMap = {
+        topic: 'boostedTopics',
+        author: 'boostedAuthors',
+        keyword: 'boostedKeywords',
+        domain: 'boostedDomains',
+        space: 'boostedSpaces'
+      } as const;
+      const targetField = fieldMap[category];
+      const committed = await userProfileRepository.updateProfile(curr => {
+        const nextMemory = { ...curr.feedbackMemory };
+        const record = { ...(nextMemory[targetField] || {}) };
+        delete record[key];
+        (nextMemory as any)[targetField] = record;
+        return {
+          ...curr,
+          feedbackMemory: nextMemory
+        };
+      });
+      latestProfileRef.current = committed;
+      setProfile(committed);
+      await scheduleFeedRecompute(committed, latestInteractionsRef.current);
+    } catch {
+      setErrorMessage('Boost konnte nicht entfernt werden.');
+    }
+  }, [scheduleFeedRecompute]);
+
+  const removeFeedbackPenalty = useCallback(async (
+    category: 'topic' | 'author' | 'keyword' | 'domain' | 'space',
+    key: string
+  ) => {
+    try {
+      const fieldMap = {
+        topic: 'penalizedTopics',
+        author: 'penalizedAuthors',
+        keyword: 'penalizedKeywords',
+        domain: 'penalizedDomains',
+        space: 'penalizedSpaces'
+      } as const;
+      const targetField = fieldMap[category];
+      const committed = await userProfileRepository.updateProfile(curr => {
+        const nextMemory = { ...curr.feedbackMemory };
+        const record = { ...(nextMemory[targetField] || {}) };
+        delete record[key];
+        (nextMemory as any)[targetField] = record;
+        return {
+          ...curr,
+          feedbackMemory: nextMemory
+        };
+      });
+      latestProfileRef.current = committed;
+      setProfile(committed);
+      await scheduleFeedRecompute(committed, latestInteractionsRef.current);
+    } catch {
+      setErrorMessage('Dämpfung konnte nicht zurückgesetzt werden.');
+    }
+  }, [scheduleFeedRecompute]);
+
+  const updateFeedMixRatio = useCallback(async (
+    focusRatio: number,
+    socraticRatio: number,
+    serendipityRatio: number
+  ) => {
+    try {
+      const total = focusRatio + socraticRatio + serendipityRatio;
+      const normFocus = total > 0 ? focusRatio / total : 0.6;
+      const normSocratic = total > 0 ? socraticRatio / total : 0.2;
+      const normSerendipity = total > 0 ? serendipityRatio / total : 0.2;
+
+      const committed = await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        feedMixRatio: {
+          focusRatio: Math.round(normFocus * 100) / 100,
+          socraticRatio: Math.round(normSocratic * 100) / 100,
+          serendipityRatio: Math.round(normSerendipity * 100) / 100
+        }
+      }));
+      latestProfileRef.current = committed;
+      setProfile(committed);
+      await scheduleFeedRecompute(committed, latestInteractionsRef.current);
+    } catch {
+      setErrorMessage('Feed-Mischverhältnis konnte nicht gespeichert werden.');
+    }
+  }, [scheduleFeedRecompute]);
+
+  const clearFeedbackMemory = useCallback(async () => {
+    try {
+      const committed = await userProfileRepository.updateProfile(curr => ({
+        ...curr,
+        feedbackMemory: {
+          boostedTopics: {},
+          penalizedTopics: {},
+          boostedAuthors: {},
+          penalizedAuthors: {},
+          boostedKeywords: {},
+          penalizedKeywords: {},
+          boostedDomains: {},
+          penalizedDomains: {},
+          boostedSpaces: {},
+          penalizedSpaces: {}
+        }
+      }));
+      latestProfileRef.current = committed;
+      setProfile(committed);
+      await scheduleFeedRecompute(committed, latestInteractionsRef.current);
+    } catch {
+      setErrorMessage('Algorithmus-Spiegel konnte nicht zurückgesetzt werden.');
     }
   }, [scheduleFeedRecompute]);
 
@@ -1267,7 +1447,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateSpace,
         deleteSpace,
         togglePinSpace,
-        selectSpace
+        selectSpace,
+        removeFeedbackBoost,
+        removeFeedbackPenalty,
+        updateFeedMixRatio,
+        clearFeedbackMemory
       }}
     >
       {children}

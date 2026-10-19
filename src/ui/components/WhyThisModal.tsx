@@ -5,7 +5,7 @@ import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing } from '../theme';
 
 export const WhyThisModal: React.FC = () => {
-  const { whyModalItem, closeWhyModal, colors } = useApp();
+  const { whyModalItem, closeWhyModal, colors, setActiveTab } = useApp();
 
   if (!whyModalItem) return null;
 
@@ -121,6 +121,22 @@ export const WhyThisModal: React.FC = () => {
               </Text>
             </View>
           </ScrollView>
+
+          {/* Algorithmus-Spiegel Direct Link */}
+          <TouchableOpacity
+            style={[styles.mirrorButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+            onPress={() => {
+              closeWhyModal();
+              setActiveTab('settings');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Algorithmus-Spiegel öffnen"
+          >
+            <Ionicons name="sparkles" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+            <Text style={[styles.mirrorButtonText, { color: colors.textPrimary }]}>
+              🪞 Dein Algorithmus-Spiegel öffnen
+            </Text>
+          </TouchableOpacity>
 
           {/* Action button */}
           <TouchableOpacity
@@ -243,6 +259,20 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: typography.sizes.micro,
     lineHeight: 16
+  },
+  mirrorButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: spacing.sm
+  },
+  mirrorButtonText: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '600'
   },
   doneButton: {
     minHeight: 48,
