@@ -270,7 +270,7 @@ describe('Sprint Acceptance: Migration, Editorial Research, Vote-Mirror & 3D Gal
       assert.ok(dossier.perspectiveDetails);
       assert.ok(dossier.perspectiveDetails.claim.length > 0);
       assert.ok(dossier.perspectiveDetails.humanSource.length > 0);
-      assert.ok(dossier.perspectiveDetails.counterPerspective.length > 0);
+      assert.ok(dossier.perspectiveDetails.counterPerspective && dossier.perspectiveDetails.counterPerspective.length > 0);
     });
   });
 
