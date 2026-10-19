@@ -77,7 +77,7 @@ export const SettingsScreen: React.FC = () => {
   const serendipityPct = Math.round(currentMix.serendipityRatio * 100);
 
   const feedbackMem = profile?.feedbackMemory || {};
-  const boostedItems: Array<{ category: 'topic' | 'author' | 'keyword' | 'domain' | 'space'; key: string; label: string; count: number }> = [];
+  const boostedItems: { category: 'topic' | 'author' | 'keyword' | 'domain' | 'space'; key: string; label: string; count: number }[] = [];
   Object.entries(feedbackMem.boostedTopics || {}).forEach(([k, v]) => {
     boostedItems.push({ category: 'topic', key: k, label: `Thema: ${TOPIC_METADATA[k as TopicTag]?.label || k}`, count: v });
   });
@@ -94,7 +94,7 @@ export const SettingsScreen: React.FC = () => {
     boostedItems.push({ category: 'keyword', key: k, label: `#${k}`, count: v });
   });
 
-  const penalizedItems: Array<{ category: 'topic' | 'author' | 'keyword' | 'domain' | 'space'; key: string; label: string; count: number }> = [];
+  const penalizedItems: { category: 'topic' | 'author' | 'keyword' | 'domain' | 'space'; key: string; label: string; count: number }[] = [];
   Object.entries(feedbackMem.penalizedTopics || {}).forEach(([k, v]) => {
     penalizedItems.push({ category: 'topic', key: k, label: `Thema: ${TOPIC_METADATA[k as TopicTag]?.label || k}`, count: v });
   });

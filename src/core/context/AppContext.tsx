@@ -224,9 +224,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [selectSpace, selectedFilter]);
 
   const deleteSpace = useCallback(async (id: string) => {
+    const spaces = await defaultSpaceRepository.getAllSpaces();
+    const target = spaces.find(s => s.id === id || s.handle.toLowerCase() === id.toLowerCase());
+    const targetHandle = target?.handle || id;
     const ok = await defaultSpaceRepository.deleteSubchannel(id);
+    if (ok) {
+      if (selectedFilter.toLowerCase() === normalizeSpaceHandle(targetHandle).toLowerCase()) {
+        setSelectedFilter('all');
+      }
+    }
     return ok;
-  }, []);
+  }, [selectedFilter]);
 
   const togglePinSpace = useCallback(async (id: string) => {
     const updated = await defaultSpaceRepository.togglePin(id);
@@ -959,10 +967,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (item) {
         const res = await RecursiveLearningEngine.recordInteractionEvent(latestProfileRef.current, item, 'note_created');
         if (res.event) {
-          latestProfileRef.current = res.updatedProfile;
-          setProfile(res.updatedProfile);
-          await userProfileRepository.saveProfile(res.updatedProfile);
-          await scheduleFeedRecompute(res.updatedProfile, nextInteractions);
+          const updatedProfile = await userProfileRepository.updateProfile(fresh => ({
+            ...fresh,
+            derivedWeights: res.updatedProfile.derivedWeights
+          }));
+          latestProfileRef.current = updatedProfile;
+          setProfile(updatedProfile);
+          await scheduleFeedRecompute(updatedProfile, nextInteractions);
         }
       }
 
@@ -1051,9 +1062,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const eventType = isUp ? 'upvote' : 'downvote';
         const res = await RecursiveLearningEngine.recordInteractionEvent(committed, item, eventType);
         if (res.event) {
-          latestProfileRef.current = res.updatedProfile;
-          setProfile(res.updatedProfile);
-          await userProfileRepository.saveProfile(res.updatedProfile);
+          const updatedProfile = await userProfileRepository.updateProfile(fresh => ({
+            ...fresh,
+            derivedWeights: res.updatedProfile.derivedWeights
+          }));
+          latestProfileRef.current = updatedProfile;
+          setProfile(updatedProfile);
         }
       }
 

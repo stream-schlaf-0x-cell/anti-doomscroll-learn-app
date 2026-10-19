@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { View, StyleSheet, Platform, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemeColors } from '../../ui/theme';
@@ -179,11 +179,12 @@ export const HyperspaceCanvas: React.FC<Props> = ({
         return;
       }
 
-      const width = canvas.width;
-      const height = canvas.height;
+      const width = canvas.width || 840;
+      const height = canvas.height || 560;
       const cx = width / 2;
       const cy = height / 2;
-      const fov = 460 * zoom;
+      const safeZoom = Math.max(0.2, Math.min(5.0, Number.isFinite(zoom) ? zoom : 1.0));
+      const fov = Math.max(120, 460 * safeZoom);
       const timeSec = performance.now() * 0.001;
 
       // Authentic Tonglen coherent breathing oscillation (0.1 Hz -> ~6 breaths/minute)
@@ -193,7 +194,8 @@ export const HyperspaceCanvas: React.FC<Props> = ({
 
       // Deep cosmic space background with subtle vignette
       ctx.globalCompositeOperation = 'source-over';
-      const bgGrad = ctx.createRadialGradient(cx, cy, 30, cx, cy, Math.max(width, height) * 0.7);
+      const bgRadius = Math.max(60, Math.max(width, height) * 0.7);
+      const bgGrad = ctx.createRadialGradient(cx, cy, 30, cx, cy, bgRadius);
       if (isDark) {
         bgGrad.addColorStop(0, '#0E1117');
         bgGrad.addColorStop(0.6, '#080A0E');
@@ -206,19 +208,34 @@ export const HyperspaceCanvas: React.FC<Props> = ({
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, height);
 
+      // Handle Empty State gracefully with ethereal message
+      if (nodes.length === 0) {
+        ctx.font = '14px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.75)' : 'rgba(100, 116, 139, 0.85)';
+        ctx.textAlign = 'center';
+        ctx.fillText('Keine Gestirne im gewählten Filter vorhanden', cx, cy - 8);
+        ctx.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText('Wähle oben „Alle Gestirne“ oder speichere neue Artikel & Notizen', cx, cy + 16);
+        ctx.textAlign = 'start';
+        animFrameRef.current = requestAnimationFrame(render);
+        return;
+      }
+
       // 3D rotation matrix calculation
-      const cosX = Math.cos(rotX);
-      const sinX = Math.sin(rotX);
-      const cosY = Math.cos(rotY);
-      const sinY = Math.sin(rotY);
+      const safeRotX = Number.isFinite(rotX) ? rotX : 0.25;
+      const safeRotY = Number.isFinite(rotY) ? rotY : 0.1;
+      const cosX = Math.cos(safeRotX);
+      const sinX = Math.sin(safeRotX);
+      const cosY = Math.cos(safeRotY);
+      const sinY = Math.sin(safeRotY);
 
       const projected = new Map<string, { sx: number; sy: number; scale: number; depth: number }>();
 
       // Project 3D nodes to 2D screen coordinates with breathing expansion
       for (const [id, pt] of pointsRef.current.entries()) {
-        const px = pt.x * breathScale;
-        const py = pt.y * breathScale;
-        const pz = pt.z * breathScale;
+        const px = (Number.isFinite(pt.x) ? pt.x : 0) * breathScale;
+        const py = (Number.isFinite(pt.y) ? pt.y : 0) * breathScale;
+        const pz = (Number.isFinite(pt.z) ? pt.z : 0) * breathScale;
 
         // Rotate around Y
         const x1 = px * cosY + pz * sinY;
@@ -227,11 +244,12 @@ export const HyperspaceCanvas: React.FC<Props> = ({
         const y2 = py * cosX - z1 * sinX;
         const z2 = py * sinX + z1 * cosX;
 
-        const distance = fov + z2;
-        if (distance > 20) {
-          const scale = fov / distance;
-          const sx = cx + x1 * scale;
-          const sy = cy + y2 * scale;
+        // Clamp denominator to prevent division-by-zero or negative/infinite scale
+        const safeDistance = Math.max(40, fov + z2);
+        const scale = fov / safeDistance;
+        const sx = cx + x1 * scale;
+        const sy = cy + y2 * scale;
+        if (Number.isFinite(sx) && Number.isFinite(sy) && Number.isFinite(scale) && scale > 0) {
           projected.set(id, { sx, sy, scale, depth: z2 });
         }
       }
@@ -244,7 +262,7 @@ export const HyperspaceCanvas: React.FC<Props> = ({
       for (const edge of edges) {
         const p1 = projected.get(edge.sourceId);
         const p2 = projected.get(edge.targetId);
-        if (!p1 || !p2) continue;
+        if (!p1 || !p2 || !Number.isFinite(p1.sx) || !Number.isFinite(p1.sy) || !Number.isFinite(p2.sx) || !Number.isFinite(p2.sy)) continue;
 
         const isEdgeActive =
           hoveredNodeId === edge.sourceId ||
@@ -286,7 +304,8 @@ export const HyperspaceCanvas: React.FC<Props> = ({
 
         const pt = pointsRef.current.get(id);
         const baseRadius = pt?.baseRadius || 7;
-        const radius = Math.max(3, Math.min(32, baseRadius * proj.scale));
+        const rawRadius = baseRadius * proj.scale;
+        const radius = Math.max(3, Math.min(32, Number.isFinite(rawRadius) ? rawRadius : 7));
         const depthAlpha = Math.max(0.25, Math.min(1.0, (proj.depth + 260) / 480));
         const isHovered = hoveredNodeId === id;
         const isSelected = selectedNodeId === id;
@@ -309,17 +328,26 @@ export const HyperspaceCanvas: React.FC<Props> = ({
           glowColor = 'rgba(129, 140, 248, 0.45)';
         }
 
-        // Multi-stop radial glow aura (Tonglen Engine)
-        const auraRadius = radius * (node.type === 'channel_core' ? 3.4 : 2.6) * (1.0 + breathGlow * 0.15);
-        const auraGrad = ctx.createRadialGradient(proj.sx, proj.sy, 0, proj.sx, proj.sy, auraRadius);
-        auraGrad.addColorStop(0, glowColor);
-        auraGrad.addColorStop(0.5, glowColor.replace(/[\d\.]+\)$/, '0.15)'));
-        auraGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        // Multi-stop radial glow aura (Tonglen Engine) with safe radius protection against IndexSizeError
+        const auraMultiplier = (node.type === 'channel_core' ? 3.4 : 2.6) * (1.0 + breathGlow * 0.15);
+        const rawAuraRadius = radius * auraMultiplier;
+        const auraRadius = Math.max(1, Math.min(150, Number.isFinite(rawAuraRadius) ? rawAuraRadius : radius * 2.5));
 
-        ctx.fillStyle = auraGrad;
-        ctx.beginPath();
-        ctx.arc(proj.sx, proj.sy, auraRadius, 0, Math.PI * 2);
-        ctx.fill();
+        if (Number.isFinite(proj.sx) && Number.isFinite(proj.sy) && auraRadius > 0) {
+          try {
+            const auraGrad = ctx.createRadialGradient(proj.sx, proj.sy, 0, proj.sx, proj.sy, auraRadius);
+            auraGrad.addColorStop(0, glowColor);
+            auraGrad.addColorStop(0.5, glowColor.replace(/[\d\.]+\)$/, '0.15)'));
+            auraGrad.addColorStop(1, 'rgba(0,0,0,0)');
+
+            ctx.fillStyle = auraGrad;
+            ctx.beginPath();
+            ctx.arc(proj.sx, proj.sy, auraRadius, 0, Math.PI * 2);
+            ctx.fill();
+          } catch {
+            // Guard against any browser canvas radial gradient quirks
+          }
+        }
 
         // Extra dual corona for personal notes
         if (node.noteText || node.type === 'user_note') {
@@ -351,7 +379,7 @@ export const HyperspaceCanvas: React.FC<Props> = ({
         if (proj.scale > 0.88 || isHovered || isSelected || node.type === 'channel_core') {
           ctx.font = `${isHovered || isSelected || node.type === 'channel_core' ? 'bold ' : ''}11px -apple-system, BlinkMacSystemFont, sans-serif`;
           ctx.fillStyle = isDark ? '#F1F5F9' : '#0F172A';
-          let label = node.title;
+          let label = node.title || 'Knoten';
           if (label.length > 26) label = label.slice(0, 24) + '…';
           ctx.fillText(label, proj.sx + radius + 6, proj.sy + 4);
         }
@@ -364,11 +392,26 @@ export const HyperspaceCanvas: React.FC<Props> = ({
 
     return () => {
       isRunning = false;
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (animFrameRef.current !== null) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
     };
   }, [nodes, edges, rotX, rotY, zoom, hoveredNodeId, selectedNodeId, colors, isDark, galaxyMode]);
 
-  // Pointer interactions with touch & mouse support
+  // Pointer interactions with touch & mouse support and responsive DPI scaling
+  const getCanvasCoords = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: clientX, y: clientY };
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width > 0 ? canvas.width / rect.width : 1;
+    const scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
+    };
+  };
+
   const handlePointerDown = (e: any) => {
     isDraggingRef.current = true;
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
@@ -384,14 +427,9 @@ export const HyperspaceCanvas: React.FC<Props> = ({
       return;
     }
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-
+    const { x: mx, y: my } = getCanvasCoords(e.clientX, e.clientY);
     let closestId: string | null = null;
-    let closestDist = 24;
+    let closestDist = 32;
 
     for (const [id, proj] of projectedRef.current.entries()) {
       const d = Math.hypot(proj.sx - mx, proj.sy - my);
@@ -409,11 +447,25 @@ export const HyperspaceCanvas: React.FC<Props> = ({
       const dx = Math.abs(e.clientX - lastMousePosRef.current.x);
       const dy = Math.abs(e.clientY - lastMousePosRef.current.y);
       isDraggingRef.current = false;
-      if (dx < 5 && dy < 5 && hoveredNodeId) {
-        const node = nodes.find(n => n.id === hoveredNodeId);
-        if (node) {
-          setSelectedNodeId(node.id);
-          onSelectNode(node);
+      if (dx < 5 && dy < 5) {
+        const { x: clickX, y: clickY } = getCanvasCoords(e.clientX, e.clientY);
+        let targetId = hoveredNodeId;
+        if (!targetId) {
+          let minD = 35;
+          for (const [id, proj] of projectedRef.current.entries()) {
+            const d = Math.hypot(proj.sx - clickX, proj.sy - clickY);
+            if (d < minD) {
+              minD = d;
+              targetId = id;
+            }
+          }
+        }
+        if (targetId) {
+          const node = nodes.find(n => n.id === targetId);
+          if (node) {
+            setSelectedNodeId(node.id);
+            onSelectNode(node);
+          }
         }
       }
     }
@@ -451,6 +503,30 @@ export const HyperspaceCanvas: React.FC<Props> = ({
   };
 
   const handleTouchEnd = (e: any) => {
+    if (isDraggingRef.current && e.changedTouches?.length === 1) {
+      const touch = e.changedTouches[0];
+      const dx = Math.abs(touch.clientX - lastMousePosRef.current.x);
+      const dy = Math.abs(touch.clientY - lastMousePosRef.current.y);
+      if (dx < 8 && dy < 8) {
+        const { x: clickX, y: clickY } = getCanvasCoords(touch.clientX, touch.clientY);
+        let targetId: string | null = null;
+        let minD = 40;
+        for (const [id, proj] of projectedRef.current.entries()) {
+          const d = Math.hypot(proj.sx - clickX, proj.sy - clickY);
+          if (d < minD) {
+            minD = d;
+            targetId = id;
+          }
+        }
+        if (targetId) {
+          const node = nodes.find(n => n.id === targetId);
+          if (node) {
+            setSelectedNodeId(node.id);
+            onSelectNode(node);
+          }
+        }
+      }
+    }
     isDraggingRef.current = false;
     touchDistanceRef.current = null;
   };

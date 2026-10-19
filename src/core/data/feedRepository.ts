@@ -116,13 +116,20 @@ export class LocalFeedRepository implements IFeedRepository {
   private articleIndex: ArticleIndex;
   private relatedService: RelatedContentService;
 
-  constructor(customItems?: FeedItem[], storage: AtemStorage = appStorage) {
-    this.storage = storage;
+  constructor(customItemsOrStorage?: FeedItem[] | AtemStorage, storage: AtemStorage = appStorage) {
+    if (
+      customItemsOrStorage instanceof AtemStorage ||
+      (customItemsOrStorage && typeof (customItemsOrStorage as any).getItem === 'function' && !Array.isArray(customItemsOrStorage))
+    ) {
+      this.storage = customItemsOrStorage as AtemStorage;
+    } else {
+      this.storage = storage;
+    }
     this.articleIndex = new ArticleIndex();
     this.relatedService = new RelatedContentService(this.articleIndex);
 
-    if (customItems) {
-      this.items = customItems.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
+    if (Array.isArray(customItemsOrStorage)) {
+      this.items = customItemsOrStorage.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
     } else {
       const map = new Map<string, FeedItem>();
 

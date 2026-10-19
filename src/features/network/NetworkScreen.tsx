@@ -17,7 +17,7 @@ import { AutomationRule } from '../../core/automation/types';
 import { HyperspaceCanvas, HyperspaceNode, HyperspaceEdge, GalaxyMode } from './HyperspaceCanvas';
 import { copyToClipboard } from '../../core/export/craftExport';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
-import { TOPIC_SPACE_MAP, TopicTag, UserNote } from '../../core/domain/types';
+import { UserNote } from '../../core/domain/types';
 import { conductEditorialResearchTeamInquiry } from '../../core/ingestion/autonomousResearcherService';
 import { AtmenBreathingPortal } from '../breathing/AtmenBreathingPortal';
 
@@ -272,6 +272,13 @@ export const NetworkScreen: React.FC = () => {
     return true;
   });
 
+  // Cleanly deselect inspector if active node is filtered out
+  useEffect(() => {
+    if (selectedGalaxyNode && !filteredGalaxyNodes.some(n => n.id === selectedGalaxyNode.id)) {
+      setSelectedGalaxyNode(null);
+    }
+  }, [galaxyFilter, filteredGalaxyNodes, selectedGalaxyNode]);
+
   const totalCount = allInteractionNodes.length;
   const channelCount = channelNodes.length;
   const favCount = savedNodes.length + upvotedNodes.length;
@@ -507,6 +514,19 @@ export const NetworkScreen: React.FC = () => {
                 </TouchableOpacity>
               </ScrollView>
             </View>
+
+            {/* Empty Filter Hint Banner */}
+            {filteredGalaxyNodes.length === 0 && (
+              <View style={[styles.emptyFilterBanner, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                <Ionicons name="filter-outline" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+                <Text style={[styles.emptyFilterText, { color: colors.textSecondary }]}>
+                  Keine Gestirne im Filter „{galaxyFilter === 'channels' ? 'Spaces' : galaxyFilter === 'favorites' ? 'Favoriten' : galaxyFilter === 'notes' ? 'Notizen' : 'Atem-Anker'}“
+                </Text>
+                <TouchableOpacity onPress={() => setGalaxyFilter('all')} style={{ marginLeft: 'auto' }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: colors.accent }}>Alle zeigen</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* 3D Hyperspace Canvas */}
             <HyperspaceCanvas
@@ -1408,5 +1428,18 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600'
+  },
+  emptyFilterBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 8
+  },
+  emptyFilterText: {
+    fontSize: 12,
+    fontWeight: '500'
   }
 });

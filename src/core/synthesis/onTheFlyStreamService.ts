@@ -172,7 +172,12 @@ export class OnTheFlyStreamService {
       for (const hit of hits) {
         if (!hit?.title) continue;
         try {
-          const sumRes = await fetch(`https://de.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(hit.title)}`);
+          const sumController = new AbortController();
+          const sumTimeout = setTimeout(() => sumController.abort(), 2500);
+          const sumRes = await fetch(`https://de.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(hit.title)}`, {
+            signal: sumController.signal
+          });
+          clearTimeout(sumTimeout);
           if (!sumRes.ok) continue;
           const summary = await sumRes.json();
           const extract = (summary?.extract || '').trim();

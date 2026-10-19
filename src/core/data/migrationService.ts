@@ -1,7 +1,7 @@
 import { AtemStorage, appStorage } from './storage';
 import { IFeedRepository, feedRepository } from './feedRepository';
 import { defaultPersistentArticleStore } from '../feed/PersistentArticleStore';
-import { libraryRepository, INTERACTIONS_STORAGE_KEY, SAVED_ARTICLES_STORAGE_KEY } from './libraryRepository';
+import { INTERACTIONS_STORAGE_KEY, SAVED_ARTICLES_STORAGE_KEY } from './libraryRepository';
 import { satisfiesCuratedBodyContract } from '../enrichment/batchEnricher';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
@@ -61,15 +61,22 @@ export async function runInPlaceDataMigration(
     const rawInteractions = await storage.getItem(INTERACTIONS_STORAGE_KEY);
     if (rawInteractions) {
       const parsedInteractions = JSON.parse(rawInteractions);
-      if (parsedInteractions && typeof parsedInteractions === 'object') {
+      if (parsedInteractions && typeof parsedInteractions === 'object' && !Array.isArray(parsedInteractions)) {
         for (const [id, interaction] of Object.entries(parsedInteractions)) {
+          if (!id || typeof id !== 'string') continue;
           const inter = interaction as any;
           if (
-            inter?.voteScore !== 0 ||
-            inter?.isFavorite ||
-            inter?.feedback ||
-            (inter?.notes && inter.notes.length > 0) ||
-            (typeof inter?.progress === 'number' && inter.progress > 0)
+            inter &&
+            typeof inter === 'object' &&
+            (
+              (typeof inter.voteScore === 'number' && inter.voteScore !== 0) ||
+              Boolean(inter.isFavorite) ||
+              Boolean(inter.feedback) ||
+              (Array.isArray(inter.userNotes) && inter.userNotes.length > 0) ||
+              (Array.isArray(inter.notes) && inter.notes.length > 0) ||
+              (typeof inter.progressPercent === 'number' && inter.progressPercent > 0) ||
+              (typeof inter.progress === 'number' && inter.progress > 0)
+            )
           ) {
             protectedUserItemIds.add(id);
           }
@@ -86,7 +93,9 @@ export async function runInPlaceDataMigration(
       const parsedSaved = JSON.parse(rawSaved);
       if (Array.isArray(parsedSaved)) {
         for (const item of parsedSaved) {
-          if (item?.id) protectedUserItemIds.add(item.id);
+          if (item && typeof item === 'object' && typeof item.id === 'string' && item.id.trim()) {
+            protectedUserItemIds.add(item.id.trim());
+          }
         }
       }
     }
@@ -99,8 +108,12 @@ export async function runInPlaceDataMigration(
 
   try {
     const persisted = await defaultPersistentArticleStore.loadArticles();
-    for (const item of persisted) {
-      if (item?.id) candidateMap.set(item.id, item);
+    if (Array.isArray(persisted)) {
+      for (const item of persisted) {
+        if (item && typeof item === 'object' && typeof item.id === 'string' && item.id.trim()) {
+          candidateMap.set(item.id, item);
+        }
+      }
     }
   } catch {
     // Non-fatal
@@ -114,7 +127,7 @@ export async function runInPlaceDataMigration(
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           for (const item of parsed) {
-            if (item?.id && !candidateMap.has(item.id)) {
+            if (item && typeof item === 'object' && typeof item.id === 'string' && item.id.trim() && !candidateMap.has(item.id)) {
               candidateMap.set(item.id, item);
             }
           }
@@ -126,10 +139,17 @@ export async function runInPlaceDataMigration(
   }
 
   if (repo.getAllItems) {
-    for (const item of repo.getAllItems()) {
-      if (item?.id && !candidateMap.has(item.id)) {
-        candidateMap.set(item.id, item);
+    try {
+      const allRepoItems = repo.getAllItems();
+      if (Array.isArray(allRepoItems)) {
+        for (const item of allRepoItems) {
+          if (item && typeof item === 'object' && typeof item.id === 'string' && item.id.trim() && !candidateMap.has(item.id)) {
+            candidateMap.set(item.id, item);
+          }
+        }
       }
+    } catch {
+      // Non-fatal
     }
   }
 

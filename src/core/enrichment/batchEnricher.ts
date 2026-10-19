@@ -114,9 +114,12 @@ export function getCardRenderableText(item: {
   space?: string;
   primaryTopic?: string;
   memeMeta?: any;
-}): string {
+} | null | undefined): string {
+  if (!item || typeof item !== 'object') return '';
   const displayFeedText =
-    item.feedText && item.feedText.trim().length > 0 ? item.feedText.trim() : (item.body || '').trim();
+    typeof item.feedText === 'string' && item.feedText.trim().length > 0
+      ? item.feedText.trim()
+      : (typeof item.body === 'string' ? item.body.trim() : '');
   if (!displayFeedText) return '';
   const lower = displayFeedText.toLowerCase();
   if (
@@ -128,7 +131,7 @@ export function getCardRenderableText(item: {
   }
   const isMemeCard = item.format === 'meme' || item.space === 'c/memes' || item.primaryTopic === 'memes_satire' || Boolean(item.memeMeta);
   if (isMemeCard) {
-    if (item.memeMeta?.punchline && displayFeedText.trim() === item.memeMeta.punchline.trim()) {
+    if (item.memeMeta?.punchline && displayFeedText.trim() === String(item.memeMeta.punchline).trim()) {
       return '';
     }
     if (lower.includes('originalbeitrag veröffentlicht bei')) {
@@ -143,7 +146,8 @@ export function getCardRenderableText(item: {
  * Guarantees that any item admitted into a curated selection has at least 120 characters
  * of non-boilerplate substantive prose and a valid key insight.
  */
-export function satisfiesCuratedBodyContract(item: FeedItem): boolean {
+export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined): boolean {
+  if (!item || typeof item !== 'object') return false;
   // Visual formats (memes, comics, art showcases) carry their value in image / punchline
   const isVisual =
     item.format === 'art_showcase' ||
