@@ -463,6 +463,12 @@ export function normalizeFeedEntry(
         }
       : undefined;
 
+  const isTimelessFormat = format === 'meme' || format === 'art_showcase' || source.primaryTopic === 'memes_satire' || source.primaryTopic === 'art_aesthetics';
+  const publicationDateReliable = entry.publicationDateReliable !== undefined
+    ? (isTimelessFormat ? false : entry.publicationDateReliable)
+    : (!isTimelessFormat);
+  const historicalYearOrEra = entry.historicalYearOrEra || (format === 'art_showcase' ? 'Klassisches Werk' : format === 'meme' ? 'Klassiker' : undefined);
+
   return {
     id: deterministicId,
     type,
@@ -486,6 +492,9 @@ export function normalizeFeedEntry(
       }
     ],
     publishedAt: entry.publishedAt,
+    publicationDateReliable,
+    firstSeenAt: new Date().toISOString(),
+    historicalYearOrEra,
     generatedAt: new Date().toISOString(),
     estimatedReadingMinutes,
     relevanceExplanation: buildRelevanceExplanation(source),

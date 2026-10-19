@@ -66,7 +66,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     refreshFeed,
     shuffleFeed,
     simulateDailyGeneration,
-    activeDateSeed
+    activeDateSeed,
+    spaces
   } = useApp();
 
   // Modals state
@@ -530,52 +531,108 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              onPress={() => {
-                if (onSelectSpace) onSelectSpace('all');
-                setShowSpaceModal(false);
-              }}
-              style={[
-                styles.spaceItemRow,
-                selectedFilter === 'all' && { backgroundColor: colors.accentSubtle }
-              ]}
-            >
-              <Text style={styles.spaceItemIcon}>🌟</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.spaceItemTitle, { color: colors.textPrimary }]}>Alle Spaces</Text>
-                <Text style={[styles.spaceItemSub, { color: colors.textMuted }]}>Vollständiger kuratierter Feed aller 6 Wissensbereiche</Text>
-              </View>
-              {selectedFilter === 'all' && (
-                <Ionicons name="checkmark-circle" size={18} color={colors.accent} />
-              )}
-            </TouchableOpacity>
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={true}>
+              <TouchableOpacity
+                onPress={() => {
+                  if (onSelectSpace) onSelectSpace('all');
+                  setShowSpaceModal(false);
+                }}
+                style={[
+                  styles.spaceItemRow,
+                  selectedFilter === 'all' && { backgroundColor: colors.accentSubtle }
+                ]}
+              >
+                <Text style={styles.spaceItemIcon}>🌟</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.spaceItemTitle, { color: colors.textPrimary }]}>Alle Spaces</Text>
+                  <Text style={[styles.spaceItemSub, { color: colors.textMuted }]}>Vollständiger kuratierter Feed aller Wissensbereiche</Text>
+                </View>
+                {selectedFilter === 'all' && (
+                  <Ionicons name="checkmark-circle" size={18} color={colors.accent} />
+                )}
+              </TouchableOpacity>
 
-            {(Object.keys(TOPIC_SPACE_MAP) as TopicTag[]).map(tag => {
-              const meta = TOPIC_SPACE_MAP[tag];
-              const isSelected = selectedFilter === tag;
-              return (
-                <TouchableOpacity
-                  key={tag}
-                  onPress={() => {
-                    if (onSelectSpace) onSelectSpace(tag);
-                    setShowSpaceModal(false);
-                  }}
-                  style={[
-                    styles.spaceItemRow,
-                    isSelected && { backgroundColor: colors.accentSubtle }
-                  ]}
-                >
-                  <Ionicons name={meta.icon as any} size={18} color={meta.color} style={{ marginRight: 10 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.spaceItemTitle, { color: colors.textPrimary }]}>{meta.space}</Text>
-                    <Text style={[styles.spaceItemSub, { color: colors.textMuted }]}>{meta.name}</Text>
-                  </View>
-                  {isSelected && (
-                    <Ionicons name="checkmark-circle" size={18} color={colors.accent} />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
+              {/* Meine Custom Channels */}
+              {spaces.filter(s => s.isCustom).length > 0 && (
+                <View style={{ marginTop: 8, marginBottom: 4 }}>
+                  <Text style={{ fontSize: 10, fontWeight: '800', color: colors.accent, letterSpacing: 0.8, paddingHorizontal: 12, paddingVertical: 4 }}>
+                    MEINE CHANNELS
+                  </Text>
+                  {spaces.filter(s => s.isCustom).map(s => {
+                    const isSelected = selectedFilter === s.handle || selectedFilter === s.primaryTopic;
+                    return (
+                      <TouchableOpacity
+                        key={s.id}
+                        onPress={() => {
+                          if (onSelectSpace) onSelectSpace(s.handle);
+                          setShowSpaceModal(false);
+                        }}
+                        style={[
+                          styles.spaceItemRow,
+                          isSelected && { backgroundColor: colors.accentSubtle }
+                        ]}
+                      >
+                        <Ionicons name={(s.icon as any) || 'layers-outline'} size={18} color={s.accentColor} style={{ marginRight: 10 }} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.spaceItemTitle, { color: colors.textPrimary }]}>{s.handle}</Text>
+                          <Text style={[styles.spaceItemSub, { color: colors.textMuted }]}>{s.title}</Text>
+                        </View>
+                        {isSelected && (
+                          <Ionicons name="checkmark-circle" size={18} color={colors.accent} />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* Standard Spaces */}
+              <View style={{ marginTop: 8 }}>
+                <Text style={{ fontSize: 10, fontWeight: '800', color: colors.textMuted, letterSpacing: 0.8, paddingHorizontal: 12, paddingVertical: 4 }}>
+                  STANDARD SPACES
+                </Text>
+                {spaces.filter(s => !s.isCustom).map(s => {
+                  const isSelected = selectedFilter === s.handle || selectedFilter === s.primaryTopic;
+                  return (
+                    <TouchableOpacity
+                      key={s.id}
+                      onPress={() => {
+                        if (onSelectSpace) onSelectSpace(s.handle);
+                        setShowSpaceModal(false);
+                      }}
+                      style={[
+                        styles.spaceItemRow,
+                        isSelected && { backgroundColor: colors.accentSubtle }
+                      ]}
+                    >
+                      <Ionicons name={(s.icon as any) || 'planet-outline'} size={18} color={s.accentColor} style={{ marginRight: 10 }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.spaceItemTitle, { color: colors.textPrimary }]}>{s.handle}</Text>
+                        <Text style={[styles.spaceItemSub, { color: colors.textMuted }]}>{s.title}</Text>
+                      </View>
+                      {isSelected && (
+                        <Ionicons name="checkmark-circle" size={18} color={colors.accent} />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* + Neuer Channel Button */}
+              <TouchableOpacity
+                onPress={() => {
+                  setShowSpaceModal(false);
+                  setShowUltraMasterModal(true);
+                }}
+                style={[styles.spaceItemRow, { marginTop: 8, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }]}
+              >
+                <Ionicons name="add-circle-outline" size={20} color={colors.accent} style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.spaceItemTitle, { color: colors.accent }]}>+ Neuer Channel anlegen</Text>
+                  <Text style={[styles.spaceItemSub, { color: colors.textMuted }]}>Eigenen Subchannel mit Thema & Quellen erstellen</Text>
+                </View>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>

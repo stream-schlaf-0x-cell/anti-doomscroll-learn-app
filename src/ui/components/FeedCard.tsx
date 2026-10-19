@@ -57,6 +57,39 @@ function formatRelativeTime(isoString?: string): string {
   }
 }
 
+export function formatHonestTimeLabel(item: ScoredFeedItem): string {
+  if (item.publicationDateReliable === false || item.format === 'art_showcase' || item.format === 'meme' || item.space === 'c/memes') {
+    if (item.historicalYearOrEra) return item.historicalYearOrEra;
+    if (item.artMeta?.year) return `Werk · ${item.artMeta.year}`;
+    if (item.format === 'art_showcase') return 'Meisterwerk';
+    if (item.format === 'meme' || item.space === 'c/memes') return 'Klassiker';
+    if (item.firstSeenAt) {
+      try {
+        return `In Atmen seit ${new Date(item.firstSeenAt).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })}`;
+      } catch {
+        return 'Zeitlos';
+      }
+    }
+    return 'Zeitlos';
+  }
+  return formatRelativeTime(item.publishedAt);
+}
+
+export function formatCuratedLabel(curatedAt?: string): string {
+  if (!curatedAt) return '✨ Frisch kuratiert';
+  try {
+    const diffMs = Date.now() - new Date(curatedAt).getTime();
+    if (diffMs < 0 || diffMs < 1000 * 60 * 2) return '✨ Frisch kuratiert · gerade eben';
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    if (diffMinutes < 60) return `✨ Kuratiert vor ${diffMinutes} Min.`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `✨ Kuratiert vor ${diffHours} Std.`;
+    return `✨ Kuratiert am ${new Date(curatedAt).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })}`;
+  } catch {
+    return '✨ Frisch kuratiert';
+  }
+}
+
 function isAuthenticCardImage(item: ScoredFeedItem): boolean {
   if (!item.imageUrl || item.imageUrl.trim().length === 0) return false;
   if (item.hasAuthenticImage === false) return false;
@@ -108,9 +141,15 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const [selectedTag, setSelectedTag] = useState<'einwand' | 'unterricht' | 'these' | 'notiz'>('einwand');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [usedFallbackUrl, setUsedFallbackUrl] = useState(false);
   const [showLinkPreview, setShowLinkPreview] = useState(false);
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const [naturalAspectRatio, setNaturalAspectRatio] = useState<number | null>(null);
+
+  useEffect(() => {
+    setImageError(false);
+    setUsedFallbackUrl(false);
+  }, [item.imageUrl, item.id]);
 
   const originalUrl = item.canonicalUrl || item.sourceReferences[0]?.originalUrl;
 
@@ -150,15 +189,15 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     item.sourceReferences[0]?.publisher ||
     item.sourceReferences[0]?.author ||
     'Fachquelle';
-  const timeAgo = formatRelativeTime(item.publishedAt);
+  const timeAgo = formatHonestTimeLabel(item);
   const provenanceLabel = formatVerifiedProvenanceLabel(item);
 
   const displayFeedText =
     item.feedText && item.feedText.trim().length > 0 ? item.feedText.trim() : (item.body || '').trim();
 
   // Determine whether this card is a 20-second quick card (readable in full right on the card)
-  const isArtCard = item.format === 'art_showcase' || Boolean(item.artMeta);
-  const isMemeCard = item.format === 'meme' || Boolean(item.memeMeta);
+  const isArtCard = item.format === 'art_showcase' || item.space === 'c/kunst_galerie' || Boolean(item.artMeta);
+  const isMemeCard = item.format === 'meme' || item.space === 'c/memes' || item.primaryTopic === 'memes_satire' || Boolean(item.memeMeta);
   const isQuick20sCard =
     !isArtCard &&
     (isMemeCard ||
@@ -174,12 +213,23 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     });
   }, [item.imageUrl, item.format, item.title, isMemeCard]);
 
+  const rawArtUri = item.artMeta?.highResImageUrl || item.imageUrl || '';
+  const rawItemUri = item.imageUrl || '';
   const showAuthenticImage = !isArtCard && !imageError && isAuthenticCardImage(item) && editorialAssessment.isValid;
   const activeVisualUri = isArtCard
-    ? optimizeImageUrl(item.artMeta?.highResImageUrl || item.imageUrl || '', 1200)
+    ? (usedFallbackUrl ? rawArtUri : (optimizeImageUrl(rawArtUri, 1200) || rawArtUri))
     : showAuthenticImage
-    ? optimizeImageUrl(item.imageUrl!) || item.imageUrl!
+    ? (usedFallbackUrl ? rawItemUri : (optimizeImageUrl(rawItemUri) || rawItemUri))
     : '';
+
+  const handleImageError = () => {
+    const rawUri = isArtCard ? rawArtUri : rawItemUri;
+    if (!usedFallbackUrl && rawUri && activeVisualUri !== rawUri) {
+      setUsedFallbackUrl(true);
+    } else {
+      setImageError(true);
+    }
+  };
 
   // Dynamically measure real image dimensions so comics, portraits & diagrams are NEVER cropped
   useEffect(() => {
@@ -348,7 +398,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
                 ]}
                 numberOfLines={1}
               >
-                ✨ Frisch kuratiert · vor wenigen Sekunden
+                {formatCuratedLabel(item.curatedAt)}
               </Text>
             </View>
           ) : Boolean(item.aiAssisted) && (
@@ -462,7 +512,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
               source={{ uri: activeVisualUri }}
               style={styles.artImage}
               resizeMode="contain"
-              onError={() => setImageError(true)}
+              onError={handleImageError}
             />
             <View style={styles.zoomBadgeOverlay}>
               <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
@@ -504,14 +554,14 @@ export const FeedCard: React.FC<FeedCardProps> = ({
               isMemeCard && styles.comicImage,
               { objectPosition: editorialAssessment.objectPosition || 'top center' } as any
             ]}
-            resizeMode="contain"
+            resizeMode={isMemeCard || isArtCard || editorialAssessment.category === 'comic' || editorialAssessment.category === 'square_photo' ? 'contain' : 'cover'}
             onLoad={(e) => {
               const { width, height } = e.nativeEvent.source;
               if (width > 0 && height > 0) {
                 setNaturalAspectRatio(width / height);
               }
             }}
-            onError={() => setImageError(true)}
+            onError={handleImageError}
           />
           {isMemeCard && (
             <View style={styles.zoomBadgeOverlay}>

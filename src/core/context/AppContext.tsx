@@ -7,8 +7,10 @@ import {
   ReadingPreferenceDuration,
   FeedItem,
   DayEditionType,
-  EditionPreferences
+  EditionPreferences,
+  TOPIC_SPACE_MAP
 } from '../domain/types';
+import { Subchannel, defaultSpaceRepository, normalizeSpaceHandle } from '../spaces/spaceRepository';
 import { ScoredFeedItem, determineCurrentEditionType } from '../domain/ranking';
 import { feedRepository } from '../data/feedRepository';
 import { libraryRepository } from '../data/libraryRepository';
@@ -127,6 +129,11 @@ interface AppContextValue {
   setRemoteSnapshotUrl: (url: string) => Promise<void>;
   refreshLiveFeed: () => Promise<{ success: boolean; itemCount: number; dateText: string }>;
   snapshotSyncInfo: string | null;
+  spaces: Subchannel[];
+  createSpace: (data: Parameters<typeof defaultSpaceRepository.createSubchannel>[0]) => Promise<Subchannel>;
+  deleteSpace: (id: string) => Promise<boolean>;
+  togglePinSpace: (id: string) => Promise<Subchannel[]>;
+  selectSpace: (handleOrTag: string) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -161,6 +168,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [shuffleSeed, setShuffleSeed] = useState<number>(0);
   const [remoteSnapshotUrl, setRemoteSnapshotUrlState] = useState<string>('');
   const [snapshotSyncInfo, setSnapshotSyncInfo] = useState<string | null>(null);
+  const [spaces, setSpaces] = useState<Subchannel[]>([]);
+
+  useEffect(() => {
+    void defaultSpaceRepository.getAllSpaces().then(setSpaces);
+    return defaultSpaceRepository.subscribe(setSpaces);
+  }, []);
+
+  const selectSpace = useCallback((handleOrTag: string) => {
+    const normalized = handleOrTag === 'all'
+      ? 'all'
+      : (handleOrTag.startsWith('c/')
+        ? handleOrTag
+        : (handleOrTag in TOPIC_SPACE_MAP ? handleOrTag : normalizeSpaceHandle(handleOrTag)));
+    setSelectedFilter(normalized);
+    setActiveTab('feed');
+    if (activeFeedOption === 'history') {
+      setActiveFeedOption('infinite');
+    }
+  }, [activeFeedOption]);
+
+  const createSpace = useCallback(async (data: Parameters<typeof defaultSpaceRepository.createSubchannel>[0]) => {
+    const newChan = await defaultSpaceRepository.createSubchannel(data);
+    selectSpace(newChan.handle);
+    return newChan;
+  }, [selectSpace]);
+
+  const deleteSpace = useCallback(async (id: string) => {
+    const ok = await defaultSpaceRepository.deleteSubchannel(id);
+    return ok;
+  }, []);
+
+  const togglePinSpace = useCallback(async (id: string) => {
+    const updated = await defaultSpaceRepository.togglePin(id);
+    return updated;
+  }, []);
 
   const selectedEditionTypeRef = useRef<DayEditionType>(selectedEditionType);
   selectedEditionTypeRef.current = selectedEditionType;
@@ -519,6 +561,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Ignore URL query parsing errors on web
         }
       }
+      void defaultSpaceRepository.notify();
     } catch (err: any) {
       setStartupState({
         status: 'error',
@@ -1209,7 +1252,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         remoteSnapshotUrl,
         setRemoteSnapshotUrl,
         refreshLiveFeed,
-        snapshotSyncInfo
+        snapshotSyncInfo,
+        spaces,
+        createSpace,
+        deleteSpace,
+        togglePinSpace,
+        selectSpace
       }}
     >
       {children}

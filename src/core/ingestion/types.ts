@@ -40,6 +40,8 @@ export interface RawFeedEntry {
   fullContent?: string;
   author?: string;
   publishedAt: string;
+  publicationDateReliable?: boolean;
+  historicalYearOrEra?: string;
   sourceId: string;
   imageUrl?: string;
   imageAltText?: string;

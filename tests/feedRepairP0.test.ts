@@ -47,7 +47,7 @@ describe('P0 Feed Repair & Production Hardening Verification Suite', () => {
     assert.equal(completed.status, 'fallback');
     assert.equal(completed.usedAI, false);
     assert.equal(completed.usedFallback, true);
-    assert.ok(completed.durationMs >= 15, `Duration must measure elapsed time (>0ms), got ${completed.durationMs}ms`);
+    assert.ok((completed.durationMs ?? 0) >= 15, `Duration must measure elapsed time (>0ms), got ${completed.durationMs}ms`);
     assert.equal(completed.errorMessage, 'Kein API-Schlüssel konfiguriert.');
   });
 
@@ -99,7 +99,7 @@ describe('P0 Feed Repair & Production Hardening Verification Suite', () => {
       publishedAt: '2026-10-15T12:00:00Z',
       curationScore: 10,
       evidenceTier: 'permitted_full_text',
-      externalCommunityScore: { points: 420, commentsCount: 95 }
+      externalCommunityScore: { platform: 'reddit', points: 420, commentsCount: 95 }
     });
     const itemGem = createMockItem('timeless-gem', {
       publishedAt: '2025-01-01T00:00:00Z',

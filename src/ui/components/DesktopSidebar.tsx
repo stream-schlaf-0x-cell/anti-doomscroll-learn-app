@@ -9,12 +9,13 @@ import { EnrichmentLedgerSummary } from '../../core/enrichment/types';
 import { defaultSourceRepository } from '../../core/data/sourceRepository';
 import { TOPIC_SPACE_MAP, TopicTag } from '../../core/domain/types';
 import { NewsHubModal } from './NewsHubModal';
+import { UltraMasterModal } from './UltraMasterModal';
 import { AtmenSymbol } from './AtmenSymbol';
 
 interface DesktopSidebarProps {
   articleCount?: number;
   selectedTopicFilter?: TopicTag | 'all' | string;
-  onSelectTopicFilter?: (topic: TopicTag | 'all') => void;
+  onSelectTopicFilter?: (topic: TopicTag | 'all' | string) => void;
 }
 
 export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
@@ -22,7 +23,8 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
   selectedTopicFilter = 'all',
   onSelectTopicFilter
 }) => {
-  const { colors, savedArticles, interactions, refreshFeed, shuffleFeed } = useApp();
+  const { colors, savedArticles, interactions, refreshFeed, shuffleFeed, spaces } = useApp();
+  const [showUltraMasterModal, setShowUltraMasterModal] = useState<boolean>(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [budgetSummary, setBudgetSummary] = useState<EnrichmentLedgerSummary | null>(null);
@@ -161,6 +163,64 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
             </Text>
           </TouchableOpacity>
 
+          {/* Meine Custom Channels */}
+          {spaces.filter(s => s.isCustom).length > 0 && (
+            <View style={{ marginTop: 6, marginBottom: 2 }}>
+              <Text style={{ fontSize: 10, fontWeight: '800', color: colors.accent, letterSpacing: 0.8, paddingVertical: 4 }}>
+                MEINE CHANNELS
+              </Text>
+              {spaces.filter(s => s.isCustom).map(s => {
+                const isSelected = selectedTopicFilter === s.handle;
+                return (
+                  <TouchableOpacity
+                    key={s.id}
+                    onPress={() => onSelectTopicFilter && onSelectTopicFilter(isSelected ? 'all' : s.handle)}
+                    style={[
+                      styles.spaceRowItem,
+                      {
+                        backgroundColor: isSelected ? colors.accentSubtle : colors.surfaceSecondary,
+                        borderColor: isSelected ? s.accentColor : colors.borderSubtle,
+                        borderLeftColor: s.accentColor,
+                        borderLeftWidth: 3
+                      }
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name={(s.icon as any) || 'layers-outline'} size={14} color={s.accentColor} style={{ marginRight: 8 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.spaceRowTitle, { color: isSelected ? s.accentColor : colors.textPrimary }]}>
+                        {s.handle}
+                      </Text>
+                      <Text style={[styles.spaceRowSub, { color: colors.textMuted }]} numberOfLines={1}>
+                        {s.title}
+                      </Text>
+                    </View>
+                    {isSelected && <Ionicons name="checkmark-circle" size={15} color={s.accentColor} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
+          <TouchableOpacity
+            onPress={() => setShowUltraMasterModal(true)}
+            style={[
+              styles.spaceRowItem,
+              {
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: colors.borderSubtle,
+                borderStyle: 'dashed',
+                borderWidth: 1
+              }
+            ]}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="add-circle-outline" size={15} color={colors.accent} style={{ marginRight: 8 }} />
+            <Text style={[styles.spaceRowTitle, { color: colors.accent, fontWeight: '700' }]}>
+              + Neuer Channel
+            </Text>
+          </TouchableOpacity>
+
           {(Object.keys(TOPIC_SPACE_MAP) as TopicTag[]).map(topic => {
             const meta = TOPIC_SPACE_MAP[topic];
             const isSelected = selectedTopicFilter === topic;
@@ -258,6 +318,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
       </View>
 
       <NewsHubModal visible={showNewsHubModal} onClose={() => setShowNewsHubModal(false)} />
+      <UltraMasterModal visible={showUltraMasterModal} onClose={() => setShowUltraMasterModal(false)} />
     </View>
   );
 };

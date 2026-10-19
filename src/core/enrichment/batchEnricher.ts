@@ -118,12 +118,28 @@ export function evaluateSignalVsNoiseDeterministically(
     publisher?: string;
     format?: string;
     sourceTrustLevel?: string;
+    space?: string;
+    primaryTopic?: string;
   }
 ): GatekeeperEvaluation {
   const title = (item.title || '').trim();
   const snippet = (item.feedText || item.body || item.subtitle || '').trim();
   const fullContent = [title, item.subtitle, item.feedText, item.body].filter(Boolean).join(' ');
   const combined = fullContent.toLowerCase();
+
+  // Memes, comics and visual satire are visual works whose punchline lives in title/image
+  const isVisualMemeOrComic = item.format === 'meme' ||
+    item.format === 'comic' ||
+    item.space === 'c/memes' ||
+    item.primaryTopic === 'memes_satire';
+
+  if (isVisualMemeOrComic) {
+    return {
+      score: 8,
+      passed: true,
+      reason: 'Visuelle Satire / Meme-Klassiker / Comic'
+    };
+  }
 
   // 1. One-line stubs or extreme short text (< 30 characters) without art format
   if (snippet.length < 30 && item.format !== 'art_showcase') {
@@ -326,7 +342,9 @@ export class BatchEditionEnricher {
       body: item.body,
       feedText: item.feedText,
       publisher: item.sourceReferences?.[0]?.publisher,
-      format: item.format
+      format: item.format,
+      space: item.space,
+      primaryTopic: item.primaryTopic
     });
   }
 

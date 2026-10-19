@@ -1,4 +1,5 @@
 import { FeedItem } from '../domain/types';
+import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 
 /**
  * Real Knowledge Vault
@@ -1747,14 +1748,17 @@ Jeder Klick, jedes Scrollen ist eine Entscheidung über die eigene Aufmerksamkei
     sourceDomain: 'stanford.edu',
     sourceBroadcasterName: 'Stanford Encyclopedia',
     comments: []
-  }
+  },
+  ...MEME_VAULT_ENTRIES
 ];
 
 export const REAL_KNOWLEDGE_VAULT: FeedItem[] = RAW_KNOWLEDGE_VAULT.map(item => {
   const isGenericUnsplash = Boolean(
     item.imageUrl &&
     item.imageUrl.includes('images.unsplash.com') &&
-    item.format !== 'art_showcase'
+    item.format !== 'art_showcase' &&
+    item.format !== 'meme' &&
+    item.format !== 'comic'
   );
   const cleanImageUrl = isGenericUnsplash ? undefined : item.imageUrl;
   const isArtShowcase = item.format === 'art_showcase';

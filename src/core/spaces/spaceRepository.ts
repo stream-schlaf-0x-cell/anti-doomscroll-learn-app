@@ -201,11 +201,37 @@ export const DEFAULT_SUBCHANNELS: Subchannel[] = [
   }
 ];
 
+export function normalizeSpaceHandle(raw: string): string {
+  const trimmed = (raw || '').trim().toLowerCase();
+  const withoutPrefix = trimmed.replace(/^c\//, '');
+  const clean = withoutPrefix.replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+  return `c/${clean || 'channel'}`;
+}
+
 export class SpaceRepository {
   private static STORAGE_KEY = '@atem:custom_subchannels';
   private static PINNED_IDS_KEY = '@atem:pinned_space_ids';
+  private listeners = new Set<(spaces: Subchannel[]) => void>();
 
   constructor(private storage: AtemStorage = appStorage) {}
+
+  public subscribe(listener: (spaces: Subchannel[]) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  public async notify(): Promise<void> {
+    const spaces = await this.getAllSpaces();
+    for (const listener of this.listeners) {
+      try {
+        listener(spaces);
+      } catch {
+        // Safe isolation
+      }
+    }
+  }
 
   public async getAllSpaces(): Promise<Subchannel[]> {
     try {
@@ -251,10 +277,7 @@ export class SpaceRepository {
     const spaces = await this.getAllSpaces();
 
     // Sanitize handle to start with "c/" and use alphanumeric/underscores
-    const rawHandle = data.handle || data.title.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-    const cleanHandle = rawHandle.startsWith('c/')
-      ? rawHandle.toLowerCase()
-      : `c/${rawHandle.toLowerCase().replace(/^c\//, '')}`;
+    const cleanHandle = normalizeSpaceHandle(data.handle || data.title);
 
     const newChannel: Subchannel = {
       id: `custom-space-${Date.now()}`,
@@ -280,6 +303,13 @@ export class SpaceRepository {
     const pinnedIds = [...spaces.filter(s => s.pinned).map(s => s.id), newChannel.id];
     await this.storage.setItem(SpaceRepository.PINNED_IDS_KEY, JSON.stringify(pinnedIds));
 
+    // Verify written data can be read back safely
+    const verified = await this.storage.getItem(SpaceRepository.STORAGE_KEY);
+    if (!verified) {
+      throw new Error(`Persistenzfehler: Channel ${cleanHandle} konnte nicht im lokalen Speicher verifiziert werden.`);
+    }
+
+    await this.notify();
     return newChannel;
   }
 
@@ -290,6 +320,7 @@ export class SpaceRepository {
       const custom: Subchannel[] = JSON.parse(raw);
       const filtered = custom.filter(s => s.id !== id);
       await this.storage.setItem(SpaceRepository.STORAGE_KEY, JSON.stringify(filtered));
+      await this.notify();
       return true;
     } catch {
       return false;
@@ -305,6 +336,7 @@ export class SpaceRepository {
       this.storage.setItem(SpaceRepository.STORAGE_KEY, JSON.stringify(customOnly)),
       this.storage.setItem(SpaceRepository.PINNED_IDS_KEY, JSON.stringify(pinnedIds))
     ]);
+    await this.notify();
     return updated;
   }
 }

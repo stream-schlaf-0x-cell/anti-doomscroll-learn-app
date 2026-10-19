@@ -113,12 +113,22 @@ function getAttribute(xml: string, tagName: string, attrName: string): string {
  * Parses a date string into standard ISO 8601 or falls back to current time.
  * Clamps future dates (e.g. weekend print issue dates) to Date.now().
  */
+export function parseDateWithReliability(dateStr?: string): { iso: string; reliable: boolean } {
+  if (!dateStr || !dateStr.trim()) {
+    return { iso: new Date().toISOString(), reliable: false };
+  }
+  const parsed = new Date(dateStr.trim());
+  if (isNaN(parsed.getTime())) {
+    return { iso: new Date().toISOString(), reliable: false };
+  }
+  if (parsed.getTime() > Date.now()) {
+    return { iso: new Date().toISOString(), reliable: true };
+  }
+  return { iso: parsed.toISOString(), reliable: true };
+}
+
 function parseDateToIso(dateStr: string): string {
-  if (!dateStr) return new Date().toISOString();
-  const parsed = new Date(dateStr);
-  if (isNaN(parsed.getTime())) return new Date().toISOString();
-  if (parsed.getTime() > Date.now()) return new Date().toISOString();
-  return parsed.toISOString();
+  return parseDateWithReliability(dateStr).iso;
 }
 
 export function sanitizeImageUrl(rawUrl?: string): string | undefined {
@@ -308,6 +318,8 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
       const imageUrl = extractImageUrl(block, link);
       const imageAltText = extractImageAltText(block, title);
 
+      const dateInfo = parseDateWithReliability(published);
+
       if (title && link) {
         entries.push({
           id: cleanId || link,
@@ -316,7 +328,8 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
           summary,
           fullContent,
           author: author ? stripHtml(author) : undefined,
-          publishedAt: parseDateToIso(published),
+          publishedAt: dateInfo.iso,
+          publicationDateReliable: dateInfo.reliable,
           sourceId,
           imageUrl,
           imageAltText,
@@ -350,6 +363,7 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
         getTagContent(block, 'pubDate') ||
         getTagContent(block, 'dc:date');
 
+      const dateInfo = parseDateWithReliability(pubDate);
       const imageUrl = extractImageUrl(block, link);
       const imageAltText = extractImageAltText(block, title);
 
@@ -361,7 +375,8 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
           summary,
           fullContent,
           author: author ? stripHtml(author) : undefined,
-          publishedAt: parseDateToIso(pubDate),
+          publishedAt: dateInfo.iso,
+          publicationDateReliable: dateInfo.reliable,
           sourceId,
           imageUrl,
           imageAltText,

@@ -36,18 +36,25 @@ import {
   defaultAtmenStudioService
 } from '../../core/studio/atmenStudio';
 
+export type MasterTab = 'studio' | 'channels' | 'trends' | 'daily' | 'learning' | 'archive' | 'mobile';
+
 interface UltraMasterModalProps {
   visible: boolean;
   onClose: () => void;
+  initialTab?: MasterTab;
 }
 
-type MasterTab = 'studio' | 'channels' | 'trends' | 'daily' | 'learning' | 'archive' | 'mobile';
+export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onClose, initialTab }) => {
+  const { colors, profile, refreshFeed, spaces, createSpace, deleteSpace, togglePinSpace } = useApp();
 
-export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onClose }) => {
-  const { colors, profile, refreshFeed } = useApp();
-
-  const [activeTab, setActiveTab] = useState<MasterTab>('studio');
+  const [activeTab, setActiveTab] = useState<MasterTab>(initialTab || 'studio');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (visible && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [visible, initialTab]);
 
   // Atmen Studio 3 Lenses state
   const [studioLens, setStudioLens] = useState<StudioLens>('contemplation');
@@ -57,7 +64,6 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
   const [studioOutput, setStudioOutput] = useState<StudioOutput | null>(null);
 
   // Subchannels state
-  const [spaces, setSpaces] = useState<Subchannel[]>([]);
   const [newChannelTitle, setNewChannelTitle] = useState<string>('');
   const [newChannelHandle, setNewChannelHandle] = useState<string>('');
   const [newChannelDesc, setNewChannelDesc] = useState<string>('');
@@ -98,14 +104,12 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
 
   const loadData = async () => {
     try {
-      const [allSpaces, status, learn, editions, baseCanon] = await Promise.all([
-        defaultSpaceRepository.getAllSpaces(),
+      const [status, learn, editions, baseCanon] = await Promise.all([
         DailyGenerationService.getStatus(),
         RecursiveLearningEngine.getEngineState(),
         ArchiveService.getAllArchivedEditions(),
         FoundationalCanonService.getCanon()
       ]);
-      setSpaces(allSpaces);
       setDailyStatus(status);
       setLearningState(learn);
       setArchivedEditions(editions);
@@ -155,7 +159,7 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
     }
     setIsCreatingChannel(true);
     try {
-      const created = await defaultSpaceRepository.createSubchannel({
+      const created = await createSpace({
         title: newChannelTitle.trim(),
         handle: newChannelHandle.trim() || undefined,
         description: newChannelDesc.trim(),
@@ -163,33 +167,31 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
         antithesisPrompt: newChannelPrompt.trim() || undefined,
         primaryTopic: newChannelTopic
       });
-      setSpaces(prev => [...prev, created]);
       setNewChannelTitle('');
       setNewChannelHandle('');
       setNewChannelDesc('');
       setNewChannelFlair('');
       setNewChannelPrompt('');
-      showToast(`✓ Subchannel „${created.handle}“ erfolgreich erstellt!`);
+      showToast(`✓ Subchannel „${created.handle}“ erfolgreich erstellt und geöffnet!`);
       await refreshFeed();
-    } catch {
-      showToast('Fehler beim Erstellen des Subchannels');
+      onClose();
+    } catch (err: any) {
+      showToast(err?.message || 'Fehler beim Erstellen des Subchannels');
     } finally {
       setIsCreatingChannel(false);
     }
   };
 
   const handleDeleteChannel = async (id: string, handle: string) => {
-    const ok = await defaultSpaceRepository.deleteSubchannel(id);
+    const ok = await deleteSpace(id);
     if (ok) {
-      setSpaces(prev => prev.filter(s => s.id !== id));
       showToast(`Subchannel ${handle} entfernt`);
       await refreshFeed();
     }
   };
 
   const handleTogglePin = async (id: string) => {
-    const updated = await defaultSpaceRepository.togglePin(id);
-    setSpaces(updated);
+    await togglePinSpace(id);
   };
 
   // Daily Generation

@@ -81,6 +81,7 @@ describe('Feed Batching & Discovery Partitioning Invariants', () => {
       perspective_disagreement: 'Gegenposition',
       long_invitation: 'Vertiefender Essay',
       meme: 'Satire & Meme',
+      comic: 'Comic & Cartoon',
       youtube_gem: 'Video-Essay',
       book_masterpiece: 'Buch-Empfehlung',
       opportunity_radar: 'Chancen-Radar',

@@ -154,6 +154,7 @@ export const FeedItemFormatSchema = z.enum([
   'perspective_disagreement', // Kontroverse, dialektischer Einwand
   'long_invitation',          // Einladung in vertiefende Langform
   'meme',                     // High-IQ Meme & Satire
+  'comic',                    // Cartoons, xkcd & Visual Comics
   'youtube_gem',              // Kuratierter YouTube Video-Essay
   'book_masterpiece',         // Buch-Empfehlung & Kern-These
   'opportunity_radar',        // Chancen-, Gesundheits- & Hebel-Radar
@@ -170,6 +171,7 @@ export const FORMAT_BADGE_MAP: Record<FeedItemFormat, { label: string; icon: str
   perspective_disagreement: { label: 'Gegenposition', icon: 'compass-outline' },
   long_invitation: { label: 'Vertiefender Essay', icon: 'book-outline' },
   meme: { label: 'Satire & Meme', icon: 'happy-outline' },
+  comic: { label: 'Comic & Cartoon', icon: 'sparkles-outline' },
   youtube_gem: { label: 'Video-Essay', icon: 'play-circle-outline' },
   book_masterpiece: { label: 'Buch-Empfehlung', icon: 'library-outline' },
   opportunity_radar: { label: 'Chancen-Radar', icon: 'trending-up-outline' },
@@ -452,7 +454,10 @@ export const FeedItemSchema = z.object({
   curationScore: z.number().min(0).max(10).optional(),
   curationReason: z.string().optional(),
   isNewlyCurated: z.boolean().optional(),
-  curatedAt: z.string().optional()
+  curatedAt: z.string().optional(),
+  publicationDateReliable: z.boolean().optional(),
+  firstSeenAt: z.string().optional(),
+  historicalYearOrEra: z.string().optional()
 });
 export const ArtMetaSchema = z.object({
   artist: z.string(),

@@ -9,6 +9,7 @@ import {
 import { appStorage, AtemStorage } from './storage';
 import { USER_PROFILE_STORAGE_KEY } from './userProfileRepository';
 import { INTERACTIONS_STORAGE_KEY, SAVED_ARTICLES_STORAGE_KEY } from './libraryRepository';
+import { defaultSpaceRepository } from '../spaces/spaceRepository';
 
 export const AUTO_BACKUP_STORAGE_KEY = '@atem:auto_backup:v1';
 
@@ -24,6 +25,7 @@ export interface AtemBackupSnapshot {
   rules?: any[];
   customSpacesRaw?: string | null;
   pinnedSpacesRaw?: string | null;
+  spaces?: any[];
   raindropToken?: string | null;
 }
 
@@ -127,6 +129,14 @@ export class BackupService {
         } catch {}
       }
 
+      let spacesList: any[] = [];
+      if (customSpacesRaw) {
+        try {
+          const parsed = JSON.parse(customSpacesRaw);
+          if (Array.isArray(parsed)) spacesList = parsed;
+        } catch {}
+      }
+
       const snapshot: AtemBackupSnapshot = {
         version: 2,
         exportedAt: new Date().toISOString(),
@@ -135,6 +145,7 @@ export class BackupService {
         savedArticles,
         customSpacesRaw,
         pinnedSpacesRaw,
+        spaces: spacesList,
         thoughts,
         connections,
         investigations,
@@ -278,10 +289,21 @@ export class BackupService {
 
       if (typeof parsed.customSpacesRaw === 'string') {
         await storage.setItem('@atem:custom_subchannels', parsed.customSpacesRaw);
+      } else if (Array.isArray(parsed.spaces)) {
+        await storage.setItem('@atem:custom_subchannels', JSON.stringify(parsed.spaces));
+      } else if (Array.isArray(parsed.customSpaces)) {
+        await storage.setItem('@atem:custom_subchannels', JSON.stringify(parsed.customSpaces));
       }
+
       if (typeof parsed.pinnedSpacesRaw === 'string') {
         await storage.setItem('@atem:pinned_space_ids', parsed.pinnedSpacesRaw);
+      } else if (Array.isArray(parsed.pinnedSpaceIds)) {
+        await storage.setItem('@atem:pinned_space_ids', JSON.stringify(parsed.pinnedSpaceIds));
       }
+
+      try {
+        await defaultSpaceRepository.notify();
+      } catch {}
 
       let restoredThoughtsCount = 0;
       if (Array.isArray(parsed.thoughts)) {

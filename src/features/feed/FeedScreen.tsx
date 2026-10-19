@@ -24,7 +24,7 @@ import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
 import { ScoredFeedItem, scoreFeedItem, sortFeedForDisplay, FeedSortMode } from '../../core/domain/ranking';
 import { Subchannel, defaultSpaceRepository } from '../../core/spaces/spaceRepository';
-import { UltraMasterModal } from '../../ui/components/UltraMasterModal';
+import { UltraMasterModal, MasterTab } from '../../ui/components/UltraMasterModal';
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
 import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerationProgressModal';
 import { AtmenBreathingPortal } from '../breathing/AtmenBreathingPortal';
@@ -41,7 +41,7 @@ import { feedRepository } from '../../core/data/feedRepository';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
 import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
 import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
-import { holdFeedPresentation } from '../../core/feed/feedPresentation';
+import { holdFeedPresentation, prependRevealedItems } from '../../core/feed/feedPresentation';
 import { NewsEvolutionModal } from '../../ui/components/NewsEvolutionModal';
 import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
 
@@ -85,7 +85,9 @@ export const FeedScreen: React.FC = () => {
     toggleSaveItem,
     simulateDailyGeneration,
     shuffleFeed,
-    updateTopicWeight
+    updateTopicWeight,
+    spaces,
+    selectSpace
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -103,26 +105,25 @@ export const FeedScreen: React.FC = () => {
     setActiveCardIndex(0);
     scrollViewRef.current?.scrollTo({ y: 0, animated: true });
   }, []);
-  const [pendingChangeIds, setPendingChangeIds] = useState<string[]>([]);
+
+  const [pendingNewItemIds, setPendingNewItemIds] = useState<string[]>([]);
+  const [revealedNewItems, setRevealedNewItems] = useState<FeedItem[]>([]);
+  const [curatedSelection, setCuratedSelection] = useState<{
+    items: FeedItem[];
+    timestamp: string;
+    returnFilter: string;
+  } | null>(null);
   const [lastOperationResult, setLastOperationResult] = useState<FeedOperationResult | null>(null);
-  React.useEffect(() => defaultFeedOperationManager.subscribe(result => {
-    setLastOperationResult(result);
-    setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
-    if (scrollYRef.current > 180) {
-      setPendingChangeIds(previous => [...new Set([...previous, ...result.insertedIds, ...result.updatedIds])]);
-    }
-  }), []);
-  React.useEffect(() => {
-    if (!isScrolledDown) setPendingChangeIds([]);
-  }, [isScrolledDown]);
+
   const presentationScope = `${activeFeedOption}:${selectedFilter}:${searchQuery}:${sortMode}:${selectedEditionType}`;
   const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
   const [visibleInfiniteCount, setVisibleInfiniteCount] = useState<number>(24);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [simulatingDay, setSimulatingDay] = useState<boolean>(false);
   const [simToast, setSimToast] = useState<string | null>(null);
-  const [subchannels, setSubchannels] = useState<Subchannel[]>([]);
+  const subchannels = spaces;
   const [showMasterModal, setShowMasterModal] = useState<boolean>(false);
+  const [masterModalTab, setMasterModalTab] = useState<MasterTab>('channels');
   const [isGeneratingPocket, setIsGeneratingPocket] = useState<boolean>(false);
   const [showProgressModal, setShowProgressModal] = useState<boolean>(false);
   const [progressSpaceName, setProgressSpaceName] = useState<string>('');
@@ -176,6 +177,8 @@ export const FeedScreen: React.FC = () => {
     const sub = subchannels.find(
       s => s.handle.toLowerCase() === selectedFilter.toLowerCase() || s.primaryTopic === selectedFilter
     );
+    // Custom channels must never fall back to generic topic inference to prevent flooding with unrelated science articles
+    if (sub?.isCustom) return undefined;
     if (sub?.primaryTopic) return sub.primaryTopic;
     const entry = (Object.entries(TOPIC_SPACE_MAP) as [TopicTag, (typeof TOPIC_SPACE_MAP)[TopicTag]][]).find(
       ([_, meta]) => meta.space.toLowerCase() === selectedFilter.toLowerCase()
@@ -223,7 +226,21 @@ export const FeedScreen: React.FC = () => {
   const matchesSelectedSpace = useCallback((item: FeedItem): boolean => {
     if (selectedFilter === 'all') return true;
     const filterLower = selectedFilter.toLowerCase();
+    const currentSpace = subchannels.find(s => s.handle.toLowerCase() === filterLower);
+
+    // Exact space match
     if (item.space && item.space.toLowerCase() === filterLower) return true;
+
+    // For custom channels (e.g. c/visible_learning): only match if assigned to this space or explicit title/keyword match
+    if (currentSpace?.isCustom) {
+      const raw = filterLower.replace(/^c\//, '');
+      if (raw.length > 2) {
+        const hay = `${item.title} ${item.subtitle || ''} ${item.feedText || ''} ${item.topics.join(' ')}`.toLowerCase();
+        if (hay.includes(raw)) return true;
+      }
+      return false;
+    }
+
     if (activeTopic) {
       if (item.primaryTopic === activeTopic || item.topics.includes(activeTopic)) {
         return true;
@@ -235,16 +252,51 @@ export const FeedScreen: React.FC = () => {
       if (hay.includes(raw)) return true;
     }
     return false;
-  }, [selectedFilter, activeTopic]);
+  }, [selectedFilter, activeTopic, subchannels]);
 
-  const loadSubchannels = useCallback(async () => {
-    const all = await defaultSpaceRepository.getAllSpaces();
-    setSubchannels(all);
-  }, []);
+  // Context-accurate pending changes: only count inserted items matching current space and search query
+  React.useEffect(() => defaultFeedOperationManager.subscribe(result => {
+    setLastOperationResult(result);
+    setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
+    if (scrollYRef.current > 180 && result.insertedIds && result.insertedIds.length > 0) {
+      const allAvailable = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+      const matchingIds = result.insertedIds.filter(id => {
+        const item = allAvailable.find(i => i.id === id);
+        if (!item) return false;
+        if (!matchesSelectedSpace(item)) return false;
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase().trim();
+          const hay = `${item.title} ${item.subtitle || ''} ${item.feedText || ''}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+      if (matchingIds.length > 0) {
+        setPendingNewItemIds(prev => [...new Set([...prev, ...matchingIds])]);
+      }
+    }
+  }), [matchesSelectedSpace, searchQuery]);
 
   React.useEffect(() => {
-    void loadSubchannels();
-  }, [loadSubchannels]);
+    if (!isScrolledDown) setPendingNewItemIds([]);
+  }, [isScrolledDown]);
+
+  const handleRevealPendingItems = useCallback(() => {
+    if (pendingNewItemIds.length > 0) {
+      const allAvailable = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+      const toReveal = allAvailable.filter(item => pendingNewItemIds.includes(item.id));
+      if (toReveal.length > 0) {
+        setRevealedNewItems(prev => prependRevealedItems(prev, toReveal));
+      }
+    }
+    setPendingNewItemIds([]);
+    setIsScrolledDown(false);
+    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+  }, [pendingNewItemIds]);
+
+  const loadSubchannels = useCallback(async () => {
+    await defaultSpaceRepository.notify();
+  }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -459,6 +511,13 @@ export const FeedScreen: React.FC = () => {
     return filterByQuery(scored);
   }, [infiniteInterleavedBase, profile, interactions, matchesSelectedSpace, filterByQuery]);
 
+  const scoredRevealedItems = useMemo(() => {
+    if (revealedNewItems.length === 0) return [];
+    const spaceFiltered = revealedNewItems.filter(matchesSelectedSpace);
+    const scored = spaceFiltered.map(item => scoreFeedItem(item, profile, interactions));
+    return filterByQuery(scored);
+  }, [revealedNewItems, matchesSelectedSpace, filterByQuery, profile, interactions]);
+
   const renderedInfiniteFreshItems = useMemo(() => {
     return infiniteInterleavedBase.slice(0, Math.min(visibleInfiniteCount, infiniteInterleavedBase.length));
   }, [infiniteInterleavedBase, visibleInfiniteCount]);
@@ -470,8 +529,9 @@ export const FeedScreen: React.FC = () => {
   }, [infiniteInterleavedBase.length, evergreenFallbackItems, visibleInfiniteCount]);
 
   const renderedInfiniteItems = useMemo(() => {
-    return [...renderedInfiniteFreshItems, ...renderedInfiniteEvergreenItems];
-  }, [renderedInfiniteFreshItems, renderedInfiniteEvergreenItems]);
+    const base = [...renderedInfiniteFreshItems, ...renderedInfiniteEvergreenItems];
+    return prependRevealedItems(base, scoredRevealedItems);
+  }, [renderedInfiniteFreshItems, renderedInfiniteEvergreenItems, scoredRevealedItems]);
 
   // Appended discovery items in Daily mode (never clones IDs)
   const renderedDiscovery = useMemo(() => {
@@ -481,11 +541,15 @@ export const FeedScreen: React.FC = () => {
 
   // Combine items into a seamless stream for Daily mode
   const allStreamItems = useMemo(() => {
-    return [...sortedDaily, ...renderedDiscovery];
-  }, [sortedDaily, renderedDiscovery]);
+    const base = [...sortedDaily, ...renderedDiscovery];
+    return prependRevealedItems(base, scoredRevealedItems);
+  }, [sortedDaily, renderedDiscovery, scoredRevealedItems]);
 
   // Active items array depending on selected feed option
   const currentFeedItems = useMemo((): ScoredFeedItem[] => {
+    if (curatedSelection && curatedSelection.items.length > 0) {
+      return curatedSelection.items.map(item => scoreFeedItem(item, profile, interactions));
+    }
     if (activeFeedOption === 'infinite') return renderedInfiniteItems;
     if (activeFeedOption === 'daily') return allStreamItems;
     if (activeFeedOption === 'live_news') return scoredLiveItems;
@@ -494,7 +558,7 @@ export const FeedScreen: React.FC = () => {
       return historyItems.map(h => scoreFeedItem(h.item, profile, interactions));
     }
     return renderedInfiniteItems;
-  }, [activeFeedOption, renderedInfiniteItems, allStreamItems, scoredLiveItems, scoredClassicsItems, historyItems, profile, interactions]);
+  }, [curatedSelection, activeFeedOption, renderedInfiniteItems, allStreamItems, scoredLiveItems, scoredClassicsItems, historyItems, profile, interactions]);
 
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
@@ -561,7 +625,7 @@ export const FeedScreen: React.FC = () => {
   const handleLiveAiCurate = async () => {
     if (isCuratingLiveAi) return;
     setIsCuratingLiveAi(true);
-    setCurationStage('1/3: Frische Artikelkandidaten beschaffen …');
+    setCurationStage('1/3: Passende Quellen durchsuchen …');
     // Start tracking the operation from the user's click to accurately record total duration
     const initialOp = defaultFeedOperationManager.startOperation('ai_curation');
     const operationId = initialOp.operationId;
@@ -628,11 +692,21 @@ export const FeedScreen: React.FC = () => {
       // Cap batch to 8 candidates to maintain responsive speed and stay well within budget/token limits
       const candidatesToEnrich = candidatePool.slice(0, 8);
 
-      setCurationStage('2/3: KI-Signalprüfung & Kuration …');
+      setCurationStage(`2/3: ${candidatesToEnrich.length} Fundstücke auf Relevanz & Substanz prüfen …`);
       const enriched = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(candidatesToEnrich, creds);
       const telemetry = defaultBatchEditionEnricher.getLastBatchReport();
 
-      setCurationStage('3/3: Ergebnisse bewerten und einfügen …');
+      // If curating within a specific channel, tag the items so the channel is immediately enriched
+      if (selectedFilter !== 'all') {
+        for (const item of enriched) {
+          item.space = selectedFilter;
+          if (!item.topics.includes(selectedFilter as TopicTag)) {
+            item.topics.push(selectedFilter as TopicTag);
+          }
+        }
+      }
+
+      setCurationStage(`3/3: Deine persönliche Auswahl (${enriched.length} Beiträge) zusammenstellen …`);
       if (feedRepository.executeContentOperation) {
         const opResult = await feedRepository.executeContentOperation('ai_curation', enriched, {
           pinInserted: true,
@@ -645,10 +719,16 @@ export const FeedScreen: React.FC = () => {
         feedRepository.addItems?.(enriched);
       }
 
-      await recomputeFeed();
-      if (scrollYRef.current <= 180) {
-        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      if (enriched.length > 0) {
+        setCuratedSelection({
+          items: enriched,
+          timestamp: new Date().toISOString(),
+          returnFilter: selectedFilter
+        });
       }
+
+      await recomputeFeed();
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     } catch (e: any) {
       console.warn('Live AI Curation failed:', e);
       defaultFeedOperationManager.failOperation(e?.message || 'Fehler bei der Live-KI-Kuration.');
@@ -797,7 +877,10 @@ export const FeedScreen: React.FC = () => {
 
       {/* Persistent "+ Neuer Raum" Button */}
       <TouchableOpacity
-        onPress={() => setShowMasterModal(true)}
+        onPress={() => {
+          setMasterModalTab('channels');
+          setShowMasterModal(true);
+        }}
         style={[
           styles.spacePill,
           {
@@ -817,6 +900,85 @@ export const FeedScreen: React.FC = () => {
         </Text>
       </TouchableOpacity>
     </ScrollView>
+  );
+
+  const renderEmptyCustomSpaceCard = (channel: Subchannel) => (
+    <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+      <View style={[styles.emptyPocketBadge, { backgroundColor: colors.accentSubtle }]}>
+        <Ionicons name="folder-outline" size={15} color={colors.accent} />
+        <Text style={[styles.emptyPocketBadgeText, { color: colors.accent }]}>
+          Eigener Channel • {channel.handle}
+        </Text>
+      </View>
+
+      <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+        {channel.title || channel.handle}
+      </Text>
+
+      <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+        Dieser Wissensraum enthält noch keine Beiträge. Du kannst ihn direkt mit kuratierten Inhalten füllen, passende Quellen zuordnen oder den bestehenden Bestand durchsuchen.
+      </Text>
+
+      <View style={{ flexDirection: 'column', gap: 10, marginTop: 12 }}>
+        <TouchableOpacity
+          onPress={handleLiveAiCurate}
+          disabled={isCuratingLiveAi}
+          style={[styles.generatePocketButton, { backgroundColor: colors.accent, opacity: isCuratingLiveAi ? 0.6 : 1 }]}
+          accessibilityRole="button"
+          accessibilityLabel={`Auswahl für ${channel.handle} kuratieren`}
+        >
+          <Ionicons name="sparkles" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+          <Text style={styles.generatePocketButtonText}>
+            {`✨ Auswahl für ${channel.handle} kuratieren`}
+          </Text>
+        </TouchableOpacity>
+
+        <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
+          <TouchableOpacity
+            onPress={() => {
+              setMasterModalTab('channels');
+              setShowMasterModal(true);
+            }}
+            style={[styles.resetFilterButton, { borderColor: colors.borderSubtle, flex: 1, minWidth: 160 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Passende Quelle zuordnen"
+          >
+            <Ionicons name="add-outline" size={16} color={colors.textPrimary} style={{ marginRight: 4 }} />
+            <Text style={[styles.resetFilterButtonText, { color: colors.textPrimary }]}>
+              + Passende Quelle zuordnen
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => {
+              const rawHandle = channel.handle.replace(/^c\//, '');
+              setSearchQuery(rawHandle);
+              handleFilterChange('all');
+            }}
+            style={[styles.resetFilterButton, { borderColor: colors.borderSubtle, flex: 1, minWidth: 160 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Bestehende Beiträge durchsuchen"
+          >
+            <Ionicons name="search-outline" size={16} color={colors.textPrimary} style={{ marginRight: 4 }} />
+            <Text style={[styles.resetFilterButtonText, { color: colors.textPrimary }]}>
+              Bestehende Beiträge durchsuchen
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity
+          onPress={() => {
+            handleFilterChange('all');
+            setSearchQuery('');
+          }}
+          style={[styles.resetFilterButton, { borderColor: colors.borderSubtle, alignSelf: 'flex-start', marginTop: 4 }]}
+        >
+          <Text style={[styles.resetFilterButtonText, { color: colors.textMuted }]}>
+            ← Alle Spaces anzeigen
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 
   return (
@@ -849,14 +1011,10 @@ export const FeedScreen: React.FC = () => {
           isRunning={isCuratingLiveAi}
           currentStage={curationStage}
           lastResult={lastOperationResult}
-          pendingChangeCount={pendingChangeIds.length}
+          pendingChangeCount={pendingNewItemIds.length}
           isScrolledDown={isScrolledDown}
           onOpenReport={() => setShowReportModal(true)}
-          onScrollToTop={() => {
-            setPendingChangeIds([]);
-            setIsScrolledDown(false);
-            scrollViewRef.current?.scrollTo({ y: 0, animated: false });
-          }}
+          onScrollToTop={handleRevealPendingItems}
           colors={colors}
           isDark={isDark}
         />
@@ -1184,6 +1342,35 @@ export const FeedScreen: React.FC = () => {
                   </View>
                 </View>
 
+                {/* Visible Curated Selection Header */}
+                {curatedSelection && (
+                  <View style={[styles.curatedSelectionBanner, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}>
+                    <View style={styles.curatedSelectionHeaderRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 12 }}>
+                        <Ionicons name="sparkles" size={20} color={colors.accent} style={{ marginRight: 8 }} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.curatedSelectionTitle, { color: colors.textPrimary }]}>
+                            ✨ Deine persönliche Auswahl ({curatedSelection.items.length} Beiträge)
+                          </Text>
+                          <Text style={[styles.curatedSelectionSubtitle, { color: colors.textSecondary }]}>
+                            Kuratiert vor wenigen Sekunden · Exklusiv für deinen Horizont
+                          </Text>
+                        </View>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => setCuratedSelection(null)}
+                        style={[styles.curatedSelectionExitButton, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Zurück zur Gesamtansicht"
+                      >
+                        <Text style={[styles.curatedSelectionExitText, { color: colors.textPrimary }]}>
+                          ← Zurück zur Gesamtansicht
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+
                 {/* Subchannel Quick Tuning Header */}
                 {selectedFilter !== 'all' && activeTopic && (
                   <View style={[styles.subchannelTuningHeader, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
@@ -1242,6 +1429,9 @@ export const FeedScreen: React.FC = () => {
                 )}
 
                 {renderedInfiniteItems.length === 0 ? (
+                  subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom) ? (
+                    renderEmptyCustomSpaceCard(subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom)!)
+                  ) : (
                   <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                     <View style={[styles.emptyPocketBadge, { backgroundColor: colors.accentSubtle }]}>
                       <Ionicons name="sparkles" size={15} color={colors.accent} />
@@ -1287,6 +1477,7 @@ export const FeedScreen: React.FC = () => {
                       </TouchableOpacity>
                     </View>
                   </View>
+                  )
                 ) : (
                   <>
                     {renderedInfiniteFreshItems.map((item, index) => (
@@ -2123,6 +2314,9 @@ export const FeedScreen: React.FC = () => {
                 )}
 
             {allStreamItems.length === 0 ? (
+              subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom) ? (
+                renderEmptyCustomSpaceCard(subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom)!)
+              ) : (
               <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                 <View style={[styles.emptyPocketBadge, { backgroundColor: colors.accentSubtle }]}>
                   <Ionicons name="sparkles" size={15} color={colors.accent} />
@@ -2191,6 +2385,7 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
                 </View>
               </View>
+              )
             ) : (
               <>
                 {/* Daily Edition Primary Items */}
@@ -2329,6 +2524,7 @@ export const FeedScreen: React.FC = () => {
       {/* Ultra Master Studio Modal */}
       <UltraMasterModal
         visible={showMasterModal}
+        initialTab={masterModalTab}
         onClose={() => {
           setShowMasterModal(false);
           void loadSubchannels();
@@ -3179,5 +3375,36 @@ const styles = StyleSheet.create({
   },
   finiteEndingBtnText: {
     fontSize: 13
+  },
+  curatedSelectionBanner: {
+    padding: 16,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    marginBottom: 16
+  },
+  curatedSelectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 12
+  },
+  curatedSelectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 2
+  },
+  curatedSelectionSubtitle: {
+    fontSize: 12
+  },
+  curatedSelectionExitButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  curatedSelectionExitText: {
+    fontSize: 12,
+    fontWeight: '600'
   }
 });

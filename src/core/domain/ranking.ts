@@ -169,11 +169,14 @@ export function scoreFeedItem(
   const durationMatch = readingTimeFit;
 
   // 4. Freshness Score (7-Day Rolling Quality Window: treats the entire past week as active high-value pool)
-  const pubTime = new Date(item.publishedAt).getTime();
+  const isReliableDate = item.publicationDateReliable !== false;
+  const pubTime = isReliableDate ? new Date(item.publishedAt).getTime() : NaN;
   const nowTime = Date.now();
-  const hoursOld = isNaN(pubTime) ? 24 : Math.max(0, (nowTime - pubTime) / (1000 * 60 * 60));
-  let freshness = 0.80;
-  if (hoursOld <= 12) {
+  const hoursOld = isNaN(pubTime) ? 200 : Math.max(0, (nowTime - pubTime) / (1000 * 60 * 60));
+  let freshness = 0.70;
+  if (!isReliableDate) {
+    freshness = item.isEvergreenGem ? 0.75 : 0.65;
+  } else if (hoursOld <= 12) {
     freshness = 0.98;
   } else if (hoursOld <= 48) {
     freshness = 0.95;
@@ -573,6 +576,11 @@ export function sortFeedForDisplay(
     ? rankBloomScrollFeed(remaining)
     : remaining.sort((a, b) => {
       if (mode === 'new') {
+        const isReliableA = a.publicationDateReliable !== false;
+        const isReliableB = b.publicationDateReliable !== false;
+        if (isReliableA !== isReliableB) {
+          return isReliableA ? -1 : 1;
+        }
         const timeA = new Date(a.publishedAt).getTime();
         const timeB = new Date(b.publishedAt).getTime();
         const validA = !isNaN(timeA) && timeA > 0;
@@ -580,20 +588,27 @@ export function sortFeedForDisplay(
         if (validA && validB && timeB !== timeA) return timeB - timeA;
         if (validA && !validB) return -1;
         if (!validA && validB) return 1;
+        const seenA = a.firstSeenAt ? new Date(a.firstSeenAt).getTime() : 0;
+        const seenB = b.firstSeenAt ? new Date(b.firstSeenAt).getTime() : 0;
+        if (seenB !== seenA) return seenB - seenA;
         return b.id.localeCompare(a.id);
       }
       if (mode === 'top') {
-        const pointsA = a.externalCommunityScore?.points ?? 0;
-        const pointsB = b.externalCommunityScore?.points ?? 0;
+        const pointsA = (a.externalCommunityScore?.points ?? 0) + (a.upvotesCount ?? 0) * 10;
+        const pointsB = (b.externalCommunityScore?.points ?? 0) + (b.upvotesCount ?? 0) * 10;
+        const trustBonusA = a.sourceTrustLevel === 'peer_reviewed' ? 15 : a.sourceTrustLevel === 'public_broadcaster' ? 12 : a.sourceTrustLevel === 'deep_essay' ? 10 : 5;
+        const trustBonusB = b.sourceTrustLevel === 'peer_reviewed' ? 15 : b.sourceTrustLevel === 'public_broadcaster' ? 12 : b.sourceTrustLevel === 'deep_essay' ? 10 : 5;
         const qualityA = (a.curationScore ?? 7) * 10 +
           (pointsA > 0 ? Math.min(50, Math.log10(pointsA + 1) * 20) : 0) +
-          (a.evidenceTier === 'permitted_full_text' ? 10 : 0);
+          (a.evidenceTier === 'permitted_full_text' ? 12 : a.evidenceTier === 'multiple_sources' ? 10 : 0) +
+          trustBonusA + (a.editorialAbstract ? 8 : 0);
         const qualityB = (b.curationScore ?? 7) * 10 +
           (pointsB > 0 ? Math.min(50, Math.log10(pointsB + 1) * 20) : 0) +
-          (b.evidenceTier === 'permitted_full_text' ? 10 : 0);
+          (b.evidenceTier === 'permitted_full_text' ? 12 : b.evidenceTier === 'multiple_sources' ? 10 : 0) +
+          trustBonusB + (b.editorialAbstract ? 8 : 0);
         if (qualityB !== qualityA) return qualityB - qualityA;
-        const timeA = new Date(a.publishedAt).getTime() || 0;
-        const timeB = new Date(b.publishedAt).getTime() || 0;
+        const timeA = a.publicationDateReliable !== false ? (new Date(a.publishedAt).getTime() || 0) : 0;
+        const timeB = b.publicationDateReliable !== false ? (new Date(b.publishedAt).getTime() || 0) : 0;
         if (timeB !== timeA) return timeB - timeA;
         return b.id.localeCompare(a.id);
       }
@@ -601,8 +616,10 @@ export function sortFeedForDisplay(
         const gemA = isGem(a);
         const gemB = isGem(b);
         if (gemA !== gemB) return gemA ? -1 : 1;
-        const scoreA = (a.curationScore ?? 7) * 10 + (a.wordCount >= 200 ? 10 : 0);
-        const scoreB = (b.curationScore ?? 7) * 10 + (b.wordCount >= 200 ? 10 : 0);
+        const bridgeBonusA = (a.format === 'surprising_connection' || (a.topics && a.topics.length >= 2)) ? 10 : 0;
+        const bridgeBonusB = (b.format === 'surprising_connection' || (b.topics && b.topics.length >= 2)) ? 10 : 0;
+        const scoreA = (a.curationScore ?? 7) * 10 + (a.isEvergreenGem ? 25 : 0) + (a.format === 'art_showcase' ? 20 : 0) + (a.wordCount >= 200 ? 10 : 0) + bridgeBonusA;
+        const scoreB = (b.curationScore ?? 7) * 10 + (b.isEvergreenGem ? 25 : 0) + (b.format === 'art_showcase' ? 20 : 0) + (b.wordCount >= 200 ? 10 : 0) + bridgeBonusB;
         if (scoreB !== scoreA) return scoreB - scoreA;
         return b.id.localeCompare(a.id);
       }

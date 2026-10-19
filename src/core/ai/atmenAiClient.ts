@@ -279,19 +279,37 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
   if (!reservationId) throw new AiBudgetExceededError(`Monatliches KI-Budget-Limit (${MONTHLY_BUDGET_CEILING_EUR.toFixed(2)} €) erreicht oder gesperrt.`);
 
   try {
-    let result: ParsedAiResult;
+    let result: ParsedAiResult | null = null;
     let effectiveModel = model;
+    let proxySucceeded = false;
+
     if (proxyUrl) {
-      const json = await fetchAiJson(`${proxyUrl}/curate`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'x-provider-api-key': apiKey } : {}) },
-        body: JSON.stringify({ provider: credentials.provider, prompt, systemInstruction: options.systemInstruction, jsonMode: options.jsonMode, model, maxTokens })
-      }, options.timeoutMs);
-      // A configured proxy is the exclusive route. Failure never triggers a direct paid call.
-      result = parseAiResult(json, 'proxy');
-      effectiveModel = result.model || model;
-    } else if (credentials.provider === 'gemini') {
+      try {
+        const json = await fetchAiJson(`${proxyUrl}/curate`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'x-provider-api-key': apiKey } : {}) },
+          body: JSON.stringify({ provider: credentials.provider, prompt, systemInstruction: options.systemInstruction, jsonMode: options.jsonMode, model, maxTokens })
+        }, options.timeoutMs);
+        result = parseAiResult(json, 'proxy');
+        effectiveModel = result.model || model;
+        proxySucceeded = true;
+      } catch (proxyError: any) {
+        // GitHub Pages / static hosting direct BYOK fallback:
+        // If proxy failed (e.g. 404/405 or network unreachable) and the user configured an apiKey,
+        // seamlessly fall back to direct provider HTTPS call!
+        // NOTE: If the proxy explicitly responded with 429 (rate limited / budget cap), fail closed without paid direct retry.
+        const isRateLimited = proxyError instanceof AiHttpError && proxyError.status === 429;
+        if (apiKey && !isRateLimited) {
+          console.warn('AI proxy unavailable, falling back to direct provider BYOK HTTPS call:', proxyError);
+        } else {
+          throw proxyError;
+        }
+      }
+    }
+
+    if (!proxySucceeded) {
+      if (credentials.provider === 'gemini') {
       const body = JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         ...(options.systemInstruction ? { systemInstruction: { parts: [{ text: options.systemInstruction }] } } : {}),
@@ -373,9 +391,15 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
       }
       result = parseAiResult(json, 'openrouter');
     }
-    const inputTokens = result.inputTokens ?? estimatedInputTokens;
-    const outputTokens = result.outputTokens ?? maxTokens;
-    const costEur = calculateCostEur(inputTokens, outputTokens);
+  }
+
+  if (!result) {
+    throw new Error('Kein KI-Ergebnis erhalten.');
+  }
+
+  const inputTokens = result.inputTokens ?? estimatedInputTokens;
+  const outputTokens = result.outputTokens ?? maxTokens;
+  const costEur = calculateCostEur(inputTokens, outputTokens);
     await ledger.commitReservation(reservationId, { itemId: options.itemId ?? 'live-ai-call', model: effectiveModel, inputTokens, outputTokens, costEur });
     return { text: result.text, usage: { inputTokens, outputTokens, costEur }, modelUsed: effectiveModel };
   } catch (error) {

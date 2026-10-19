@@ -15,6 +15,8 @@ export interface FeedOperationBannerProps {
   isScrolledDown?: boolean;
   /** Unique inserted or updated articles waiting while the reader stays in place. */
   pendingChangeCount?: number;
+  /** Optional custom label for destination context */
+  bannerLabel?: string;
   /** Triggered when the user taps "Details/Bericht ansehen" */
   onOpenReport?: () => void;
   /** Triggered when the user taps the floating scroll-to-top button */
@@ -29,6 +31,7 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
   lastResult,
   isScrolledDown = false,
   pendingChangeCount = 0,
+  bannerLabel,
   onOpenReport,
   onScrollToTop,
   colors,
@@ -126,10 +129,16 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
           activeOpacity={0.9}
           style={[styles.floatingPill, { backgroundColor: colors.accent, shadowColor: isDark ? '#38BDF8' : '#0284C7' }]}
           accessibilityRole="button"
-          accessibilityLabel={`${pendingChangeCount} neue oder aktualisierte Beiträge am Anfang anzeigen`}
+          accessibilityLabel={
+            bannerLabel || (pendingChangeCount === 1
+              ? '1 neue Meldung am Anfang anzeigen'
+              : `${pendingChangeCount} neue Meldungen am Anfang anzeigen`)
+          }
         >
           <Ionicons name="arrow-up" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
-          <Text accessibilityLiveRegion="polite" style={styles.floatingPillText}>{pendingChangeCount} neue / aktualisierte Beiträge anzeigen</Text>
+          <Text accessibilityLiveRegion="polite" style={styles.floatingPillText}>
+            {bannerLabel || (pendingChangeCount === 1 ? '✨ 1 neue Meldung anzeigen ↑' : `✨ ${pendingChangeCount} neue Meldungen anzeigen ↑`)}
+          </Text>
         </TouchableOpacity>
       )}
     </>

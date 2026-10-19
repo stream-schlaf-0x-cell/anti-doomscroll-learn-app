@@ -101,10 +101,23 @@ export class FeedMergeService {
           validatedItem.curationScore !== existingMatch.curationScore;
 
         if (isContentChanged) {
+          const firstSeenAt = existingMatch.firstSeenAt || existingMatch.publishedAt;
+          const publicationDateReliable = existingMatch.publicationDateReliable !== undefined
+            ? existingMatch.publicationDateReliable
+            : validatedItem.publicationDateReliable;
+          const publishedAt = (existingMatch.publicationDateReliable !== false && existingMatch.publishedAt)
+            ? existingMatch.publishedAt
+            : (validatedItem.publicationDateReliable !== false ? validatedItem.publishedAt : existingMatch.publishedAt);
+          const historicalYearOrEra = existingMatch.historicalYearOrEra || validatedItem.historicalYearOrEra;
+
           const mergedItem: FeedItem = {
             ...existingMatch,
             ...validatedItem,
             id: existingMatch.id, // Keep established ID
+            publishedAt,
+            publicationDateReliable,
+            firstSeenAt,
+            historicalYearOrEra,
             isNewlyCurated: true,
             curatedAt: new Date().toISOString()
           };
@@ -119,6 +132,7 @@ export class FeedMergeService {
         const nowIso = new Date().toISOString();
         const flaggedItem: FeedItem = {
           ...validatedItem,
+          firstSeenAt: validatedItem.firstSeenAt || nowIso,
           isNewlyCurated: true,
           curatedAt: nowIso
         };
