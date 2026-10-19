@@ -14,6 +14,7 @@ import { useApp } from '../../core/context/AppContext';
 import { TOPIC_METADATA, FeedItem } from '../../core/domain/types';
 import { radius, spacing } from '../theme';
 import { generateHivemindStream, HivemindStreamResult } from '../../core/synthesis/onTheFlyStreamService';
+import { feedRepository } from '../../core/data/feedRepository';
 import { loadAiCredentials } from '../../core/ai/atmenAiClient';
 import { QuizCheckpointCard } from './QuizCheckpointCard';
 
@@ -36,7 +37,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
   onClose,
   onStreamGenerated
 }) => {
-  const { colors, refreshFeed, openArticle } = useApp();
+  const { colors, refreshFeed, openArticle, selectedFilter } = useApp();
   const [queryInput, setQueryInput] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [result, setResult] = useState<HivemindStreamResult | null>(null);
@@ -54,7 +55,8 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
         seedTopicOrQuestion: prompt,
         targetCount: 4,
         preferredLanguage: 'de',
-        credentials: creds
+        credentials: creds,
+        space: selectedFilter !== 'all' ? selectedFilter : undefined
       });
       setResult(res);
       if (onStreamGenerated) {
@@ -69,6 +71,9 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
   };
 
   const handleIntegrateIntoFeed = async () => {
+    if (result && result.items.length > 0) {
+      feedRepository.addItems(result.items);
+    }
     await refreshFeed();
     onClose();
   };

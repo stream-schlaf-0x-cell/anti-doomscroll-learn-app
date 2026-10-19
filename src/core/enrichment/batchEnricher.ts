@@ -104,6 +104,73 @@ export function detectLanguage(text: string): 'de' | 'en' {
 }
 
 /**
+ * Calculates the exact text that FeedCard will render for an item's body,
+ * taking into account boilerplate suppression (e.g. Hacker News stubs).
+ */
+export function getCardRenderableText(item: {
+  feedText?: string;
+  body?: string;
+  format?: string;
+  space?: string;
+  primaryTopic?: string;
+  memeMeta?: any;
+}): string {
+  const displayFeedText =
+    item.feedText && item.feedText.trim().length > 0 ? item.feedText.trim() : (item.body || '').trim();
+  if (!displayFeedText) return '';
+  const lower = displayFeedText.toLowerCase();
+  if (
+    lower.startsWith('diskutiert auf hacker news') ||
+    lower.startsWith('aktuelle fachdiskussion auf hacker news') ||
+    lower.startsWith('top-thema auf hacker news')
+  ) {
+    return '';
+  }
+  const isMemeCard = item.format === 'meme' || item.space === 'c/memes' || item.primaryTopic === 'memes_satire' || Boolean(item.memeMeta);
+  if (isMemeCard) {
+    if (item.memeMeta?.punchline && displayFeedText.trim() === item.memeMeta.punchline.trim()) {
+      return '';
+    }
+    if (lower.includes('originalbeitrag veröffentlicht bei')) {
+      return '';
+    }
+  }
+  return displayFeedText;
+}
+
+/**
+ * Directive 1: Hard Substance Gate & Zero Empty Cards Contract
+ * Guarantees that any item admitted into a curated selection has at least 120 characters
+ * of non-boilerplate substantive prose and a valid key insight.
+ */
+export function satisfiesCuratedBodyContract(item: FeedItem): boolean {
+  // Visual formats (memes, comics, art showcases) carry their value in image / punchline
+  const isVisual =
+    item.format === 'art_showcase' ||
+    item.format === 'meme' ||
+    item.format === 'comic' ||
+    item.space === 'c/memes' ||
+    item.space === 'c/kunst_galerie' ||
+    item.primaryTopic === 'memes_satire';
+
+  if (isVisual) {
+    return true;
+  }
+
+  const renderableText = getCardRenderableText(item);
+  if (renderableText.length < 120) {
+    return false;
+  }
+
+  const hasInsight = Boolean((item.keyInsight || item.subtitle || '').trim());
+  if (!hasInsight) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Deterministic Signal-vs-Noise evaluation for offline and unconfigured fallback.
  * Evaluates incoming raw items (Title + Publisher + Snippet) for intellectual depth,
  * substance, and absence of clickbait/shopping/daily-politics triviality (Score 0–10).
@@ -148,6 +215,20 @@ export function evaluateSignalVsNoiseDeterministically(
       passed: false,
       reason: 'Einzeiliger Stub / Unzureichender Kontext'
     };
+  }
+
+  // 1b. Directive 1: Bare link stubs / boilerplate without real substantive article prose
+  const isBoilerplateSnippet = /^(diskutiert auf hacker news|aktuelle fachdiskussion auf hacker news|top-thema auf hacker news)/i.test(snippet);
+  if (isBoilerplateSnippet && item.format !== 'art_showcase') {
+    const rawArticle = (item.body || '').trim();
+    const isBoilerplateArticle = /^(diskutiert auf hacker news|aktuelle fachdiskussion auf hacker news|top-thema auf hacker news)/i.test(rawArticle);
+    if (rawArticle.length < 140 || isBoilerplateArticle) {
+      return {
+        score: 3,
+        passed: false,
+        reason: 'Reiner Link-Stub / Boilerplate ohne Fließtext'
+      };
+    }
   }
 
   // 2. Pure affiliate deals, promo, vouchers, commerce discounts

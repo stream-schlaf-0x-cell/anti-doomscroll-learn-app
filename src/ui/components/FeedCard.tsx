@@ -19,6 +19,7 @@ import {
   TopicTag,
   UserNote
 } from '../../core/domain/types';
+import { getCardRenderableText } from '../../core/enrichment/batchEnricher';
 import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing } from '../theme';
 import { LinkPreviewModal } from './LinkPreviewModal';
@@ -192,8 +193,10 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const timeAgo = formatHonestTimeLabel(item);
   const provenanceLabel = formatVerifiedProvenanceLabel(item);
 
-  const displayFeedText =
-    item.feedText && item.feedText.trim().length > 0 ? item.feedText.trim() : (item.body || '').trim();
+  const displayFeedText = useMemo(
+    () => getCardRenderableText(item),
+    [item.feedText, item.body, item.format, item.space, item.primaryTopic, item.memeMeta]
+  );
 
   // Determine whether this card is a 20-second quick card (readable in full right on the card)
   const isArtCard = item.format === 'art_showcase' || item.space === 'c/kunst_galerie' || Boolean(item.artMeta);
@@ -268,26 +271,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   }, [item.subtitle, item.title, displayFeedText]);
 
   // Hide boilerplate feedText when it merely repeats HN metadata or comic alt-text punchline
-  const shouldShowBodyText = useMemo(() => {
-    if (!displayFeedText) return false;
-    const lower = displayFeedText.toLowerCase();
-    if (
-      lower.startsWith('diskutiert auf hacker news') ||
-      lower.startsWith('aktuelle fachdiskussion auf hacker news') ||
-      lower.startsWith('top-thema auf hacker news')
-    ) {
-      return false;
-    }
-    if (isMemeCard) {
-      if (item.memeMeta?.punchline && displayFeedText.trim() === item.memeMeta.punchline.trim()) {
-        return false;
-      }
-      if (lower.includes('originalbeitrag veröffentlicht bei')) {
-        return false;
-      }
-    }
-    return true;
-  }, [displayFeedText, isMemeCard, item.memeMeta]);
+  const shouldShowBodyText = Boolean(displayFeedText);
 
   const isSubstantiallyLonger = (item.articleBody?.length ?? 0) > item.feedText.length * 1.25;
 

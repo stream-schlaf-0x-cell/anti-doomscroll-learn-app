@@ -1,5 +1,6 @@
 import { FeedItem } from '../domain/types';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
+import { classifyTopicDeterministically } from '../enrichment/batchEnricher';
 
 export interface OpenWebHarvestResult {
   museumArtworks: FeedItem[];
@@ -571,6 +572,116 @@ export class OpenWebHarvester {
           space: 'c/serendipity',
           flair: '🔬 Fachpublikation',
           keyInsight: `Forschungsarbeit aus ${journal} (${work.cited_by_count || 0} Zitationen).`,
+          upvotesCount: 0,
+          awardsCount: { gold: 0, brain: 0, spark: 0 },
+          sourceTrustLevel: 'peer_reviewed',
+          sourceDomain: 'openalex.org',
+          sourceBroadcasterName: journal,
+          comments: []
+        });
+      }
+
+      return items;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 4b. Targeted Scholarly & Journalistic Research for Specific Channels/Topics (Directive 6)
+   * Queries OpenAlex for works matching a query with guaranteed substantive abstracts >= 140 chars.
+   */
+  public static async harvestScholarlyWorksForQuery(query: string, limit = 5): Promise<FeedItem[]> {
+    const cleanQuery = query.replace(/^c\//i, '').replace(/[_-]/g, ' ').trim();
+    if (!cleanQuery) return [];
+
+    try {
+      const searchParam = encodeURIComponent(cleanQuery);
+      const url = `https://api.openalex.org/works?filter=is_oa:true,has_abstract:true&search=${searchParam}&sort=cited_by_count:desc&per-page=${limit}`;
+      const response = await this.fetchWithTimeout(url, 4000);
+      if (!response.ok) {
+        throw new Error(`OpenAlex query failed (${response.status})`);
+      }
+      const data = await response.json();
+      const results = Array.isArray(data?.results) ? data.results : [];
+      const items: FeedItem[] = [];
+
+      for (const work of results) {
+        if (!work.title || !work.id) continue;
+        const workId = String(work.id).replace('https://openalex.org/', '');
+        const doiUrl = work.doi || work.primary_location?.landing_page_url || work.id;
+        const journal = work.primary_location?.source?.display_name || 'OpenAlex Fachpublikation';
+        const firstAuthor = work.authorships?.[0]?.author?.display_name || 'Forschungsteam';
+        const pubDate = work.publication_date
+          ? new Date(work.publication_date).toISOString()
+          : new Date().toISOString();
+
+        let abstractText = '';
+        if (work.abstract_inverted_index && typeof work.abstract_inverted_index === 'object') {
+          const wordsByPos: string[] = [];
+          for (const [word, positions] of Object.entries(work.abstract_inverted_index)) {
+            if (Array.isArray(positions)) {
+              for (const pos of positions) {
+                if (typeof pos === 'number' && pos < 250) {
+                  wordsByPos[pos] = word;
+                }
+              }
+            }
+          }
+          abstractText = wordsByPos.filter(Boolean).join(' ').trim();
+        }
+
+        // Directive 1: Guarantee substantive prose >= 140 chars
+        if (abstractText.length < 140) continue;
+
+        const primaryTopic = classifyTopicDeterministically(work.title, abstractText, 'german_didactics');
+
+        items.push({
+          id: `openalex-q-${workId}`,
+          type: 'deep_dive',
+          format: 'sourced_update',
+          title: work.title,
+          subtitle: `${journal} • ${firstAuthor} • ${work.cited_by_count || 0} Zitationen`,
+          feedText: abstractText.length > 420 ? abstractText.slice(0, 417) + '…' : abstractText,
+          articleBody: abstractText,
+          body: abstractText,
+          topics: [primaryTopic, 'science_society'],
+          primaryTopic,
+          sourceReferences: [
+            {
+              title: work.title,
+              publisher: journal,
+              author: firstAuthor,
+              originalUrl: doiUrl,
+              publicationTimestamp: pubDate,
+              retrievalTimestamp: new Date().toISOString(),
+              isVerified: true
+            }
+          ],
+          publishedAt: pubDate,
+          publicationDateReliable: Boolean(work.publication_date),
+          firstSeenAt: new Date().toISOString(),
+          generatedAt: new Date().toISOString(),
+          estimatedReadingMinutes: Math.max(2, Math.ceil(abstractText.split(/\s+/).length / 150)),
+          relevanceExplanation: `Gezielte Fachrecherche zu „${cleanQuery}“ (${journal}).`,
+          contentStatus: 'scientific_analysis',
+          isDailyEdition: false,
+          editionDate: new Date().toISOString().split('T')[0],
+          isTeachingRelated: true,
+          isChallengingPerspective: false,
+          isDemonstration: false,
+          aiAssisted: false,
+          factReviewStatus: 'scientific_paper',
+          provenanceSummary: `Gezielte wissenschaftliche Publikation via OpenAlex (${journal}).`,
+          wordCount: abstractText.split(/\s+/).length,
+          evidenceTier: 'publisher_excerpt',
+          contentOrigin: 'live_ingested',
+          contentHash: `openalex-q-${workId}`,
+          canonicalUrl: doiUrl,
+          hasAuthenticImage: false,
+          space: `c/${cleanQuery.replace(/\s+/g, '_')}`,
+          flair: '🔬 Fachrecherche',
+          keyInsight: `Erkenntnis aus ${journal}: ${work.title}`,
           upvotesCount: 0,
           awardsCount: { gold: 0, brain: 0, spark: 0 },
           sourceTrustLevel: 'peer_reviewed',

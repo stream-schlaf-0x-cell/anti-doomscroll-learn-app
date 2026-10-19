@@ -131,6 +131,7 @@ interface AppContextValue {
   snapshotSyncInfo: string | null;
   spaces: Subchannel[];
   createSpace: (data: Parameters<typeof defaultSpaceRepository.createSubchannel>[0]) => Promise<Subchannel>;
+  updateSpace: (oldHandle: string, data: Parameters<typeof defaultSpaceRepository.updateSubchannel>[1]) => Promise<Subchannel | null>;
   deleteSpace: (id: string) => Promise<boolean>;
   togglePinSpace: (id: string) => Promise<Subchannel[]>;
   selectSpace: (handleOrTag: string) => void;
@@ -193,6 +194,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     selectSpace(newChan.handle);
     return newChan;
   }, [selectSpace]);
+
+  const updateSpace = useCallback(async (oldHandle: string, data: Parameters<typeof defaultSpaceRepository.updateSubchannel>[1]) => {
+    const updated = await defaultSpaceRepository.updateSubchannel(oldHandle, data);
+    if (updated && selectedFilter.toLowerCase() === normalizeSpaceHandle(oldHandle).toLowerCase()) {
+      selectSpace(updated.handle);
+    }
+    return updated;
+  }, [selectSpace, selectedFilter]);
 
   const deleteSpace = useCallback(async (id: string) => {
     const ok = await defaultSpaceRepository.deleteSubchannel(id);
@@ -1255,6 +1264,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         snapshotSyncInfo,
         spaces,
         createSpace,
+        updateSpace,
         deleteSpace,
         togglePinSpace,
         selectSpace

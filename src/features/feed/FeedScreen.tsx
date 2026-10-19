@@ -12,7 +12,8 @@ import {
   ActivityIndicator,
   Platform,
   TextInput,
-  Linking
+  Linking,
+  Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, FeedItem, DayEditionType, DAY_EDITIONS_META, TOPIC_SPACE_MAP } from '../../core/domain/types';
@@ -23,9 +24,9 @@ import { DesktopSidebar } from '../../ui/components/DesktopSidebar';
 import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
 import { ScoredFeedItem, scoreFeedItem, sortFeedForDisplay, FeedSortMode } from '../../core/domain/ranking';
-import { Subchannel, defaultSpaceRepository } from '../../core/spaces/spaceRepository';
+import { Subchannel, defaultSpaceRepository, normalizeSpaceHandle } from '../../core/spaces/spaceRepository';
 import { UltraMasterModal, MasterTab } from '../../ui/components/UltraMasterModal';
-import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
+import { OnTheFlyStreamService, generateHivemindStream } from '../../core/synthesis/onTheFlyStreamService';
 import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerationProgressModal';
 import { AtmenBreathingPortal } from '../breathing/AtmenBreathingPortal';
 import { QuizCheckpointCard } from '../../ui/components/QuizCheckpointCard';
@@ -35,7 +36,9 @@ import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { ContinuousLiveNewsService, NewsHubFilterCategory } from '../../core/data/continuousLiveNewsService';
 import { NewsHubModal } from '../../ui/components/NewsHubModal';
 import { defaultSourceRepository } from '../../core/data/sourceRepository';
-import { defaultBatchEditionEnricher } from '../../core/enrichment/batchEnricher';
+import { defaultBatchEditionEnricher, satisfiesCuratedBodyContract, getCardRenderableText } from '../../core/enrichment/batchEnricher';
+import { REAL_KNOWLEDGE_VAULT } from '../../core/data/realKnowledgeVault';
+import { OpenWebHarvester } from '../../core/ingestion/openWebHarvester';
 import { loadAiCredentials } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
@@ -51,6 +54,20 @@ function useReadingStableFeed(items: ScoredFeedItem[], reading: boolean, scope: 
   const presented = holdFeedPresentation(previous, latest, reading);
   React.useEffect(() => setPrevious(presented), [presented]);
   return presented.items;
+}
+
+function formatCuratedAge(isoString: string): string {
+  try {
+    const diffMs = Date.now() - new Date(isoString).getTime();
+    const diffSec = Math.floor(diffMs / 1000);
+    if (diffSec < 60) return 'vor wenigen Sekunden';
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `vor ${diffMin} Min.`;
+    const diffHours = Math.floor(diffMin / 60);
+    return `vor ${diffHours} Std.`;
+  } catch {
+    return 'vor wenigen Sekunden';
+  }
 }
 
 export const FeedScreen: React.FC = () => {
@@ -87,7 +104,8 @@ export const FeedScreen: React.FC = () => {
     shuffleFeed,
     updateTopicWeight,
     spaces,
-    selectSpace
+    selectSpace,
+    updateSpace
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -112,6 +130,15 @@ export const FeedScreen: React.FC = () => {
     items: FeedItem[];
     timestamp: string;
     returnFilter: string;
+    mode?: 'news' | 'evergreen';
+    topicTitle?: string;
+  } | null>(null);
+  const [editingChannel, setEditingChannel] = useState<{
+    originalHandle: string;
+    handle: string;
+    title: string;
+    description: string;
+    accentColor: string;
   } | null>(null);
   const [lastOperationResult, setLastOperationResult] = useState<FeedOperationResult | null>(null);
 
@@ -625,52 +652,151 @@ export const FeedScreen: React.FC = () => {
   const handleLiveAiCurate = async () => {
     if (isCuratingLiveAi) return;
     setIsCuratingLiveAi(true);
-    setCurationStage('1/3: Passende Quellen durchsuchen …');
-    // Start tracking the operation from the user's click to accurately record total duration
+
+    const isNewsMode = sortMode === 'new' || activeFeedOption === 'live_news';
+    const isChannelCurating = selectedFilter !== 'all';
+    const activeSpaceHandle = isChannelCurating ? normalizeSpaceHandle(selectedFilter) : 'all';
+    const activeChannel = isChannelCurating
+      ? subchannels.find(s => s.handle.toLowerCase() === activeSpaceHandle.toLowerCase())
+      : undefined;
+    const activeTopicTitle = activeChannel?.title || activeChannel?.flair || (isChannelCurating ? activeSpaceHandle.replace(/^c\//, '').replace(/_/g, ' ') : undefined);
+    const activePrimaryTopic = activeChannel?.primaryTopic || (isChannelCurating ? OnTheFlyStreamService.inferTopicFromSpace(activeSpaceHandle) : undefined);
+
+    setCurationStage(
+      isChannelCurating
+        ? `1/3: Fundstücke für ${activeTopicTitle || activeSpaceHandle} scannen …`
+        : (isNewsMode ? '1/3: Verifizierte News & Ticker durchsuchen …' : '1/3: Zeitlose Vertiefungsbeiträge scannen …')
+    );
+
     const initialOp = defaultFeedOperationManager.startOperation('ai_curation');
     const operationId = initialOp.operationId;
 
     try {
       const creds = await loadAiCredentials();
-
-      // Collect IDs and canonical URLs currently visible or pinned in the feed
-      const visibleIds = new Set(renderedInfiniteItems.slice(0, visibleInfiniteCount).map(i => i.id));
-      const pinnedSet = new Set(defaultFeedOperationManager.getPinnedItemIds());
-      const seenUrls = new Set<string>();
-      for (const item of renderedInfiniteItems.slice(0, visibleInfiniteCount)) {
-        if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
-      }
-
-      // Procure genuine unrendered candidates from discovery, open web, and live news pools
       const candidatePool: FeedItem[] = [];
-      const sourcesToHarvest: FeedItem[] = [...openWebItems, ...discoveryItems, ...liveNewsItems];
-      for (const item of sourcesToHarvest) {
-        if (!visibleIds.has(item.id) && !pinnedSet.has(item.id)) {
-          if (!item.canonicalUrl || !seenUrls.has(item.canonicalUrl)) {
-            if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
-            candidatePool.push(item);
+
+      if (isChannelCurating) {
+        // --- CHANNEL-DRIVEN HARVEST (Stages 1, 2, 3) ---
+        const cleanSearchQuery = activeTopicTitle || activeSpaceHandle.replace(/^c\//, '').replace(/_/g, ' ');
+        const searchTerms = cleanSearchQuery.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+
+        // Stage 1: Filter existing pools and Real Knowledge Vault
+        const localMatches: FeedItem[] = [];
+        const allLocalPool: FeedItem[] = [...openWebItems, ...discoveryItems, ...liveNewsItems, ...REAL_KNOWLEDGE_VAULT];
+        for (const item of allLocalPool) {
+          const text = `${item.title} ${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''} ${(item.topics || []).join(' ')}`.toLowerCase();
+          const matchesKeyword = searchTerms.some(term => text.includes(term));
+          const matchesSpace = item.space?.toLowerCase() === activeSpaceHandle.toLowerCase();
+          const matchesTopic = activePrimaryTopic && (item.primaryTopic === activePrimaryTopic || item.topics?.includes(activePrimaryTopic));
+          if (matchesSpace || matchesKeyword || matchesTopic) {
+            localMatches.push(item);
           }
         }
-      }
 
-      // If local pools are low on unrendered candidates, fetch fresh live news stream
-      if (candidatePool.length < 6) {
-        try {
-          const freshLive = await ContinuousLiveNewsService.getLiveStream({ limit: 20, forceRefresh: false });
-          for (const item of freshLive) {
+        // Stage 2: Live Scholarly Research (OpenAlex & Wikipedia) if local matches < 6
+        let liveHarvested: FeedItem[] = [];
+        if (localMatches.length < 6) {
+          setCurationStage(`1/3: Offene Primärquellen zu „${cleanSearchQuery}“ recherchieren …`);
+          try {
+            const today = new Date().toISOString().slice(0, 10);
+            const [openAlexItems, wikiItems] = await Promise.all([
+              OnTheFlyStreamService.searchOpenAlex(cleanSearchQuery, activePrimaryTopic || 'science_society', activeSpaceHandle, today),
+              OnTheFlyStreamService.searchWikipedia(cleanSearchQuery, activePrimaryTopic || 'science_society', activeSpaceHandle, today)
+            ]);
+            liveHarvested = [...openAlexItems, ...wikiItems];
+          } catch (err) {
+            console.warn('Live research error:', err);
+          }
+        }
+
+        // Stage 3: On-demand Hivemind Synthesis if total candidates < 5
+        let synthesizedItems: FeedItem[] = [];
+        if (localMatches.length + liveHarvested.length < 5) {
+          setCurationStage(`1/3: Vertiefende Synthese für „${cleanSearchQuery}“ erstellen …`);
+          try {
+            const hivemindRes = await generateHivemindStream({
+              seedTopicOrQuestion: cleanSearchQuery,
+              targetCount: 4,
+              preferredLanguage: 'de',
+              credentials: creds,
+              space: activeSpaceHandle
+            });
+            if (hivemindRes.items && hivemindRes.items.length > 0) {
+              synthesizedItems = hivemindRes.items;
+            }
+          } catch (err) {
+            console.warn('Hivemind stream generation error:', err);
+          }
+        }
+
+        const combinedChannelPool = [...synthesizedItems, ...liveHarvested, ...localMatches];
+        const seenKeys = new Set<string>();
+        for (const item of combinedChannelPool) {
+          const key = item.canonicalUrl || item.id || item.title;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            candidatePool.push({
+              ...item,
+              space: activeSpaceHandle,
+              primaryTopic: activePrimaryTopic || item.primaryTopic || 'science_society'
+            });
+          }
+        }
+      } else {
+        // --- GLOBAL FEED SELECTION (Mode A vs Mode B) ---
+        const visibleIds = new Set(renderedInfiniteItems.slice(0, visibleInfiniteCount).map(i => i.id));
+        const pinnedSet = new Set(defaultFeedOperationManager.getPinnedItemIds());
+        const seenUrls = new Set<string>();
+        for (const item of renderedInfiniteItems.slice(0, visibleInfiniteCount)) {
+          if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
+        }
+
+        if (isNewsMode) {
+          // Mode B: Growth News Research - only admit verified journalistic news with reliable dates & real body excerpts
+          const newsSources = [...liveNewsItems, ...openWebItems];
+          for (const item of newsSources) {
             if (!visibleIds.has(item.id) && !pinnedSet.has(item.id)) {
               if (!item.canonicalUrl || !seenUrls.has(item.canonicalUrl)) {
                 if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
-                candidatePool.push(item);
+                if (item.primaryTopic !== 'memes_satire' && item.primaryTopic !== 'art_aesthetics') {
+                  if (getCardRenderableText(item).length >= 120) {
+                    candidatePool.push(item);
+                  }
+                }
               }
             }
           }
-        } catch {
-          // Ignore network errors during supplementary pool fetching
+          if (candidatePool.length < 6) {
+            try {
+              const freshLive = await ContinuousLiveNewsService.getLiveStream({ limit: 20, forceRefresh: false });
+              for (const item of freshLive) {
+                if (!visibleIds.has(item.id) && !pinnedSet.has(item.id)) {
+                  if (!item.canonicalUrl || !seenUrls.has(item.canonicalUrl)) {
+                    if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
+                    if (getCardRenderableText(item).length >= 120) {
+                      candidatePool.push(item);
+                    }
+                  }
+                }
+              }
+            } catch {}
+          }
+        } else {
+          // Mode A: Evergreen Depth - pull timeless high-substance essays, papers, historical reflections
+          const evergreenSources = [...REAL_KNOWLEDGE_VAULT, ...discoveryItems, ...openWebItems];
+          for (const item of evergreenSources) {
+            if (!visibleIds.has(item.id) && !pinnedSet.has(item.id)) {
+              if (!item.canonicalUrl || !seenUrls.has(item.canonicalUrl)) {
+                if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
+                if (getCardRenderableText(item).length >= 120) {
+                  candidatePool.push(item);
+                }
+              }
+            }
+          }
         }
       }
 
-      // If unrendered pool is still empty, include uncurated visible items to improve them
       if (candidatePool.length === 0) {
         const uncuratedVisible = renderedInfiniteItems.filter(i => !i.aiAssisted).slice(0, 6);
         candidatePool.push(...uncuratedVisible);
@@ -689,45 +815,73 @@ export const FeedScreen: React.FC = () => {
         return;
       }
 
-      // Cap batch to 8 candidates to maintain responsive speed and stay well within budget/token limits
-      const candidatesToEnrich = candidatePool.slice(0, 8);
+      // Diversity enforcement: maximum 2 items per sourceDomain / publisher
+      const domainCounts = new Map<string, number>();
+      const diverseCandidates: FeedItem[] = [];
+      for (const item of candidatePool) {
+        let domain = item.sourceReferences?.[0]?.publisher || 'unknown';
+        const urlString = item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl;
+        if (urlString) {
+          try {
+            domain = new URL(urlString).hostname || domain;
+          } catch {}
+        }
+        const currentCount = domainCounts.get(domain) || 0;
+        if (currentCount < 2) {
+          domainCounts.set(domain, currentCount + 1);
+          diverseCandidates.push(item);
+        }
+      }
+      const poolToEnrich = diverseCandidates.length >= 4 ? diverseCandidates : candidatePool;
+      const candidatesToEnrich = poolToEnrich.slice(0, 8);
 
       setCurationStage(`2/3: ${candidatesToEnrich.length} Fundstücke auf Relevanz & Substanz prüfen …`);
       const enriched = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(candidatesToEnrich, creds);
       const telemetry = defaultBatchEditionEnricher.getLastBatchReport();
 
-      // If curating within a specific channel, tag the items so the channel is immediately enriched
-      if (selectedFilter !== 'all') {
-        for (const item of enriched) {
-          item.space = selectedFilter;
-          if (!item.topics.includes(selectedFilter as TopicTag)) {
-            item.topics.push(selectedFilter as TopicTag);
+      // Verify that every item satisfies the curated body contract
+      const filteredSubstantive = enriched.filter(satisfiesCuratedBodyContract);
+      const itemsToPresent = filteredSubstantive.length >= 3 ? filteredSubstantive : (enriched.length > 0 ? enriched : candidatesToEnrich.slice(0, 5));
+
+      if (isChannelCurating) {
+        for (const item of itemsToPresent) {
+          item.space = activeSpaceHandle;
+          if (activePrimaryTopic) {
+            item.primaryTopic = activePrimaryTopic;
+            if (!item.topics.includes(activePrimaryTopic)) {
+              item.topics.push(activePrimaryTopic);
+            }
           }
         }
       }
 
-      setCurationStage(`3/3: Deine persönliche Auswahl (${enriched.length} Beiträge) zusammenstellen …`);
+      setCurationStage(`3/3: Deine persönliche Auswahl (${itemsToPresent.length} Beiträge) zusammenstellen …`);
+
+      // Always persist items to feedRepository so they permanently exist in this channel
+      feedRepository.addItems(itemsToPresent);
+
       if (feedRepository.executeContentOperation) {
-        const opResult = await feedRepository.executeContentOperation('ai_curation', enriched, {
+        const opResult = await feedRepository.executeContentOperation('ai_curation', itemsToPresent, {
           pinInserted: true,
           pinUpdated: false,
           telemetry,
           operationId
         });
         setLastOperationResult(opResult);
-      } else {
-        feedRepository.addItems?.(enriched);
       }
 
-      if (enriched.length > 0) {
+      if (itemsToPresent.length > 0) {
         setCuratedSelection({
-          items: enriched,
+          items: itemsToPresent,
           timestamp: new Date().toISOString(),
-          returnFilter: selectedFilter
+          returnFilter: selectedFilter,
+          mode: isNewsMode ? 'news' : 'evergreen',
+          topicTitle: activeTopicTitle
         });
       }
 
       await recomputeFeed();
+      await refreshFeed();
       scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     } catch (e: any) {
       console.warn('Live AI Curation failed:', e);
@@ -804,9 +958,12 @@ export const FeedScreen: React.FC = () => {
     };
   }, [currentFeedItems, activeCardIndex, openArticle, toggleSaveItem]);
 
+  const activeSpace = subchannels.find(
+    s => s.handle.toLowerCase() === selectedFilter.toLowerCase() || s.primaryTopic === selectedFilter
+  );
   const activeSpaceName = selectedFilter === 'all'
     ? 'Alle Spaces'
-    : (subchannels.find(s => s.handle === selectedFilter || s.primaryTopic === selectedFilter)?.handle || selectedFilter);
+    : (activeSpace?.title || activeSpace?.handle || selectedFilter);
 
   const renderSpacePills = () => (
     <ScrollView
@@ -837,7 +994,7 @@ export const FeedScreen: React.FC = () => {
             { color: selectedFilter === 'all' ? '#FFFFFF' : colors.textSecondary }
           ]}
         >
-          🌟 Alle Spaces
+          Alle Spaces
         </Text>
       </TouchableOpacity>
 
@@ -875,7 +1032,7 @@ export const FeedScreen: React.FC = () => {
         );
       })}
 
-      {/* Persistent "+ Neuer Raum" Button */}
+      {/* Persistent "Neuer Raum" Button */}
       <TouchableOpacity
         onPress={() => {
           setMasterModalTab('channels');
@@ -896,7 +1053,7 @@ export const FeedScreen: React.FC = () => {
           style={{ marginRight: 5 }}
         />
         <Text style={[styles.spacePillText, { color: '#F59E0B' }]}>
-          + Neuer Raum
+          Neuer Raum
         </Text>
       </TouchableOpacity>
     </ScrollView>
@@ -925,11 +1082,11 @@ export const FeedScreen: React.FC = () => {
           disabled={isCuratingLiveAi}
           style={[styles.generatePocketButton, { backgroundColor: colors.accent, opacity: isCuratingLiveAi ? 0.6 : 1 }]}
           accessibilityRole="button"
-          accessibilityLabel={`Auswahl für ${channel.handle} kuratieren`}
+          accessibilityLabel={`Auswahl für ${channel.title || channel.handle} kuratieren`}
         >
           <Ionicons name="sparkles" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
           <Text style={styles.generatePocketButtonText}>
-            {`✨ Auswahl für ${channel.handle} kuratieren`}
+            {isCuratingLiveAi ? 'Kuriert …' : `Auswahl für ${channel.title || channel.handle} kuratieren`}
           </Text>
         </TouchableOpacity>
 
@@ -945,7 +1102,7 @@ export const FeedScreen: React.FC = () => {
           >
             <Ionicons name="add-outline" size={16} color={colors.textPrimary} style={{ marginRight: 4 }} />
             <Text style={[styles.resetFilterButtonText, { color: colors.textPrimary }]}>
-              + Passende Quelle zuordnen
+              Passende Quelle zuordnen
             </Text>
           </TouchableOpacity>
 
@@ -1075,7 +1232,7 @@ export const FeedScreen: React.FC = () => {
                       }
                     ]}
                   >
-                    ♾️ Endlos-Stream
+                    Endlos-Stream
                   </Text>
                 </TouchableOpacity>
 
@@ -1103,7 +1260,7 @@ export const FeedScreen: React.FC = () => {
                       }
                     ]}
                   >
-                    🌅 Tagesausgaben
+                    Tagesausgaben
                   </Text>
                 </TouchableOpacity>
 
@@ -1131,7 +1288,7 @@ export const FeedScreen: React.FC = () => {
                       }
                     ]}
                   >
-                    🕓 Chronik
+                    Chronik
                   </Text>
                 </TouchableOpacity>
 
@@ -1154,7 +1311,7 @@ export const FeedScreen: React.FC = () => {
                       }
                     ]}
                   >
-                    ⚡ Live News Hub
+                    Live News Hub
                   </Text>
                 </TouchableOpacity>
 
@@ -1182,7 +1339,7 @@ export const FeedScreen: React.FC = () => {
                       }
                     ]}
                   >
-                    🏛 Klassiker
+                    Klassiker
                   </Text>
                 </TouchableOpacity>
               </ScrollView>
@@ -1213,6 +1370,28 @@ export const FeedScreen: React.FC = () => {
                     </Text>
                   </Text>
                 </View>
+                {activeSpace?.isCustom && (
+                  <TouchableOpacity
+                    onPress={() => setEditingChannel({
+                      originalHandle: activeSpace.handle,
+                      handle: activeSpace.handle,
+                      title: activeSpace.title || activeSpace.handle,
+                      description: activeSpace.description || '',
+                      accentColor: activeSpace.accentColor || '#3B82F6'
+                    })}
+                    style={[
+                      styles.activeFilterBannerReset,
+                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginRight: 8 }
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Kanal bearbeiten"
+                  >
+                    <Ionicons name="pencil-outline" size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                    <Text style={[styles.activeFilterBannerResetText, { color: colors.textSecondary }]}>
+                      Bearbeiten
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   onPress={() => handleFilterChange('all')}
                   style={[
@@ -1310,7 +1489,7 @@ export const FeedScreen: React.FC = () => {
                   >
                     <Ionicons name="git-network-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
                     <Text style={[styles.sortTabText, { color: colors.textPrimary, fontWeight: '700' }]}>
-                      + Hivemind
+                      Hivemind
                     </Text>
                   </TouchableOpacity>
 
@@ -1319,18 +1498,14 @@ export const FeedScreen: React.FC = () => {
                     disabled={isCuratingLiveAi}
                     style={[
                       styles.sortTab,
-                      { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: '#10B981' }
+                      { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: '#10B981', opacity: isCuratingLiveAi ? 0.7 : 1 }
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel="Live KI-Kuration starten"
                   >
-                    {isCuratingLiveAi ? (
-                      <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 4 }} />
-                    ) : (
-                      <Ionicons name="sparkles" size={13} color="#10B981" style={{ marginRight: 4 }} />
-                    )}
+                    <Ionicons name="sparkles" size={13} color="#10B981" style={{ marginRight: 4 }} />
                     <Text style={[styles.sortTabText, { color: '#10B981', fontWeight: '700' }]}>
-                      ✨ Live KI-Kuration
+                      {isCuratingLiveAi ? 'Kuriert …' : 'Live KI-Kuration'}
                     </Text>
                   </TouchableOpacity>
 
@@ -1350,10 +1525,12 @@ export const FeedScreen: React.FC = () => {
                         <Ionicons name="sparkles" size={20} color={colors.accent} style={{ marginRight: 8 }} />
                         <View style={{ flex: 1 }}>
                           <Text style={[styles.curatedSelectionTitle, { color: colors.textPrimary }]}>
-                            ✨ Deine persönliche Auswahl ({curatedSelection.items.length} Beiträge)
+                            {curatedSelection.mode === 'news'
+                              ? `✨ Deine kuratierte News-Recherche (${curatedSelection.items.length} Meldungen)`
+                              : `✨ Deine persönliche Auswahl (${curatedSelection.items.length} Beiträge)`}
                           </Text>
                           <Text style={[styles.curatedSelectionSubtitle, { color: colors.textSecondary }]}>
-                            Kuratiert vor wenigen Sekunden · Exklusiv für deinen Horizont
+                            Kuratiert {formatCuratedAge(curatedSelection.timestamp)} · {curatedSelection.topicTitle ? `Für ${curatedSelection.topicTitle}` : 'Exklusiv für deinen Horizont'}
                           </Text>
                         </View>
                       </View>
@@ -1428,7 +1605,33 @@ export const FeedScreen: React.FC = () => {
                   </View>
                 )}
 
-                {renderedInfiniteItems.length === 0 ? (
+                {curatedSelection && curatedSelection.items.length > 0 ? (
+                  <>
+                    {curatedSelection.items.map((rawItem, index) => {
+                      const item = scoreFeedItem(rawItem, profile, interactions);
+                      return (
+                        <View
+                          key={item.id}
+                          onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+                        >
+                          <FeedCard
+                            item={item}
+                            isHero={index === 0}
+                            isFocused={index === activeCardIndex}
+                            isExpanded={Boolean(expandedCardIds[item.id])}
+                            onToggleKurzCheck={() => {
+                              setExpandedCardIds(prev => ({
+                                ...prev,
+                                [item.id]: !prev[item.id]
+                              }));
+                            }}
+                            onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                          />
+                        </View>
+                      );
+                    })}
+                  </>
+                ) : renderedInfiniteItems.length === 0 ? (
                   subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom) ? (
                     renderEmptyCustomSpaceCard(subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom)!)
                   ) : (
@@ -1600,7 +1803,7 @@ export const FeedScreen: React.FC = () => {
                         >
                           <Ionicons name="shuffle-outline" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
                           <Text style={[styles.finiteEndingBtnText, { color: '#FFFFFF', fontWeight: '700' }]}>
-                            🔄 Neuer Mix
+                            Neuer Mix
                           </Text>
                         </TouchableOpacity>
 
@@ -1612,7 +1815,7 @@ export const FeedScreen: React.FC = () => {
                         >
                           <Ionicons name="flash-outline" size={15} color="#F59E0B" style={{ marginRight: 6 }} />
                           <Text style={[styles.finiteEndingBtnText, { color: colors.textPrimary, fontWeight: '600' }]}>
-                            ⚡ Zu den aktuellen Nachrichten
+                            Zu den aktuellen Nachrichten
                           </Text>
                         </TouchableOpacity>
 
@@ -1625,7 +1828,7 @@ export const FeedScreen: React.FC = () => {
                           >
                             <Ionicons name="arrow-down-circle-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
                             <Text style={[styles.finiteEndingBtnText, { color: colors.accent, fontWeight: '600' }]}>
-                              ⬇️ 12 weitere anzeigen
+                              12 weitere anzeigen
                             </Text>
                           </TouchableOpacity>
                         ) : (
@@ -2313,7 +2516,33 @@ export const FeedScreen: React.FC = () => {
                   </View>
                 )}
 
-            {allStreamItems.length === 0 ? (
+            {curatedSelection && curatedSelection.items.length > 0 ? (
+              <>
+                {curatedSelection.items.map((rawItem, index) => {
+                  const item = scoreFeedItem(rawItem, profile, interactions);
+                  return (
+                    <View
+                      key={item.id}
+                      onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+                    >
+                      <FeedCard
+                        item={item}
+                        isHero={index === 0}
+                        isFocused={index === activeCardIndex}
+                        isExpanded={Boolean(expandedCardIds[item.id])}
+                        onToggleKurzCheck={() => {
+                          setExpandedCardIds(prev => ({
+                            ...prev,
+                            [item.id]: !prev[item.id]
+                          }));
+                        }}
+                        onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                      />
+                    </View>
+                  );
+                })}
+              </>
+            ) : allStreamItems.length === 0 ? (
               subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom) ? (
                 renderEmptyCustomSpaceCard(subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom)!)
               ) : (
@@ -2370,7 +2599,7 @@ export const FeedScreen: React.FC = () => {
                       style={{ marginRight: 6 }}
                     />
                     <Text style={styles.generatePocketButtonText}>
-                      {isGeneratingPocket ? 'Recherchiere & synthetisiere Stream…' : '⚡ Stream on-the-fly generieren'}
+                      {isGeneratingPocket ? 'Recherchiere & synthetisiere Stream…' : 'Stream on-the-fly generieren'}
                     </Text>
                   </TouchableOpacity>
 
@@ -2592,6 +2821,106 @@ export const FeedScreen: React.FC = () => {
         colors={colors}
         isDark={isDark}
       />
+
+      {/* Channel Edit & Typo-Correction Modal */}
+      {editingChannel && (
+        <Modal
+          visible={Boolean(editingChannel)}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setEditingChannel(null)}
+        >
+          <View style={styles.channelEditOverlay}>
+            <View style={[styles.channelEditDialog, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+              <View style={styles.channelEditHeader}>
+                <Ionicons name="pencil" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                <Text style={[styles.channelEditTitle, { color: colors.textPrimary }]}>
+                  Kanal bearbeiten
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setEditingChannel(null)}
+                  style={{ marginLeft: 'auto', padding: 4 }}
+                  accessibilityLabel="Schließen"
+                >
+                  <Ionicons name="close" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.channelEditLabel, { color: colors.textSecondary }]}>
+                Titel / Name des Channels
+              </Text>
+              <TextInput
+                style={[styles.channelEditInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
+                value={editingChannel.title}
+                onChangeText={(text) => setEditingChannel(prev => prev ? { ...prev, title: text } : null)}
+                placeholder="z. B. Visible Learning"
+                placeholderTextColor={colors.textMuted}
+              />
+
+              <Text style={[styles.channelEditLabel, { color: colors.textSecondary }]}>
+                Handle (z. B. c/visible_learning)
+              </Text>
+              <TextInput
+                style={[styles.channelEditInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
+                value={editingChannel.handle}
+                onChangeText={(text) => setEditingChannel(prev => prev ? { ...prev, handle: text } : null)}
+                placeholder="c/handle"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="none"
+              />
+
+              <Text style={[styles.channelEditLabel, { color: colors.textSecondary }]}>
+                Beschreibung / Fokus
+              </Text>
+              <TextInput
+                style={[styles.channelEditInput, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle, minHeight: 64 }]}
+                value={editingChannel.description}
+                onChangeText={(text) => setEditingChannel(prev => prev ? { ...prev, description: text } : null)}
+                placeholder="Themenschwerpunkt beschreiben…"
+                placeholderTextColor={colors.textMuted}
+                multiline
+              />
+
+              <View style={styles.channelEditActions}>
+                <TouchableOpacity
+                  onPress={() => setEditingChannel(null)}
+                  style={[styles.channelEditCancelBtn, { borderColor: colors.borderSubtle }]}
+                >
+                  <Text style={[styles.channelEditBtnText, { color: colors.textSecondary }]}>
+                    Abbrechen
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (!editingChannel.title.trim()) return;
+                    const cleanHandle = normalizeSpaceHandle(editingChannel.handle || editingChannel.title);
+                    const updated = await updateSpace(editingChannel.originalHandle, {
+                      title: editingChannel.title.trim(),
+                      handle: cleanHandle,
+                      description: editingChannel.description.trim(),
+                      accentColor: editingChannel.accentColor
+                    });
+                    if (updated) {
+                      if (selectedFilter.toLowerCase() === editingChannel.originalHandle.toLowerCase()) {
+                        setSelectedFilter(updated.handle);
+                      }
+                      setSimToast(`✓ Kanal „${updated.title}“ aktualisiert.`);
+                      setTimeout(() => setSimToast(null), 3000);
+                    }
+                    setEditingChannel(null);
+                  }}
+                  style={[styles.channelEditSaveBtn, { backgroundColor: colors.accent }]}
+                >
+                  <Text style={[styles.channelEditBtnText, { color: '#FFFFFF', fontWeight: '700' }]}>
+                    Speichern
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 };
@@ -2604,14 +2933,73 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 780,
     alignSelf: 'center',
-    height: 0,
     zIndex: 20
   },
   operationStatusOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0
+    width: '100%'
+  },
+  channelEditOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.md
+  },
+  channelEditDialog: {
+    width: '100%',
+    maxWidth: 480,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 8
+  },
+  channelEditHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md
+  },
+  channelEditTitle: {
+    fontSize: 18,
+    fontWeight: '700'
+  },
+  channelEditLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: spacing.sm,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5
+  },
+  channelEditInput: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14
+  },
+  channelEditActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: spacing.lg
+  },
+  channelEditCancelBtn: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: 16,
+    paddingVertical: 10
+  },
+  channelEditSaveBtn: {
+    borderRadius: radius.md,
+    paddingHorizontal: 20,
+    paddingVertical: 10
+  },
+  channelEditBtnText: {
+    fontSize: 14
   },
   filterBarContainer: {
     borderBottomWidth: 0.5,

@@ -1,5 +1,6 @@
 import { TopicTag } from '../domain/types';
 import { appStorage, AtemStorage } from '../data/storage';
+import { feedRepository } from '../data/feedRepository';
 
 export interface Subchannel {
   id: string;
@@ -338,6 +339,56 @@ export class SpaceRepository {
     ]);
     await this.notify();
     return updated;
+  }
+
+  public async updateSubchannel(
+    oldHandle: string,
+    data: {
+      title?: string;
+      handle?: string;
+      description?: string;
+      icon?: string;
+      accentColor?: string;
+    }
+  ): Promise<Subchannel | null> {
+    const spaces = await this.getAllSpaces();
+    const cleanOldHandle = normalizeSpaceHandle(oldHandle);
+    const target = spaces.find(s => s.handle.toLowerCase() === cleanOldHandle.toLowerCase() && s.isCustom);
+    if (!target) return null;
+
+    const newHandle = data.handle ? normalizeSpaceHandle(data.handle) : target.handle;
+    const updatedChannel: Subchannel = {
+      ...target,
+      title: data.title !== undefined ? data.title.trim() : target.title,
+      handle: newHandle,
+      description: data.description !== undefined ? data.description.trim() : target.description,
+      icon: data.icon || target.icon,
+      accentColor: data.accentColor || target.accentColor
+    };
+
+    const customOnly = spaces.filter(s => s.isCustom && s.id !== target.id);
+    customOnly.push(updatedChannel);
+    await this.storage.setItem(SpaceRepository.STORAGE_KEY, JSON.stringify(customOnly));
+
+    const pinnedIds = spaces.filter(s => s.pinned).map(s => s.id);
+    await this.storage.setItem(SpaceRepository.PINNED_IDS_KEY, JSON.stringify(pinnedIds));
+
+    // Migrate any items in feedRepository that have item.space === cleanOldHandle
+    try {
+      const allItems = feedRepository.getAllItems();
+      const itemsToMigrate = allItems.filter(i => i.space?.toLowerCase() === cleanOldHandle.toLowerCase());
+      if (itemsToMigrate.length > 0) {
+        for (const item of itemsToMigrate) {
+          item.space = newHandle;
+        }
+        feedRepository.addItems(itemsToMigrate);
+      }
+    } catch {
+      // Safe isolation
+    }
+
+    await this.notify();
+    return updatedChannel;
   }
 }
 

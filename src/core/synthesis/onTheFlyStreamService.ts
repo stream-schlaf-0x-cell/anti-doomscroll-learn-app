@@ -14,7 +14,7 @@
 import { FeedItem, TopicTag, TOPIC_SPACE_MAP } from '../domain/types';
 import { feedRepository } from '../data/feedRepository';
 import { ArchiveService } from '../archive/archiveService';
-import { defaultSpaceRepository } from '../spaces/spaceRepository';
+import { defaultSpaceRepository, normalizeSpaceHandle } from '../spaces/spaceRepository';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 import { enrichItemWithInstantResearch } from './backgroundResearchPipeline';
 import { TOPIC_DIALECTICS, DialecticTemplate } from './dialecticTemplates';
@@ -624,6 +624,8 @@ export class OnTheFlyStreamService {
     seedTopicOrQuestion: string;
     targetCount?: number;
     preferredLanguage?: 'de' | 'en';
+    credentials?: import('../ai/atmenAiClient').AiCredentials;
+    space?: string;
   }): Promise<HivemindStreamResult> {
     return generateHivemindStream(params);
   }
@@ -642,6 +644,7 @@ export async function generateHivemindStream(params: {
   targetCount?: number;
   preferredLanguage?: 'de' | 'en';
   credentials?: import('../ai/atmenAiClient').AiCredentials;
+  space?: string;
 }): Promise<HivemindStreamResult> {
   const seed = params.seedTopicOrQuestion.trim() || 'Emergente Phänomene und Kognition';
   const topic = OnTheFlyStreamService.inferTopicFromSpace(seed);
@@ -791,7 +794,7 @@ Antworte ausschließlich mit dem JSON-Array.`;
       contentOrigin: 'enriched_ai',
       contentHash: `hivemind-${id}`,
       canonicalUrl: `https://atmen.network/hivemind/${encodeURIComponent(seed)}`,
-      space: `c/${topic}`,
+      space: params.space ? normalizeSpaceHandle(params.space) : `c/${topic}`,
       flair,
       keyInsight: stage.keyInsight,
       perspectiveDetails: {
