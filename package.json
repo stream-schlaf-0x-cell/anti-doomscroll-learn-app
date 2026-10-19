@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
     "test": "node --import tsx --test tests/*.test.ts",
+    "dump": "tsx scripts/generate-codebase-dumps.ts",
     "ingest": "tsx scripts/run-pipeline.ts",
     "daemon": "tsx scripts/daily-pipeline-daemon.ts"
   },
