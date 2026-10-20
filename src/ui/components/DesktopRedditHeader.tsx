@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing, PALETTE_METADATA, ThemePalette } from '../theme';
 import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
-import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
+import { TopicTag } from '../../core/domain/types';
 import { defaultSourceRepository } from '../../core/data/sourceRepository';
 import {
   loadAiCredentials,
@@ -57,10 +57,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     setPalettePreference,
     activeTab,
     setActiveTab,
-    activeFeedOption,
-    setActiveFeedOption,
     goHome,
-    selectedArticleId,
     savedArticles,
     interactions,
     refreshFeed,
@@ -217,7 +214,6 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         <View style={styles.headerInner}>
           {/* Left: Brand + Reddit Space Selector */}
           <View style={styles.leftSection}>
-            {/* 1. Brand: Always returns to Home Center */}
             <TouchableOpacity
               onPress={() => {
                 goHome();
@@ -228,81 +224,12 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               accessibilityRole="button"
               accessibilityLabel="Zurück zur Home Startseite"
             >
-              {/* atmen Blue Chevron Arch Emblem */}
-              <AtmenSymbol size={28} isDark={isDark} style={{ marginRight: 8 }} />
+              <AtmenSymbol size={26} isDark={isDark} style={{ marginRight: 8 }} />
               <Text style={[styles.brandText, { color: colors.textPrimary }]}>
                 Atmen
               </Text>
             </TouchableOpacity>
 
-            {/* 2. Center of App: Dedicated Home Pill */}
-            <TouchableOpacity
-              onPress={() => {
-                goHome();
-                if (onSelectSpace) onSelectSpace('all');
-              }}
-              style={[
-                styles.homeCenterPill,
-                {
-                  backgroundColor: activeTab === 'feed' && !selectedArticleId ? colors.accent : colors.surfaceSecondary,
-                  borderColor: activeTab === 'feed' && !selectedArticleId ? colors.accent : colors.borderSubtle
-                }
-              ]}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Home Menü und Feed öffnen"
-            >
-              <Ionicons
-                name={activeTab === 'feed' && !selectedArticleId ? 'home' : 'home-outline'}
-                size={14}
-                color={activeTab === 'feed' && !selectedArticleId ? '#FFFFFF' : colors.textPrimary}
-                style={{ marginRight: 5 }}
-              />
-              <Text
-                style={[
-                  styles.homeCenterPillText,
-                  { color: activeTab === 'feed' && !selectedArticleId && activeFeedOption !== 'live_news' ? '#FFFFFF' : colors.textPrimary }
-                ]}
-              >
-                Home
-              </Text>
-            </TouchableOpacity>
-
-            {/* Direct 1-Click News Entry */}
-            <TouchableOpacity
-              onPress={() => {
-                setActiveTab('feed');
-                setActiveFeedOption('live_news');
-                if (onSelectSpace) onSelectSpace('all');
-              }}
-              style={[
-                styles.homeCenterPill,
-                {
-                  backgroundColor: activeTab === 'feed' && !selectedArticleId && activeFeedOption === 'live_news' ? colors.accent : colors.surfaceSecondary,
-                  borderColor: activeTab === 'feed' && !selectedArticleId && activeFeedOption === 'live_news' ? colors.accent : colors.borderSubtle
-                }
-              ]}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Echtzeit-Nachrichten öffnen"
-            >
-              <Ionicons
-                name="flash"
-                size={14}
-                color={activeTab === 'feed' && !selectedArticleId && activeFeedOption === 'live_news' ? '#FFFFFF' : '#F59E0B'}
-                style={{ marginRight: 5 }}
-              />
-              <Text
-                style={[
-                  styles.homeCenterPillText,
-                  { color: activeTab === 'feed' && !selectedArticleId && activeFeedOption === 'live_news' ? '#FFFFFF' : colors.textPrimary }
-                ]}
-              >
-                News
-              </Text>
-            </TouchableOpacity>
-
-            {/* Space Dropdown Selector Button */}
             <TouchableOpacity
               onPress={() => setShowSpaceModal(true)}
               style={[styles.spaceDropdown, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
@@ -310,69 +237,115 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               accessibilityRole="button"
               accessibilityLabel={`Space wechseln: ${activeSpaceName}`}
             >
-              <Ionicons name="planet-outline" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+              <Ionicons name="planet-outline" size={14} color={colors.accent} style={{ marginRight: 5 }} />
               <Text style={[styles.spaceDropdownText, { color: colors.textPrimary }]} numberOfLines={1}>
-                {activeSpaceName}
+                {activeSpaceName === 'Alle Spaces' ? 'Alle Spaces ▾' : `${activeSpaceName} ▾`}
               </Text>
-              <Ionicons name="chevron-down" size={13} color={colors.textMuted} style={{ marginLeft: 4 }} />
             </TouchableOpacity>
           </View>
 
-          {/* Center: Reddit-style Rounded Search Bar */}
+          {/* Center: Clean navigation pills for 🏠 Stream, 🌌 Kosmos, and ✨ AI Studio */}
           <View style={styles.centerSection}>
-            <View style={[styles.searchBar, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-              <Ionicons name="search" size={15} color={colors.textMuted} style={{ marginRight: 8 }} />
-              <TextInput
-                value={searchQuery}
-                onChangeText={onSearchChange}
-                placeholder="Atmen durchsuchen (Thesen, Didaktik, Quellen)…"
-                placeholderTextColor={colors.textMuted}
-                style={[styles.searchInput, { color: colors.textPrimary }]}
-                autoCapitalize="none"
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => onSearchChange('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="close-circle" size={16} color={colors.textMuted} />
-                </TouchableOpacity>
-              )}
+            <View style={styles.centerNavGroup}>
+              {/* 1. 🏠 Stream */}
+              <TouchableOpacity
+                onPress={() => {
+                  setActiveTab('feed');
+                  goHome();
+                }}
+                style={[
+                  styles.navPill,
+                  {
+                    backgroundColor: activeTab === 'feed' ? colors.accent : colors.surfaceSecondary,
+                    borderColor: activeTab === 'feed' ? colors.accent : colors.borderSubtle
+                  }
+                ]}
+                activeOpacity={0.75}
+                accessibilityRole="tab"
+                accessibilityLabel="Stream öffnen"
+                accessibilityState={{ selected: activeTab === 'feed' }}
+              >
+                <Ionicons
+                  name="newspaper-outline"
+                  size={14}
+                  color={activeTab === 'feed' ? '#FFFFFF' : colors.textPrimary}
+                  style={{ marginRight: 5 }}
+                />
+                <Text
+                  style={[
+                    styles.navPillText,
+                    { color: activeTab === 'feed' ? '#FFFFFF' : colors.textPrimary, fontWeight: activeTab === 'feed' ? '700' : '600' }
+                  ]}
+                >
+                  🏠 Stream
+                </Text>
+              </TouchableOpacity>
+
+              {/* 2. 🌌 Kosmos (3D Galaxy) */}
+              <TouchableOpacity
+                onPress={() => setActiveTab('network')}
+                style={[
+                  styles.navPill,
+                  {
+                    backgroundColor: activeTab === 'network' ? colors.accent : colors.surfaceSecondary,
+                    borderColor: activeTab === 'network' ? colors.accent : colors.borderSubtle
+                  }
+                ]}
+                activeOpacity={0.75}
+                accessibilityRole="tab"
+                accessibilityLabel="Kosmos öffnen"
+                accessibilityState={{ selected: activeTab === 'network' }}
+              >
+                <Ionicons
+                  name="planet-outline"
+                  size={14}
+                  color={activeTab === 'network' ? '#FFFFFF' : colors.textPrimary}
+                  style={{ marginRight: 5 }}
+                />
+                <Text
+                  style={[
+                    styles.navPillText,
+                    { color: activeTab === 'network' ? '#FFFFFF' : colors.textPrimary, fontWeight: activeTab === 'network' ? '700' : '600' }
+                  ]}
+                >
+                  🌌 Kosmos
+                </Text>
+              </TouchableOpacity>
+
+              {/* 3. ✨ AI Studio (Subchannels as #1 priority) */}
+              <TouchableOpacity
+                onPress={() => setShowUltraMasterModal(true)}
+                style={[
+                  styles.navPill,
+                  {
+                    backgroundColor: colors.surfaceSecondary,
+                    borderColor: '#F59E0B'
+                  }
+                ]}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="AI Studio & Subchannel-Erstellung öffnen"
+              >
+                <Ionicons
+                  name="sparkles"
+                  size={13}
+                  color="#F59E0B"
+                  style={{ marginRight: 5 }}
+                />
+                <Text
+                  style={[
+                    styles.navPillText,
+                    { color: colors.textPrimary, fontWeight: '700' }
+                  ]}
+                >
+                  ✨ AI Studio
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
 
-          {/* Right: Clean Reddit-style Action Cluster (Quellen Status, Frischer Wind, Studio, Theme & Nav Tabs) */}
+          {/* Right: 🧘 Atmen breathing portal trigger + Settings/Theme */}
           <View style={styles.rightSection}>
-            {/* 1. Active Sources Pill -> Opens Quellen- und Themenverwaltung */}
-            <TouchableOpacity
-              onPress={() => setShowNewsHubModal(true)}
-              style={[styles.liveStatusPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-              accessibilityRole="button"
-              accessibilityLabel="Quellen- und Themenverwaltung öffnen"
-            >
-              <View style={styles.liveGreenDot} />
-              <Text style={[styles.liveStatusText, { color: colors.textPrimary }]}>
-                Quellen & Themen ({healthOverview.deliveringSources}/{healthOverview.totalSources})
-              </Text>
-            </TouchableOpacity>
-
-            {/* 2. Instant Shuffle / Frischer Wind Button */}
-            <TouchableOpacity
-              onPress={handleShuffle}
-              disabled={isSimulating || isRefreshing}
-              style={[styles.newsHubBadge, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Frischer Wind: Feed neu mischen"
-            >
-              {isSimulating || isRefreshing ? (
-                <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 4 }} />
-              ) : (
-                <Ionicons name="shuffle-outline" size={14} color={colors.accent} style={{ marginRight: 4 }} />
-              )}
-              <Text style={[styles.newsHubText, { color: colors.accent, fontWeight: '700' }]}>
-                Frischer Wind
-              </Text>
-            </TouchableOpacity>
-
-            {/* 3. Atmen Breathing Portal Pill */}
             <TouchableOpacity
               onPress={() => setShowBreathingPortal(true)}
               style={[styles.breathingPill, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: '#10B981' }]}
@@ -380,41 +353,12 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               accessibilityRole="button"
               accessibilityLabel="Atmen Portal öffnen"
             >
-              <Ionicons name="leaf-outline" size={14} color="#10B981" style={{ marginRight: 4 }} />
+              <Text style={{ fontSize: 13, marginRight: 4 }}>🧘</Text>
               <Text style={[styles.breathingPillText, { color: '#10B981', fontWeight: '700' }]}>
                 Atmen
               </Text>
             </TouchableOpacity>
 
-            {/* 4. Hivemind-Stream Trigger */}
-            <TouchableOpacity
-              onPress={() => setShowHivemindModal(true)}
-              style={[styles.hivemindBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Hivemind Stream generieren"
-            >
-              <Ionicons name="git-network-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-              <Text style={[styles.hivemindBadgeText, { color: colors.textPrimary, fontWeight: '600' }]}>
-                + Hivemind-Stream
-              </Text>
-            </TouchableOpacity>
-
-            {/* 3. Studio & Tools Hub Button (consolidates Kurator, Master Studio, KI, Mobile QR & Karma) */}
-            <TouchableOpacity
-              onPress={() => setShowDevSimModal(true)}
-              style={[styles.devSimBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Studio, Kurator und Werkzeuge öffnen"
-            >
-              <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-              <Text style={[styles.devSimBadgeText, { color: colors.textPrimary }]}>
-                Studio & Tools
-              </Text>
-            </TouchableOpacity>
-
-            {/* 4. Compact Aesthetics Cluster: Palette & Theme Toggle */}
             <View style={[styles.toolCluster, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
               <TouchableOpacity
                 onPress={() => setShowPaletteModal(true)}
@@ -435,60 +379,15 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               >
                 <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={15} color={colors.textSecondary} />
               </TouchableOpacity>
-            </View>
-
-            {/* 5. Primary Tab Switcher */}
-            <View style={[styles.tabGroup, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-              <TouchableOpacity
-                onPress={() => setActiveTab('feed')}
-                style={[styles.tabBtn, activeTab === 'feed' && { backgroundColor: colors.surface }]}
-                accessibilityRole="button"
-                accessibilityLabel="Ausgabe öffnen"
-              >
-                <Ionicons
-                  name="newspaper-outline"
-                  size={15}
-                  color={activeTab === 'feed' ? colors.accent : colors.textMuted}
-                />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setActiveTab('library')}
-                style={[styles.tabBtn, activeTab === 'library' && { backgroundColor: colors.surface }]}
-                accessibilityRole="button"
-                accessibilityLabel="Bibliothek öffnen"
-              >
-                <Ionicons
-                  name="bookmarks-outline"
-                  size={15}
-                  color={activeTab === 'library' ? colors.accent : colors.textMuted}
-                />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setActiveTab('network')}
-                style={[styles.tabBtn, activeTab === 'network' && { backgroundColor: colors.surface }]}
-                accessibilityRole="button"
-                accessibilityLabel="Netzwerk & Hyperspace öffnen"
-              >
-                <Ionicons
-                  name="planet-outline"
-                  size={15}
-                  color={activeTab === 'network' ? colors.accent : colors.textMuted}
-                />
-              </TouchableOpacity>
 
               <TouchableOpacity
                 onPress={() => setActiveTab('settings')}
-                style={[styles.tabBtn, activeTab === 'settings' && { backgroundColor: colors.surface }]}
+                style={styles.toolClusterBtn}
+                activeOpacity={0.8}
                 accessibilityRole="button"
-                accessibilityLabel="Steuerung öffnen"
+                accessibilityLabel="Einstellungen öffnen"
               >
-                <Ionicons
-                  name="options-outline"
-                  size={15}
-                  color={activeTab === 'settings' ? colors.accent : colors.textMuted}
-                />
+                <Ionicons name="options-outline" size={15} color={activeTab === 'settings' ? colors.accent : colors.textSecondary} />
               </TouchableOpacity>
             </View>
           </View>
@@ -1364,7 +1263,25 @@ const styles = StyleSheet.create({
   },
   centerSection: {
     flex: 1,
-    maxWidth: 440
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  centerNavGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  navPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  navPillText: {
+    fontSize: typography.sizes.caption,
+    letterSpacing: 0.2
   },
   searchBar: {
     flexDirection: 'row',

@@ -255,10 +255,22 @@ export class ContinuousLiveNewsService {
 
   /**
    * 1. Native CORS-Open Connector: Tagesschau API v2 (`https://www.tagesschau.de/api2u/news/`)
+   * Anchors regional focus explicitly to Saxony (regions=14, Dresden, Leipzig).
+   * Automatically sanitizes and replaces any other regional parameter with Saxony (14).
    */
-  public static async fetchTagesschauLiveJson(limit = 40): Promise<FeedItem[]> {
+  public static async fetchTagesschauLiveJson(
+    limit = 40,
+    options?: { regions?: number | string }
+  ): Promise<FeedItem[]> {
     try {
-      const response = await this.fetchWithTimeout('https://www.tagesschau.de/api2u/news/', 3500);
+      let regionParam = options?.regions ? String(options.regions) : '';
+      if (regionParam === '15' || (regionParam && regionParam !== '14')) {
+        regionParam = '14'; // Purge non-Saxony regions and lock firmly to Saxony (14)
+      }
+      const url = regionParam
+        ? `https://www.tagesschau.de/api2u/news/?regions=${regionParam}`
+        : 'https://www.tagesschau.de/api2u/news/';
+      const response = await this.fetchWithTimeout(url, 3500);
       if (!response.ok) return [];
       const data = await response.json();
       const newsList = Array.isArray(data?.news) ? data.news.slice(0, limit) : [];
@@ -361,6 +373,14 @@ export class ContinuousLiveNewsService {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Regional Focus Connector: Saxony / Dresden / Leipzig (regions=14).
+   * Actively anchors regional coverage to Saxony (MDR Sachsen, regional culture & politics).
+   */
+  public static async fetchSaxonyRegionalNews(limit = 20): Promise<FeedItem[]> {
+    return this.fetchTagesschauLiveJson(limit, { regions: 14 });
   }
 
   /**

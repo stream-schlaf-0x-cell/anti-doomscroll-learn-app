@@ -143,7 +143,7 @@ const MainNavigator: React.FC = () => {
                   { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
                 ]}
                 accessibilityRole="tab"
-                accessibilityLabel="Ausgabe"
+                accessibilityLabel="Stream"
                 accessibilityState={{ selected: false }}
               >
                 <Ionicons
@@ -161,7 +161,7 @@ const MainNavigator: React.FC = () => {
                     }
                   ]}
                 >
-                  Ausgabe
+                  Stream
                 </Text>
               </TouchableOpacity>
 
@@ -210,7 +210,7 @@ const MainNavigator: React.FC = () => {
                     : { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
                 ]}
                 accessibilityRole="tab"
-                accessibilityLabel="Netzwerk"
+                accessibilityLabel="Kosmos"
                 accessibilityState={{ selected: activeTab === 'network' }}
               >
                 <Ionicons
@@ -228,7 +228,7 @@ const MainNavigator: React.FC = () => {
                     }
                   ]}
                 >
-                  Netzwerk
+                  Kosmos
                 </Text>
               </TouchableOpacity>
 

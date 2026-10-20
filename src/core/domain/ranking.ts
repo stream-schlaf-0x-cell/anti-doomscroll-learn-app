@@ -98,13 +98,118 @@ export function getEffectiveTopicWeight(profile?: UserProfile, topic?: TopicTag)
 export function getNormalizedPublisherKey(item: FeedItem): string {
   const pub = item.sourceReferences?.[0]?.publisher || item.sourceBroadcasterName || item.sourceDomain || 'unknown';
   const clean = pub.toLowerCase().trim();
-  if (clean.includes('tagesschau')) return 'ard tagesschau';
-  if (clean.includes('deutschlandfunk')) return 'deutschlandfunk';
+  if (clean.includes('guardian')) return 'the guardian';
+  if (clean.includes('politico')) return 'politico europe';
+  if (clean.includes('monde') || clean.includes('eurozine')) return 'le monde / eurozine';
+  if (clean.includes('verfassungsblog')) return 'verfassungsblog';
+  if (clean.includes('schulportal')) return 'deutsches schulportal';
+  if (clean.includes('deutschlandfunk') || clean.includes('dlf')) return 'deutschlandfunk';
+  if (clean.includes('tagesschau') || /(^|[^a-z])ard([^a-z]|$)/.test(clean)) return 'ard tagesschau';
   if (clean.includes('wikipedia') || clean.includes('wikimedia')) return 'wikipedia / wikimedia';
   if (clean.includes('arxiv')) return 'arxiv';
   if (clean.includes('spektrum') || clean.includes('gehirn')) return 'spektrum';
   if (clean.includes('aeon') || clean.includes('psyche')) return 'aeon / psyche';
   return clean;
+}
+
+/**
+ * Detects whether an item originates from ARD / Tagesschau / ARD subsidiaries.
+ */
+export function isArdSource(item: FeedItem): boolean {
+  const pub = (item.sourceReferences?.[0]?.publisher || item.sourceBroadcasterName || '').toLowerCase().trim();
+  const dom = (item.sourceDomain || '').toLowerCase();
+  const url = (item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '').toLowerCase();
+  return (
+    pub.includes('tagesschau') ||
+    pub.includes('ard-aktuell') ||
+    /(^|[^a-z])ard([^a-z]|$)/.test(pub) ||
+    dom.includes('tagesschau.de') ||
+    dom.includes('ard.de') ||
+    url.includes('tagesschau.de') ||
+    url.includes('ard.de')
+  );
+}
+
+/**
+ * Checks whether an item represents an international or high-value balancing source.
+ */
+export function isBalancingSource(item: FeedItem): boolean {
+  const text = `${item.sourceReferences?.[0]?.publisher || ''} ${item.sourceBroadcasterName || ''} ${item.sourceDomain || ''} ${item.canonicalUrl || ''}`.toLowerCase();
+  return (
+    text.includes('deutschlandfunk') ||
+    text.includes('dlf') ||
+    text.includes('zeit') ||
+    text.includes('spiegel') ||
+    text.includes('sueddeutsche') ||
+    text.includes('süddeutsche') ||
+    text.includes('guardian') ||
+    text.includes('politico') ||
+    text.includes('monde') ||
+    text.includes('eurozine') ||
+    text.includes('verfassungsblog') ||
+    text.includes('schulportal')
+  );
+}
+
+/**
+ * Checks whether an item anchors regional Saxony / Dresden / Leipzig focus.
+ */
+export function matchesSaxonyRegion(item: FeedItem): boolean {
+  const text = `${item.title} ${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''} ${item.sourceBroadcasterName || ''} ${item.sourceDomain || ''} ${item.canonicalUrl || ''}`.toLowerCase();
+  return (
+    text.includes('sachsen') ||
+    text.includes('dresden') ||
+    text.includes('leipzig') ||
+    text.includes('mdr') ||
+    text.includes('regions=14') ||
+    false
+  );
+}
+
+export const DISCOURSE_CONCEPTS: { topic: TopicTag; concept: string; framework: string }[] = [
+  {
+    topic: 'philosophy_ethics',
+    concept: 'Diskursethik & Normenbegründung (Jürgen Habermas)',
+    framework: 'Hinterfragt die unausgesprochenen Geltungsansprüche und moralischen Voraussetzungen der Kontroverse.'
+  },
+  {
+    topic: 'science_society',
+    concept: 'Institutionenökonomik & Pfadabhängigkeit (Douglass North)',
+    framework: 'Verbindet tagesaktuelle Dynamiken mit trägen systemischen Anreizstrukturen und historischen Pfaden.'
+  },
+  {
+    topic: 'german_didactics',
+    concept: 'Bildungsgerechtigkeit & Kognitive Aktivierung (Hattie / Klieme)',
+    framework: 'Hebt bildungspolitische Reflexionen von Symptomdebatten auf empirische Tiefenstrukturen.'
+  },
+  {
+    topic: 'ai_apple',
+    concept: 'Technologische Kybernetik & Aufmerksamkeitsökonomie (Norbert Wiener / Neil Postman)',
+    framework: 'Analysiert die strukturelle Rückkopplung digitaler Infrastrukturen auf gesellschaftliche Willensbildung.'
+  },
+  {
+    topic: 'contemplation_mind',
+    concept: 'Resonanztheorie & Kognitive Entschleunigung (Hartmut Rosa)',
+    framework: 'Eröffnet einen kontemplativen Metaraum gegenüber getriebener Reaktionslogik.'
+  }
+];
+
+export function enrichItemWithDiscourseConcept<T extends FeedItem>(item: T): T {
+  if (item.feedText && (item.feedText.includes('Wissensvorsprung:') || item.keyInsight?.includes('Strukturelle Einordnung:'))) {
+    return item;
+  }
+  const match = DISCOURSE_CONCEPTS.find(c => c.topic === item.primaryTopic) || DISCOURSE_CONCEPTS[0];
+  const conceptText = ` [Wissensvorsprung: Verknüpft mit ${match.concept} – ${match.framework}]`;
+  const newFeedText = `${(item.feedText || item.title).trim()}${conceptText}`;
+  const newInsight = item.keyInsight
+    ? `${item.keyInsight} (Strukturelle Einordnung: ${match.concept})`
+    : `Strukturelle Einordnung: ${match.concept}`;
+
+  return {
+    ...item,
+    feedText: newFeedText,
+    keyInsight: newInsight
+  };
 }
 
 /**
@@ -424,7 +529,74 @@ function getCardRhythmFormat(item: FeedItem): 'quick_20s' | 'visual_art' | 'deep
  * - Format Pacing: Smoothly alternates between 20-second quick insights, sourced briefings,
  *   deep essays, visual artworks, contemplative thoughts, music/synthesis, and playful finds.
  */
-export function rankBloomScrollFeed(items: ScoredFeedItem[]): ScoredFeedItem[] {
+export function enforceArdsSpacing<T extends FeedItem>(items: T[], minGap = 7): T[] {
+  const nonArd: T[] = [];
+  const ardList: T[] = [];
+
+  for (const item of items) {
+    if (isArdSource(item)) {
+      ardList.push(item);
+    } else {
+      nonArd.push(item);
+    }
+  }
+
+  if (ardList.length === 0) return [...nonArd];
+  if (nonArd.length === 0) return [...ardList];
+
+  const result: T[] = [];
+  let ardIndex = 0;
+  let lastArdDist = Infinity;
+
+  for (let i = 0; i < nonArd.length; i++) {
+    if (ardIndex < ardList.length && lastArdDist >= minGap) {
+      result.push(ardList[ardIndex++]);
+      lastArdDist = 0;
+    }
+    result.push(nonArd[i]);
+    lastArdDist++;
+  }
+
+  // If there are still ARD items left, distribute into slots where neither neighbor is an ARD
+  while (ardIndex < ardList.length) {
+    const ard = ardList[ardIndex++];
+    let bestSlot = -1;
+    let maxDist = -1;
+
+    for (let slot = 0; slot <= result.length; slot++) {
+      const prevIsArd = slot > 0 ? isArdSource(result[slot - 1]) : false;
+      const nextIsArd = slot < result.length ? isArdSource(result[slot]) : false;
+      if (!prevIsArd && !nextIsArd) {
+        let leftDist = Infinity;
+        for (let l = slot - 1; l >= 0; l--) {
+          if (isArdSource(result[l])) { leftDist = slot - 1 - l; break; }
+        }
+        let rightDist = Infinity;
+        for (let r = slot; r < result.length; r++) {
+          if (isArdSource(result[r])) { rightDist = r - slot; break; }
+        }
+        const minDist = Math.min(leftDist, rightDist);
+        if (minDist > maxDist) {
+          maxDist = minDist;
+          bestSlot = slot;
+        }
+      }
+    }
+
+    if (bestSlot !== -1) {
+      result.splice(bestSlot, 0, ard);
+    } else {
+      result.push(ard);
+    }
+  }
+
+  return result;
+}
+
+export function rankBloomScrollFeed(
+  items: ScoredFeedItem[],
+  options?: { seenItemIds?: ReadonlySet<string> }
+): ScoredFeedItem[] {
   if (items.length <= 2) return [...items];
 
   // Deduplicate input by canonicalUrl or id
@@ -479,7 +651,7 @@ export function rankBloomScrollFeed(items: ScoredFeedItem[]): ScoredFeedItem[] {
     let bestIdx = 0;
     let bestWindowScore = -Infinity;
 
-    // Evaluate top candidates in remaining pool (up to 80 for speed & breadth)
+    // Evaluate top candidates in remaining pool (up to 90 for speed & breadth)
     const evalLimit = Math.min(remaining.length, 90);
     for (let i = 0; i < evalLimit; i++) {
       const cand = remaining[i];
@@ -488,17 +660,34 @@ export function rankBloomScrollFeed(items: ScoredFeedItem[]): ScoredFeedItem[] {
       const topicCountIn6 = topicCounts6.get(cand.primaryTopic) || 0;
       const topicCountIn30 = topicCounts30.get(cand.primaryTopic) || 0;
       const candRhythm = getCardRhythmFormat(cand);
+      const isCandArd = isArdSource(cand);
+      const isLastArd = lastCard ? isArdSource(lastCard) : false;
+      const ardInRecent7 = recentWindow.slice(-7).some(c => isArdSource(c));
 
       let utility = cand.score || 0.7;
 
-      // 1. Publisher Diversity & 20% Cap Enforcement (max 4 per 30 cards, soft cap at 3)
+      // 1. Strict ARD Cap: Max 12-15% (at most 1 in 7-8 cards), NEVER consecutive
+      if (isCandArd) {
+        if (isLastArd) {
+          utility -= 250.0; // Strictly never consecutive!
+        }
+        if (ardInRecent7) {
+          utility -= 90.0; // Enforce at least 7 cards spacing
+        }
+        const ardCount30 = window30.filter(c => isArdSource(c)).length;
+        if (ardCount30 >= 4) {
+          utility -= 120.0; // Max 4 per 30 cards (13.3%)
+        }
+      }
+
+      // Publisher Diversity for other sources
       if (pubKey === lastPub) {
         utility -= 5.0; // Never repeat same publisher back-to-back if avoidable
       } else if (pubKey === secondLastPub) {
         utility -= 2.5;
       }
       if (pubCountIn30 === 0) {
-        utility += 0.52; // Strong bonus for bringing a fresh voice into the 30-card window
+        utility += 0.52; // Strong bonus for bringing a fresh voice
       } else if (pubCountIn30 === 1) {
         utility += 0.15;
       } else if (pubCountIn30 === 2) {
@@ -506,17 +695,32 @@ export function rankBloomScrollFeed(items: ScoredFeedItem[]): ScoredFeedItem[] {
       } else if (pubCountIn30 === 3) {
         utility -= 1.20;
       } else if (pubCountIn30 >= 4) {
-        utility -= 6.0; // Hard cap: < 15% of 30-card window (strictly <= 20%)
+        utility -= 6.0;
+      }
+
+      // Balancing international & quality source boost (DLF, ZEIT, Spiegel, Guardian, Politico, Eurozine, etc.)
+      if (isBalancingSource(cand)) {
+        utility += 0.06;
+      }
+
+      // Regional Saxony (Dresden / Leipzig) boost
+      if (matchesSaxonyRegion(cand)) {
+        utility += 0.05;
+      }
+
+      // Seen-Impression Rotation: Cards already scrolled past rotate down so fresh discoveries surface
+      if (options?.seenItemIds?.has(cand.id)) {
+        utility -= 3.5;
       }
 
       // 2. Topic Transition & Anti-Dominance
       if (lastCard && cand.primaryTopic === lastCard.primaryTopic) {
-        utility -= 25.0; // Strictly prevent consecutive identical primaryTopic whenever another topic exists
+        utility -= 25.0; // Strictly prevent consecutive identical primaryTopic
       }
       if (topicCountIn6 >= 2) {
         utility -= 1.5;
       }
-      // Keep AI/Acceleration ('ai_apple') vibrant (~16-20%) without dominating
+      // Keep AI/Acceleration vibrant (~16-20%) without dominating
       if (cand.primaryTopic === 'ai_apple') {
         if (topicCountIn6 >= 1) utility -= 1.1;
         if (topicCountIn30 >= 6) utility -= 3.0;
@@ -528,7 +732,7 @@ export function rankBloomScrollFeed(items: ScoredFeedItem[]): ScoredFeedItem[] {
       if (candRhythm === 'visual_art') {
         const recentArtCount = recentWindow.filter(x => getCardRhythmFormat(x) === 'visual_art').length;
         if (recentArtCount >= 1) utility -= 1.6;
-        else utility += 0.28; // Welcome visual relief when none in last 6 cards
+        else utility += 0.28;
       }
 
       // 3. ~10% Teaching & ~10% Counter-Perspective Target Steering
@@ -546,26 +750,30 @@ export function rankBloomScrollFeed(items: ScoredFeedItem[]): ScoredFeedItem[] {
       }
 
       if (isChall) {
-        if (challengingCount30 < targetChallCount && (pos % 8 === 5 || pos % 8 === 6)) {
-          utility += 0.75;
+        if (
+          pos >= 3 &&
+          challengingCount30 < targetChallCount &&
+          (pos % 6 === 4 || pos % 6 === 5 || (pos >= 12 && challengingCount30 < 2))
+        ) {
+          utility += 0.85;
         } else if (challengingCount30 > targetChallCount + 2) {
           utility -= 0.75;
         }
       }
 
-      // 4. Broad Domain Coverage (Philosophy, Science, Contemplation, Music, Books, Playful Wit)
+      // 4. Broad Domain Coverage
       if (topicCountIn30 === 0) {
-        utility += 0.42; // Ensure underrepresented domains surface early
+        utility += 0.42;
       } else if (topicCountIn6 === 0) {
         utility += 0.18;
       }
 
-      // 5. Format Rhythm Transition (20s quick vs. briefing vs. deep essay vs. art vs. community)
+      // 5. Format Rhythm Transition
       if (lastRhythm && candRhythm !== lastRhythm) {
         utility += 0.15;
       }
       if (candRhythm === 'quick_20s' && lastRhythm === 'deep_essay') {
-        utility += 0.15; // Reward a breezy 20-second card right after a deep read
+        utility += 0.15;
       }
 
       if (utility > bestWindowScore) {
@@ -578,7 +786,7 @@ export function rankBloomScrollFeed(items: ScoredFeedItem[]): ScoredFeedItem[] {
     selected.push(chosen);
   }
 
-  return selected;
+  return enforceArdsSpacing(selected, 7);
 }
 
 /**
@@ -586,16 +794,31 @@ export function rankBloomScrollFeed(items: ScoredFeedItem[]): ScoredFeedItem[] {
  * Uses the sliding-window Bloom-Ranking algorithm.
  */
 export function interleaveForAddictiveLearning(items: ScoredFeedItem[], pinnedIds: readonly string[] = []): ScoredFeedItem[] {
-  return sortFeedForDisplay(items, 'hot', { pinnedIds, interleave: true });
+  return sortFeedForDisplay(items, 'for_you', { pinnedIds, interleave: true });
 }
 
-export type FeedSortMode = 'hot' | 'new' | 'top' | 'gems';
+export type FeedSortMode =
+  | 'for_you'
+  | 'today'
+  | 'discourse'
+  | 'top'
+  | 'timeless'
+  | 'hot'
+  | 'new'
+  | 'gems';
+
+export interface SortFeedOptions {
+  pinnedIds?: readonly string[];
+  interleave?: boolean;
+  ignorePins?: boolean;
+  seenItemIds?: ReadonlySet<string>;
+}
 
 /** The final presentation boundary: pin order wins over every score and diversity rule unless ignorePins is true. */
 export function sortFeedForDisplay(
   items: ScoredFeedItem[],
   mode: FeedSortMode,
-  options: { pinnedIds?: readonly string[]; interleave?: boolean; ignorePins?: boolean } = {}
+  options: SortFeedOptions = {}
 ): ScoredFeedItem[] {
   const unique = new Map(items.map(item => [item.id, item]));
   const pinned = (options.ignorePins ? [] : (options.pinnedIds ?? [])).flatMap(id => {
@@ -610,60 +833,113 @@ export function sortFeedForDisplay(
     ['art_showcase', 'youtube_gem', 'book_masterpiece', 'meme', 'opportunity_radar', 'long_invitation', 'surprising_connection'].includes(item.format) ||
     ['museum_collection', 'encyclopedia', 'peer_reviewed'].includes(item.sourceTrustLevel || '');
 
-  const sorted = mode === 'hot' && options.interleave
-    ? rankBloomScrollFeed(remaining)
-    : remaining.sort((a, b) => {
-      if (mode === 'new') {
-        const isReliableA = a.publicationDateReliable !== false;
-        const isReliableB = b.publicationDateReliable !== false;
-        if (isReliableA !== isReliableB) {
-          return isReliableA ? -1 : 1;
-        }
-        const timeA = new Date(a.publishedAt).getTime();
-        const timeB = new Date(b.publishedAt).getTime();
-        const validA = !isNaN(timeA) && timeA > 0;
-        const validB = !isNaN(timeB) && timeB > 0;
-        if (validA && validB && timeB !== timeA) return timeB - timeA;
-        if (validA && !validB) return -1;
-        if (!validA && validB) return 1;
-        const seenA = a.firstSeenAt ? new Date(a.firstSeenAt).getTime() : 0;
-        const seenB = b.firstSeenAt ? new Date(b.firstSeenAt).getTime() : 0;
-        if (seenB !== seenA) return seenB - seenA;
-        return b.id.localeCompare(a.id);
+  // 1. "🔥 Für dich" (Default Smart Mix): Bloom-Ranking + Seen-Rotation + Diversity Caps
+  if (mode === 'for_you' || (mode === 'hot' && options.interleave)) {
+    const ranked = rankBloomScrollFeed(remaining, { seenItemIds: options.seenItemIds });
+    return [...pinned, ...ranked];
+  }
+
+  // 2. "⚡ Heute" (Tagesaktuell / Last 24-48h): Strictly dated, Saxony + International, Strict ARD Cap
+  if (mode === 'today' || mode === 'new') {
+    const datedOnly = remaining.filter(item => item.publicationDateReliable !== false);
+    const pool = datedOnly.length >= 4 ? datedOnly : remaining;
+    const sorted = [...pool].sort((a, b) => {
+      const isReliableA = a.publicationDateReliable !== false;
+      const isReliableB = b.publicationDateReliable !== false;
+      if (isReliableA !== isReliableB) {
+        return isReliableA ? -1 : 1;
       }
-      if (mode === 'top') {
-        const pointsA = (a.externalCommunityScore?.points ?? 0) + (a.upvotesCount ?? 0) * 10;
-        const pointsB = (b.externalCommunityScore?.points ?? 0) + (b.upvotesCount ?? 0) * 10;
-        const trustBonusA = a.sourceTrustLevel === 'peer_reviewed' ? 15 : a.sourceTrustLevel === 'public_broadcaster' ? 12 : a.sourceTrustLevel === 'deep_essay' ? 10 : 5;
-        const trustBonusB = b.sourceTrustLevel === 'peer_reviewed' ? 15 : b.sourceTrustLevel === 'public_broadcaster' ? 12 : b.sourceTrustLevel === 'deep_essay' ? 10 : 5;
-        const qualityA = (a.curationScore ?? 7) * 10 +
-          (pointsA > 0 ? Math.min(50, Math.log10(pointsA + 1) * 20) : 0) +
-          (a.evidenceTier === 'permitted_full_text' ? 12 : a.evidenceTier === 'multiple_sources' ? 10 : 0) +
-          trustBonusA + (a.editorialAbstract ? 8 : 0);
-        const qualityB = (b.curationScore ?? 7) * 10 +
-          (pointsB > 0 ? Math.min(50, Math.log10(pointsB + 1) * 20) : 0) +
-          (b.evidenceTier === 'permitted_full_text' ? 12 : b.evidenceTier === 'multiple_sources' ? 10 : 0) +
-          trustBonusB + (b.editorialAbstract ? 8 : 0);
-        if (qualityB !== qualityA) return qualityB - qualityA;
-        const timeA = a.publicationDateReliable !== false ? (new Date(a.publishedAt).getTime() || 0) : 0;
-        const timeB = b.publicationDateReliable !== false ? (new Date(b.publishedAt).getTime() || 0) : 0;
-        if (timeB !== timeA) return timeB - timeA;
-        return b.id.localeCompare(a.id);
-      }
-      if (mode === 'gems') {
-        const gemA = isGem(a);
-        const gemB = isGem(b);
-        if (gemA !== gemB) return gemA ? -1 : 1;
-        const bridgeBonusA = (a.format === 'surprising_connection' || (a.topics && a.topics.length >= 2)) ? 10 : 0;
-        const bridgeBonusB = (b.format === 'surprising_connection' || (b.topics && b.topics.length >= 2)) ? 10 : 0;
-        const scoreA = (a.curationScore ?? 7) * 10 + (a.isEvergreenGem ? 25 : 0) + (a.format === 'art_showcase' ? 20 : 0) + (a.wordCount >= 200 ? 10 : 0) + bridgeBonusA;
-        const scoreB = (b.curationScore ?? 7) * 10 + (b.isEvergreenGem ? 25 : 0) + (b.format === 'art_showcase' ? 20 : 0) + (b.wordCount >= 200 ? 10 : 0) + bridgeBonusB;
-        if (scoreB !== scoreA) return scoreB - scoreA;
-        return b.id.localeCompare(a.id);
-      }
-      if (b.score !== a.score) return b.score - a.score;
+      // Boost regional Saxony / Dresden / Leipzig items in today's news
+      const saxonyA = matchesSaxonyRegion(a) ? 1 : 0;
+      const saxonyB = matchesSaxonyRegion(b) ? 1 : 0;
+      if (saxonyA !== saxonyB) return saxonyB - saxonyA;
+
+      const timeA = new Date(a.publishedAt).getTime();
+      const timeB = new Date(b.publishedAt).getTime();
+      const validA = !isNaN(timeA) && timeA > 0;
+      const validB = !isNaN(timeB) && timeB > 0;
+      if (validA && validB && timeB !== timeA) return timeB - timeA;
+      if (validA && !validB) return -1;
+      if (!validA && validB) return 1;
+      const seenA = a.firstSeenAt ? new Date(a.firstSeenAt).getTime() : 0;
+      const seenB = b.firstSeenAt ? new Date(b.firstSeenAt).getTime() : 0;
+      if (seenB !== seenA) return seenB - seenA;
       return b.id.localeCompare(a.id);
     });
+    return [...pinned, ...enforceArdsSpacing(sorted, 7)];
+  }
+
+  // 3. "🧭 Diskurs" (1-14d Deep Debates & Option A: The Bigger Picture)
+  if (mode === 'discourse') {
+    const now = Date.now();
+    const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+    // Exclude short news flashes, focus on substantive analyses
+    const discourseCandidates = remaining
+      .filter(item => {
+        const time = new Date(item.publishedAt).getTime();
+        const isRecent = isNaN(time) || (now - time) <= fourteenDaysMs + (48 * 3600 * 1000);
+        const isSubstantive = (item.wordCount ?? 0) >= 60 || item.format !== 'sourced_update';
+        return isRecent && isSubstantive;
+      })
+      .map(item => enrichItemWithDiscourseConcept(item));
+
+    const pool = discourseCandidates.length >= 3 ? discourseCandidates : remaining.map(item => enrichItemWithDiscourseConcept(item));
+    const sorted = [...pool].sort((a, b) => {
+      const balancingA = isBalancingSource(a) ? 15 : 0;
+      const balancingB = isBalancingSource(b) ? 15 : 0;
+      const scoreA = (a.curationScore ?? 7) * 10 + balancingA + (a.wordCount >= 180 ? 10 : 0);
+      const scoreB = (b.curationScore ?? 7) * 10 + balancingB + (b.wordCount >= 180 ? 10 : 0);
+      if (scoreB !== scoreA) return scoreB - scoreA;
+      return b.id.localeCompare(a.id);
+    });
+    return [...pinned, ...enforceArdsSpacing(sorted, 7)];
+  }
+
+  // 4. "🏆 Top" (30-Day Review of highest impact items)
+  if (mode === 'top') {
+    const sorted = [...remaining].sort((a, b) => {
+      const pointsA = (a.externalCommunityScore?.points ?? 0) + (a.upvotesCount ?? 0) * 10;
+      const pointsB = (b.externalCommunityScore?.points ?? 0) + (b.upvotesCount ?? 0) * 10;
+      const trustBonusA = a.sourceTrustLevel === 'peer_reviewed' ? 15 : a.sourceTrustLevel === 'public_broadcaster' ? 12 : a.sourceTrustLevel === 'deep_essay' ? 10 : 5;
+      const trustBonusB = b.sourceTrustLevel === 'peer_reviewed' ? 15 : b.sourceTrustLevel === 'public_broadcaster' ? 12 : b.sourceTrustLevel === 'deep_essay' ? 10 : 5;
+      const qualityA = (a.curationScore ?? 7) * 10 +
+        (pointsA > 0 ? Math.min(50, Math.log10(pointsA + 1) * 20) : 0) +
+        (a.evidenceTier === 'permitted_full_text' ? 12 : a.evidenceTier === 'multiple_sources' ? 10 : 0) +
+        trustBonusA + (a.editorialAbstract ? 8 : 0);
+      const qualityB = (b.curationScore ?? 7) * 10 +
+        (pointsB > 0 ? Math.min(50, Math.log10(pointsB + 1) * 20) : 0) +
+        (b.evidenceTier === 'permitted_full_text' ? 12 : b.evidenceTier === 'multiple_sources' ? 10 : 0) +
+        trustBonusB + (b.editorialAbstract ? 8 : 0);
+      if (qualityB !== qualityA) return qualityB - qualityA;
+      const timeA = a.publicationDateReliable !== false ? (new Date(a.publishedAt).getTime() || 0) : 0;
+      const timeB = b.publicationDateReliable !== false ? (new Date(b.publishedAt).getTime() || 0) : 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return b.id.localeCompare(a.id);
+    });
+    return [...pinned, ...enforceArdsSpacing(sorted, 7)];
+  }
+
+  // 5. "💎 Zeitlos" (Timeless essays, art, literature, music, evergreen concepts)
+  if (mode === 'timeless' || mode === 'gems') {
+    const sorted = [...remaining].sort((a, b) => {
+      const gemA = isGem(a);
+      const gemB = isGem(b);
+      if (gemA !== gemB) return gemA ? -1 : 1;
+      const bridgeBonusA = (a.format === 'surprising_connection' || (a.topics && a.topics.length >= 2)) ? 10 : 0;
+      const bridgeBonusB = (b.format === 'surprising_connection' || (b.topics && b.topics.length >= 2)) ? 10 : 0;
+      const scoreA = (a.curationScore ?? 7) * 10 + (a.isEvergreenGem ? 25 : 0) + (a.format === 'art_showcase' ? 20 : 0) + (a.wordCount >= 200 ? 10 : 0) + bridgeBonusA;
+      const scoreB = (b.curationScore ?? 7) * 10 + (b.isEvergreenGem ? 25 : 0) + (b.format === 'art_showcase' ? 20 : 0) + (b.wordCount >= 200 ? 10 : 0) + bridgeBonusB;
+      if (scoreB !== scoreA) return scoreB - scoreA;
+      return b.id.localeCompare(a.id);
+    });
+    return [...pinned, ...sorted];
+  }
+
+  // Fallback: Default hot/score order
+  const sorted = [...remaining].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.id.localeCompare(a.id);
+  });
   return [...pinned, ...sorted];
 }
 
@@ -685,13 +961,28 @@ export function rankAndInterleaveFeed(
     const topBatch = ranked.slice(0, batchSize);
     const rest = ranked.slice(batchSize);
 
+    const insertSafelyIntoRest = (item: ScoredFeedItem) => {
+      const lastTopTopic = topBatch[topBatch.length - 1]?.primaryTopic;
+      if (
+        rest.length > 0 &&
+        (rest[0].primaryTopic === item.primaryTopic || lastTopTopic === item.primaryTopic)
+      ) {
+        const nextDiffIdx = rest.findIndex(r => r.primaryTopic !== item.primaryTopic && r.primaryTopic !== lastTopTopic);
+        if (nextDiffIdx !== -1) {
+          rest.splice(nextDiffIdx, 0, item);
+          return;
+        }
+      }
+      rest.unshift(item);
+    };
+
     if (!topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics')) {
       const tIdx = rest.findIndex(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics');
       if (tIdx !== -1) {
         const [teachItem] = rest.splice(tIdx, 1);
         const displaced = topBatch[batchSize - 1];
         topBatch[batchSize - 1] = teachItem;
-        rest.unshift(displaced);
+        insertSafelyIntoRest(displaced);
       }
     }
 
@@ -703,7 +994,26 @@ export function rankAndInterleaveFeed(
         const pos = Math.max(0, replacePos);
         const displaced = topBatch[pos];
         topBatch[pos] = challItem;
-        rest.unshift(displaced);
+        insertSafelyIntoRest(displaced);
+      }
+    }
+
+    // Final sweep across topBatch and rest boundary to ensure no consecutive duplicate topics
+    for (let i = 0; i < topBatch.length - 1; i++) {
+      if (topBatch[i].primaryTopic === topBatch[i + 1].primaryTopic) {
+        const swapIdx = topBatch.findIndex((x, idx) => idx > i + 1 && x.primaryTopic !== topBatch[i].primaryTopic);
+        if (swapIdx !== -1) {
+          const temp = topBatch[i + 1];
+          topBatch[i + 1] = topBatch[swapIdx];
+          topBatch[swapIdx] = temp;
+        }
+      }
+    }
+    if (rest.length > 0 && topBatch[topBatch.length - 1].primaryTopic === rest[0].primaryTopic) {
+      const swapRestIdx = rest.findIndex(r => r.primaryTopic !== topBatch[topBatch.length - 1].primaryTopic);
+      if (swapRestIdx !== -1) {
+        const [nonDup] = rest.splice(swapRestIdx, 1);
+        rest.unshift(nonDup);
       }
     }
 

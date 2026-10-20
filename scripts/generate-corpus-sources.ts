@@ -2076,19 +2076,19 @@ const BATCH_2_ITEMS: CorpusSeed[] = [
     "description": "Faktenchecks aus Berlin und Brandenburg."
   },
   {
-    "id": "fc-ndr-recherche",
-    "name": "NDR Info Investigativ",
-    "url": "https://www.ndr.de/nachrichten/info/index.html",
+    "id": "fc-mdr-sachsen-investigativ",
+    "name": "MDR Sachsen Investigativ (Dresden & Leipzig)",
+    "url": "https://www.mdr.de/nachrichten/sachsen/index-rss.xml",
     "primaryTopic": "philosophy_ethics",
     "topics": [
       "philosophy_ethics",
       "science_society"
     ],
-    "defaultEvidenceTier": "peer_reviewed_journal",
+    "defaultEvidenceTier": "publisher_excerpt",
     "language": "de",
     "reliabilityTier": "tier_a",
     "sourceDomain": "quality_news",
-    "description": "Investigatives Recherchenetzwerk des Norddeutschen Rundfunks."
+    "description": "Investigatives Recherchenetzwerk des Mitteldeutschen Rundfunks mit Fokus auf Sachsen, Dresden und Leipzig."
   },
   {
     "id": "fc-tagesspiegel-monitoring",

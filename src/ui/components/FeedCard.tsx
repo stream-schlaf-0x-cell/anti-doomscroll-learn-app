@@ -28,6 +28,7 @@ import { CURATED_SOUND_MASTERS, MusicTrackItem } from '../../core/music/musicRec
 import { optimizeImageUrl, assessEditorialImage } from '../../core/utils/imageQuality';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { QuizCheckpointCard } from './QuizCheckpointCard';
+import { SubchannelBadge } from './SubchannelBadge';
 import { generateQuizForArticle } from '../../core/quiz/quizGenerator';
 
 interface FeedCardProps {
@@ -89,6 +90,36 @@ export function formatCuratedLabel(curatedAt?: string): string {
   } catch {
     return '✨ Frisch kuratiert';
   }
+}
+
+export function stripLeadingTitleDuplicate(text: string, title: string): string {
+  if (!text || !title) return text || '';
+  const trimmedText = text.trim();
+  const trimmedTitle = title.trim();
+
+  // 1. Direct exact or case-insensitive match
+  if (trimmedText.toLowerCase().startsWith(trimmedTitle.toLowerCase())) {
+    const remainder = trimmedText.slice(trimmedTitle.length).trim();
+    return remainder.replace(/^[:\-–—.,]\s*/, '').trim();
+  }
+
+  // 2. Cleaned title match (without trailing punctuation)
+  const cleanTitle = trimmedTitle.replace(/[.:\-–—!?]+$/, '').trim();
+  if (cleanTitle.length > 8 && trimmedText.toLowerCase().startsWith(cleanTitle.toLowerCase())) {
+    const remainder = trimmedText.slice(cleanTitle.length).trim();
+    return remainder.replace(/^[:\-–—.,]\s*/, '').trim();
+  }
+
+  // 3. Match first N words if headline is long
+  const titleWords = cleanTitle.split(/\s+/).slice(0, 6).join(' ').toLowerCase();
+  if (titleWords.length > 18 && trimmedText.toLowerCase().startsWith(titleWords)) {
+    const sepMatch = trimmedText.slice(0, cleanTitle.length + 20).match(/[:\-–—]\s*/);
+    if (sepMatch && sepMatch.index !== undefined) {
+      return trimmedText.slice(sepMatch.index + sepMatch[0].length).trim();
+    }
+  }
+
+  return trimmedText;
 }
 
 function isAuthenticCardImage(item: ScoredFeedItem): boolean {
@@ -183,7 +214,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const spaceMeta = TOPIC_SPACE_MAP[item.primaryTopic as TopicTag];
   const spaceName = item.space || spaceMeta?.space || `c/${item.primaryTopic}`;
   const spaceColor = spaceMeta?.color || colors.accent;
-  const spaceBgTint = spaceMeta?.bgTint || colors.accentSubtle;
 
   const publisherName =
     item.sourceBroadcasterName ||
@@ -193,10 +223,10 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const timeAgo = formatHonestTimeLabel(item);
   const provenanceLabel = formatVerifiedProvenanceLabel(item);
 
-  const displayFeedText = useMemo(
-    () => getCardRenderableText(item),
-    [item.feedText, item.body, item.format, item.space, item.primaryTopic, item.memeMeta]
-  );
+  const displayFeedText = useMemo(() => {
+    const raw = getCardRenderableText(item);
+    return stripLeadingTitleDuplicate(raw, item.title);
+  }, [item]);
 
   // Determine whether this card is a 20-second quick card (readable in full right on the card)
   const isArtCard = item.format === 'art_showcase' || item.space === 'c/kunst_galerie' || Boolean(item.artMeta);
@@ -337,19 +367,12 @@ export const FeedCard: React.FC<FeedCardProps> = ({
       {/* 1. SINGLE-LINE REDDIT HEADER: [c/space] • Publisher • Time • ~Min + [Provenance] [Bookmark] */}
       <View style={styles.topHeaderRow}>
         <View style={styles.topLeftMeta}>
-          <TouchableOpacity
+          <SubchannelBadge
+            space={spaceName}
+            primaryTopic={item.primaryTopic as TopicTag}
+            accentColor={item.space ? undefined : spaceColor}
             onPress={() => onInvestigateTopic && onInvestigateTopic(item.primaryTopic)}
-            activeOpacity={0.75}
-            style={[styles.spacePill, { backgroundColor: spaceBgTint, borderColor: spaceColor }]}
-          >
-            <Ionicons
-              name={(spaceMeta?.icon as any) || 'planet-outline'}
-              size={12}
-              color={spaceColor}
-              style={{ marginRight: 4 }}
-            />
-            <Text style={[styles.spaceText, { color: spaceColor }]}>{spaceName}</Text>
-          </TouchableOpacity>
+          />
 
           <Text style={[styles.dotSeparator, { color: colors.textMuted }]}>•</Text>
           <Text style={[styles.publisherText, { color: colors.textPrimary }]} numberOfLines={1}>

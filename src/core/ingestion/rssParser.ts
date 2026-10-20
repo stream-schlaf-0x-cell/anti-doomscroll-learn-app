@@ -127,7 +127,7 @@ export function parseDateWithReliability(dateStr?: string): { iso: string; relia
   return { iso: parsed.toISOString(), reliable: true };
 }
 
-function parseDateToIso(dateStr: string): string {
+export function parseDateToIso(dateStr: string): string {
   return parseDateWithReliability(dateStr).iso;
 }
 

@@ -1965,19 +1965,19 @@ export const GLOBAL_CORPUS_RESERVE_SOURCES: RawFeedSource[] = [
     description: "Faktenchecks aus Berlin und Brandenburg."
   },
   {
-    id: "fc-ndr-recherche",
-    name: "NDR Info Investigativ",
-    url: "https://www.ndr.de/nachrichten/info/index.html",
-    homepageUrl: "https://www.ndr.de/nachrichten/info/index.html",
+    id: "fc-mdr-sachsen-investigativ",
+    name: "MDR Sachsen Investigativ (Dresden & Leipzig)",
+    url: "https://www.mdr.de/nachrichten/sachsen/index-rss.xml",
+    homepageUrl: "https://www.mdr.de/nachrichten/sachsen/index.html",
     primaryTopic: "philosophy_ethics",
     topics: ["philosophy_ethics","science_society"],
     defaultEvidenceTier: "publisher_excerpt",
-    defaultAuthor: "NDR Info Investigativ",
+    defaultAuthor: "MDR Sachsen Investigativ",
     language: "de",
     reliabilityTier: "tier_a",
     sourceDomain: "quality_news",
-    defaultEnabled: false,
-    description: "Investigatives Recherchenetzwerk des Norddeutschen Rundfunks."
+    defaultEnabled: true,
+    description: "Investigatives Recherchenetzwerk des Mitteldeutschen Rundfunks mit Fokus auf Sachsen, Dresden und Leipzig."
   },
   {
     id: "fc-tagesspiegel-monitoring",

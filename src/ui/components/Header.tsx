@@ -19,7 +19,7 @@ export const Header: React.FC<HeaderProps> = ({
   subtitle = 'atmen network • Raum für Erkenntnis & Souveränität',
   showThemeToggle = true
 }) => {
-  const { colors, isDark, setThemePreference, goHome, activeTab, setActiveTab, activeFeedOption, setActiveFeedOption } = useApp();
+  const { colors, isDark, setThemePreference, goHome, activeTab, setActiveTab } = useApp();
   const [showMaster, setShowMaster] = useState<boolean>(false);
   const [showMobile, setShowMobile] = useState<boolean>(false);
   const [showBreathing, setShowBreathing] = useState<boolean>(false);
@@ -55,37 +55,37 @@ export const Header: React.FC<HeaderProps> = ({
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <TouchableOpacity
-              onPress={goHome}
+              onPress={() => {
+                setActiveTab('feed');
+                goHome();
+              }}
               style={[
                 styles.themeToggle,
-                { backgroundColor: activeTab === 'feed' && activeFeedOption !== 'live_news' ? colors.accent : colors.accentSubtle }
+                { backgroundColor: activeTab === 'feed' ? colors.accent : colors.surfaceSecondary }
               ]}
               accessibilityRole="button"
-              accessibilityLabel="Home Menü öffnen"
+              accessibilityLabel="Stream öffnen"
             >
               <Ionicons
-                name="home"
+                name="newspaper-outline"
                 size={16}
-                color={activeTab === 'feed' && activeFeedOption !== 'live_news' ? '#FFFFFF' : colors.accent}
+                color={activeTab === 'feed' ? '#FFFFFF' : colors.textPrimary}
               />
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => {
-                setActiveTab('feed');
-                setActiveFeedOption('live_news');
-              }}
+              onPress={() => setActiveTab('network')}
               style={[
                 styles.themeToggle,
-                { backgroundColor: activeTab === 'feed' && activeFeedOption === 'live_news' ? colors.accent : colors.accentSubtle }
+                { backgroundColor: activeTab === 'network' ? colors.accent : colors.surfaceSecondary }
               ]}
               accessibilityRole="button"
-              accessibilityLabel="Echtzeit-Nachrichten öffnen"
+              accessibilityLabel="Kosmos öffnen"
             >
               <Ionicons
-                name="flash"
+                name="planet-outline"
                 size={16}
-                color={activeTab === 'feed' && activeFeedOption === 'live_news' ? '#FFFFFF' : '#F59E0B'}
+                color={activeTab === 'network' ? '#FFFFFF' : colors.textPrimary}
               />
             </TouchableOpacity>
 
@@ -93,7 +93,7 @@ export const Header: React.FC<HeaderProps> = ({
               onPress={() => setShowMaster(true)}
               style={[styles.themeToggle, { backgroundColor: '#F59E0B' + '22' }]}
               accessibilityRole="button"
-              accessibilityLabel="Ultra Master Studio öffnen"
+              accessibilityLabel="AI Studio & Subchannel-Erstellung öffnen"
             >
               <Ionicons name="sparkles" size={16} color="#F59E0B" />
             </TouchableOpacity>
@@ -102,18 +102,9 @@ export const Header: React.FC<HeaderProps> = ({
               onPress={() => setShowBreathing(true)}
               style={[styles.themeToggle, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}
               accessibilityRole="button"
-              accessibilityLabel="Kognitive Atempause & Atem-Simulator starten"
+              accessibilityLabel="Atmen Portal öffnen"
             >
-              <Ionicons name="leaf-outline" size={16} color="#10B981" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setShowMobile(true)}
-              style={[styles.themeToggle, { backgroundColor: '#06B6D4' + '22' }]}
-              accessibilityRole="button"
-              accessibilityLabel="Auf Smartphone öffnen"
-            >
-              <Ionicons name="phone-portrait-outline" size={16} color="#06B6D4" />
+              <Text style={{ fontSize: 14 }}>🧘</Text>
             </TouchableOpacity>
 
             {showThemeToggle && (
@@ -126,7 +117,7 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <Ionicons
                   name={isDark ? 'sunny-outline' : 'moon-outline'}
-                  size={18}
+                  size={16}
                   color={colors.textSecondary}
                 />
               </TouchableOpacity>

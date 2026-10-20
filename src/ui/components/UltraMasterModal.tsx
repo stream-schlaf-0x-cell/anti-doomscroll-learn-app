@@ -14,7 +14,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import QRCode from 'qrcode';
 import { useApp } from '../../core/context/AppContext';
-import { Subchannel, defaultSpaceRepository } from '../../core/spaces/spaceRepository';
 import { TrendRadarService, DialecticalTrend } from '../../core/synthesis/trendRadarService';
 import { ArchiveService, ArchivedEdition } from '../../core/archive/archiveService';
 import {
@@ -47,7 +46,7 @@ interface UltraMasterModalProps {
 export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onClose, initialTab }) => {
   const { colors, profile, refreshFeed, spaces, createSpace, deleteSpace, togglePinSpace } = useApp();
 
-  const [activeTab, setActiveTab] = useState<MasterTab>(initialTab || 'studio');
+  const [activeTab, setActiveTab] = useState<MasterTab>(initialTab || 'channels');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -329,22 +328,22 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
           {/* Navigation Bar */}
           <View style={[styles.tabBar, { borderBottomColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary }]}>
             <TouchableOpacity
-              onPress={() => setActiveTab('studio')}
-              style={[styles.tabItem, activeTab === 'studio' && { borderBottomColor: '#EC4899', backgroundColor: colors.surface }]}
-            >
-              <Ionicons name="sparkles" size={14} color={activeTab === 'studio' ? '#EC4899' : colors.textMuted} style={{ marginRight: 6 }} />
-              <Text style={[styles.tabItemText, { color: activeTab === 'studio' ? '#EC4899' : colors.textSecondary }]}>
-                ✨ Studio (3 Linsen)
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
               onPress={() => setActiveTab('channels')}
               style={[styles.tabItem, activeTab === 'channels' && { borderBottomColor: '#F59E0B', backgroundColor: colors.surface }]}
             >
               <Ionicons name="layers-outline" size={14} color={activeTab === 'channels' ? '#F59E0B' : colors.textMuted} style={{ marginRight: 6 }} />
               <Text style={[styles.tabItemText, { color: activeTab === 'channels' ? '#F59E0B' : colors.textSecondary }]}>
-                Subchannels ({spaces.length})
+                ✨ Subchannels ({spaces.length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setActiveTab('studio')}
+              style={[styles.tabItem, activeTab === 'studio' && { borderBottomColor: '#EC4899', backgroundColor: colors.surface }]}
+            >
+              <Ionicons name="sparkles" size={14} color={activeTab === 'studio' ? '#EC4899' : colors.textMuted} style={{ marginRight: 6 }} />
+              <Text style={[styles.tabItemText, { color: activeTab === 'studio' ? '#EC4899' : colors.textSecondary }]}>
+                Studio (3 Linsen)
               </Text>
             </TouchableOpacity>
 
@@ -614,7 +613,7 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
                 {/* Channel Creator Box */}
                 <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                   <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    + Neuen Subchannel on the go erstellen
+                    Neuen Subchannel (c/...) erstellen & konfigurieren
                   </Text>
                   <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
                     Erstelle beliebig viele thematische Räume nach Reddit-Vorbild. Definiere Handle, Flair und eine sokratische Antithese-Leitfrage.

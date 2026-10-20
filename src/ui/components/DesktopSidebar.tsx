@@ -11,6 +11,7 @@ import { TOPIC_SPACE_MAP, TopicTag } from '../../core/domain/types';
 import { NewsHubModal } from './NewsHubModal';
 import { UltraMasterModal } from './UltraMasterModal';
 import { AtmenSymbol } from './AtmenSymbol';
+import { SubchannelBadge } from './SubchannelBadge';
 
 interface DesktopSidebarProps {
   articleCount?: number;
@@ -186,12 +187,15 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
                     ]}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name={(s.icon as any) || 'layers-outline'} size={14} color={s.accentColor} style={{ marginRight: 8 }} />
+                    <SubchannelBadge
+                      space={s.handle}
+                      accentColor={s.accentColor}
+                      icon={s.icon}
+                      size="sm"
+                      style={{ marginRight: 8 }}
+                    />
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.spaceRowTitle, { color: isSelected ? s.accentColor : colors.textPrimary }]}>
-                        {s.handle}
-                      </Text>
-                      <Text style={[styles.spaceRowSub, { color: colors.textMuted }]} numberOfLines={1}>
+                      <Text style={[styles.spaceRowSub, { color: colors.textSecondary }]} numberOfLines={1}>
                         {s.title}
                       </Text>
                     </View>

@@ -38,7 +38,7 @@ import { NewsHubModal } from '../../ui/components/NewsHubModal';
 import { defaultSourceRepository } from '../../core/data/sourceRepository';
 import { defaultBatchEditionEnricher, satisfiesCuratedBodyContract, getCardRenderableText } from '../../core/enrichment/batchEnricher';
 import { REAL_KNOWLEDGE_VAULT } from '../../core/data/realKnowledgeVault';
-import { OpenWebHarvester } from '../../core/ingestion/openWebHarvester';
+import { seenImpressionsService } from '../../core/data/seenImpressionsService';
 import { loadAiCredentials } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
@@ -82,11 +82,9 @@ export const FeedScreen: React.FC = () => {
     recordCardAppearances,
     colors,
     isDark,
-    setActiveTab,
     refreshFeed,
     recomputeFeed,
     refreshLiveFeed,
-    snapshotSyncInfo,
     activeFeedOption,
     setActiveFeedOption,
     selectedEditionType,
@@ -105,13 +103,17 @@ export const FeedScreen: React.FC = () => {
     shuffleFeed,
     updateTopicWeight,
     spaces,
-    selectSpace,
     updateSpace
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
 
-  const [sortMode, setSortMode] = useState<FeedSortMode>('hot');
+  const [sortMode, setSortMode] = useState<FeedSortMode>('for_you');
+  const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    void seenImpressionsService.getSeenIds().then(setSeenIds);
+  }, []);
   const [isScrolledDown, setIsScrolledDown] = useState<boolean>(false);
   const scrollYRef = React.useRef<number>(0);
   const scrollViewRef = React.useRef<ScrollView>(null);
@@ -330,6 +332,8 @@ export const FeedScreen: React.FC = () => {
     setRefreshing(true);
     await refreshLiveFeed();
     await loadSubchannels();
+    const updatedSeen = await seenImpressionsService.getSeenIds();
+    setSeenIds(updatedSeen);
     if (activeFeedOption === 'live_news') {
       await loadLiveNews();
     } else if (activeFeedOption === 'classics') {
@@ -524,8 +528,8 @@ export const FeedScreen: React.FC = () => {
       seen.add(item.id);
       return true;
     });
-    return sortFeedForDisplay(unique, sortMode, { pinnedIds, interleave: true });
-  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, sortMode, pinnedIds]);
+    return sortFeedForDisplay(unique, sortMode, { pinnedIds, interleave: true, seenItemIds: seenIds });
+  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, sortMode, pinnedIds, seenIds]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
   // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
@@ -617,6 +621,7 @@ export const FeedScreen: React.FC = () => {
 
     if (newlyVisibleIds.length > 0) {
       void recordCardAppearances(newlyVisibleIds);
+      void seenImpressionsService.recordSeen(newlyVisibleIds);
     }
   }, [activeFeedOption, currentFeedItems, recordCardAppearances]);
 
@@ -654,7 +659,7 @@ export const FeedScreen: React.FC = () => {
     if (isCuratingLiveAi) return;
     setIsCuratingLiveAi(true);
 
-    const isNewsMode = sortMode === 'new' || activeFeedOption === 'live_news';
+    const isNewsMode = sortMode === 'new' || sortMode === 'today' || activeFeedOption === 'live_news';
     const isChannelCurating = selectedFilter !== 'all';
     const activeSpaceHandle = isChannelCurating ? normalizeSpaceHandle(selectedFilter) : 'all';
     const activeChannel = isChannelCurating
@@ -1087,7 +1092,7 @@ export const FeedScreen: React.FC = () => {
         >
           <Ionicons name="sparkles" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
           <Text style={styles.generatePocketButtonText}>
-            {isCuratingLiveAi ? 'Kuriert …' : `Auswahl für ${channel.title || channel.handle} kuratieren`}
+            {isCuratingLiveAi ? 'Kuratiert …' : `Auswahl für ${channel.title || channel.handle} kuratieren`}
           </Text>
         </TouchableOpacity>
 
@@ -1197,155 +1202,6 @@ export const FeedScreen: React.FC = () => {
         <View style={[styles.mainLayoutWrapper, isDesktop && styles.desktopLayoutWrapper]}>
           {/* Feed Column (Center) */}
           <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn]}>
-            {snapshotSyncInfo && (
-              <View style={[styles.snapshotSyncBanner, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                <Ionicons name="sparkles" size={12} color={colors.accent} style={{ marginRight: 6 }} />
-                <Text style={[styles.snapshotSyncText, { color: colors.textSecondary }]}>
-                  {snapshotSyncInfo}
-                </Text>
-              </View>
-            )}
-
-            {/* 1. Primary Feed Mode Segmented Switcher */}
-            <View style={[styles.feedModeSwitcherWrapper, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.feedModeSwitcher}>
-                <TouchableOpacity
-                  onPress={() => setActiveFeedOption('infinite')}
-                  style={[
-                    styles.feedModeBtn,
-                    activeFeedOption === 'infinite' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                  ]}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: activeFeedOption === 'infinite' }}
-                >
-                  <Ionicons
-                    name="infinite"
-                    size={15}
-                    color={activeFeedOption === 'infinite' ? colors.accent : colors.textSecondary}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text
-                    style={[
-                      styles.feedModeText,
-                      {
-                        color: activeFeedOption === 'infinite' ? colors.accent : colors.textPrimary,
-                        fontWeight: activeFeedOption === 'infinite' ? '700' : '600'
-                      }
-                    ]}
-                  >
-                    Endlos-Stream
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setActiveFeedOption('daily')}
-                  style={[
-                    styles.feedModeBtn,
-                    activeFeedOption === 'daily' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                  ]}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: activeFeedOption === 'daily' }}
-                >
-                  <Ionicons
-                    name="newspaper-outline"
-                    size={15}
-                    color={activeFeedOption === 'daily' ? colors.accent : colors.textSecondary}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text
-                    style={[
-                      styles.feedModeText,
-                      {
-                        color: activeFeedOption === 'daily' ? colors.accent : colors.textPrimary,
-                        fontWeight: activeFeedOption === 'daily' ? '700' : '600'
-                      }
-                    ]}
-                  >
-                    Tagesausgaben
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setActiveFeedOption('history')}
-                  style={[
-                    styles.feedModeBtn,
-                    activeFeedOption === 'history' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                  ]}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: activeFeedOption === 'history' }}
-                >
-                  <Ionicons
-                    name="time-outline"
-                    size={15}
-                    color={activeFeedOption === 'history' ? colors.accent : colors.textSecondary}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text
-                    style={[
-                      styles.feedModeText,
-                      {
-                        color: activeFeedOption === 'history' ? colors.accent : colors.textPrimary,
-                        fontWeight: activeFeedOption === 'history' ? '700' : '600'
-                      }
-                    ]}
-                  >
-                    Chronik
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setActiveFeedOption('live_news')}
-                  style={[
-                    styles.feedModeBtn,
-                    activeFeedOption === 'live_news' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                  ]}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: activeFeedOption === 'live_news' }}
-                >
-                  <View style={styles.livePulseDot} />
-                  <Text
-                    style={[
-                      styles.feedModeText,
-                      {
-                        color: activeFeedOption === 'live_news' ? colors.accent : colors.textPrimary,
-                        fontWeight: activeFeedOption === 'live_news' ? '700' : '600'
-                      }
-                    ]}
-                  >
-                    Live News Hub
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setActiveFeedOption('classics')}
-                  style={[
-                    styles.feedModeBtn,
-                    activeFeedOption === 'classics' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                  ]}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: activeFeedOption === 'classics' }}
-                >
-                  <Ionicons
-                    name="library-outline"
-                    size={15}
-                    color={activeFeedOption === 'classics' ? colors.accent : colors.textSecondary}
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text
-                    style={[
-                      styles.feedModeText,
-                      {
-                        color: activeFeedOption === 'classics' ? colors.accent : colors.textPrimary,
-                        fontWeight: activeFeedOption === 'classics' ? '700' : '600'
-                      }
-                    ]}
-                  >
-                    Klassiker
-                  </Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-
             {/* Global Active Space / Channel Banner */}
             {selectedFilter !== 'all' && (
               <View
@@ -1425,31 +1281,50 @@ export const FeedScreen: React.FC = () => {
                   </View>
                 )}
 
-                {/* Reddit Sort Filter Bar: Hot, New, Top, Gems */}
+                {/* 5 Distinct Sort Horizons */}
                 <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                   <TouchableOpacity
-                    onPress={() => handleSortChange('hot')}
+                    onPress={() => handleSortChange('for_you')}
                     style={[
                       styles.sortTab,
-                      sortMode === 'hot' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      (sortMode === 'for_you' || sortMode === 'hot') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                     ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: sortMode === 'for_you' || sortMode === 'hot' }}
                   >
                     <Text style={styles.sortEmoji}>🔥</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'hot' ? colors.accent : colors.textSecondary }]}>
-                      Bloom
+                    <Text style={[styles.sortTabText, { color: (sortMode === 'for_you' || sortMode === 'hot') ? colors.accent : colors.textSecondary }]}>
+                      Für dich
                     </Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => handleSortChange('new')}
+                    onPress={() => handleSortChange('today')}
                     style={[
                       styles.sortTab,
-                      sortMode === 'new' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      (sortMode === 'today' || sortMode === 'new') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                     ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: sortMode === 'today' || sortMode === 'new' }}
                   >
                     <Text style={styles.sortEmoji}>⚡</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'new' ? colors.accent : colors.textSecondary }]}>
-                      Neu
+                    <Text style={[styles.sortTabText, { color: (sortMode === 'today' || sortMode === 'new') ? colors.accent : colors.textSecondary }]}>
+                      Heute
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => handleSortChange('discourse')}
+                    style={[
+                      styles.sortTab,
+                      sortMode === 'discourse' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: sortMode === 'discourse' }}
+                  >
+                    <Text style={styles.sortEmoji}>🧭</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'discourse' ? colors.accent : colors.textSecondary }]}>
+                      Diskurs
                     </Text>
                   </TouchableOpacity>
 
@@ -1459,6 +1334,8 @@ export const FeedScreen: React.FC = () => {
                       styles.sortTab,
                       sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                     ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: sortMode === 'top' }}
                   >
                     <Text style={styles.sortEmoji}>🏆</Text>
                     <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
@@ -1467,61 +1344,17 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => handleSortChange('gems')}
+                    onPress={() => handleSortChange('timeless')}
                     style={[
                       styles.sortTab,
-                      sortMode === 'gems' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      (sortMode === 'timeless' || sortMode === 'gems') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                     ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: sortMode === 'timeless' || sortMode === 'gems' }}
                   >
                     <Text style={styles.sortEmoji}>💎</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'gems' ? colors.accent : colors.textSecondary }]}>
-                      Perlen & Kunst
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => setShowHivemindModal(true)}
-                    style={[
-                      styles.sortTab,
-                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Hivemind Stream generieren"
-                  >
-                    <Ionicons name="git-network-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-                    <Text style={[styles.sortTabText, { color: colors.textPrimary, fontWeight: '700' }]}>
-                      Hivemind
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={handleLiveAiCurate}
-                    disabled={isCuratingLiveAi}
-                    style={[
-                      styles.sortTab,
-                      { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: '#10B981', opacity: isCuratingLiveAi ? 0.7 : 1 }
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Live KI-Kuration starten"
-                  >
-                    <Ionicons name="sparkles" size={13} color="#10B981" style={{ marginRight: 4 }} />
-                    <Text style={[styles.sortTabText, { color: '#10B981', fontWeight: '700' }]}>
-                      {isCuratingLiveAi ? 'Kuriert …' : 'Live KI-Kuration'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => setActiveTab('settings')}
-                    style={[
-                      styles.sortTab,
-                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Algorithmus-Spiegel öffnen"
-                  >
-                    <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-                    <Text style={[styles.sortTabText, { color: colors.textPrimary, fontWeight: '700' }]}>
-                      Spiegel
+                    <Text style={[styles.sortTabText, { color: (sortMode === 'timeless' || sortMode === 'gems') ? colors.accent : colors.textSecondary }]}>
+                      Zeitlos
                     </Text>
                   </TouchableOpacity>
 
@@ -2413,31 +2246,44 @@ export const FeedScreen: React.FC = () => {
                   </View>
                 )}
 
-                {/* Reddit Sort Filter Bar: Hot, New, Top, Gems */}
+                {/* 5 Distinct Sort Horizons */}
                 <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                   <TouchableOpacity
-                    onPress={() => handleSortChange('hot')}
+                    onPress={() => handleSortChange('for_you')}
                     style={[
                       styles.sortTab,
-                      sortMode === 'hot' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      (sortMode === 'for_you' || sortMode === 'hot') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                     ]}
                   >
                     <Text style={styles.sortEmoji}>🔥</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'hot' ? colors.accent : colors.textSecondary }]}>
-                      Bloom
+                    <Text style={[styles.sortTabText, { color: (sortMode === 'for_you' || sortMode === 'hot') ? colors.accent : colors.textSecondary }]}>
+                      Für dich
                     </Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => handleSortChange('new')}
+                    onPress={() => handleSortChange('today')}
                     style={[
                       styles.sortTab,
-                      sortMode === 'new' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      (sortMode === 'today' || sortMode === 'new') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                     ]}
                   >
                     <Text style={styles.sortEmoji}>⚡</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'new' ? colors.accent : colors.textSecondary }]}>
-                      Neu
+                    <Text style={[styles.sortTabText, { color: (sortMode === 'today' || sortMode === 'new') ? colors.accent : colors.textSecondary }]}>
+                      Heute
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => handleSortChange('discourse')}
+                    style={[
+                      styles.sortTab,
+                      sortMode === 'discourse' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                  >
+                    <Text style={styles.sortEmoji}>🧭</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'discourse' ? colors.accent : colors.textSecondary }]}>
+                      Diskurs
                     </Text>
                   </TouchableOpacity>
 
@@ -2455,15 +2301,15 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    onPress={() => handleSortChange('gems')}
+                    onPress={() => handleSortChange('timeless')}
                     style={[
                       styles.sortTab,
-                      sortMode === 'gems' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      (sortMode === 'timeless' || sortMode === 'gems') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                     ]}
                   >
                     <Text style={styles.sortEmoji}>💎</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'gems' ? colors.accent : colors.textSecondary }]}>
-                      Perlen & Kunst
+                    <Text style={[styles.sortTabText, { color: (sortMode === 'timeless' || sortMode === 'gems') ? colors.accent : colors.textSecondary }]}>
+                      Zeitlos
                     </Text>
                   </TouchableOpacity>
 
