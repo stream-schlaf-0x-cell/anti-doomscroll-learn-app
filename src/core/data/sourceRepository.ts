@@ -255,8 +255,13 @@ interface SourcesStatePayload {
 }
 
 export class SourceRepository {
-  private observedHealth: Record<string, SourceHealthInfo> = { ...bundledSourceHealth };
-  constructor(private storage: AtemStorage = appStorage) {}
+  private observedHealth: Record<string, SourceHealthInfo>;
+  constructor(
+    private storage: AtemStorage = appStorage,
+    initialHealth?: Record<string, SourceHealthInfo>
+  ) {
+    this.observedHealth = initialHealth !== undefined ? { ...initialHealth } : { ...bundledSourceHealth };
+  }
 
   private async loadState(): Promise<SourcesStatePayload> {
     try {
@@ -264,7 +269,7 @@ export class SourceRepository {
       if (raw) {
         const parsed = JSON.parse(raw);
         const persistedHealth = parseSourceHealth(parsed.sourceHealthOverrides);
-        this.observedHealth = { ...bundledSourceHealth, ...this.observedHealth, ...persistedHealth };
+        this.observedHealth = { ...this.observedHealth, ...persistedHealth };
         return {
           disabledIds: Array.isArray(parsed.disabledIds) ? parsed.disabledIds : [],
           enabledIds: Array.isArray(parsed.enabledIds) ? parsed.enabledIds : [],

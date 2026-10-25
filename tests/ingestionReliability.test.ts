@@ -9,7 +9,7 @@ import { REAL_KNOWLEDGE_VAULT } from '../src/core/data/realKnowledgeVault';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
-const createRepository = () => new SourceRepository(new AtemStorage(new MemoryStorageDriver()));
+const createRepository = () => new SourceRepository(new AtemStorage(new MemoryStorageDriver()), {});
 const sampleItem = () => FeedItemSchema.parse({
   ...REAL_KNOWLEDGE_VAULT[0], id: 'controlled-snapshot-item',
   publishedAt: '2024-01-02T08:00:00.000Z'
