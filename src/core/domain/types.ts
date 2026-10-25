@@ -801,3 +801,41 @@ export const ReadingInteractionSchema = z.object({
 });
 export type ReadingInteraction = z.infer<typeof ReadingInteractionSchema>;
 
+
+export function hasSpecificArticleUrl(rawUrl?: string | null): boolean {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+
+    // Strip trailing slashes and common index files
+    const cleanPath = parsed.pathname
+      .replace(/\/+$/, '')
+      .replace(/\/index\.(html?|php|jsp)$/i, '');
+
+    // Bare homepage check: empty path or root '/' without specific article query params
+    if (!cleanPath || cleanPath === '') {
+      const hasArticleQuery =
+        parsed.searchParams.has('id') ||
+        parsed.searchParams.has('p') ||
+        parsed.searchParams.has('article') ||
+        parsed.searchParams.has('doi');
+      return hasArticleQuery;
+    }
+
+    // Reject generic section-only landing paths if they lack a deeper slug
+    const segments = cleanPath.split('/').filter(Boolean);
+    if (segments.length === 1 && /^(home|startseite|news|aktuelles|politik|kultur|feed|rss)$/i.test(segments[0])) {
+      return false;
+    }
+
+    // Must have meaningful path length beyond a 2-letter language code like '/de' or '/en'
+    if (segments.length === 1 && segments[0].length <= 3) {
+      return false;
+    }
+
+    return cleanPath.length >= 4;
+  } catch {
+    return false;
+  }
+}

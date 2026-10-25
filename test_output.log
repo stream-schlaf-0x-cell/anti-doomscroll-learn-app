@@ -1,0 +1,2552 @@
+
+> atem@1.0.0 test
+> node --import tsx --test tests/*.test.ts
+
+TAP version 13
+# Subtest: server master key cannot fund unauthenticated requests
+ok 1 - server master key cannot fund unauthenticated requests
+  ---
+  duration_ms: 6.63097
+  type: 'test'
+  ...
+# Subtest: BYOK takes precedence over a server master and never consumes its budget
+ok 2 - BYOK takes precedence over a server master and never consumes its budget
+  ---
+  duration_ms: 37.524188
+  type: 'test'
+  ...
+# Subtest: only allowlisted routes, methods, models and a valid request schema reach upstream
+ok 3 - only allowlisted routes, methods, models and a valid request schema reach upstream
+  ---
+  duration_ms: 1.86416
+  type: 'test'
+  ...
+# Subtest: UTF-8 byte limit rejects a multibyte body below the JavaScript character ceiling
+ok 4 - UTF-8 byte limit rejects a multibyte body below the JavaScript character ceiling
+  ---
+  duration_ms: 8.543897
+  type: 'test'
+  ...
+# Subtest: Gemini upstream output tokens are capped even when the client requests more
+ok 5 - Gemini upstream output tokens are capped even when the client requests more
+  ---
+  duration_ms: 1.800988
+  type: 'test'
+  ...
+# Subtest: OpenRouter BYOK uses its own endpoint and Authorization header
+ok 6 - OpenRouter BYOK uses its own endpoint and Authorization header
+  ---
+  duration_ms: 7.781753
+  type: 'test'
+  ...
+# Subtest: CORS rejects unknown origins and only echoes explicitly permitted origins
+ok 7 - CORS rejects unknown origins and only echoes explicitly permitted origins
+  ---
+  duration_ms: 0.980333
+  type: 'test'
+  ...
+# Subtest: forwarded headers cannot evade rate limiting when no trusted client IP is supplied
+ok 8 - forwarded headers cannot evade rate limiting when no trusted client IP is supplied
+  ---
+  duration_ms: 2.238229
+  type: 'test'
+  ...
+# Subtest: proxy timeout includes response body, and upstream failures never echo secrets
+ok 9 - proxy timeout includes response body, and upstream failures never echo secrets
+  ---
+  duration_ms: 17.398657
+  type: 'test'
+  ...
+# Subtest: credential metadata and proxy survive reload, while new keys are session-only by default
+ok 10 - credential metadata and proxy survive reload, while new keys are session-only by default
+  ---
+  duration_ms: 2.99607
+  type: 'test'
+  ...
+# Subtest: legacy plaintext keys migrate out of durable storage but work for the current session
+ok 11 - legacy plaintext keys migrate out of durable storage but work for the current session
+  ---
+  duration_ms: 0.641986
+  type: 'test'
+  ...
+# Subtest: deliberate persistence can be revoked, and clearing credentials removes the session key
+ok 12 - deliberate persistence can be revoked, and clearing credentials removes the session key
+  ---
+  duration_ms: 0.925793
+  type: 'test'
+  ...
+# Subtest: unsafe proxy URLs reject before credentials are saved or any network call is made
+ok 13 - unsafe proxy URLs reject before credentials are saved or any network call is made
+  ---
+  duration_ms: 2.57306
+  type: 'test'
+  ...
+# Subtest: configured proxy 429 fails closed and releases reserved budget without a paid direct retry
+ok 14 - configured proxy 429 fails closed and releases reserved budget without a paid direct retry
+  ---
+  duration_ms: 34.408712
+  type: 'test'
+  ...
+# Subtest: OpenRouter proxy forwards provider, provider-neutral BYOK header and bounded output tokens
+ok 15 - OpenRouter proxy forwards provider, provider-neutral BYOK header and bounded output tokens
+  ---
+  duration_ms: 7.804768
+  type: 'test'
+  ...
+# Subtest: direct Gemini output is capped and its key travels in a header rather than the URL
+ok 16 - direct Gemini output is capped and its key travels in a header rather than the URL
+  ---
+  duration_ms: 4.816534
+  type: 'test'
+  ...
+# Subtest: direct OpenRouter requests cap max_tokens and cannot send an undefined bearer key
+ok 17 - direct OpenRouter requests cap max_tokens and cannot send an undefined bearer key
+  ---
+  duration_ms: 7.514504
+  type: 'test'
+  ...
+# Subtest: timeout covers response body consumption and aborts the request
+ok 18 - timeout covers response body consumption and aborts the request
+  ---
+  duration_ms: 15.569775
+  type: 'test'
+  ...
+# Subtest: provider errors never echo upstream text containing credentials
+ok 19 - provider errors never echo upstream text containing credentials
+  ---
+  duration_ms: 1.708041
+  type: 'test'
+  ...
+# Subtest: empty provider text is a failed call, and proxy-only connection tests are usable
+ok 20 - empty provider text is a failed call, and proxy-only connection tests are usable
+  ---
+  duration_ms: 2.976048
+  type: 'test'
+  ...
+# Subtest: Gemini responses with null usageMetadata tokens or extra fields parse cleanly
+ok 21 - Gemini responses with null usageMetadata tokens or extra fields parse cleanly
+  ---
+  duration_ms: 2.305283
+  type: 'test'
+  ...
+# Subtest: ArchiveService (Permanent Knowledge Library & Craft Export)
+    # Subtest: records and retrieves a daily edition by date
+    ok 1 - records and retrieves a daily edition by date
+      ---
+      duration_ms: 3.066265
+      type: 'test'
+      ...
+    # Subtest: performs full-text search across archived items
+    ok 2 - performs full-text search across archived items
+      ---
+      duration_ms: 0.645514
+      type: 'test'
+      ...
+    # Subtest: exports an archived edition as formatted Markdown for Craft Docs / Obsidian
+    ok 3 - exports an archived edition as formatted Markdown for Craft Docs / Obsidian
+      ---
+      duration_ms: 0.796263
+      type: 'test'
+      ...
+    # Subtest: calculates archive statistics
+    ok 4 - calculates archive statistics
+      ---
+      duration_ms: 0.525931
+      type: 'test'
+      ...
+    # Subtest: preserves distinct session units on the same date without overwriting
+    ok 5 - preserves distinct session units on the same date without overwriting
+      ---
+      duration_ms: 18.654325
+      type: 'test'
+      ...
+    # Subtest: handles parallel writes concurrently without data loss
+    ok 6 - handles parallel writes concurrently without data loss
+      ---
+      duration_ms: 2.660023
+      type: 'test'
+      ...
+    # Subtest: rejects corrupted stored archive with CorruptedDataError and safely recovers
+    ok 7 - rejects corrupted stored archive with CorruptedDataError and safely recovers
+      ---
+      duration_ms: 43.314027
+      type: 'test'
+      ...
+    1..7
+ok 22 - ArchiveService (Permanent Knowledge Library & Craft Export)
+  ---
+  duration_ms: 71.509161
+  type: 'suite'
+  ...
+# Subtest: Audit Remediation & Verification Suite (Master Execution Plan)
+    # Subtest: 1. Zero-width character stripping: strips invisible chars from titles, HTML, and text
+    ok 1 - 1. Zero-width character stripping: strips invisible chars from titles, HTML, and text
+      ---
+      duration_ms: 8.834473
+      type: 'test'
+      ...
+    # Subtest: 2. German ordinal date & abbreviation sentence splitting preservation
+    ok 2 - 2. German ordinal date & abbreviation sentence splitting preservation
+      ---
+      duration_ms: 0.503975
+      type: 'test'
+      ...
+    # Subtest: 3. Tracking pixel rejection & image URL entity decoding
+    ok 3 - 3. Tracking pixel rejection & image URL entity decoding
+      ---
+      duration_ms: 0.578953
+      type: 'test'
+      ...
+    # Subtest: 4. Cross-reference token-exact matching without substring false positives
+    ok 4 - 4. Cross-reference token-exact matching without substring false positives
+      ---
+      duration_ms: 0.598352
+      type: 'test'
+      ...
+    # Subtest: 5. Feature registry default state and toggling
+    ok 5 - 5. Feature registry default state and toggling
+      ---
+      duration_ms: 0.352463
+      type: 'test'
+      ...
+    # Subtest: 6. Subtitle substance guard: rejects stubs like "Comments" in favor of substantial sentences
+    ok 6 - 6. Subtitle substance guard: rejects stubs like "Comments" in favor of substantial sentences
+      ---
+      duration_ms: 1.855382
+      type: 'test'
+      ...
+    1..6
+ok 23 - Audit Remediation & Verification Suite (Master Execution Plan)
+  ---
+  duration_ms: 14.135385
+  type: 'suite'
+  ...
+# Subtest: AutomationEngine & Research Collector (Masterplan v3)
+    # Subtest: 1. Initializes default templates with enabled=false (safe start)
+    ok 1 - 1. Initializes default templates with enabled=false (safe start)
+      ---
+      duration_ms: 27.936109
+      type: 'test'
+      ...
+    # Subtest: 2. Dry-run previews matching sources without modifying graph or storage
+    ok 2 - 2. Dry-run previews matching sources without modifying graph or storage
+      ---
+      duration_ms: 13.515221
+      type: 'test'
+      ...
+    # Subtest: 3. Real run creates organizing thought node and connects source articles
+    ok 3 - 3. Real run creates organizing thought node and connects source articles
+      ---
+      duration_ms: 46.993652
+      type: 'test'
+      ...
+    # Subtest: 4. Handles rules with zero matching candidates gracefully
+    ok 4 - 4. Handles rules with zero matching candidates gracefully
+      ---
+      duration_ms: 14.890496
+      type: 'test'
+      ...
+    1..4
+ok 24 - AutomationEngine & Research Collector (Masterplan v3)
+  ---
+  duration_ms: 104.98908
+  type: 'suite'
+  ...
+# Subtest: Autonomous QA, Chaos Fuzzing & Bug Hunter Suite
+    # Subtest: 1. Corrupted Storage Fuzzing & Safe Fallback Recovery
+        # Subtest: handles severely corrupted JSON, null arrays, and primitive values in migrationService without throwing
+        ok 1 - handles severely corrupted JSON, null arrays, and primitive values in migrationService without throwing
+          ---
+          duration_ms: 809.238624
+          type: 'test'
+          ...
+        # Subtest: PersistentArticleStore and LocalFeedRepository handle empty, null, or corrupted storage gracefully
+        ok 2 - PersistentArticleStore and LocalFeedRepository handle empty, null, or corrupted storage gracefully
+          ---
+          duration_ms: 437.682011
+          type: 'test'
+          ...
+        # Subtest: satisfiesCuratedBodyContract and getCardRenderableText never throw on null, undefined or malformed inputs
+        ok 3 - satisfiesCuratedBodyContract and getCardRenderableText never throw on null, undefined or malformed inputs
+          ---
+          duration_ms: 0.334639
+          type: 'test'
+          ...
+        1..3
+    ok 1 - 1. Corrupted Storage Fuzzing & Safe Fallback Recovery
+      ---
+      duration_ms: 1248.450026
+      type: 'suite'
+      ...
+    # Subtest: 2. Rapid-Fire Interaction Stress Test & Mathematical Invariants
+        # Subtest: simulates 30 rapid alternating interactions ensuring derived weights remain bounded [0.05, 0.95] and finite
+        ok 1 - simulates 30 rapid alternating interactions ensuring derived weights remain bounded [0.05, 0.95] and finite
+          ---
+          duration_ms: 23.222715
+          type: 'test'
+          ...
+        1..1
+    ok 2 - 2. Rapid-Fire Interaction Stress Test & Mathematical Invariants
+      ---
+      duration_ms: 23.414839
+      type: 'suite'
+      ...
+    # Subtest: 3. 3D Galaxy Coordinate & Canvas Math Fuzzing
+        # Subtest: verifies 3D projection math under extreme zooms (0.1x to 10x) and boundary node counts (0, 1, 2, 500)
+        ok 1 - verifies 3D projection math under extreme zooms (0.1x to 10x) and boundary node counts (0, 1, 2, 500)
+          ---
+          duration_ms: 151.523042
+          type: 'test'
+          ...
+        1..1
+    ok 3 - 3. 3D Galaxy Coordinate & Canvas Math Fuzzing
+      ---
+      duration_ms: 151.704936
+      type: 'suite'
+      ...
+    # Subtest: 4. Network Blackout Simulation & Graceful Service Degradation
+        # Subtest: gracefully handles offline/network timeout during OpenAlex and Wikipedia lane searches without crashing
+        ok 1 - gracefully handles offline/network timeout during OpenAlex and Wikipedia lane searches without crashing
+          ---
+          duration_ms: 170.234353
+          type: 'test'
+          ...
+        1..1
+    ok 4 - 4. Network Blackout Simulation & Graceful Service Degradation
+      ---
+      duration_ms: 170.648959
+      type: 'suite'
+      ...
+    1..4
+ok 25 - Autonomous QA, Chaos Fuzzing & Bug Hunter Suite
+  ---
+  duration_ms: 1595.378978
+  type: 'suite'
+  ...
+# Subtest: AutonomousResearcherService (Automated Gatherer & Spiritual Teammate)
+    # Subtest: contains pre-vetted quality feed catalog for 1-click subscription
+    ok 1 - contains pre-vetted quality feed catalog for 1-click subscription
+      ---
+      duration_ms: 1.376395
+      type: 'test'
+      ...
+    # Subtest: discovers feed for known top domains instantly
+    ok 2 - discovers feed for known top domains instantly
+      ---
+      duration_ms: 0.692734
+      type: 'test'
+      ...
+    # Subtest: handles direct RSS/XML feed links gracefully
+    ok 3 - handles direct RSS/XML feed links gracefully
+      ---
+      duration_ms: 0.424629
+      type: 'test'
+      ...
+    # Subtest: generates standard fallback feed endpoint for unknown websites
+    ok 4 - generates standard fallback feed endpoint for unknown websites
+      ---
+      duration_ms: 0.254806
+      type: 'test'
+      ...
+    # Subtest: returns null for empty or invalid URLs
+    ok 5 - returns null for empty or invalid URLs
+      ---
+      duration_ms: 0.1655
+      type: 'test'
+      ...
+    # Subtest: conducts a deep spiritual inquiry and registers schema-valid FeedItem
+    ok 6 - conducts a deep spiritual inquiry and registers schema-valid FeedItem
+      ---
+      duration_ms: 496.178856
+      type: 'test'
+      ...
+    1..6
+ok 26 - AutonomousResearcherService (Automated Gatherer & Spiritual Teammate)
+  ---
+  duration_ms: 500.937024
+  type: 'suite'
+  ...
+# Subtest: Batch curation cache and truthful execution report
+    # Subtest: reuses successful curation and invalidates it when source content changes
+    ok 1 - reuses successful curation and invalidates it when source content changes
+      ---
+      duration_ms: 62.476326
+      type: 'test'
+      ...
+    # Subtest: shares an in-flight curation and bounds metadata as well as excerpts
+    ok 2 - shares an in-flight curation and bounds metadata as well as excerpts
+      ---
+      duration_ms: 73.838839
+      type: 'test'
+      ...
+    # Subtest: does not cache failed AI attempts or falsely report offline heuristics as AI
+    ok 3 - does not cache failed AI attempts or falsely report offline heuristics as AI
+      ---
+      duration_ms: 7.690794
+      type: 'test'
+      ...
+    1..3
+ok 27 - Batch curation cache and truthful execution report
+  ---
+  duration_ms: 146.889158
+  type: 'suite'
+  ...
+# Subtest: Bloomscrolling Iteration: 72 Sources, Sliding-Window Ranking & 7 Verification Cases
+    # Subtest: 1. Source Catalog & Health Telemetry: >= 50 concrete sources with per-source delivery health
+    ok 1 - 1. Source Catalog & Health Telemetry: >= 50 concrete sources with per-source delivery health
+      ---
+      duration_ms: 32.032837
+      type: 'test'
+      ...
+    # Subtest: 2. 30-Card Bloomscrolling Feed Inspection: Publisher diversity (>= 12 publishers, <= 20% cap), Topic & Format Rhythm
+    ok 2 - 2. 30-Card Bloomscrolling Feed Inspection: Publisher diversity (>= 12 publishers, <= 20% cap), Topic & Format Rhythm
+      ---
+      duration_ms: 2810.602679
+      type: 'test'
+      ...
+    # Subtest: 3. Case 1 (Short 20s News Card) & Case 2 (Deep Reader Abstract + Thin-Evidence Protection)
+    ok 3 - 3. Case 1 (Short 20s News Card) & Case 2 (Deep Reader Abstract + Thin-Evidence Protection)
+      ---
+      duration_ms: 433.488982
+      type: 'test'
+      ...
+    # Subtest: 4. Case 3 (Artwork Showcase) & Encyclopedia Provenance: Art excluded from Live News Hub, Wikipedia labeled Enzyklopädie
+    ok 4 - 4. Case 3 (Artwork Showcase) & Encyclopedia Provenance: Art excluded from Live News Hub, Wikipedia labeled Enzyklopädie
+      ---
+      duration_ms: 2064.846859
+      type: 'test'
+      ...
+    # Subtest: 5. Case 4 (Community Card) & Explicit Feedback Weighting (> Passive Behavior)
+    ok 5 - 5. Case 4 (Community Card) & Explicit Feedback Weighting (> Passive Behavior)
+      ---
+      duration_ms: 421.911757
+      type: 'test'
+      ...
+    # Subtest: 6. Case 6 (Empty Freshness Pool -> Evergreen Fallback without ID cloning) & Case 7 (Viewport-Only Chronik)
+    ok 6 - 6. Case 6 (Empty Freshness Pool -> Evergreen Fallback without ID cloning) & Case 7 (Viewport-Only Chronik)
+      ---
+      duration_ms: 460.638083
+      type: 'test'
+      ...
+    # Subtest: 7. Forschung und Wissen Relative Image Resolution, Techpresso Source & Comic Alt-Text Punchline Extraction
+    ok 7 - 7. Forschung und Wissen Relative Image Resolution, Techpresso Source & Comic Alt-Text Punchline Extraction
+      ---
+      duration_ms: 3.52481
+      type: 'test'
+      ...
+    1..7
+ok 28 - Bloomscrolling Iteration: 72 Sources, Sliding-Window Ranking & 7 Verification Cases
+  ---
+  duration_ms: 6228.900165
+  type: 'suite'
+  ...
+# Subtest: ContinuousLiveNewsService & Instant Research Invariants
+    # Subtest: returns verified live stream items conforming strictly to FeedItemSchema
+    ok 1 - returns verified live stream items conforming strictly to FeedItemSchema
+      ---
+      duration_ms: 2462.732726
+      type: 'test'
+      ...
+    # Subtest: filters live items by specific category (e.g. oerr, tech, science)
+    ok 2 - filters live items by specific category (e.g. oerr, tech, science)
+      ---
+      duration_ms: 222.099428
+      type: 'test'
+      ...
+    # Subtest: searches live items accurately by search query
+    ok 3 - searches live items accurately by search query
+      ---
+      duration_ms: 91.937113
+      type: 'test'
+      ...
+    # Subtest: provides timeless Evergreen Classics with high epistemic value
+    ok 4 - provides timeless Evergreen Classics with high epistemic value
+      ---
+      duration_ms: 15.063113
+      type: 'test'
+      ...
+    # Subtest: filters out disabled sources from the live stream
+    ok 5 - filters out disabled sources from the live stream
+      ---
+      duration_ms: 166.303299
+      type: 'test'
+      ...
+    1..5
+ok 29 - ContinuousLiveNewsService & Instant Research Invariants
+  ---
+  duration_ms: 2960.124468
+  type: 'suite'
+  ...
+# Subtest: Craft Docs & Markdown Exporter (Data Sovereignty)
+    # Subtest: generates valid markdown document with title and frontmatter
+    ok 1 - generates valid markdown document with title and frontmatter
+      ---
+      duration_ms: 28.871802
+      type: 'test'
+      ...
+    # Subtest: formats saved items, key insights, and user notes with sparring
+    ok 2 - formats saved items, key insights, and user notes with sparring
+      ---
+      duration_ms: 0.851257
+      type: 'test'
+      ...
+    1..2
+ok 30 - Craft Docs & Markdown Exporter (Data Sovereignty)
+  ---
+  duration_ms: 31.038809
+  type: 'suite'
+  ...
+# Subtest: Custom Channel Curation & Deadlock Prevention Suite
+    # Subtest: satisfiesCuratedBodyContract rejects empty or boilerplate Hacker News link stubs
+    ok 1 - satisfiesCuratedBodyContract rejects empty or boilerplate Hacker News link stubs
+      ---
+      duration_ms: 2.123367
+      type: 'test'
+      ...
+    # Subtest: updateSubchannel correctly updates typo handle and migrates items in feedRepository
+    ok 2 - updateSubchannel correctly updates typo handle and migrates items in feedRepository
+      ---
+      duration_ms: 169.714309
+      type: 'test'
+      ...
+    # Subtest: generateHivemindStream assigns the requested channel space to all generated items
+    ok 3 - generateHivemindStream assigns the requested channel space to all generated items
+      ---
+      duration_ms: 84.155304
+      type: 'test'
+      ...
+    # Subtest: normalizeSpaceHandle guarantees c/ prefix and lowercase underscores
+    ok 4 - normalizeSpaceHandle guarantees c/ prefix and lowercase underscores
+      ---
+      duration_ms: 0.54585
+      type: 'test'
+      ...
+    1..4
+ok 31 - Custom Channel Curation & Deadlock Prevention Suite
+  ---
+  duration_ms: 258.354422
+  type: 'suite'
+  ...
+# Subtest: Domain Schemas & Invariant Validation
+    # Subtest: should validate all initial fixtures against FeedItemSchema
+    ok 1 - should validate all initial fixtures against FeedItemSchema
+      ---
+      duration_ms: 19.840825
+      type: 'test'
+      ...
+    # Subtest: should validate default user profile against UserProfileSchema
+    ok 2 - should validate default user profile against UserProfileSchema
+      ---
+      duration_ms: 6.057846
+      type: 'test'
+      ...
+    # Subtest: should reject invalid reading interaction schema data
+    ok 3 - should reject invalid reading interaction schema data
+      ---
+      duration_ms: 1.342931
+      type: 'test'
+      ...
+    # Subtest: should verify the demonstration collection contains the intended range of reading lengths
+    ok 4 - should verify the demonstration collection contains the intended range of reading lengths
+      ---
+      duration_ms: 0.484676
+      type: 'test'
+      ...
+    # Subtest: should verify all fixtures contain meaningful standalone feedText and valid Phase 2 metadata
+    ok 5 - should verify all fixtures contain meaningful standalone feedText and valid Phase 2 metadata
+      ---
+      duration_ms: 0.328714
+      type: 'test'
+      ...
+    # Subtest: should validate Phase 2 PersonalGoal schema and German metadata mapping
+    ok 6 - should validate Phase 2 PersonalGoal schema and German metadata mapping
+      ---
+      duration_ms: 0.323317
+      type: 'test'
+      ...
+    1..6
+ok 32 - Domain Schemas & Invariant Validation
+  ---
+  duration_ms: 30.336386
+  type: 'suite'
+  ...
+# Subtest: Deterministic Ranking Engine
+    # Subtest: should assign higher score to articles matching top user interests
+    ok 1 - should assign higher score to articles matching top user interests
+      ---
+      duration_ms: 2.090894
+      type: 'test'
+      ...
+    # Subtest: should boost items matching user reading duration preference using controlled test data
+    ok 2 - should boost items matching user reading duration preference using controlled test data
+      ---
+      duration_ms: 0.739016
+      type: 'test'
+      ...
+    # Subtest: should produce observable ranking differences between quick and deep preferences on real fixtures
+    ok 3 - should produce observable ranking differences between quick and deep preferences on real fixtures
+      ---
+      duration_ms: 11.269554
+      type: 'test'
+      ...
+    # Subtest: should adjust scores based on explicit user feedback
+    ok 4 - should adjust scores based on explicit user feedback
+      ---
+      duration_ms: 0.563194
+      type: 'test'
+      ...
+    # Subtest: should interleave topics to avoid clumping identical primary topics
+    ok 5 - should interleave topics to avoid clumping identical primary topics
+      ---
+      duration_ms: 3.172143
+      type: 'test'
+      ...
+    # Subtest: should produce transparent German explanation breakdown
+    ok 6 - should produce transparent German explanation breakdown
+      ---
+      duration_ms: 0.266431
+      type: 'test'
+      ...
+    # Subtest: should adjust scores based on explicit personal goals alignment
+    ok 7 - should adjust scores based on explicit personal goals alignment
+      ---
+      duration_ms: 0.247195
+      type: 'test'
+      ...
+    # Subtest: should adjust scores based on feedback memory for authors and topics
+    ok 8 - should adjust scores based on feedback memory for authors and topics
+      ---
+      duration_ms: 0.356216
+      type: 'test'
+      ...
+    # Subtest: should enforce soft editorial quota for teaching items and challenging perspectives in primary batch
+    ok 9 - should enforce soft editorial quota for teaching items and challenging perspectives in primary batch
+      ---
+      duration_ms: 3.06709
+      type: 'test'
+      ...
+    # Subtest: should use derivedWeights in preference to explicitInterests when computing effective topic weight
+    ok 10 - should use derivedWeights in preference to explicitInterests when computing effective topic weight
+      ---
+      duration_ms: 0.284562
+      type: 'test'
+      ...
+    # Subtest: should ensure teaching items do not exceed balanced proportions across all feed items
+    ok 11 - should ensure teaching items do not exceed balanced proportions across all feed items
+      ---
+      duration_ms: 0.159194
+      type: 'test'
+      ...
+    1..11
+ok 33 - Deterministic Ranking Engine
+  ---
+  duration_ms: 23.020261
+  type: 'suite'
+  ...
+# Subtest: Three Daily Editions & Editorial Depth
+    # Subtest: determines edition type correctly based on local hour in Europe/Berlin
+    ok 1 - determines edition type correctly based on local hour in Europe/Berlin
+      ---
+      duration_ms: 25.518518
+      type: 'test'
+      ...
+    # Subtest: honors custom edition start hours from user profile
+    ok 2 - honors custom edition start hours from user profile
+      ---
+      duration_ms: 0.51806
+      type: 'test'
+      ...
+    # Subtest: ranks edition feeds with target counts and editorial quotas
+    ok 3 - ranks edition feeds with target counts and editorial quotas
+      ---
+      duration_ms: 21912.962108
+      type: 'test'
+      ...
+    # Subtest: guarantees 0% article overlap across morning, midday, and evening editions
+    ok 4 - guarantees 0% article overlap across morning, midday, and evening editions
+      ---
+      duration_ms: 21705.41106
+      type: 'test'
+      ...
+    # Subtest: synthesizes Ebene 2 Editorial Abstract conforming to schema
+    ok 5 - synthesizes Ebene 2 Editorial Abstract conforming to schema
+      ---
+      duration_ms: 1.442292
+      type: 'test'
+      ...
+    # Subtest: handles already_known and more_depth recursive learning feedback
+    ok 6 - handles already_known and more_depth recursive learning feedback
+      ---
+      duration_ms: 1.528957
+      type: 'test'
+      ...
+    # Subtest: WeatherService handles network gracefully and caches results
+    ok 7 - WeatherService handles network gracefully and caches results
+      ---
+      duration_ms: 216.183194
+      type: 'test'
+      ...
+    1..7
+ok 34 - Three Daily Editions & Editorial Depth
+  ---
+  duration_ms: 43865.745945
+  type: 'suite'
+  ...
+# Subtest: Provider-Independent Enrichment & €5 Budget Enforcement
+    # Subtest: 1. Calculates token costs accurately using grounded Gemini Flash pricing
+    ok 1 - 1. Calculates token costs accurately using grounded Gemini Flash pricing
+      ---
+      duration_ms: 1.447133
+      type: 'test'
+      ...
+    # Subtest: 2. EnrichmentUsageLedger records calls and accumulates monthly totals in memory
+    ok 2 - 2. EnrichmentUsageLedger records calls and accumulates monthly totals in memory
+      ---
+      duration_ms: 1.512186
+      type: 'test'
+      ...
+    # Subtest: 3. Enforces hard monthly ceiling (€5.00) and blocks further spend when exceeded
+    ok 3 - 3. Enforces hard monthly ceiling (€5.00) and blocks further spend when exceeded
+      ---
+      duration_ms: 0.983852
+      type: 'test'
+      ...
+    # Subtest: 4. EnrichmentCache stores and retrieves results keyed by contentHash + promptVersion
+    ok 4 - 4. EnrichmentCache stores and retrieves results keyed by contentHash + promptVersion
+      ---
+      duration_ms: 0.673722
+      type: 'test'
+      ...
+    # Subtest: 5. SourceOnlyEnricher operates at zero cost and synthesizes German standalone reading
+    ok 5 - 5. SourceOnlyEnricher operates at zero cost and synthesizes German standalone reading
+      ---
+      duration_ms: 0.472781
+      type: 'test'
+      ...
+    # Subtest: 6. ProviderEnricher uses active model when budget allows and records spend in ledger
+    ok 6 - 6. ProviderEnricher uses active model when budget allows and records spend in ledger
+      ---
+      duration_ms: 1.413245
+      type: 'test'
+      ...
+    # Subtest: 7. ProviderEnricher serves cached results without re-spending budget
+    ok 7 - 7. ProviderEnricher serves cached results without re-spending budget
+      ---
+      duration_ms: 0.787004
+      type: 'test'
+      ...
+    # Subtest: 8. ProviderEnricher automatically falls back to SourceOnlyEnricher when monthly budget is exceeded
+    ok 8 - 8. ProviderEnricher automatically falls back to SourceOnlyEnricher when monthly budget is exceeded
+      ---
+      duration_ms: 0.750896
+      type: 'test'
+      ...
+    # Subtest: 9. GeminiEnricher gracefully falls back when no API key is provided and generates sparring replies
+    ok 9 - 9. GeminiEnricher gracefully falls back when no API key is provided and generates sparring replies
+      ---
+      duration_ms: 36.254262
+      type: 'test'
+      ...
+    # Subtest: 10. Atomic budget reservation guarantees race-free spending limits
+    ok 10 - 10. Atomic budget reservation guarantees race-free spending limits
+      ---
+      duration_ms: 1.836845
+      type: 'test'
+      ...
+    # Subtest: 11. Fail-Safe Closed: Corrupted ledger storage locks budget and prevents further spend
+    ok 11 - 11. Fail-Safe Closed: Corrupted ledger storage locks budget and prevents further spend
+      ---
+      duration_ms: 0.942872
+      type: 'test'
+      ...
+    # Subtest: 12. Fail-Safe Closed on ALL Storage Errors: Storage unavailable or write error locks budget and falls back to SourceOnlyEnricher
+    ok 12 - 12. Fail-Safe Closed on ALL Storage Errors: Storage unavailable or write error locks budget and falls back to SourceOnlyEnricher
+      ---
+      duration_ms: 1.881603
+      type: 'test'
+      ...
+    1..12
+ok 35 - Provider-Independent Enrichment & €5 Budget Enforcement
+  ---
+  duration_ms: 51.164044
+  type: 'suite'
+  ...
+# Subtest: Make The Feed Alive — Verifications
+    # Subtest: 1. Live News Hub & Chronological Ordering
+        # Subtest: returns news items strictly ordered newest first in chronological mode
+        ok 1 - returns news items strictly ordered newest first in chronological mode
+          ---
+          duration_ms: 4516.212349
+          type: 'test'
+          ...
+        # Subtest: does not contaminate live news stream with ancient REAL_KNOWLEDGE_VAULT essays
+        ok 2 - does not contaminate live news stream with ancient REAL_KNOWLEDGE_VAULT essays
+          ---
+          duration_ms: 85.346475
+          type: 'test'
+          ...
+        # Subtest: provides honest status info distinguishing live, snapshot, cached, and offline
+        ok 3 - provides honest status info distinguishing live, snapshot, cached, and offline
+          ---
+          duration_ms: 1.1808
+          type: 'test'
+          ...
+        # Subtest: strictly adheres to the 24h window without secret expansion to all items
+        ok 4 - strictly adheres to the 24h window without secret expansion to all items
+          ---
+          duration_ms: 166.111587
+          type: 'test'
+          ...
+        # Subtest: does not penalize news_hub_heise_1 with artificial hardcoded score reductions
+        ok 5 - does not penalize news_hub_heise_1 with artificial hardcoded score reductions
+          ---
+          duration_ms: 0.600477
+          type: 'test'
+          ...
+        # Subtest: deduplicates in-flight calls and supports progressive provider update notifications
+        ok 6 - deduplicates in-flight calls and supports progressive provider update notifications
+          ---
+          duration_ms: 653.492365
+          type: 'test'
+          ...
+        1..6
+    ok 1 - 1. Live News Hub & Chronological Ordering
+      ---
+      duration_ms: 5424.691358
+      type: 'suite'
+      ...
+    # Subtest: 2. BoundedIdSet & Neuer Mix History Tracking
+        # Subtest: evicts oldest IDs in FIFO order and never abruptly drops history to 0
+        ok 1 - evicts oldest IDs in FIFO order and never abruptly drops history to 0
+          ---
+          duration_ms: 1.427672
+          type: 'test'
+          ...
+        # Subtest: produces completely fresh candidate sets across consecutive mixes without repeating recently shown items
+        ok 2 - produces completely fresh candidate sets across consecutive mixes without repeating recently shown items
+          ---
+          duration_ms: 21495.329941
+          type: 'test'
+          ...
+        # Subtest: rotates discovery pool items cleanly when previously shown IDs are provided
+        ok 3 - rotates discovery pool items cleanly when previously shown IDs are provided
+          ---
+          duration_ms: 9242.072828
+          type: 'test'
+          ...
+        # Subtest: guarantees rich publisher and topic diversity in the candidate selection
+        ok 4 - guarantees rich publisher and topic diversity in the candidate selection
+          ---
+          duration_ms: 11963.77509
+          type: 'test'
+          ...
+        1..4
+    ok 2 - 2. BoundedIdSet & Neuer Mix History Tracking
+      ---
+      duration_ms: 42703.242828
+      type: 'suite'
+      ...
+    # Subtest: 3. P1: News Evolution Briefing ("Was hat sich verändert?")
+        # Subtest: produces exactly 3 structured points with citations in deterministic local fallback
+        ok 1 - produces exactly 3 structured points with citations in deterministic local fallback
+          ---
+          duration_ms: 2.211116
+          type: 'test'
+          ...
+        # Subtest: caches identical runs so re-opening the briefing consumes 0 tokens and returns instantly
+        ok 2 - caches identical runs so re-opening the briefing consumes 0 tokens and returns instantly
+          ---
+          duration_ms: 0.849232
+          type: 'test'
+          ...
+        1..2
+    ok 3 - 3. P1: News Evolution Briefing ("Was hat sich verändert?")
+      ---
+      duration_ms: 3.296964
+      type: 'suite'
+      ...
+    1..3
+ok 36 - Make The Feed Alive — Verifications
+  ---
+  duration_ms: 48132.081176
+  type: 'suite'
+  ...
+# Subtest: Feed Batching & Discovery Partitioning Invariants
+    # Subtest: 1. Returns at most 12 items for daily edition even when larger candidate pool exists
+    ok 1 - 1. Returns at most 12 items for daily edition even when larger candidate pool exists
+      ---
+      duration_ms: 2716.429334
+      type: 'test'
+      ...
+    # Subtest: 2. Guarantees zero ID overlap between daily edition and discovery pool
+    ok 2 - 2. Guarantees zero ID overlap between daily edition and discovery pool
+      ---
+      duration_ms: 6956.376714
+      type: 'test'
+      ...
+    # Subtest: 3. Retains all non-daily items in discovery pool without losing candidate stories
+    ok 3 - 3. Retains all non-daily items in discovery pool without losing candidate stories
+      ---
+      duration_ms: 44.045746
+      type: 'test'
+      ...
+    # Subtest: 4. Correctly maps all Phase 2 EvidenceTier values to German UI descriptions
+    ok 4 - 4. Correctly maps all Phase 2 EvidenceTier values to German UI descriptions
+      ---
+      duration_ms: 0.476817
+      type: 'test'
+      ...
+    # Subtest: 5. Correctly maps all Phase 2 FeedItemFormat values to editorial labels
+    ok 5 - 5. Correctly maps all Phase 2 FeedItemFormat values to editorial labels
+      ---
+      duration_ms: 0.425811
+      type: 'test'
+      ...
+    1..5
+ok 37 - Feed Batching & Discovery Partitioning Invariants
+  ---
+  duration_ms: 9719.434346
+  type: 'suite'
+  ...
+# Subtest: Feed presentation and truthful operation telemetry
+    # Subtest: keeps the manually pinned low-score result ahead of high-score items through endless interleaving
+    ok 1 - keeps the manually pinned low-score result ahead of high-score items through endless interleaving
+      ---
+      duration_ms: 4.79627
+      type: 'test'
+      ...
+    # Subtest: keeps explicit pin order through hot sorting and deduplicates combined pools
+    ok 2 - keeps explicit pin order through hot sorting and deduplicates combined pools
+      ---
+      duration_ms: 0.570672
+      type: 'test'
+      ...
+    # Subtest: keeps explicit pin order through new sorting and deduplicates combined pools
+    ok 3 - keeps explicit pin order through new sorting and deduplicates combined pools
+      ---
+      duration_ms: 0.742805
+      type: 'test'
+      ...
+    # Subtest: keeps explicit pin order through top sorting and deduplicates combined pools
+    ok 4 - keeps explicit pin order through top sorting and deduplicates combined pools
+      ---
+      duration_ms: 0.991881
+      type: 'test'
+      ...
+    # Subtest: keeps explicit pin order through gems sorting and deduplicates combined pools
+    ok 5 - keeps explicit pin order through gems sorting and deduplicates combined pools
+      ---
+      duration_ms: 0.77065
+      type: 'test'
+      ...
+    # Subtest: surfaces manually updated articles without claiming they were newly inserted
+    ok 6 - surfaces manually updated articles without claiming they were newly inserted
+      ---
+      duration_ms: 1.210263
+      type: 'test'
+      ...
+    # Subtest: does not pin background arrivals even when a caller leaves the pin option implicit
+    ok 7 - does not pin background arrivals even when a caller leaves the pin option implicit
+      ---
+      duration_ms: 0.344415
+      type: 'test'
+      ...
+    # Subtest: never infers actual AI use from an AI-named operation
+    ok 8 - never infers actual AI use from an AI-named operation
+      ---
+      duration_ms: 8.830917
+      type: 'test'
+      ...
+    # Subtest: combines gatekeeper rejections and schema rejections and preserves actual cache/fallback usage
+    ok 9 - combines gatekeeper rejections and schema rejections and preserves actual cache/fallback usage
+      ---
+      duration_ms: 1.533574
+      type: 'test'
+      ...
+    # Subtest: records a changed teaser or topic as an update and refreshes its curation timestamp
+    ok 10 - records a changed teaser or topic as an update and refreshes its curation timestamp
+      ---
+      duration_ms: 0.907546
+      type: 'test'
+      ...
+    # Subtest: retains the visible order and article bodies while reading until the reader accepts updates
+    ok 11 - retains the visible order and article bodies while reading until the reader accepts updates
+      ---
+      duration_ms: 0.399211
+      type: 'test'
+      ...
+    # Subtest: preserves an updated established article across a subsequent snapshot replacement
+    ok 12 - preserves an updated established article across a subsequent snapshot replacement
+      ---
+      duration_ms: 12.657487
+      type: 'test'
+      ...
+    # Subtest: does not resurrect a duplicate canonical URL under a second ID after snapshot replacement
+    ok 13 - does not resurrect a duplicate canonical URL under a second ID after snapshot replacement
+      ---
+      duration_ms: 19.181969
+      type: 'test'
+      ...
+    # Subtest: does not inject an excluded pin into the appended discovery list a second time
+    ok 14 - does not inject an excluded pin into the appended discovery list a second time
+      ---
+      duration_ms: 2.175734
+      type: 'test'
+      ...
+    # Subtest: dates an older curation instead of claiming it happened seconds ago
+    ok 15 - dates an older curation instead of claiming it happened seconds ago
+      ---
+      duration_ms: 0.515914
+      type: 'test'
+      ...
+    1..15
+ok 38 - Feed presentation and truthful operation telemetry
+  ---
+  duration_ms: 58.001847
+  type: 'suite'
+  ...
+# Subtest: P0 Feed Repair & Production Hardening Verification Suite
+    # Subtest: 1. Curation execution measures true duration and labels fallback honestly as status fallback
+    ok 1 - 1. Curation execution measures true duration and labels fallback honestly as status fallback
+      ---
+      duration_ms: 22.686453
+      type: 'test'
+      ...
+    # Subtest: 1b. AI success is only granted when usedAI is true
+    ok 2 - 1b. AI success is only granted when usedAI is true
+      ---
+      duration_ms: 0.490889
+      type: 'test'
+      ...
+    # Subtest: 2. Does not mass-pin dozens of updated articles; caps automatic freshness pins at 4
+    ok 3 - 2. Does not mass-pin dozens of updated articles; caps automatic freshness pins at 4
+      ---
+      duration_ms: 1.354857
+      type: 'test'
+      ...
+    # Subtest: 3. Sort modes Neu, Top, and Gems produce distinctly different top-3 cards
+    ok 4 - 3. Sort modes Neu, Top, and Gems produce distinctly different top-3 cards
+      ---
+      duration_ms: 3.611264
+      type: 'test'
+      ...
+    # Subtest: 4. Tagesschau dynamically maps ressorts to valid topics
+    ok 5 - 4. Tagesschau dynamically maps ressorts to valid topics
+      ---
+      duration_ms: 0.279734
+      type: 'test'
+      ...
+    # Subtest: 5. Honest refresh tracking reports 0 new items on repeated checks
+    ok 6 - 5. Honest refresh tracking reports 0 new items on repeated checks
+      ---
+      duration_ms: 27.544438
+      type: 'test'
+      ...
+    # Subtest: 6. Backup V2 safely exports/imports without leaking secrets or tokens
+    ok 7 - 6. Backup V2 safely exports/imports without leaking secrets or tokens
+      ---
+      duration_ms: 22.208216
+      type: 'test'
+      ...
+    1..7
+ok 39 - P0 Feed Repair & Production Hardening Verification Suite
+  ---
+  duration_ms: 79.970025
+  type: 'suite'
+  ...
+# Subtest: FoundationalCanonService (Independent Knowledge Foundation)
+    # Subtest: retrieves genesis foundational canon with pre-seeded bookmarks and weights
+    ok 1 - retrieves genesis foundational canon with pre-seeded bookmarks and weights
+      ---
+      duration_ms: 1.490483
+      type: 'test'
+      ...
+    # Subtest: creates and persists a customized snapshot of imported items
+    ok 2 - creates and persists a customized snapshot of imported items
+      ---
+      duration_ms: 0.966817
+      type: 'test'
+      ...
+    # Subtest: exports foundational canon to human-readable Markdown with weights and sources
+    ok 3 - exports foundational canon to human-readable Markdown with weights and sources
+      ---
+      duration_ms: 0.373804
+      type: 'test'
+      ...
+    # Subtest: exports foundational canon to standalone JSON string
+    ok 4 - exports foundational canon to standalone JSON string
+      ---
+      duration_ms: 0.316795
+      type: 'test'
+      ...
+    # Subtest: honestly states provenance as pre-seeded foundation without claiming personal Raindrop genesis sync
+    ok 5 - honestly states provenance as pre-seeded foundation without claiming personal Raindrop genesis sync
+      ---
+      duration_ms: 0.246902
+      type: 'test'
+      ...
+    # Subtest: rejects corrupted stored canon with CorruptedDataError and preserves raw data during recovery
+    ok 6 - rejects corrupted stored canon with CorruptedDataError and preserves raw data during recovery
+      ---
+      duration_ms: 12.613527
+      type: 'test'
+      ...
+    1..6
+ok 40 - FoundationalCanonService (Independent Knowledge Foundation)
+  ---
+  duration_ms: 17.558119
+  type: 'suite'
+  ...
+# Subtest: GraphRepository & Personal Knowledge Graph (Masterplan v3)
+    # Subtest: 1. Adds thought and validates schema fields
+    ok 1 - 1. Adds thought and validates schema fields
+      ---
+      duration_ms: 6.38582
+      type: 'test'
+      ...
+    # Subtest: 2. Updates thought and bumps updatedAt
+    ok 2 - 2. Updates thought and bumps updatedAt
+      ---
+      duration_ms: 1.158338
+      type: 'test'
+      ...
+    # Subtest: 3. Connects two thoughts and retrieves connections for a node
+    ok 3 - 3. Connects two thoughts and retrieves connections for a node
+      ---
+      duration_ms: 2.938339
+      type: 'test'
+      ...
+    # Subtest: 4. Prevents duplicate connections between the same nodes and relation
+    ok 4 - 4. Prevents duplicate connections between the same nodes and relation
+      ---
+      duration_ms: 1.350504
+      type: 'test'
+      ...
+    # Subtest: 5. Deletes thought and cascades connection deletion
+    ok 5 - 5. Deletes thought and cascades connection deletion
+      ---
+      duration_ms: 1.499152
+      type: 'test'
+      ...
+    # Subtest: 6. Exports graph as Markdown with wikilinks and YAML metadata
+    ok 6 - 6. Exports graph as Markdown with wikilinks and YAML metadata
+      ---
+      duration_ms: 1.543671
+      type: 'test'
+      ...
+    # Subtest: 7. Calculates graph telemetry accurately
+    ok 7 - 7. Calculates graph telemetry accurately
+      ---
+      duration_ms: 1.593025
+      type: 'test'
+      ...
+    1..7
+ok 41 - GraphRepository & Personal Knowledge Graph (Masterplan v3)
+  ---
+  duration_ms: 20.288236
+  type: 'suite'
+  ...
+# Subtest: Home Navigation & Search/Filter Reset Invariants
+    # Subtest: resets query, subchannel filter, and active tab back to default daily feed
+    ok 1 - resets query, subchannel filter, and active tab back to default daily feed
+      ---
+      duration_ms: 1.036097
+      type: 'test'
+      ...
+    1..1
+ok 42 - Home Navigation & Search/Filter Reset Invariants
+  ---
+  duration_ms: 2.139479
+  type: 'suite'
+  ...
+# Subtest: Ingestion reliability regressions (no network)
+    # Subtest: keeps unmeasured catalog feeds unknown instead of inventing a successful fetch
+    not ok 1 - keeps unmeasured catalog feeds unknown instead of inventing a successful fetch
+      ---
+      duration_ms: 35.1425
+      type: 'test'
+      location: '/app/tests/ingestionReliability.test.ts:2:1942'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+
+        + true
+        - undefined
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      actual: true
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (/app/tests/ingestionReliability.test.ts:23:12)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async Promise.all (index 0)
+        async Suite.run (node:internal/test_runner/test:1442:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+      ...
+    # Subtest: keeps an untested custom feed unknown until measured
+    ok 2 - keeps an untested custom feed unknown until measured
+      ---
+      duration_ms: 10.652062
+      type: 'test'
+      ...
+    # Subtest: labels research landing pages as references and excludes them from RSS delivery claims
+    ok 3 - labels research landing pages as references and excludes them from RSS delivery claims
+      ---
+      duration_ms: 4.905657
+      type: 'test'
+      ...
+    # Subtest: propagates validated snapshot telemetry and derives actual delivering count
+    not ok 4 - propagates validated snapshot telemetry and derives actual delivering count
+      ---
+      duration_ms: 59.305362
+      type: 'test'
+      location: '/app/tests/ingestionReliability.test.ts:2:3388'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+
+        true !== false
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: false
+      actual: true
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (/app/tests/ingestionReliability.test.ts:64:12)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:744:7)
+      ...
+    # Subtest: does not invent a generation date for legacy array snapshots
+    ok 5 - does not invent a generation date for legacy array snapshots
+      ---
+      duration_ms: 5.425275
+      type: 'test'
+      ...
+    # Subtest: validates offline fallback, preserves old publication dates and labels it offline
+    ok 6 - validates offline fallback, preserves old publication dates and labels it offline
+      ---
+      duration_ms: 243.222221
+      type: 'test'
+      ...
+    # Subtest: ignores a malformed cached snapshot rather than emitting invalid feed cards
+    ok 7 - ignores a malformed cached snapshot rather than emitting invalid feed cards
+      ---
+      duration_ms: 125.100599
+      type: 'test'
+      ...
+    1..7
+not ok 43 - Ingestion reliability regressions (no network)
+  ---
+  duration_ms: 485.693267
+  type: 'suite'
+  location: '/app/tests/ingestionReliability.test.ts:2:1864'
+  failureType: 'subtestsFailed'
+  error: '2 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: Bounded snapshot delivery
+    # Subtest: limits startup cards while retaining publisher diversity and complete reader bodies
+    ok 1 - limits startup cards while retaining publisher diversity and complete reader bodies
+      ---
+      duration_ms: 58.47221
+      type: 'test'
+      ...
+    1..1
+ok 44 - Bounded snapshot delivery
+  ---
+  duration_ms: 58.871377
+  type: 'suite'
+  ...
+# Subtest: Snapshot provenance and payload budget
+    # Subtest: keeps cached snapshot timestamps during an entirely offline refresh
+    ok 1 - keeps cached snapshot timestamps during an entirely offline refresh
+      ---
+      duration_ms: 8.655765
+      type: 'test'
+      ...
+    # Subtest: bounds Unicode payload bytes without truncating the delivered reader text
+    ok 2 - bounds Unicode payload bytes without truncating the delivered reader text
+      ---
+      duration_ms: 116.756011
+      type: 'test'
+      ...
+    1..2
+ok 45 - Snapshot provenance and payload budget
+  ---
+  duration_ms: 125.742415
+  type: 'suite'
+  ...
+# Subtest: InvestigationEngine (Curiosity Execution & Epistemic Verification)
+    # Subtest: 1. Sanitizes untrusted source text and strips prompt injection patterns
+    ok 1 - 1. Sanitizes untrusted source text and strips prompt injection patterns
+      ---
+      duration_ms: 2.057638
+      type: 'test'
+      ...
+    # Subtest: 2. Computes stable deterministic cache keys
+    ok 2 - 2. Computes stable deterministic cache keys
+      ---
+      duration_ms: 0.387821
+      type: 'test'
+      ...
+    # Subtest: 3. Runs deterministic fallback cleanly when offline or no AI key set
+    ok 3 - 3. Runs deterministic fallback cleanly when offline or no AI key set
+      ---
+      duration_ms: 1.534004
+      type: 'test'
+      ...
+    # Subtest: 4. Diff engine accurately detects new evidence vs counter-arguments vs repetition
+    ok 4 - 4. Diff engine accurately detects new evidence vs counter-arguments vs repetition
+      ---
+      duration_ms: 0.908008
+      type: 'test'
+      ...
+    # Subtest: 5. Immediate cancellation aborts in-flight investigation
+    ok 5 - 5. Immediate cancellation aborts in-flight investigation
+      ---
+      duration_ms: 0.6695
+      type: 'test'
+      ...
+    1..5
+ok 46 - InvestigationEngine (Curiosity Execution & Epistemic Verification)
+  ---
+  duration_ms: 7.017383
+  type: 'suite'
+  ...
+# Subtest: InvestigationRepository & Markdown Export
+    # Subtest: 1. Loads empty array on clean storage
+    ok 1 - 1. Loads empty array on clean storage
+      ---
+      duration_ms: 2.139305
+      type: 'test'
+      ...
+    # Subtest: 2. Saves, retrieves, and updates an investigation cleanly
+    ok 2 - 2. Saves, retrieves, and updates an investigation cleanly
+      ---
+      duration_ms: 1.340064
+      type: 'test'
+      ...
+    # Subtest: 3. UserVerdict is updated independently without overriding AI claims
+    ok 3 - 3. UserVerdict is updated independently without overriding AI claims
+      ---
+      duration_ms: 0.69452
+      type: 'test'
+      ...
+    # Subtest: 4. Exports structured research brief to publication-ready Markdown with YAML frontmatter & Wikilinks
+    ok 4 - 4. Exports structured research brief to publication-ready Markdown with YAML frontmatter & Wikilinks
+      ---
+      duration_ms: 24.30405
+      type: 'test'
+      ...
+    # Subtest: 5. Deletes an investigation cleanly without residual artifacts
+    ok 5 - 5. Deletes an investigation cleanly without residual artifacts
+      ---
+      duration_ms: 0.647678
+      type: 'test'
+      ...
+    1..5
+ok 47 - InvestigationRepository & Markdown Export
+  ---
+  duration_ms: 30.703541
+  type: 'suite'
+  ...
+# Subtest: Living Feed Engine & Layered Architecture Tests
+    # Subtest: 1. FeedMergeService (Idempotent Merge & Deduplication)
+        # Subtest: correctly inserts true new items and detects duplicates
+        ok 1 - correctly inserts true new items and detects duplicates
+          ---
+          duration_ms: 13.863395
+          type: 'test'
+          ...
+        # Subtest: updates existing item when incoming version has higher quality score or updated body
+        ok 2 - updates existing item when incoming version has higher quality score or updated body
+          ---
+          duration_ms: 0.900256
+          type: 'test'
+          ...
+        # Subtest: rejects malformed items and logs rejection reason
+        ok 3 - rejects malformed items and logs rejection reason
+          ---
+          duration_ms: 0.642871
+          type: 'test'
+          ...
+        1..3
+    ok 1 - 1. FeedMergeService (Idempotent Merge & Deduplication)
+      ---
+      duration_ms: 16.421034
+      type: 'suite'
+      ...
+    # Subtest: 2. FeedOperationManager (Top-Pinning & Telemetry)
+        # Subtest: pins user-curated items to top and records operation telemetry
+        ok 1 - pins user-curated items to top and records operation telemetry
+          ---
+          duration_ms: 0.610835
+          type: 'test'
+          ...
+        # Subtest: notifies listeners on operation completed
+        ok 2 - notifies listeners on operation completed
+          ---
+          duration_ms: 0.285659
+          type: 'test'
+          ...
+        1..2
+    ok 2 - 2. FeedOperationManager (Top-Pinning & Telemetry)
+      ---
+      duration_ms: 1.090029
+      type: 'suite'
+      ...
+    # Subtest: 3. ArticleIndex (O(1) Keyword & Topic Inverted Index)
+        # Subtest: indexes items and performs sub-millisecond candidate lookup
+        ok 1 - indexes items and performs sub-millisecond candidate lookup
+          ---
+          duration_ms: 1.380317
+          type: 'test'
+          ...
+        1..1
+    ok 3 - 3. ArticleIndex (O(1) Keyword & Topic Inverted Index)
+      ---
+      duration_ms: 1.900092
+      type: 'suite'
+      ...
+    # Subtest: 4. Multi-Dimensional EnrichmentCache
+        # Subtest: generates content-addressable cache keys incorporating content, prompt, and model
+        ok 1 - generates content-addressable cache keys incorporating content, prompt, and model
+          ---
+          duration_ms: 0.423407
+          type: 'test'
+          ...
+        1..1
+    ok 4 - 4. Multi-Dimensional EnrichmentCache
+      ---
+      duration_ms: 0.643492
+      type: 'suite'
+      ...
+    # Subtest: 5. Secure AI Proxy (server/ai/proxy)
+        # Subtest: returns capabilities without exposing server secrets
+        ok 1 - returns capabilities without exposing server secrets
+          ---
+          duration_ms: 0.970013
+          type: 'test'
+          ...
+        # Subtest: rejects oversized payloads with 413 Payload Too Large
+        ok 2 - rejects oversized payloads with 413 Payload Too Large
+          ---
+          duration_ms: 8.647875
+          type: 'test'
+          ...
+        # Subtest: rejects missing body with 400 Bad Request
+        ok 3 - rejects missing body with 400 Bad Request
+          ---
+          duration_ms: 0.553728
+          type: 'test'
+          ...
+        1..3
+    ok 5 - 5. Secure AI Proxy (server/ai/proxy)
+      ---
+      duration_ms: 10.515935
+      type: 'suite'
+      ...
+    1..5
+ok 48 - Living Feed Engine & Layered Architecture Tests
+  ---
+  duration_ms: 31.521306
+  type: 'suite'
+  ...
+# Subtest: commits the local edition while weather is still pending
+ok 49 - commits the local edition while weather is still pending
+  ---
+  duration_ms: 1.615734
+  type: 'test'
+  ...
+# Subtest: discards stale local data and weather completions
+ok 50 - discards stale local data and weather completions
+  ---
+  duration_ms: 0.496326
+  type: 'test'
+  ...
+# Subtest: keeps local reading ready when the weather service fails
+ok 51 - keeps local reading ready when the weather service fails
+  ---
+  duration_ms: 0.428534
+  type: 'test'
+  ...
+# Subtest: Master Execution Plan: Editorial Depth, Authentic Community & Provenance
+    # Subtest: 1. TOPIC_DIALECTICS covers all 12 topics with unique, domain-specific arguments
+    ok 1 - 1. TOPIC_DIALECTICS covers all 12 topics with unique, domain-specific arguments
+      ---
+      duration_ms: 1.524648
+      type: 'test'
+      ...
+    # Subtest: 2. synthesizeDeepeningArticle structures articles with 4 substantive subheadings
+    ok 2 - 2. synthesizeDeepeningArticle structures articles with 4 substantive subheadings
+      ---
+      duration_ms: 0.42122
+      type: 'test'
+      ...
+    # Subtest: 3. pureJsSha256 generates exact 64-char hex SHA-256 digests without Node builtins
+    ok 3 - 3. pureJsSha256 generates exact 64-char hex SHA-256 digests without Node builtins
+      ---
+      duration_ms: 1.230017
+      type: 'test'
+      ...
+    # Subtest: 4. normalizeFeedEntry preserves faithful source text without fake boilerplate inflation
+    ok 4 - 4. normalizeFeedEntry preserves faithful source text without fake boilerplate inflation
+      ---
+      duration_ms: 7.941255
+      type: 'test'
+      ...
+    # Subtest: 5. ContinuousLiveNewsService fetches live feeds with timeout safety and fallback
+    ok 5 - 5. ContinuousLiveNewsService fetches live feeds with timeout safety and fallback
+      ---
+      duration_ms: 1681.60881
+      type: 'test'
+      ...
+    # Subtest: 6. Fixtures and initial feeds start with authentic community scores (0 upvotes)
+    ok 6 - 6. Fixtures and initial feeds start with authentic community scores (0 upvotes)
+      ---
+      duration_ms: 0.577056
+      type: 'test'
+      ...
+    1..6
+ok 52 - Master Execution Plan: Editorial Depth, Authentic Community & Provenance
+  ---
+  duration_ms: 1694.95213
+  type: 'suite'
+  ...
+# Subtest: Master Engine Overhaul: 5 Sort Horizons, ARD Cap, Saxony Focus & Subchannel Badges
+    # Subtest: 1. 5 Sort Horizons return properly sorted and enriched datasets
+    ok 1 - 1. 5 Sort Horizons return properly sorted and enriched datasets
+      ---
+      duration_ms: 19.411005
+      type: 'test'
+      ...
+    # Subtest: 2. Anti-ARD monoculture cap: ARD items capped at <= 1 in 7-8 and strictly never consecutive
+    ok 2 - 2. Anti-ARD monoculture cap: ARD items capped at <= 1 in 7-8 and strictly never consecutive
+      ---
+      duration_ms: 3.053456
+      type: 'test'
+      ...
+    # Subtest: 3. Regional Focus: Schleswig-Holstein (regions=15) purged & Saxony / Dresden / Leipzig anchored
+    ok 3 - 3. Regional Focus: Schleswig-Holstein (regions=15) purged & Saxony / Dresden / Leipzig anchored
+      ---
+      duration_ms: 6.529034
+      type: 'test'
+      ...
+    # Subtest: 4. Subchannel Badges: Distinct Reddit-style visual cues with high contrast
+    ok 4 - 4. Subchannel Badges: Distinct Reddit-style visual cues with high contrast
+      ---
+      duration_ms: 0.899233
+      type: 'test'
+      ...
+    # Subtest: 5. FeedCard: Strips leading title repetition in card bodies
+    ok 5 - 5. FeedCard: Strips leading title repetition in card bodies
+      ---
+      duration_ms: 0.4058
+      type: 'test'
+      ...
+    # Subtest: 6. Medical Typo Zero-Tolerance: 0 occurrences of "Kuriert" remain in src/
+    ok 6 - 6. Medical Typo Zero-Tolerance: 0 occurrences of "Kuriert" remain in src/
+      ---
+      duration_ms: 30.424967
+      type: 'test'
+      ...
+    1..6
+ok 53 - Master Engine Overhaul: 5 Sort Horizons, ARD Cap, Saxony Focus & Subchannel Badges
+  ---
+  duration_ms: 62.818084
+  type: 'suite'
+  ...
+# Subtest: Sprint Acceptance: Migration, Editorial Research, Vote-Mirror & 3D Galaxy
+    # Subtest: 1. In-Place Version Auto-Migration (No Re-Onboarding Required)
+        # Subtest: migrates existing cached items in-place on boot, purges unbookmarked stubs, and preserves protected user items
+        ok 1 - migrates existing cached items in-place on boot, purges unbookmarked stubs, and preserves protected user items
+          ---
+          duration_ms: 401.717128
+          type: 'test'
+          ...
+        1..1
+    ok 1 - 1. In-Place Version Auto-Migration (No Re-Onboarding Required)
+      ---
+      duration_ms: 402.844443
+      type: 'suite'
+      ...
+    # Subtest: 2. Transparent Vote-Mirror & Feedback Memory Learning
+        # Subtest: modulates feed ranking deterministically based on boosted and penalized feedback signals
+        ok 1 - modulates feed ranking deterministically based on boosted and penalized feedback signals
+          ---
+          duration_ms: 3.120354
+          type: 'test'
+          ...
+        1..1
+    ok 2 - 2. Transparent Vote-Mirror & Feedback Memory Learning
+      ---
+      duration_ms: 3.699658
+      type: 'suite'
+      ...
+    # Subtest: 3. Epistemic Editorial Research Team & Honest Provenance
+        # Subtest: Lane 3 (researchVerifiedRssLane) matches relevant high-substance items with honest epistemic labels
+        ok 1 - Lane 3 (researchVerifiedRssLane) matches relevant high-substance items with honest epistemic labels
+          ---
+          duration_ms: 8.611768
+          type: 'test'
+          ...
+        # Subtest: conductSpiritualInquiry returns schema-valid research dossier with required dialectical counter-perspective
+        ok 2 - conductSpiritualInquiry returns schema-valid research dossier with required dialectical counter-perspective
+          ---
+          duration_ms: 451.868791
+          type: 'test'
+          ...
+        1..2
+    ok 3 - 3. Epistemic Editorial Research Team & Honest Provenance
+      ---
+      duration_ms: 461.059581
+      type: 'suite'
+      ...
+    # Subtest: 4. 3D Interaction Galaxy Nodes & Spatial Presets
+        # Subtest: converts user interactions, channels, and breathing anchor to comprehensive HyperspaceNodes
+        ok 1 - converts user interactions, channels, and breathing anchor to comprehensive HyperspaceNodes
+          ---
+          duration_ms: 0.672495
+          type: 'test'
+          ...
+        1..1
+    ok 4 - 4. 3D Interaction Galaxy Nodes & Spatial Presets
+      ---
+      duration_ms: 1.143366
+      type: 'suite'
+      ...
+    1..4
+ok 54 - Sprint Acceptance: Migration, Editorial Research, Vote-Mirror & 3D Galaxy
+  ---
+  duration_ms: 869.766973
+  type: 'suite'
+  ...
+# Subtest: MusicRecommendationService (iTunes & Spotify Grounding)
+    # Subtest: loads curated sound and focus tracks with complete metadata
+    ok 1 - loads curated sound and focus tracks with complete metadata
+      ---
+      duration_ms: 1.169988
+      type: 'test'
+      ...
+    # Subtest: formats audio track duration correctly in MM:SS
+    ok 2 - formats audio track duration correctly in MM:SS
+      ---
+      duration_ms: 0.23393
+      type: 'test'
+      ...
+    # Subtest: searches for tracks and matches query against title and artist
+    ok 3 - searches for tracks and matches query against title and artist
+      ---
+      duration_ms: 130.259816
+      type: 'test'
+      ...
+    1..3
+ok 55 - MusicRecommendationService (iTunes & Spotify Grounding)
+  ---
+  duration_ms: 133.146816
+  type: 'suite'
+  ...
+# Subtest: October 23 Audit Resolutions
+    # Subtest: hasSpecificArticleUrl rejects bare homepages
+    ok 1 - hasSpecificArticleUrl rejects bare homepages
+      ---
+      duration_ms: 1.142019
+      type: 'test'
+      ...
+    # Subtest: classifyArticleTopic extracts content-driven subjects
+    ok 2 - classifyArticleTopic extracts content-driven subjects
+      ---
+      duration_ms: 2.591049
+      type: 'test'
+      ...
+    # Subtest: isHighlySpecializedJargon correctly identifies dense academic texts
+    ok 3 - isHighlySpecializedJargon correctly identifies dense academic texts
+      ---
+      duration_ms: 0.245337
+      type: 'test'
+      ...
+    # Subtest: isValidConceptualQuiz rejects thin articles and low-quality questions
+    ok 4 - isValidConceptualQuiz rejects thin articles and low-quality questions
+      ---
+      duration_ms: 0.189299
+      type: 'test'
+      ...
+    # Subtest: AutonomousResearcherService concurrency lock prevents double starts
+    ok 5 - AutonomousResearcherService concurrency lock prevents double starts
+      ---
+      duration_ms: 0.134821
+      type: 'test'
+      ...
+    1..5
+ok 56 - October 23 Audit Resolutions
+  ---
+  duration_ms: 6.026308
+  type: 'suite'
+  ...
+# Subtest: OnTheFlyStreamService (Empty Pocket & Stream Generation)
+    # Subtest: generates a full bespoke stream for an empty pocket
+    ok 1 - generates a full bespoke stream for an empty pocket
+      ---
+      duration_ms: 105.729413
+      type: 'test'
+      ...
+    # Subtest: validates every generated item against FeedItemSchema
+    ok 2 - validates every generated item against FeedItemSchema
+      ---
+      duration_ms: 86.733876
+      type: 'test'
+      ...
+    # Subtest: allows generating stream without memes or without AI synthesis
+    ok 3 - allows generating stream without memes or without AI synthesis
+      ---
+      duration_ms: 77.554719
+      type: 'test'
+      ...
+    1..3
+ok 57 - OnTheFlyStreamService (Empty Pocket & Stream Generation)
+  ---
+  duration_ms: 271.646472
+  type: 'suite'
+  ...
+# Subtest: Open-Web Harvesters, Live News CORS Resilience & Anti-Doomscroll Pacing
+    # Subtest: ContinuousLiveNewsService: prevents static Python 3.15 from being stuck at \#1 and prioritizes fresh items
+    ok 1 - ContinuousLiveNewsService: prevents static Python 3.15 from being stuck at \#1 and prioritizes fresh items
+      ---
+      duration_ms: 1561.056678
+      type: 'test'
+      ...
+    # Subtest: ContinuousLiveNewsService: interleaves publishers so consecutive clumping is prevented
+    ok 2 - ContinuousLiveNewsService: interleaves publishers so consecutive clumping is prevented
+      ---
+      duration_ms: 105.44724
+      type: 'test'
+      ...
+    # Subtest: ContinuousLiveNewsService: provides a readable last-updated timestamp
+    ok 3 - ContinuousLiveNewsService: provides a readable last-updated timestamp
+      ---
+      duration_ms: 0.266931
+      type: 'test'
+      ...
+    # Subtest: normalizer: splits teaser into distinct subtitle and feedText so card headers never repeat the body
+    ok 4 - normalizer: splits teaser into distinct subtitle and feedText so card headers never repeat the body
+      ---
+      duration_ms: 0.889045
+      type: 'test'
+      ...
+    # Subtest: AppearanceHistoryService: chronologically records seen cards idempotently with sequence numbering
+    ok 5 - AppearanceHistoryService: chronologically records seen cards idempotently with sequence numbering
+      ---
+      duration_ms: 1.442744
+      type: 'test'
+      ...
+    # Subtest: interleaveForAddictiveLearning: paces discovery into dynamic waves including visual art showcases
+    ok 6 - interleaveForAddictiveLearning: paces discovery into dynamic waves including visual art showcases
+      ---
+      duration_ms: 38.295653
+      type: 'test'
+      ...
+    1..6
+ok 58 - Open-Web Harvesters, Live News CORS Resilience & Anti-Doomscroll Pacing
+  ---
+  duration_ms: 1709.09093
+  type: 'suite'
+  ...
+# Subtest: Storage Mutex & Persistence Architecture
+    # Subtest: 1. Profile save settles and invokes the persistent driver
+    ok 1 - 1. Profile save settles and invokes the persistent driver
+      ---
+      duration_ms: 13.871888
+      type: 'test'
+      ...
+    # Subtest: 2. Save, unsave, progress, feedback, and reset settle without deadlocking
+    ok 2 - 2. Save, unsave, progress, feedback, and reset settle without deadlocking
+      ---
+      duration_ms: 4.869507
+      type: 'test'
+      ...
+    # Subtest: 3. Concurrent updates to different articles preserve both changes
+    ok 3 - 3. Concurrent updates to different articles preserve both changes
+      ---
+      duration_ms: 81.784975
+      type: 'test'
+      ...
+    # Subtest: 4. Progress and bookmark updates on the same article preserve both fields
+    ok 4 - 4. Progress and bookmark updates on the same article preserve both fields
+      ---
+      duration_ms: 54.467912
+      type: 'test'
+      ...
+    # Subtest: 5. A failed operation releases its lock and later operations can succeed
+    ok 5 - 5. A failed operation releases its lock and later operations can succeed
+      ---
+      duration_ms: 1.829299
+      type: 'test'
+      ...
+    # Subtest: 6. A new repository instance can read committed data
+    ok 6 - 6. A new repository instance can read committed data
+      ---
+      duration_ms: 1.116426
+      type: 'test'
+      ...
+    # Subtest: 7. Older asynchronous work cannot overwrite newer user choices
+    ok 7 - 7. Older asynchronous work cannot overwrite newer user choices
+      ---
+      duration_ms: 2.744572
+      type: 'test'
+      ...
+    # Subtest: 8. Distinguishes missing vs corrupt data and throws CorruptedDataError
+    ok 8 - 8. Distinguishes missing vs corrupt data and throws CorruptedDataError
+      ---
+      duration_ms: 1.07985
+      type: 'test'
+      ...
+    # Subtest: 9. updateProfile and mutateInteraction reject with CorruptedDataError on corrupt stored bytes
+    ok 9 - 9. updateProfile and mutateInteraction reject with CorruptedDataError on corrupt stored bytes
+      ---
+      duration_ms: 0.995737
+      type: 'test'
+      ...
+    # Subtest: 10. saveArticle persists full article entity offline decoupled from feed rotation
+    ok 10 - 10. saveArticle persists full article entity offline decoupled from feed rotation
+      ---
+      duration_ms: 10.219635
+      type: 'test'
+      ...
+    # Subtest: 11. unsaveArticle unmarks bookmark and removes full article from saved articles storage
+    ok 11 - 11. unsaveArticle unmarks bookmark and removes full article from saved articles storage
+      ---
+      duration_ms: 1.717409
+      type: 'test'
+      ...
+    # Subtest: 12. clearLibrary wipes both interaction state and saved full articles
+    ok 12 - 12. clearLibrary wipes both interaction state and saved full articles
+      ---
+      duration_ms: 4.858353
+      type: 'test'
+      ...
+    # Subtest: 13. addNote appends intellectual reflection notes with tags and timestamp
+    ok 13 - 13. addNote appends intellectual reflection notes with tags and timestamp
+      ---
+      duration_ms: 2.940838
+      type: 'test'
+      ...
+    # Subtest: 14. voteItem updates voteScore and feedback (+1/-1/0) without losing existing data
+    ok 14 - 14. voteItem updates voteScore and feedback (+1/-1/0) without losing existing data
+      ---
+      duration_ms: 0.768702
+      type: 'test'
+      ...
+    1..14
+ok 59 - Storage Mutex & Persistence Architecture
+  ---
+  duration_ms: 185.770989
+  type: 'suite'
+  ...
+# Subtest: Phase 2.5: Intelligence, Studio & Body Sharding Architecture
+    # Subtest: 1. AtmenAiClient & BYOK Credentials
+        # Subtest: initializes with default models (Gemini 3.8 & OpenRouter 3.8)
+        ok 1 - initializes with default models (Gemini 3.8 & OpenRouter 3.8)
+          ---
+          duration_ms: 1.465824
+          type: 'test'
+          ...
+        # Subtest: persists and clears credentials under @atem:ai_credentials:v1
+        ok 2 - persists and clears credentials under @atem:ai_credentials:v1
+          ---
+          duration_ms: 1.121239
+          type: 'test'
+          ...
+        # Subtest: gracefully reports failure on testAiConnection without an API key
+        ok 3 - gracefully reports failure on testAiConnection without an API key
+          ---
+          duration_ms: 0.333544
+          type: 'test'
+          ...
+        # Subtest: callAiModel throws AiCredentialsMissingError when unconfigured
+        ok 4 - callAiModel throws AiCredentialsMissingError when unconfigured
+          ---
+          duration_ms: 1.271712
+          type: 'test'
+          ...
+        # Subtest: enforces monthly ledger budget ceiling before making AI requests
+        ok 5 - enforces monthly ledger budget ceiling before making AI requests
+          ---
+          duration_ms: 1.817733
+          type: 'test'
+          ...
+        1..5
+    ok 1 - 1. AtmenAiClient & BYOK Credentials
+      ---
+      duration_ms: 7.287177
+      type: 'suite'
+      ...
+    # Subtest: 2. LocalLibraryRepository Body Sharding
+        # Subtest: shards articleBody into @atem:article_body:v1:<id> and keeps index lightweight
+        ok 1 - shards articleBody into @atem:article_body:v1:<id> and keeps index lightweight
+          ---
+          duration_ms: 15.108865
+          type: 'test'
+          ...
+        # Subtest: unsaveArticle removes both the index entry and the sharded body
+        ok 2 - unsaveArticle removes both the index entry and the sharded body
+          ---
+          duration_ms: 1.71625
+          type: 'test'
+          ...
+        # Subtest: handles legacy unsharded articles gracefully (backward compatibility)
+        ok 3 - handles legacy unsharded articles gracefully (backward compatibility)
+          ---
+          duration_ms: 0.937177
+          type: 'test'
+          ...
+        1..3
+    ok 2 - 2. LocalLibraryRepository Body Sharding
+      ---
+      duration_ms: 18.192504
+      type: 'suite'
+      ...
+    # Subtest: 3. Atmen Studio: 3 Lenses & Transformation Service
+        # Subtest: defines the 3 core contemplative lenses
+        ok 1 - defines the 3 core contemplative lenses
+          ---
+          duration_ms: 0.481465
+          type: 'test'
+          ...
+        # Subtest: generates high-coherence deterministic output for all 3 lenses
+        ok 2 - generates high-coherence deterministic output for all 3 lenses
+          ---
+          duration_ms: 1.120498
+          type: 'test'
+          ...
+        # Subtest: formats studio output into publication-ready Markdown
+        ok 3 - formats studio output into publication-ready Markdown
+          ---
+          duration_ms: 0.309679
+          type: 'test'
+          ...
+        1..3
+    ok 3 - 3. Atmen Studio: 3 Lenses & Transformation Service
+      ---
+      duration_ms: 2.131229
+      type: 'suite'
+      ...
+    # Subtest: 4. Batch Semantic Enrichment & Topic Classification
+        # Subtest: classifies content deterministically into valid TopicTags
+        ok 1 - classifies content deterministically into valid TopicTags
+          ---
+          duration_ms: 2.850733
+          type: 'test'
+          ...
+        # Subtest: enriches raw items deterministically generating clean German feedText and insights
+        ok 2 - enriches raw items deterministically generating clean German feedText and insights
+          ---
+          duration_ms: 1.608111
+          type: 'test'
+          ...
+        1..2
+    ok 4 - 4. Batch Semantic Enrichment & Topic Classification
+      ---
+      duration_ms: 4.75245
+      type: 'suite'
+      ...
+    1..4
+ok 60 - Phase 2.5: Intelligence, Studio & Body Sharding Architecture
+  ---
+  duration_ms: 33.31474
+  type: 'suite'
+  ...
+# Subtest: Phase 3: Bloomscrolling Engine, Native Atem Integration, Quizzes & Simplified Hub
+    # Subtest: 1. Feature Registry cleanly integrates 3 Phase 3 modules with default enabled
+    ok 1 - 1. Feature Registry cleanly integrates 3 Phase 3 modules with default enabled
+      ---
+      duration_ms: 1.361546
+      type: 'test'
+      ...
+    # Subtest: 2. NewsHubModal source contract: exactly 2 submenus, zero duplicate emoji bugs, clean source management
+    ok 2 - 2. NewsHubModal source contract: exactly 2 submenus, zero duplicate emoji bugs, clean source management
+      ---
+      duration_ms: 45.165304
+      type: 'test'
+      ...
+    # Subtest: 3. AtmenBreathingPortal points to authentic URL and supports modal and inline modes
+    ok 3 - 3. AtmenBreathingPortal points to authentic URL and supports modal and inline modes
+      ---
+      duration_ms: 0.372921
+      type: 'test'
+      ...
+    # Subtest: 4. QuizGenerator synthesizes valid FeedQuizQuestionSchema with 4 options and correct answer
+    ok 4 - 4. QuizGenerator synthesizes valid FeedQuizQuestionSchema with 4 options and correct answer
+      ---
+      duration_ms: 2.463534
+      type: 'test'
+      ...
+    # Subtest: 5. Hivemind 2.0: generateHivemindStream generates 4-card sequence with thesis, mechanics, antithesis, and synthesis + quiz
+    ok 5 - 5. Hivemind 2.0: generateHivemindStream generates 4-card sequence with thesis, mechanics, antithesis, and synthesis + quiz
+      ---
+      duration_ms: 81.511647
+      type: 'test'
+      ...
+    1..5
+ok 61 - Phase 3: Bloomscrolling Engine, Native Atem Integration, Quizzes & Simplified Hub
+  ---
+  duration_ms: 132.494186
+  type: 'suite'
+  ...
+# Subtest: Content Ingestion Pipeline: Parser, Normalizer & Deduplication
+    # Subtest: 1. Parses standard RSS 2.0 XML correctly
+    ok 1 - 1. Parses standard RSS 2.0 XML correctly
+      ---
+      duration_ms: 6.083613
+      type: 'test'
+      ...
+    # Subtest: 2. Parses Atom 1.0 XML correctly
+    ok 2 - 2. Parses Atom 1.0 XML correctly
+      ---
+      duration_ms: 3.178432
+      type: 'test'
+      ...
+    # Subtest: 3. Safely strips HTML tags and decodes entities
+    ok 3 - 3. Safely strips HTML tags and decodes entities
+      ---
+      duration_ms: 0.272111
+      type: 'test'
+      ...
+    # Subtest: 4. Canonicalizes URLs by stripping marketing and tracking query parameters
+    ok 4 - 4. Canonicalizes URLs by stripping marketing and tracking query parameters
+      ---
+      duration_ms: 0.721417
+      type: 'test'
+      ...
+    # Subtest: 5. Generates deterministic SHA-256 content hashes
+    ok 5 - 5. Generates deterministic SHA-256 content hashes
+      ---
+      duration_ms: 1.002864
+      type: 'test'
+      ...
+    # Subtest: 6. Normalizes RawFeedEntry into schema-valid FeedItem
+    ok 6 - 6. Normalizes RawFeedEntry into schema-valid FeedItem
+      ---
+      duration_ms: 20.640861
+      type: 'test'
+      ...
+    # Subtest: 7. Deduplicates feed items by canonical URL, hash and title
+    ok 7 - 7. Deduplicates feed items by canonical URL, hash and title
+      ---
+      duration_ms: 3.779082
+      type: 'test'
+      ...
+    # Subtest: 8. Handles empty or malformed XML gracefully without throwing
+    ok 8 - 8. Handles empty or malformed XML gracefully without throwing
+      ---
+      duration_ms: 1.173801
+      type: 'test'
+      ...
+    1..8
+ok 62 - Content Ingestion Pipeline: Parser, Normalizer & Deduplication
+  ---
+  duration_ms: 38.596431
+  type: 'suite'
+  ...
+# Subtest: counts delivering sources only after entries pass normalization and schema validation
+ok 63 - counts delivering sources only after entries pass normalization and schema validation
+  ---
+  duration_ms: 23.664402
+  type: 'test'
+  ...
+# Subtest: keeps a reference page in the catalog without attempting to fetch it as RSS
+ok 64 - keeps a reference page in the catalog without attempting to fetch it as RSS
+  ---
+  duration_ms: 1.005941
+  type: 'test'
+  ...
+# Subtest: Markdown Readability & Rabbit Hole Intelligence
+    # Subtest: 1. Strips raw markdown tokens cleanly from text
+    ok 1 - 1. Strips raw markdown tokens cleanly from text
+      ---
+      duration_ms: 1.168593
+      type: 'test'
+      ...
+    # Subtest: 2. synthesizeEditorialAbstract removes raw markdown hashes from overview and key findings
+    ok 2 - 2. synthesizeEditorialAbstract removes raw markdown hashes from overview and key findings
+      ---
+      duration_ms: 0.381783
+      type: 'test'
+      ...
+    # Subtest: 3. Extracts salient concepts accurately from item (creator, movement, salient keywords)
+    ok 3 - 3. Extracts salient concepts accurately from item (creator, movement, salient keywords)
+      ---
+      duration_ms: 0.64731
+      type: 'test'
+      ...
+    # Subtest: 4. RabbitHoleService discovers conceptually linked companion reads without throwing
+    ok 4 - 4. RabbitHoleService discovers conceptually linked companion reads without throwing
+      ---
+      duration_ms: 13.870459
+      type: 'test'
+      ...
+    1..4
+ok 65 - Markdown Readability & Rabbit Hole Intelligence
+  ---
+  duration_ms: 17.562501
+  type: 'suite'
+  ...
+# Subtest: RaindropService (Bookmark Ingestion & Profile Synthesis)
+    # Subtest: verifies demo token instantly without network dependency
+    ok 1 - verifies demo token instantly without network dependency
+      ---
+      duration_ms: 1.366556
+      type: 'test'
+      ...
+    # Subtest: rejects empty token with clear German error message
+    ok 2 - rejects empty token with clear German error message
+      ---
+      duration_ms: 0.244538
+      type: 'test'
+      ...
+    # Subtest: loads demo collections and bookmarks
+    ok 3 - loads demo collections and bookmarks
+      ---
+      duration_ms: 0.456789
+      type: 'test'
+      ...
+    # Subtest: derives calibrated profile interest weights from Raindrop bookmark tags
+    ok 4 - derives calibrated profile interest weights from Raindrop bookmark tags
+      ---
+      duration_ms: 0.558517
+      type: 'test'
+      ...
+    # Subtest: converts a Raindrop bookmark to a schema-valid FeedItem for the reader
+    ok 5 - converts a Raindrop bookmark to a schema-valid FeedItem for the reader
+      ---
+      duration_ms: 11.769769
+      type: 'test'
+      ...
+    # Subtest: saves an article to Raindrop (demo mode succeeds)
+    ok 6 - saves an article to Raindrop (demo mode succeeds)
+      ---
+      duration_ms: 0.397561
+      type: 'test'
+      ...
+    1..6
+ok 66 - RaindropService (Bookmark Ingestion & Profile Synthesis)
+  ---
+  duration_ms: 16.631751
+  type: 'suite'
+  ...
+# Subtest: RecursiveLearningEngine (Adaptive Cognitive Personalization)
+    # Subtest: retrieves default engine state with base domain trust multipliers
+    ok 1 - retrieves default engine state with base domain trust multipliers
+      ---
+      duration_ms: 1.897066
+      type: 'test'
+      ...
+    # Subtest: records upvote and increases topic weight with bounded adaptive dampening
+    ok 2 - records upvote and increases topic weight with bounded adaptive dampening
+      ---
+      duration_ms: 1.037254
+      type: 'test'
+      ...
+    # Subtest: records critical feedback and dampens topic weight without falling below min floor
+    ok 3 - records critical feedback and dampens topic weight without falling below min floor
+      ---
+      duration_ms: 0.487928
+      type: 'test'
+      ...
+    # Subtest: enforces idempotency on duplicate interaction events for the same item
+    ok 4 - enforces idempotency on duplicate interaction events for the same item
+      ---
+      duration_ms: 1.025728
+      type: 'test'
+      ...
+    # Subtest: enforces composite idempotency when interleaved with another event type (Upvote -> Note -> same Upvote)
+    ok 5 - enforces composite idempotency when interleaved with another event type (Upvote -> Note -> same Upvote)
+      ---
+      duration_ms: 0.650817
+      type: 'test'
+      ...
+    # Subtest: generates transparent explanation of topic evolution
+    ok 6 - generates transparent explanation of topic evolution
+      ---
+      duration_ms: 0.310902
+      type: 'test'
+      ...
+    1..6
+ok 67 - RecursiveLearningEngine (Adaptive Cognitive Personalization)
+  ---
+  duration_ms: 6.943456
+  type: 'suite'
+  ...
+# Subtest: SourceRepository & News Hub Ingestion Engine
+    # Subtest: loads all verified sources by default with category metadata
+    ok 1 - loads all verified sources by default with category metadata
+      ---
+      duration_ms: 35.128097
+      type: 'test'
+      ...
+    # Subtest: toggles a source off and on
+    ok 2 - toggles a source off and on
+      ---
+      duration_ms: 31.032381
+      type: 'test'
+      ...
+    # Subtest: adds and removes a custom RSS feed
+    ok 3 - adds and removes a custom RSS feed
+      ---
+      duration_ms: 15.492842
+      type: 'test'
+      ...
+    # Subtest: rejects duplicate feed URLs
+    ok 4 - rejects duplicate feed URLs
+      ---
+      duration_ms: 3.880482
+      type: 'test'
+      ...
+    # Subtest: imports feeds from standard OPML XML
+    ok 5 - imports feeds from standard OPML XML
+      ---
+      duration_ms: 7.674328
+      type: 'test'
+      ...
+    # Subtest: exports all sources to standard OPML 2.0 XML
+    ok 6 - exports all sources to standard OPML 2.0 XML
+      ---
+      duration_ms: 8.633461
+      type: 'test'
+      ...
+    # Subtest: applies curated presets (oerr_only, all)
+    ok 7 - applies curated presets (oerr_only, all)
+      ---
+      duration_ms: 17.377708
+      type: 'test'
+      ...
+    # Subtest: toggles an entire category in bulk (toggleCategory)
+    ok 8 - toggles an entire category in bulk (toggleCategory)
+      ---
+      duration_ms: 22.869063
+      type: 'test'
+      ...
+    1..8
+ok 68 - SourceRepository & News Hub Ingestion Engine
+  ---
+  duration_ms: 144.01221
+  type: 'suite'
+  ...
+# Subtest: does not let inactive reference pages block the domain of an enabled feed
+ok 69 - does not let inactive reference pages block the domain of an enabled feed
+  ---
+  duration_ms: 5.577186
+  type: 'test'
+  ...
+# Subtest: SpaceRepository (Modular Reddit-like Subchannels)
+    # Subtest: loads all 12 default curated subchannels matching TOPIC_SPACE_MAP
+    ok 1 - loads all 12 default curated subchannels matching TOPIC_SPACE_MAP
+      ---
+      duration_ms: 1.6182
+      type: 'test'
+      ...
+    # Subtest: creates a new custom subchannel on the go with sanitized handle
+    ok 2 - creates a new custom subchannel on the go with sanitized handle
+      ---
+      duration_ms: 1.945152
+      type: 'test'
+      ...
+    # Subtest: toggles pin status on a subchannel
+    ok 3 - toggles pin status on a subchannel
+      ---
+      duration_ms: 1.171665
+      type: 'test'
+      ...
+    # Subtest: deletes a custom subchannel
+    ok 4 - deletes a custom subchannel
+      ---
+      duration_ms: 1.269185
+      type: 'test'
+      ...
+    1..4
+ok 70 - SpaceRepository (Modular Reddit-like Subchannels)
+  ---
+  duration_ms: 7.780923
+  type: 'suite'
+  ...
+# Subtest: TrendRadarService (Hegelian Dialectics & Critical Analysis)
+    # Subtest: returns all curated dialectical trends
+    ok 1 - returns all curated dialectical trends
+      ---
+      duration_ms: 1.212914
+      type: 'test'
+      ...
+    # Subtest: converts dialectical trend to a schema-valid FeedItem
+    ok 2 - converts dialectical trend to a schema-valid FeedItem
+      ---
+      duration_ms: 12.575383
+      type: 'test'
+      ...
+    # Subtest: generates dynamic dialectical analysis from raw headline and summary
+    ok 3 - generates dynamic dialectical analysis from raw headline and summary
+      ---
+      duration_ms: 0.538807
+      type: 'test'
+      ...
+    1..3
+ok 71 - TrendRadarService (Hegelian Dialectics & Critical Analysis)
+  ---
+  duration_ms: 15.840294
+  type: 'suite'
+  ...
+# AI proxy unavailable, falling back to direct provider BYOK HTTPS call: AiHttpError: KI-Anfrage fehlgeschlagen (HTTP 404).
+#     at <anonymous> (/app/src/core/ai/aiTransport.ts:57:33)
+#     at async fetchAiJson (/app/src/core/ai/aiTransport.ts:53:12)
+#     at async callAiModel (/app/src/core/ai/atmenAiClient.ts:288:22)
+#     at async TestContext.<anonymous> (/app/tests/userFeedbackAcceptance.test.ts:275:24)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Promise.all (index 0)
+#     at async Suite.run (node:internal/test_runner/test:1442:7)
+#     at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+#   status: 404
+# }
+# Subtest: Masterprompt v2.0 User Feedback & Acceptance Suite
+    # Subtest: Pillar 1: Honest Timestamps & Sorting (Neueste, Hot, Top, Gems)
+        # Subtest: Neueste strictly places verified recent dates above undated timeless memes and classics
+        ok 1 - Neueste strictly places verified recent dates above undated timeless memes and classics
+          ---
+          duration_ms: 22.916359
+          type: 'test'
+          ...
+        # Subtest: Schema preserves publicationDateReliable, firstSeenAt, and historicalYearOrEra
+        ok 2 - Schema preserves publicationDateReliable, firstSeenAt, and historicalYearOrEra
+          ---
+          duration_ms: 0.675907
+          type: 'test'
+          ...
+        1..2
+    ok 1 - Pillar 1: Honest Timestamps & Sorting (Neueste, Hot, Top, Gems)
+      ---
+      duration_ms: 24.711747
+      type: 'suite'
+      ...
+    # Subtest: Pillar 2: 1:1 Banner Promise & Revealed Items Insertion
+        # Subtest: prependRevealedItems guarantees revealed items appear at index 0 without duplicates
+        ok 1 - prependRevealedItems guarantees revealed items appear at index 0 without duplicates
+          ---
+          duration_ms: 0.428771
+          type: 'test'
+          ...
+        1..1
+    ok 2 - Pillar 2: 1:1 Banner Promise & Revealed Items Insertion
+      ---
+      duration_ms: 0.686304
+      type: 'suite'
+      ...
+    # Subtest: Pillar 3: iPad Channel Persistence & Clean Isolation
+        # Subtest: normalizeSpaceHandle deterministically formats handles and strips invalid symbols
+        ok 1 - normalizeSpaceHandle deterministically formats handles and strips invalid symbols
+          ---
+          duration_ms: 0.539201
+          type: 'test'
+          ...
+        # Subtest: SpaceRepository safely creates, verifies storage write, and notifies subscribers
+        ok 2 - SpaceRepository safely creates, verifies storage write, and notifies subscribers
+          ---
+          duration_ms: 1.604454
+          type: 'test'
+          ...
+        # Subtest: BackupService exports custom spaces and restores them correctly
+        ok 3 - BackupService exports custom spaces and restores them correctly
+          ---
+          duration_ms: 8.002943
+          type: 'test'
+          ...
+        1..3
+    ok 3 - Pillar 3: iPad Channel Persistence & Clean Isolation
+      ---
+      duration_ms: 10.765589
+      type: 'suite'
+      ...
+    # Subtest: Pillar 4: AI Curation Fallback & Direct BYOK
+        # Subtest: seamlessly falls back to direct provider HTTPS when proxy is unavailable (e.g. 404)
+        ok 1 - seamlessly falls back to direct provider HTTPS when proxy is unavailable (e.g. 404)
+          ---
+          duration_ms: 39.930047
+          type: 'test'
+          ...
+        1..1
+    ok 4 - Pillar 4: AI Curation Fallback & Direct BYOK
+      ---
+      duration_ms: 40.188958
+      type: 'suite'
+      ...
+    # Subtest: Pillar 5: c/memes Discovery Pool
+        # Subtest: contains at least 30 authentic meme classics, comics, and mental models
+        ok 1 - contains at least 30 authentic meme classics, comics, and mental models
+          ---
+          duration_ms: 0.385131
+          type: 'test'
+          ...
+        # Subtest: batchEnricher does not reject meme and comic formats for short text
+        ok 2 - batchEnricher does not reject meme and comic formats for short text
+          ---
+          duration_ms: 0.940399
+          type: 'test'
+          ...
+        1..2
+    ok 5 - Pillar 5: c/memes Discovery Pool
+      ---
+      duration_ms: 1.681233
+      type: 'suite'
+      ...
+    1..5
+ok 72 - Masterprompt v2.0 User Feedback & Acceptance Suite
+  ---
+  duration_ms: 79.133957
+  type: 'suite'
+  ...
+# Subtest: Work Package 3: AI Gatekeeper, Batch Intelligence & Model Selection
+    # Subtest: 1. Deterministic Signal-vs-Noise Gatekeeper Heuristics
+        # Subtest: approves substantive scientific or philosophical articles with score >= 7
+        ok 1 - approves substantive scientific or philosophical articles with score >= 7
+          ---
+          duration_ms: 2.191555
+          type: 'test'
+          ...
+        # Subtest: rejects pure affiliate deals, shopping vouchers and commercial promo (score < 7)
+        ok 2 - rejects pure affiliate deals, shopping vouchers and commercial promo (score < 7)
+          ---
+          duration_ms: 0.566806
+          type: 'test'
+          ...
+        # Subtest: rejects one-line stubs and minimal text (< 40 chars) without context
+        ok 3 - rejects one-line stubs and minimal text (< 40 chars) without context
+          ---
+          duration_ms: 0.24655
+          type: 'test'
+          ...
+        # Subtest: rejects sensationalist clickbait and outrage headlines
+        ok 4 - rejects sensationalist clickbait and outrage headlines
+          ---
+          duration_ms: 0.465416
+          type: 'test'
+          ...
+        1..4
+    ok 1 - 1. Deterministic Signal-vs-Noise Gatekeeper Heuristics
+      ---
+      duration_ms: 4.735894
+      type: 'suite'
+      ...
+    # Subtest: 2. Source Language Preservation
+        # Subtest: accurately identifies English vs German articles
+        ok 1 - accurately identifies English vs German articles
+          ---
+          duration_ms: 1.084278
+          type: 'test'
+          ...
+        # Subtest: preserves English language without injecting German didactic boilerplate
+        ok 2 - preserves English language without injecting German didactic boilerplate
+          ---
+          duration_ms: 2.309225
+          type: 'test'
+          ...
+        1..2
+    ok 2 - 2. Source Language Preservation
+      ---
+      duration_ms: 3.697486
+      type: 'suite'
+      ...
+    # Subtest: 3. BatchEditionEnricher Gatekeeping Pipeline
+        # Subtest: filters out low-score items and keeps high-score items during gatekeepAndEnrichBatch
+        ok 1 - filters out low-score items and keeps high-score items during gatekeepAndEnrichBatch
+          ---
+          duration_ms: 2.283017
+          type: 'test'
+          ...
+        # Subtest: LocalFeedRepository.curateAndAddItems passes candidates through gatekeeper before storing
+        ok 2 - LocalFeedRepository.curateAndAddItems passes candidates through gatekeeper before storing
+          ---
+          duration_ms: 11.428432
+          type: 'test'
+          ...
+        1..2
+    ok 3 - 3. BatchEditionEnricher Gatekeeping Pipeline
+      ---
+      duration_ms: 14.080084
+      type: 'suite'
+      ...
+    # Subtest: 4. Model Selector & BYOK AI Settings Configuration
+        # Subtest: defines standard recommended models for Gemini and OpenRouter
+        ok 1 - defines standard recommended models for Gemini and OpenRouter
+          ---
+          duration_ms: 0.395928
+          type: 'test'
+          ...
+        # Subtest: persists and loads chosen models and providers cleanly
+        ok 2 - persists and loads chosen models and providers cleanly
+          ---
+          duration_ms: 1.212451
+          type: 'test'
+          ...
+        1..2
+    ok 4 - 4. Model Selector & BYOK AI Settings Configuration
+      ---
+      duration_ms: 1.907132
+      type: 'suite'
+      ...
+    # Subtest: 5. Google Gemini Model Registry & Live Discovery (October 2026 Source of Truth)
+        # Subtest: contains all official verified models across all 8 functional categories
+        ok 1 - contains all official verified models across all 8 functional categories
+          ---
+          duration_ms: 0.542997
+          type: 'test'
+          ...
+        # Subtest: rejects discontinued models with informative error
+        ok 2 - rejects discontinued models with informative error
+          ---
+          duration_ms: 0.315737
+          type: 'test'
+          ...
+        # Subtest: filters models strictly by current workflow and isolates legacy models
+        ok 3 - filters models strictly by current workflow and isolates legacy models
+          ---
+          duration_ms: 0.343406
+          type: 'test'
+          ...
+        # Subtest: validates workflow compatibility and rejects incompatible cross-workflow models
+        ok 4 - validates workflow compatibility and rejects incompatible cross-workflow models
+          ---
+          duration_ms: 0.207788
+          type: 'test'
+          ...
+        # Subtest: discovers live models and caches them in storage safely without throwing on empty credentials
+        ok 5 - discovers live models and caches them in storage safely without throwing on empty credentials
+          ---
+          duration_ms: 0.629381
+          type: 'test'
+          ...
+        # Subtest: gatekeepAndEnrichBatch supports overrideCredentials parameter
+        ok 6 - gatekeepAndEnrichBatch supports overrideCredentials parameter
+          ---
+          duration_ms: 1.308693
+          type: 'test'
+          ...
+        1..6
+    ok 5 - 5. Google Gemini Model Registry & Live Discovery (October 2026 Source of Truth)
+      ---
+      duration_ms: 3.63482
+      type: 'suite'
+      ...
+    1..5
+ok 73 - Work Package 3: AI Gatekeeper, Batch Intelligence & Model Selection
+  ---
+  duration_ms: 29.303392
+  type: 'suite'
+  ...
+1..73
+# tests 326
+# suites 76
+# pass 324
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 58566.776841

@@ -154,3 +154,20 @@ Antworte AUSSCHLIESSLICH als JSON-Array von Objekten mit den Feldern:
 
   return items.map(generateQuizForArticle);
 }
+
+export function isValidConceptualQuiz(item: FeedItem, question?: FeedQuizQuestion): boolean {
+  if (item.wordCount < 120) return false;
+  if (!question) return false;
+
+  const questionText = question.question.toLowerCase();
+  if (questionText.includes('originalbeitrag veröffentlicht bei') || questionText.includes('veröffentlicht auf')) {
+    return false;
+  }
+
+  // Reject canned templates from deterministic fallback if they lack substance
+  if (questionText.includes('kern') && question.options[question.correctIndex].includes('substantieller einblick')) {
+      return false;
+  }
+
+  return true;
+}
