@@ -16,7 +16,7 @@ import {
   Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { TopicTag, FeedItem, DayEditionType, DAY_EDITIONS_META, TOPIC_SPACE_MAP } from '../../core/domain/types';
+import { TopicTag, FeedItem, TOPIC_SPACE_MAP } from '../../core/domain/types';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
 import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
@@ -36,7 +36,13 @@ import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { ContinuousLiveNewsService, NewsHubFilterCategory } from '../../core/data/continuousLiveNewsService';
 import { NewsHubModal } from '../../ui/components/NewsHubModal';
 import { defaultSourceRepository } from '../../core/data/sourceRepository';
-import { defaultBatchEditionEnricher, satisfiesCuratedBodyContract, getCardRenderableText } from '../../core/enrichment/batchEnricher';
+import {
+  defaultBatchEditionEnricher,
+  satisfiesCuratedBodyContract,
+  satisfiesDefaultCuratedStandard,
+  sanitizeCuratedFeedItem,
+  getCardRenderableText
+} from '../../core/enrichment/batchEnricher';
 import { REAL_KNOWLEDGE_VAULT } from '../../core/data/realKnowledgeVault';
 import { seenImpressionsService } from '../../core/data/seenImpressionsService';
 import { loadAiCredentials } from '../../core/ai/atmenAiClient';
@@ -87,10 +93,6 @@ export const FeedScreen: React.FC = () => {
     refreshLiveFeed,
     activeFeedOption,
     setActiveFeedOption,
-    selectedEditionType,
-    currentEditionType,
-    setSelectedEditionType,
-    weatherData,
     profile,
     interactions,
     selectedFilter,
@@ -99,8 +101,6 @@ export const FeedScreen: React.FC = () => {
     setSearchQuery,
     openArticle,
     toggleSaveItem,
-    simulateDailyGeneration,
-    shuffleFeed,
     updateTopicWeight,
     spaces,
     updateSpace
@@ -145,11 +145,9 @@ export const FeedScreen: React.FC = () => {
   } | null>(null);
   const [lastOperationResult, setLastOperationResult] = useState<FeedOperationResult | null>(null);
 
-  const presentationScope = `${activeFeedOption}:${selectedFilter}:${searchQuery}:${sortMode}:${selectedEditionType}`;
-  const [visibleDiscoveryCount, setVisibleDiscoveryCount] = useState<number>(10);
+  const presentationScope = `${activeFeedOption}:${selectedFilter}:${searchQuery}:${sortMode}`;
   const [visibleInfiniteCount, setVisibleInfiniteCount] = useState<number>(24);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [simulatingDay, setSimulatingDay] = useState<boolean>(false);
   const [simToast, setSimToast] = useState<string | null>(null);
   const subchannels = spaces;
   const [showMasterModal, setShowMasterModal] = useState<boolean>(false);
@@ -339,61 +337,7 @@ export const FeedScreen: React.FC = () => {
     } else if (activeFeedOption === 'classics') {
       setClassicsItems(ContinuousLiveNewsService.getEvergreenClassics());
     }
-    setVisibleDiscoveryCount(10);
     setRefreshing(false);
-  };
-
-  const handleSimulateToday = async () => {
-    setSimulatingDay(true);
-    try {
-      const res = await simulateDailyGeneration(0);
-      setSimToast(`Ausgabe für ${res.simulatedDate} neu durchmischt & Live-Feeds synchronisiert`);
-      setTimeout(() => setSimToast(null), 3000);
-    } catch {
-      setSimToast('Simulation fehlgeschlagen.');
-      setTimeout(() => setSimToast(null), 3000);
-    } finally {
-      setSimulatingDay(false);
-    }
-  };
-
-  const handleSimulateNextDay = async () => {
-    setSimulatingDay(true);
-    try {
-      const res = await simulateDailyGeneration(1);
-      setSimToast(`Nächster Tag simuliert: ${res.simulatedDate} (${res.itemCount} frische Artikel)`);
-      setTimeout(() => setSimToast(null), 3500);
-    } catch {
-      setSimToast('Simulation fehlgeschlagen.');
-      setTimeout(() => setSimToast(null), 3000);
-    } finally {
-      setSimulatingDay(false);
-    }
-  };
-
-  const handleShuffle = async () => {
-    setSimulatingDay(true);
-    try {
-      const renderedIds = currentFeedItems.slice(0, visibleInfiniteCount).map(i => i.id);
-      const res = await shuffleFeed(renderedIds);
-      setVisibleInfiniteCount(24);
-      setActiveCardIndex(0);
-      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-      if (res?.isPoolExhausted) {
-        setSimToast('Fundus vollständig gezeigt · mische aus allen Beiträgen neu');
-      } else {
-        const toastText = res?.pinnedCount && res.pinnedCount > 0
-          ? `${res.freshCount} neue Beiträge, ${res.pinnedCount} angeheftete behalten`
-          : `${res.freshCount} neue Beiträge kuratiert`;
-        setSimToast(toastText);
-      }
-      setTimeout(() => setSimToast(null), 2500);
-    } catch {
-      setSimToast('Mischen fehlgeschlagen.');
-      setTimeout(() => setSimToast(null), 2500);
-    } finally {
-      setSimulatingDay(false);
-    }
   };
 
   const handleGenerateEmptyPocket = async () => {
@@ -438,8 +382,7 @@ export const FeedScreen: React.FC = () => {
 
   const handleFilterChange = (filter: string | 'all') => {
     setSelectedFilter(filter);
-    setVisibleDiscoveryCount(12);
-    setVisibleInfiniteCount(16);
+    setVisibleInfiniteCount(24);
     if (filter !== 'all' && (activeFeedOption === 'live_news' || activeFeedOption === 'classics')) {
       setActiveFeedOption('infinite');
     }
@@ -501,14 +444,6 @@ export const FeedScreen: React.FC = () => {
     return filterByQuery(spaceFiltered);
   }, [discoveryItems, matchesSelectedSpace, filterByQuery]);
 
-  const latestSortedDaily = useMemo(() => sortFeedForDisplay(filteredDaily, sortMode, { pinnedIds }), [filteredDaily, sortMode, pinnedIds]);
-  const sortedDaily = useReadingStableFeed(latestSortedDaily, isScrolledDown, presentationScope);
-  const latestSortedDiscovery = useMemo(() => {
-    const dailyIds = new Set(sortedDaily.map(item => item.id));
-    return sortFeedForDisplay(filteredDiscovery.filter(item => !dailyIds.has(item.id)), sortMode, { pinnedIds });
-  }, [filteredDiscovery, sortedDaily, sortMode, pinnedIds]);
-  const sortedDiscovery = useReadingStableFeed(latestSortedDiscovery, isScrolledDown, presentationScope);
-
   // OpenWeb harvested candidates scored and filtered
   const scoredOpenWebItems = useMemo(() => {
     return openWebItems.map(item => scoreFeedItem(item, profile, interactions));
@@ -519,34 +454,49 @@ export const FeedScreen: React.FC = () => {
     return filterByQuery(spaceFiltered);
   }, [scoredOpenWebItems, matchesSelectedSpace, filterByQuery]);
 
-  // Combined endless stream with Sliding-Window Bloom-Ranking (never clones IDs)
+  // Combined endless stream with Always-On "Frisch kuratiert" Quality Gate & Sliding-Window Bloom-Ranking
   const latestInfiniteInterleavedBase = useMemo(() => {
-    const combined = [...filteredDaily, ...filteredOpenWeb, ...filteredDiscovery];
+    const combined = [...filteredDaily, ...filteredOpenWeb, ...filteredDiscovery, ...scoredLiveItems];
     const seen = new Set<string>();
-    const unique = combined.filter(item => {
-      if (seen.has(item.id)) return false;
+    const seenCanon = new Set<string>();
+    const unique: ScoredFeedItem[] = [];
+    for (const item of combined) {
+      if (seen.has(item.id)) continue;
+      const canon = item.canonicalUrl?.toLowerCase().trim();
+      if (canon && seenCanon.has(canon)) continue;
       seen.add(item.id);
-      return true;
-    });
-    return sortFeedForDisplay(unique, sortMode, { pinnedIds, interleave: true, seenItemIds: seenIds });
-  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, sortMode, pinnedIds, seenIds]);
+      if (canon) seenCanon.add(canon);
+      unique.push(item);
+    }
+
+    // 100% Default Curated Quality Gate ("Frisch kuratiert" standard on every stream card)
+    const sanitized = unique.map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions));
+    const strictCurated = sanitized.filter(item => satisfiesDefaultCuratedStandard(item));
+    const curatedPool = strictCurated.length >= 3 || selectedFilter === 'all'
+      ? strictCurated
+      : sanitized.filter(item => satisfiesCuratedBodyContract(item));
+
+    return sortFeedForDisplay(curatedPool, sortMode, { pinnedIds, interleave: true, seenItemIds: seenIds });
+  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, profile, interactions, selectedFilter, sortMode, pinnedIds, seenIds]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
   // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
   const evergreenFallbackItems = useMemo(() => {
+    if (sortMode === 'today') return []; // Never append old evergreen items under ⚡ Heute!
     const freshIds = new Set(infiniteInterleavedBase.map(i => i.id));
     const rawClassics = ContinuousLiveNewsService.getEvergreenClassics();
     const scored = rawClassics
       .filter(item => !freshIds.has(item.id))
       .filter(matchesSelectedSpace)
-      .map(item => scoreFeedItem(item, profile, interactions));
+      .filter(satisfiesDefaultCuratedStandard)
+      .map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions));
     return filterByQuery(scored);
-  }, [infiniteInterleavedBase, profile, interactions, matchesSelectedSpace, filterByQuery]);
+  }, [sortMode, infiniteInterleavedBase, profile, interactions, matchesSelectedSpace, filterByQuery]);
 
   const scoredRevealedItems = useMemo(() => {
     if (revealedNewItems.length === 0) return [];
-    const spaceFiltered = revealedNewItems.filter(matchesSelectedSpace);
-    const scored = spaceFiltered.map(item => scoreFeedItem(item, profile, interactions));
+    const spaceFiltered = revealedNewItems.filter(matchesSelectedSpace).filter(satisfiesDefaultCuratedStandard);
+    const scored = spaceFiltered.map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions));
     return filterByQuery(scored);
   }, [revealedNewItems, matchesSelectedSpace, filterByQuery, profile, interactions]);
 
@@ -565,32 +515,18 @@ export const FeedScreen: React.FC = () => {
     return prependRevealedItems(base, scoredRevealedItems);
   }, [renderedInfiniteFreshItems, renderedInfiniteEvergreenItems, scoredRevealedItems]);
 
-  // Appended discovery items in Daily mode (never clones IDs)
-  const renderedDiscovery = useMemo(() => {
-    if (sortedDiscovery.length === 0) return [];
-    return sortedDiscovery.slice(0, Math.min(visibleDiscoveryCount, sortedDiscovery.length));
-  }, [sortedDiscovery, visibleDiscoveryCount]);
-
-  // Combine items into a seamless stream for Daily mode
-  const allStreamItems = useMemo(() => {
-    const base = [...sortedDaily, ...renderedDiscovery];
-    return prependRevealedItems(base, scoredRevealedItems);
-  }, [sortedDaily, renderedDiscovery, scoredRevealedItems]);
-
   // Active items array depending on selected feed option
   const currentFeedItems = useMemo((): ScoredFeedItem[] => {
     if (curatedSelection && curatedSelection.items.length > 0) {
       return curatedSelection.items.map(item => scoreFeedItem(item, profile, interactions));
     }
-    if (activeFeedOption === 'infinite') return renderedInfiniteItems;
-    if (activeFeedOption === 'daily') return allStreamItems;
     if (activeFeedOption === 'live_news') return scoredLiveItems;
     if (activeFeedOption === 'classics') return scoredClassicsItems;
     if (activeFeedOption === 'history') {
       return historyItems.map(h => scoreFeedItem(h.item, profile, interactions));
     }
     return renderedInfiniteItems;
-  }, [curatedSelection, activeFeedOption, renderedInfiniteItems, allStreamItems, scoredLiveItems, scoredClassicsItems, historyItems, profile, interactions]);
+  }, [curatedSelection, activeFeedOption, renderedInfiniteItems, scoredLiveItems, scoredClassicsItems, historyItems, profile, interactions]);
 
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
@@ -599,6 +535,61 @@ export const FeedScreen: React.FC = () => {
 
   const [curationStage, setCurationStage] = useState<string>('');
   const [showReportModal, setShowReportModal] = useState<boolean>(false);
+  const isReplenishingRef = React.useRef<boolean>(false);
+  const [isReplenishingStream, setIsReplenishingStream] = useState<boolean>(false);
+
+  const curateNextStreamBatch = useCallback(async (reason: 'scroll' | 'today' = 'scroll') => {
+    if (isReplenishingRef.current) return;
+    isReplenishingRef.current = true;
+    setIsReplenishingStream(true);
+    try {
+      const freshLive = await ContinuousLiveNewsService.getLiveStream({
+        limit: 24,
+        forceRefresh: reason === 'today'
+      });
+      if (freshLive.length > 0) {
+        setLiveNewsItems(freshLive);
+      }
+      const existingIds = new Set(
+        (feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id)
+      );
+      const unseenCandidates = freshLive
+        .filter(i => !existingIds.has(i.id))
+        .map(sanitizeCuratedFeedItem)
+        .filter(satisfiesDefaultCuratedStandard);
+
+      if (unseenCandidates.length > 0) {
+        const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(unseenCandidates.slice(0, 12));
+        const validCurated = curated.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+        if (validCurated.length > 0) {
+          feedRepository.addItems(validCurated);
+          await recomputeFeed();
+        }
+      } else if (reason === 'today') {
+        await refreshLiveFeed();
+      }
+    } catch {
+      // Non-blocking background replenishment
+    } finally {
+      isReplenishingRef.current = false;
+      setIsReplenishingStream(false);
+    }
+  }, [recomputeFeed, refreshLiveFeed]);
+
+  // When switching to ⚡ Heute, if fewer than 10 fresh <=48h items exist locally, trigger live harvest immediately
+  React.useEffect(() => {
+    if (sortMode === 'today') {
+      const nowMs = Date.now();
+      const fresh48hCount = infiniteInterleavedBase.filter(i => {
+        if (i.publicationDateReliable !== true) return false;
+        const t = new Date(i.publishedAt).getTime();
+        return !isNaN(t) && (nowMs - t) <= 48 * 3600 * 1000;
+      }).length;
+      if (fresh48hCount < 10) {
+        void curateNextStreamBatch('today');
+      }
+    }
+  }, [sortMode, infiniteInterleavedBase, curateNextStreamBatch]);
 
   const flushVisibleCardsToChronik = useCallback(() => {
     if (activeFeedOption === 'history') return;
@@ -632,7 +623,7 @@ export const FeedScreen: React.FC = () => {
 
   const totalInfiniteAvailable = infiniteInterleavedBase.length + evergreenFallbackItems.length;
 
-  // Seamless infinite mind-scroll listener (triggers next items & flushes viewport Chronik as user scrolls)
+  // Seamless infinite mind-scroll listener (triggers next items & background auto-replenishment at 75% scroll depth)
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
     scrollYRef.current = contentOffset.y;
@@ -645,13 +636,22 @@ export const FeedScreen: React.FC = () => {
 
     flushVisibleCardsToChronik();
 
-    const paddingToBottom = 800;
-    if (layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom) {
-      if (activeFeedOption === 'daily') {
-        setVisibleDiscoveryCount(prev => Math.min(prev + 6, Math.max(10, sortedDiscovery.length)));
-      }
+    const scrollBottom = layoutMeasurement.height + contentOffset.y;
+    const reachedThreshold = contentSize.height > 0 && (
+      scrollBottom >= contentSize.height * 0.75 ||
+      scrollBottom >= contentSize.height - 900
+    );
+
+    if (reachedThreshold) {
+      setVisibleInfiniteCount(prev => {
+        const next = Math.min(prev + 15, Math.max(prev + 15, totalInfiniteAvailable));
+        if (next >= totalInfiniteAvailable - 8) {
+          void curateNextStreamBatch('scroll');
+        }
+        return next;
+      });
     }
-  }, [activeFeedOption, flushVisibleCardsToChronik, sortedDiscovery.length]);
+  }, [flushVisibleCardsToChronik, totalInfiniteAvailable, curateNextStreamBatch]);
 
   const [isCuratingLiveAi, setIsCuratingLiveAi] = useState<boolean>(false);
 
@@ -898,14 +898,6 @@ export const FeedScreen: React.FC = () => {
       setIsCuratingLiveAi(false);
       setCurationStage('');
     }
-  };
-
-  const handleLoadMoreDiscovery = () => {
-    setVisibleDiscoveryCount(prev => Math.min(prev + 10, sortedDiscovery.length));
-  };
-
-  const handleLoadMoreInfinite = () => {
-    setVisibleInfiniteCount(prev => Math.min(prev + 12, totalInfiniteAvailable));
   };
 
   const healthOverview = defaultSourceRepository.getHealthOverview();
@@ -1266,9 +1258,15 @@ export const FeedScreen: React.FC = () => {
               </View>
             )}
 
-            {/* MODE: ENDLESS DISCOVERY STREAM */}
-            {activeFeedOption === 'infinite' && (
+            {/* MODE: ENDLESS DISCOVERY STREAM (UNIFIED CONTINUOUS STREAM) */}
+            {activeFeedOption !== 'live_news' && activeFeedOption !== 'classics' && activeFeedOption !== 'history' && (
               <>
+                {simToast && (
+                  <View style={[styles.simToastContainer, { backgroundColor: colors.accent }]}>
+                    <Text style={styles.simToastText}>{simToast}</Text>
+                  </View>
+                )}
+
                 {searchQuery.trim().length > 0 && (
                   <View style={[styles.searchNoticeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                     <Ionicons name="search" size={14} color={colors.accent} style={{ marginRight: 6 }} />
@@ -1627,69 +1625,15 @@ export const FeedScreen: React.FC = () => {
                       </View>
                     )}
 
-                    {/* Finite Feed Peaceful Ending Card */}
-                    <View style={[styles.finiteEndingCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                      <View style={styles.finiteEndingHeader}>
-                        <View style={[styles.finiteEndingIconBox, { backgroundColor: colors.accentSubtle }]}>
-                          <Ionicons name="sparkles" size={20} color={colors.accent} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.finiteEndingTitle, { color: colors.textPrimary }]}>
-                            🌱 Das war deine Auswahl für jetzt
-                          </Text>
-                          <Text style={[styles.finiteEndingSubtitle, { color: colors.textSecondary }]}>
-                            Du hast {renderedInfiniteItems.length} kuratierte Beiträge erkundet. Ein bewusster Moment zum Innehalten — oder für den nächsten Impuls:
-                          </Text>
-                        </View>
+                    {/* Seamless Infinite Auto-Replenishment Status */}
+                    {isReplenishingStream && (
+                      <View style={[styles.loadingBox, { backgroundColor: colors.surface, paddingVertical: spacing.md }]}>
+                        <ActivityIndicator size="small" color={colors.accent} />
+                        <Text style={[styles.loadingText, { color: colors.textSecondary, marginTop: 6 }]}>
+                          Kuratiere weitere hochrelevante Beiträge im Hintergrund…
+                        </Text>
                       </View>
-
-                      <View style={styles.finiteEndingActionsRow}>
-                        <TouchableOpacity
-                          onPress={handleShuffle}
-                          style={[styles.finiteEndingBtn, { backgroundColor: colors.accent, borderColor: colors.accent }]}
-                          accessibilityRole="button"
-                          accessibilityLabel="Neuer Mix: 24 frische Beiträge laden"
-                        >
-                          <Ionicons name="shuffle-outline" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
-                          <Text style={[styles.finiteEndingBtnText, { color: '#FFFFFF', fontWeight: '700' }]}>
-                            Neuer Mix
-                          </Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          onPress={() => setActiveFeedOption('live_news')}
-                          style={[styles.finiteEndingBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                          accessibilityRole="button"
-                          accessibilityLabel="Zu den aktuellen Live-Nachrichten springen"
-                        >
-                          <Ionicons name="flash-outline" size={15} color="#F59E0B" style={{ marginRight: 6 }} />
-                          <Text style={[styles.finiteEndingBtnText, { color: colors.textPrimary, fontWeight: '600' }]}>
-                            Zu den aktuellen Nachrichten
-                          </Text>
-                        </TouchableOpacity>
-
-                        {visibleInfiniteCount < totalInfiniteAvailable ? (
-                          <TouchableOpacity
-                            onPress={handleLoadMoreInfinite}
-                            style={[styles.finiteEndingBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                            accessibilityRole="button"
-                            accessibilityLabel="12 weitere Beiträge der aktuellen Auswahl anzeigen"
-                          >
-                            <Ionicons name="arrow-down-circle-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
-                            <Text style={[styles.finiteEndingBtnText, { color: colors.accent, fontWeight: '600' }]}>
-                              12 weitere anzeigen
-                            </Text>
-                          </TouchableOpacity>
-                        ) : (
-                          <View style={[styles.finiteEndingBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, opacity: 0.75 }]}>
-                            <Ionicons name="checkmark-circle-outline" size={15} color={colors.textMuted} style={{ marginRight: 6 }} />
-                            <Text style={[styles.finiteEndingBtnText, { color: colors.textMuted, fontWeight: '500' }]}>
-                              Alle {totalInfiniteAvailable} Beiträge durchstöbert
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
+                    )}
                   </>
                 )}
               </>
@@ -2042,7 +1986,7 @@ export const FeedScreen: React.FC = () => {
                       Noch keine Chronik-Einträge
                     </Text>
                     <Text style={[styles.emptySubtitle, { color: colors.textMuted, textAlign: 'center', marginBottom: 16 }]}>
-                      Scrolle durch den Endlos-Stream oder die Tagesausgaben, um deine persönliche Lesereise aufzuzeichnen.
+                      Scrolle durch den Endlos-Stream, um deine persönliche Lesereise aufzuzeichnen.
                     </Text>
                     <TouchableOpacity
                       onPress={() => setActiveFeedOption('infinite')}
@@ -2085,518 +2029,6 @@ export const FeedScreen: React.FC = () => {
                 )}
               </View>
             )}
-
-            {/* 4. MODE: DAILY FINITE EDITION (DEFAULT) */}
-            {activeFeedOption === 'daily' && (
-              <>
-                {searchQuery.trim().length > 0 && (
-                  <View style={[styles.searchNoticeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Ionicons name="search" size={14} color={colors.accent} style={{ marginRight: 6 }} />
-                    <Text style={[styles.searchNoticeText, { color: colors.textPrimary }]}>
-                      Ergebnisse für „{searchQuery}“ ({allStreamItems.length} Treffer)
-                    </Text>
-                    <TouchableOpacity onPress={() => setSearchQuery('')} style={{ marginLeft: 'auto' }}>
-                      <Text style={[styles.searchNoticeClear, { color: colors.accent }]}>Filter aufheben</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {/* 3-Editions Bar (Morgen, Mittendrin, Abend) */}
-                <View style={[styles.editionsContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <View style={styles.editionsHeaderRow}>
-                    <Text style={[styles.editionsTitle, { color: colors.textPrimary }]}>
-                      {DAY_EDITIONS_META[selectedEditionType].label}
-                    </Text>
-                    <Text style={[styles.editionsSubtitle, { color: colors.textMuted }]}>
-                      {DAY_EDITIONS_META[selectedEditionType].tagline}
-                    </Text>
-                  </View>
-
-                  <View style={styles.editionsPillsRow}>
-                    {(['morning', 'midday', 'evening'] as DayEditionType[]).map(edition => {
-                      const meta = DAY_EDITIONS_META[edition];
-                      const isSelected = selectedEditionType === edition;
-                      const isCurrent = currentEditionType === edition;
-                      return (
-                        <TouchableOpacity
-                          key={edition}
-                          onPress={() => setSelectedEditionType(edition)}
-                          style={[
-                            styles.editionPill,
-                            {
-                              backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
-                              borderColor: isSelected ? colors.accent : colors.borderSubtle
-                            }
-                          ]}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Ausgabe ${meta.label} anzeigen`}
-                        >
-                          <Ionicons
-                            name={meta.icon as any}
-                            size={14}
-                            color={isSelected ? '#FFFFFF' : colors.textPrimary}
-                          />
-                          <Text
-                            style={[
-                              styles.editionPillText,
-                              {
-                                color: isSelected ? '#FFFFFF' : colors.textPrimary,
-                                fontWeight: isSelected ? '700' : '600'
-                              }
-                            ]}
-                          >
-                            {meta.label}
-                          </Text>
-                          {isCurrent && (
-                            <View style={[styles.currentEditionDot, { backgroundColor: isSelected ? '#FFFFFF' : colors.accent }]} />
-                          )}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-
-                  {/* Feed-Kurator & Live-Sync Bar */}
-                  <View style={[styles.devSimRow, { borderTopColor: colors.borderSubtle }]}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
-                      <Ionicons name="sync-outline" size={13} color={colors.accent} style={{ marginRight: 2 }} />
-                      <Text style={[styles.devSimDateText, { color: colors.textPrimary, fontWeight: '700' }]}>
-                        Quellen-Pool:
-                      </Text>
-                      <Text style={[styles.devSimDateText, { color: colors.textMuted }]}>
-                        {healthOverview.deliveringCount}/{healthOverview.totalSources} aktiv • {healthOverview.totalItems} Beiträge • €0.00
-                      </Text>
-                    </View>
-
-                    <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-                      <TouchableOpacity
-                        onPress={handleShuffle}
-                        disabled={simulatingDay}
-                        style={[styles.devSimPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Frischen Wind würfeln (Shuffle)"
-                      >
-                        <Ionicons name="shuffle" size={11} color={colors.accent} style={{ marginRight: 3 }} />
-                        <Text style={[styles.devSimPillText, { color: colors.textPrimary }]}>
-                          {simulatingDay ? 'Lädt…' : '🔄 Frischer Wind'}
-                        </Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={handleSimulateToday}
-                        disabled={simulatingDay}
-                        style={[styles.devSimPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Live-Sync & Feeds aktualisieren"
-                      >
-                        <Ionicons name="refresh" size={11} color={colors.accent} style={{ marginRight: 3 }} />
-                        <Text style={[styles.devSimPillText, { color: colors.textPrimary }]}>
-                          Live-Sync
-                        </Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={handleSimulateNextDay}
-                        disabled={simulatingDay}
-                        style={[styles.devSimPill, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Nächsten Tag kuratieren"
-                      >
-                        <Ionicons name="calendar-outline" size={11} color={colors.accent} style={{ marginRight: 3 }} />
-                        <Text style={[styles.devSimPillText, { color: colors.accent, fontWeight: '700' }]}>
-                          +1 Tag
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-
-                {simToast && (
-                  <View style={[styles.simToastContainer, { backgroundColor: colors.accent }]}>
-                    <Text style={styles.simToastText}>{simToast}</Text>
-                  </View>
-                )}
-
-                {/* Open-Meteo Weather Card for Morning Edition (collapses cleanly if weatherData is null) */}
-                {selectedEditionType === 'morning' && weatherData && (
-                  <View style={[styles.weatherCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                    <View style={styles.weatherMainRow}>
-                      <View style={styles.weatherLeft}>
-                        <Ionicons name={weatherData.iconName as any || 'sunny-outline'} size={26} color={colors.accent} />
-                        <View style={{ marginLeft: 10 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-                            <Text style={[styles.weatherTemp, { color: colors.textPrimary }]}>
-                              {Math.round(weatherData.temperatureCelsius)}°C
-                            </Text>
-                            <Text style={[styles.weatherCity, { color: colors.textSecondary }]}>
-                              in {weatherData.locationName}
-                            </Text>
-                          </View>
-                          <Text style={[styles.weatherDesc, { color: colors.textMuted }]}>
-                            {weatherData.weatherDescription}{weatherData.practicalNote ? ` • ${weatherData.practicalNote}` : ''}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={styles.weatherSourceTag}>
-                        <Ionicons name="shield-checkmark-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
-                        <Text style={[styles.weatherSourceText, { color: colors.textMuted }]}>
-                          Open-Meteo
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                )}
-
-                {/* 5 Distinct Sort Horizons */}
-                <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('for_you')}
-                    style={[
-                      styles.sortTab,
-                      (sortMode === 'for_you' || sortMode === 'hot') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                  >
-                    <Text style={styles.sortEmoji}>🔥</Text>
-                    <Text style={[styles.sortTabText, { color: (sortMode === 'for_you' || sortMode === 'hot') ? colors.accent : colors.textSecondary }]}>
-                      Für dich
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('today')}
-                    style={[
-                      styles.sortTab,
-                      (sortMode === 'today' || sortMode === 'new') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                  >
-                    <Text style={styles.sortEmoji}>⚡</Text>
-                    <Text style={[styles.sortTabText, { color: (sortMode === 'today' || sortMode === 'new') ? colors.accent : colors.textSecondary }]}>
-                      Heute
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('discourse')}
-                    style={[
-                      styles.sortTab,
-                      sortMode === 'discourse' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                  >
-                    <Text style={styles.sortEmoji}>🧭</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'discourse' ? colors.accent : colors.textSecondary }]}>
-                      Diskurs
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('top')}
-                    style={[
-                      styles.sortTab,
-                      sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                  >
-                    <Text style={styles.sortEmoji}>🏆</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
-                      Top
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('timeless')}
-                    style={[
-                      styles.sortTab,
-                      (sortMode === 'timeless' || sortMode === 'gems') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                  >
-                    <Text style={styles.sortEmoji}>💎</Text>
-                    <Text style={[styles.sortTabText, { color: (sortMode === 'timeless' || sortMode === 'gems') ? colors.accent : colors.textSecondary }]}>
-                      Zeitlos
-                    </Text>
-                  </TouchableOpacity>
-
-                  <View style={styles.sortRightInfo}>
-                    <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-                    <Text style={[styles.sortInfoText, { color: colors.textMuted }]}>
-                      Kuratierte Ausgabe
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Subchannel Quick Tuning Header */}
-                {selectedFilter !== 'all' && activeTopic && (
-                  <View style={[styles.subchannelTuningHeader, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Ionicons name="funnel-outline" size={14} color={colors.accent} />
-                        <Text style={[styles.subchannelTuningTitle, { color: colors.textPrimary }]}>
-                          Kanal {selectedFilter}
-                        </Text>
-                      </View>
-                      <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
-                        Relevanz in deinem Feed: {Math.round((profile.derivedWeights?.[activeTopic] ?? profile.explicitInterests[activeTopic] ?? 0.5) * 100)}%
-                      </Text>
-                    </View>
-                    <View style={{ flexDirection: 'row', gap: 6 }}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          const curr = profile.explicitInterests[activeTopic] ?? 0.5;
-                          updateTopicWeight(activeTopic, Math.min(1.0, Math.round((curr + 0.15) * 100) / 100));
-                          setSimToast(`✓ Fokus auf ${selectedFilter} erhöht!`);
-                          setTimeout(() => setSimToast(null), 2000);
-                        }}
-                        style={[styles.tuningBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Fokus für dieses Thema erhöhen"
-                      >
-                        <Ionicons name="arrow-up" size={13} color={colors.accent} style={{ marginRight: 3 }} />
-                        <Text style={[styles.tuningBtnText, { color: colors.accent, fontWeight: '700' }]}>+ Fokus</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => {
-                          const curr = profile.explicitInterests[activeTopic] ?? 0.5;
-                          updateTopicWeight(activeTopic, Math.max(0.1, Math.round((curr - 0.15) * 100) / 100));
-                          setSimToast(`✓ Fokus auf ${selectedFilter} verringert.`);
-                          setTimeout(() => setSimToast(null), 2000);
-                        }}
-                        style={[styles.tuningBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Fokus für dieses Thema verringern"
-                      >
-                        <Ionicons name="arrow-down" size={13} color={colors.textMuted} style={{ marginRight: 3 }} />
-                        <Text style={[styles.tuningBtnText, { color: colors.textSecondary }]}>- Weniger</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => handleFilterChange('all')}
-                        style={[styles.tuningBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Alle Spaces anzeigen"
-                      >
-                        <Text style={[styles.tuningBtnText, { color: colors.textMuted }]}>✕ Alle</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-
-            {curatedSelection && curatedSelection.items.length > 0 ? (
-              <>
-                {curatedSelection.items.map((rawItem, index) => {
-                  const item = scoreFeedItem(rawItem, profile, interactions);
-                  return (
-                    <View
-                      key={item.id}
-                      onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
-                    >
-                      <FeedCard
-                        item={item}
-                        isHero={index === 0}
-                        isFocused={index === activeCardIndex}
-                        isExpanded={Boolean(expandedCardIds[item.id])}
-                        onToggleKurzCheck={() => {
-                          setExpandedCardIds(prev => ({
-                            ...prev,
-                            [item.id]: !prev[item.id]
-                          }));
-                        }}
-                        onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
-                      />
-                    </View>
-                  );
-                })}
-              </>
-            ) : allStreamItems.length === 0 ? (
-              subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom) ? (
-                renderEmptyCustomSpaceCard(subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom)!)
-              ) : (
-              <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                <View style={[styles.emptyPocketBadge, { backgroundColor: colors.accentSubtle }]}>
-                  <Ionicons name="sparkles" size={15} color={colors.accent} />
-                  <Text style={[styles.emptyPocketBadgeText, { color: colors.accent }]}>
-                    Epistemischer Raum • On-the-Fly Entdeckung
-                  </Text>
-                </View>
-
-                <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-                  {selectedFilter !== 'all'
-                    ? `Raum ${selectedFilter} erschließen`
-                    : (searchQuery ? `Erkenntnis-Stream zu „${searchQuery}“ generieren` : 'Neuen Erkenntnis-Stream generieren')}
-                </Text>
-
-                <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-                  Dieser Wissensraum enthält noch keine kuratierten Beiträge. Du kannst hier auf Knopfdruck eine fundierte Recherche, eine dialektische KI-Synthese (mit sichtbarem Banner), menschliche Memes und Kanon-Literatur generieren — und direkt im Bibliotheka-Archiv speichern.
-                </Text>
-
-                <View style={styles.pocketFeaturesRow}>
-                  <View style={[styles.pocketFeaturePill, { backgroundColor: colors.surfaceSecondary }]}>
-                    <Text style={styles.pocketFeatureEmoji}>🔬</Text>
-                    <Text style={[styles.pocketFeatureText, { color: colors.textSecondary }]}>Wissenschaft & Quellen</Text>
-                  </View>
-                  <View style={[styles.pocketFeaturePill, { backgroundColor: colors.surfaceSecondary }]}>
-                    <Text style={styles.pocketFeatureEmoji}>🤖</Text>
-                    <Text style={[styles.pocketFeatureText, { color: colors.textSecondary }]}>KI-Synthese Banner</Text>
-                  </View>
-                  <View style={[styles.pocketFeaturePill, { backgroundColor: colors.surfaceSecondary }]}>
-                    <Text style={styles.pocketFeatureEmoji}>🎭</Text>
-                    <Text style={[styles.pocketFeatureText, { color: colors.textSecondary }]}>Menschliche Memes</Text>
-                  </View>
-                  <View style={[styles.pocketFeaturePill, { backgroundColor: colors.surfaceSecondary }]}>
-                    <Text style={styles.pocketFeatureEmoji}>🏛</Text>
-                    <Text style={[styles.pocketFeatureText, { color: colors.textSecondary }]}>Bibliotheka-Archiv</Text>
-                  </View>
-                </View>
-
-                <View style={styles.pocketActionsRow}>
-                  <TouchableOpacity
-                    onPress={handleGenerateEmptyPocket}
-                    disabled={isGeneratingPocket}
-                    style={[
-                      styles.generatePocketButton,
-                      { backgroundColor: colors.accent, opacity: isGeneratingPocket ? 0.7 : 1 }
-                    ]}
-                  >
-                    <Ionicons
-                      name={isGeneratingPocket ? 'hourglass-outline' : 'flash-outline'}
-                      size={16}
-                      color="#FFFFFF"
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={styles.generatePocketButtonText}>
-                      {isGeneratingPocket ? 'Recherchiere & synthetisiere Stream…' : 'Stream on-the-fly generieren'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => {
-                      setSelectedFilter('all');
-                      setSearchQuery('');
-                    }}
-                    style={[styles.resetFilterButton, { borderColor: colors.borderSubtle }]}
-                  >
-                    <Text style={[styles.resetFilterButtonText, { color: colors.textMuted }]}>Alle Spaces anzeigen</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-              )
-            ) : (
-              <>
-                {/* Daily Edition Primary Items */}
-                {sortedDaily.map((item, index) => (
-                  <View
-                    key={item.id}
-                    onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
-                  >
-                    <FeedCard
-                      item={item}
-                      isHero={index === 0 && selectedFilter === 'all' && !searchQuery}
-                      isFocused={index === activeCardIndex}
-                      isExpanded={Boolean(expandedCardIds[item.id])}
-                      onToggleKurzCheck={() => {
-                        setExpandedCardIds(prev => ({
-                          ...prev,
-                          [item.id]: !prev[item.id]
-                        }));
-                      }}
-                      onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
-                    />
-
-                    {/* Bloomscrolling Quiz Checkpoint every 3 cards */}
-                    {(index + 1) % 3 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
-                      <View style={{ marginVertical: spacing.md }}>
-                        <QuizCheckpointCard
-                          questions={sortedDaily
-                            .slice(Math.max(0, index - 2), index + 1)
-                            .map(a => a.quiz || generateQuizForArticle(a))}
-                          title={`Tagesausgabe: Wissens-Checkpoint #${Math.floor((index + 1) / 3)}`}
-                          subtitle="Überprüfe deine Erkenntnis der letzten 3 Beiträge"
-                        />
-                      </View>
-                    )}
-                  </View>
-                ))}
-
-                {/* Transition Milestone between Daily Edition and Discovery Pool */}
-                {sortedDaily.length > 0 && renderedDiscovery.length > 0 && (
-                  <View style={[styles.streamDividerCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                    <View style={[styles.sparkleIconBox, { backgroundColor: colors.accentSubtle }]}>
-                      <Ionicons name="sparkles" size={20} color={colors.accent} />
-                    </View>
-                    <Text style={[styles.streamDividerTitle, { color: colors.textPrimary }]}>
-                      Tagesausgabe abgeschlossen
-                    </Text>
-                    <Text style={[styles.streamDividerText, { color: colors.textSecondary }]}>
-                      Hier beginnt der endlose Mind-Scroll. Entdecke tiefer gehende Recherchen, Gegenpositionen und Praxis-Impulse.
-                    </Text>
-                  </View>
-                )}
-
-                {/* Appended Discovery Items */}
-                {renderedDiscovery.map((item, index) => {
-                  const globalIndex = sortedDaily.length + index;
-                  return (
-                    <View
-                      key={item.id}
-                      onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
-                    >
-                      <FeedCard
-                        item={item}
-                        isHero={false}
-                        isFocused={globalIndex === activeCardIndex}
-                        isExpanded={Boolean(expandedCardIds[item.id])}
-                        onToggleKurzCheck={() => {
-                          setExpandedCardIds(prev => ({
-                            ...prev,
-                            [item.id]: !prev[item.id]
-                          }));
-                        }}
-                        onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
-                      />
-
-                      {/* Bloomscrolling Quiz Checkpoint every 3 cards */}
-                      {(index + 1) % 3 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
-                        <View style={{ marginVertical: spacing.md }}>
-                          <QuizCheckpointCard
-                            questions={renderedDiscovery
-                              .slice(Math.max(0, index - 2), index + 1)
-                              .map(a => a.quiz || generateQuizForArticle(a))}
-                            title={`Discovery: Wissens-Checkpoint #${Math.floor((index + 1) / 3)}`}
-                            subtitle="Überprüfe deine Erkenntnis der letzten 3 Beiträge"
-                          />
-                        </View>
-                      )}
-                    </View>
-                  );
-                })}
-
-                {/* End-of-Edition Reflection Gate: Inline Atmen Breathing Portal */}
-                {isFeatureEnabled(profile, 'breathing_portal') && (
-                  <View style={{ marginVertical: spacing.lg }}>
-                    <AtmenBreathingPortal mode="inline" height={380} />
-                  </View>
-                )}
-
-                {/* End of Section / Conscious Discovery Trigger */}
-                {visibleDiscoveryCount < sortedDiscovery.length ? (
-                  <TouchableOpacity
-                    onPress={handleLoadMoreDiscovery}
-                    style={[styles.loadMoreButton, { borderColor: colors.accent, backgroundColor: colors.surface }]}
-                  >
-                    <Ionicons name="compass-outline" size={18} color={colors.accent} style={{ marginRight: 6 }} />
-                    <Text style={[styles.loadMoreButtonText, { color: colors.accent }]}>
-                      Weiter entdecken (+10 Beiträge)
-                    </Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={[styles.loadMoreButton, { borderColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary, opacity: 0.85 }]}>
-                    <Ionicons name="checkmark-circle-outline" size={18} color={colors.textMuted} style={{ marginRight: 6 }} />
-                    <Text style={[styles.loadMoreButtonText, { color: colors.textMuted }]}>
-                      Alle verfügbaren Beiträge dieser Ausgabe gelesen
-                    </Text>
-                  </View>
-                )}
-              </>
-            )}
-            </>
-          )}
           </View>
 
           {/* Right Column: Sticky Desktop Community Sidebar */}

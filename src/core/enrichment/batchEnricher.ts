@@ -104,28 +104,52 @@ export function detectLanguage(text: string): 'de' | 'en' {
 }
 
 /**
+ * Strips affiliate footers, donation banners, and generic publisher boilerplate from raw text.
+ */
+export function stripPublisherBoilerplate(raw: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  let text = raw
+    .replace(/Amazon Blitzangebote:[\s\S]*$/i, '')
+    .replace(/Bei einem Kauf über diesen Link unterstützt ihr uns[\s\S]*$/i, '')
+    .replace(/Wenn ihr über folgende Links kauft[\s\S]*$/i, '')
+    .replace(/Unterstütze unabhängigen Journalismus\.?/gi, '')
+    .replace(/Tipp:\s*Nutze Deskmodder als bevorzugte Quelle[\s\S]*$/i, '')
+    .replace(/Der Beitrag .* erschien zuerst auf [\s\S]*$/i, '')
+    .replace(/Originalbeitrag veröffentlicht bei [^.\n]+\.?/gi, '')
+    .replace(/–––[\s\S]*?(Spende jetzt|Jetzt spenden)[\s\S]*?(–––|$)/gi, '')
+    .replace(/\b\d+\s+posts?\s*-\s*\d+\s+participants?\s*Read full topic\b/gi, '')
+    .trim();
+  return text;
+}
+
+/**
  * Calculates the exact text that FeedCard will render for an item's body,
- * taking into account boilerplate suppression (e.g. Hacker News stubs).
+ * taking into account boilerplate suppression (e.g. Hacker News stubs, affiliate footers).
  */
 export function getCardRenderableText(item: {
   feedText?: string;
   body?: string;
+  articleBody?: string;
   format?: string;
   space?: string;
   primaryTopic?: string;
   memeMeta?: any;
 } | null | undefined): string {
   if (!item || typeof item !== 'object') return '';
-  const displayFeedText =
+  const rawCandidate =
     typeof item.feedText === 'string' && item.feedText.trim().length > 0
       ? item.feedText.trim()
-      : (typeof item.body === 'string' ? item.body.trim() : '');
+      : (typeof item.body === 'string' && item.body.trim().length > 0
+          ? item.body.trim()
+          : (typeof item.articleBody === 'string' ? item.articleBody.trim() : ''));
+  const displayFeedText = stripPublisherBoilerplate(rawCandidate);
   if (!displayFeedText) return '';
   const lower = displayFeedText.toLowerCase();
   if (
     lower.startsWith('diskutiert auf hacker news') ||
     lower.startsWith('aktuelle fachdiskussion auf hacker news') ||
-    lower.startsWith('top-thema auf hacker news')
+    lower.startsWith('top-thema auf hacker news') ||
+    lower === 'schlagzeilen zu aktuellen ereignissen - kurze nachrichten im ticker'
   ) {
     return '';
   }
@@ -140,6 +164,9 @@ export function getCardRenderableText(item: {
   }
   return displayFeedText;
 }
+
+const SPORTS_GOSSIP_REGEX = /\b(bundesliga|dfb-pokal|champions league|eintracht frankfurt|matchplan|pokalduell|ligapartie|torjäger|spieltag|transfermarkt|tabellenführer|trainerwechsel)\b/i;
+const CLINICAL_PATHOLOGY_JARGON_REGEX = /\b(carcinoma|oncology|chemotherapy|metastasis|randomized clinical trial|placebo-controlled|mortality rate|myocardial infarction|histopathology|adenocarcinoma)\b/i;
 
 /**
  * Directive 1: Hard Substance Gate & Zero Empty Cards Contract
@@ -161,17 +188,96 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
     return true;
   }
 
+  const title = (item.title || '').trim();
+  if (!title || /^schlagzeilen$/i.test(title)) {
+    return false;
+  }
+
+  const combinedText = `${title} ${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`;
+  if (SPORTS_GOSSIP_REGEX.test(combinedText)) {
+    return false;
+  }
+
+  if (item.primaryTopic === 'contemplation_mind' && CLINICAL_PATHOLOGY_JARGON_REGEX.test(combinedText)) {
+    return false;
+  }
+
   const renderableText = getCardRenderableText(item);
   if (renderableText.length < 120) {
     return false;
   }
 
-  const hasInsight = Boolean((item.keyInsight || item.subtitle || '').trim());
-  if (!hasInsight) {
+  const insight = stripPublisherBoilerplate((item.keyInsight || item.subtitle || '').trim());
+  if (!insight || /^originalbeitrag veröffentlicht bei/i.test(insight)) {
     return false;
   }
 
   return true;
+}
+
+/**
+ * Strict Default Stream Curation Standard ("Frisch kuratiert" quality as 100% default):
+ * Requires >= 140 characters of substantive non-boilerplate text, a real conceptual keyInsight,
+ * and rejects sports gossip, clinical pathology jargon in mindfulness, and shallow ticker stubs.
+ */
+export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefined): boolean {
+  if (!satisfiesCuratedBodyContract(item)) return false;
+  if (!item) return false;
+
+  const isVisual =
+    item.format === 'art_showcase' ||
+    item.format === 'meme' ||
+    item.format === 'comic' ||
+    item.space === 'c/memes' ||
+    item.space === 'c/kunst_galerie' ||
+    item.primaryTopic === 'memes_satire';
+
+  if (isVisual) return true;
+
+  const renderable = getCardRenderableText(item);
+  if (renderable.length < 140) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Sanitizes and normalizes a FeedItem for the default curated stream:
+ * - Strips affiliate/donation boilerplate
+ * - Ensures accurate article-level topic classification (never dumping political news into Philosophy)
+ * - Ensures a genuine conceptual keyInsight
+ */
+export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
+  const cleanedFeedText = stripPublisherBoilerplate(item.feedText || item.body || item.articleBody || '');
+  const cleanedBody = stripPublisherBoilerplate(item.body || cleanedFeedText);
+  const cleanedArticleBody = item.articleBody ? stripPublisherBoilerplate(item.articleBody) : undefined;
+
+  const correctedTopic = classifyTopicDeterministically(
+    item.title || '',
+    `${item.subtitle || ''} ${cleanedFeedText}`,
+    item.primaryTopic
+  );
+
+  let cleanedInsight = stripPublisherBoilerplate(item.keyInsight || item.subtitle || '');
+  if (!cleanedInsight || cleanedInsight.length < 15) {
+    const firstSentence = cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || item.title;
+    cleanedInsight = firstSentence.slice(0, 220);
+  }
+
+  const updatedTopics = item.topics?.includes(correctedTopic)
+    ? item.topics
+    : [correctedTopic, ...(item.topics || []).filter(t => t !== correctedTopic)].slice(0, 3);
+
+  return {
+    ...item,
+    primaryTopic: correctedTopic,
+    topics: updatedTopics,
+    feedText: cleanedFeedText || item.feedText,
+    body: cleanedBody || item.body,
+    ...(cleanedArticleBody ? { articleBody: cleanedArticleBody } : {}),
+    keyInsight: cleanedInsight
+  };
 }
 
 /**
@@ -366,6 +472,15 @@ export function classifyTopicDeterministically(
     )
   ) {
     return 'ai_apple';
+  }
+
+  // Society, Politics, Fact-Checks & Law (prevent dumping political news into philosophy_ethics)
+  if (
+    /\b(polizeiabkommen|bundesregierung|parlament|bundestag|datenschutz|wahl|koalition|konjunktur|bruttoinlandsprodukt|arbeitslos|zoll|strafzölle|geopolitik|eu-kommission|verfassungsschutz|grenzpartnerschaft|faktencheck|minister|gesetz|gericht|urteil|behörde)\b/i.test(
+      combined
+    )
+  ) {
+    return 'science_society';
   }
 
   return fallback;

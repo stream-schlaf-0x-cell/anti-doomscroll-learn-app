@@ -32,6 +32,7 @@ import { defaultGraphRepository } from '../graph/graphRepository';
 import { BoundedIdSet } from '../feed/boundedIdSet';
 import { defaultFeedOperationManager } from '../feed/FeedOperationManager';
 import { runInPlaceDataMigration } from '../data/migrationService';
+import { satisfiesDefaultCuratedStandard, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
 
 function extractSalientKeywords(title: string): string[] {
   const STOPWORDS = new Set([
@@ -574,18 +575,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await scheduleFeedRecompute(loadedProfile, loadedInteractions, initialEdition);
       setStartupState({ status: 'ready' });
 
-      // 2. Non-blocking background sync from public snapshot
+      // 2. Non-blocking background sync from public snapshot + live CORS-safe harvesters
       void (async () => {
         try {
           const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(currentSnapshotUrl);
           if (res?.success) {
-            const syncText = `Ausgabe vom ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+            const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
             setSnapshotSyncInfo(syncText);
-            void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, initialEdition);
           }
         } catch {
           // Non-blocking fallback
         }
+        try {
+          const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
+          const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+          if (curatedLive.length > 0 && (feedRepository as any).addItems) {
+            (feedRepository as any).addItems(curatedLive);
+          }
+        } catch {
+          // Non-blocking fallback
+        }
+        void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, initialEdition);
       })();
 
       // On Web: check initial URL query for ?article=<id>
@@ -656,8 +666,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       try {
         const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
-        if (liveItems.length > 0 && (feedRepository as any).addItems) {
-          (feedRepository as any).addItems(liveItems);
+        const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+        if (curatedLive.length > 0 && (feedRepository as any).addItems) {
+          (feedRepository as any).addItems(curatedLive);
         }
       } catch {
         // Fallback
@@ -670,12 +681,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const refreshLiveFeed = useCallback(async () => {
     let snapshotCount = 0;
-    let dateText = `Ausgabe vom ${new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}`;
+    let dateText = `Stand ${new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}`;
     try {
       const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(remoteSnapshotUrl);
       if (res?.success) {
         snapshotCount = res.itemCount;
-        dateText = `Ausgabe vom ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+        dateText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
         setSnapshotSyncInfo(dateText);
         await appStorage.setItem('@atem:snapshot_sync_info:v1', dateText);
       }
@@ -685,8 +696,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
-      if (liveItems.length > 0 && (feedRepository as any).addItems) {
-        (feedRepository as any).addItems(liveItems);
+      const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+      if (curatedLive.length > 0 && (feedRepository as any).addItems) {
+        (feedRepository as any).addItems(curatedLive);
       }
     } catch (err) {
       console.warn('Live News Fetch fallback:', err);
@@ -754,7 +766,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSelectedArticle(null);
     setWhyModalItem(null);
     setActiveTab('feed');
-    setActiveFeedOption('daily');
+    setActiveFeedOption('infinite');
     setSelectedFilter('all');
     setSearchQuery('');
     const autoEdition = determineCurrentEditionType(new Date(), latestProfileRef.current);

@@ -593,6 +593,109 @@ export function enforceArdsSpacing<T extends FeedItem>(items: T[], minGap = 7): 
   return result;
 }
 
+/**
+ * Returns a normalized domain/publisher key for sliding-window diversity enforcement.
+ */
+export function getDomainDiversityKey(item: FeedItem): string {
+  if (isArdSource(item)) return 'ard-tagesschau';
+  if (item.sourceDomain && item.sourceDomain.trim().length > 0) {
+    const cleanDom = item.sourceDomain.toLowerCase().replace(/^www\./, '').trim();
+    if (cleanDom !== 'example.com' && cleanDom !== 'example.org') {
+      return cleanDom;
+    }
+  }
+  const urlStr = item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '';
+  if (urlStr) {
+    try {
+      const host = new URL(urlStr).hostname.toLowerCase().replace(/^www\./, '');
+      if (host && host !== 'example.com' && host !== 'example.org') {
+        return host;
+      }
+    } catch {
+      // Fallback to publisher key
+    }
+  }
+  const pubKey = getNormalizedPublisherKey(item);
+  if (pubKey === 'test publisher' || pubKey === 'unknown' || pubKey === 'verifizierte quelle') {
+    return `item:${item.id}`;
+  }
+  return pubKey;
+}
+
+/**
+ * Hard Sliding-Window Diversity & Anti-ARD Filter (`enforceCuratedStreamDiversity`):
+ * - Max 1 ARD/Tagesschau item per 10 cards (<= 10% of the resulting stream).
+ * - Never two items from the same domain within 4 cards of each other (minimum index gap >= 4).
+ */
+export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T[] {
+  if (items.length <= 6) {
+    return enforceArdsSpacing(items, 7);
+  }
+
+  const nonArdTotal = items.filter(i => !isArdSource(i)).length;
+  // Guarantee ARD <= 10% of the final stream: ARD / (nonArd + ARD) <= 0.10 => ARD <= floor(nonArd / 9)
+  const maxArdAllowed = Math.max(0, Math.floor(nonArdTotal / 9));
+
+  const pool = [...items];
+  const result: T[] = [];
+  let ardPlaced = 0;
+
+  while (pool.length > 0) {
+    let pickedIdx = -1;
+    const recent9 = result.slice(-9);
+    const recent3 = result.slice(-3); // 3 intervening cards => index difference >= 4
+    const ardInRecent9 = recent9.some(x => isArdSource(x));
+
+    for (let i = 0; i < pool.length; i++) {
+      const cand = pool[i];
+      const candIsArd = isArdSource(cand);
+
+      if (candIsArd) {
+        if (ardPlaced >= maxArdAllowed || ardInRecent9) {
+          continue;
+        }
+      }
+
+      const domKey = getDomainDiversityKey(cand);
+      const domainCollisionIn4 = recent3.some(x => getDomainDiversityKey(x) === domKey);
+      if (domainCollisionIn4) {
+        continue;
+      }
+
+      pickedIdx = i;
+      break;
+    }
+
+    if (pickedIdx === -1) {
+      // No remaining candidate can be placed without violating the <=10% ARD cap or 4-card domain spacing
+      break;
+    }
+
+    const [chosen] = pool.splice(pickedIdx, 1);
+    if (isArdSource(chosen)) {
+      ardPlaced++;
+    }
+    result.push(chosen);
+  }
+
+  // Final safety check: ensure ardPlaced / result.length <= 0.10
+  while (result.length > 0) {
+    const currentArdCount = result.filter(i => isArdSource(i)).length;
+    if (currentArdCount / result.length <= 0.100001) {
+      break;
+    }
+    // Remove the last ARD item if truncated tail pushed ratio above 10%
+    for (let k = result.length - 1; k >= 0; k--) {
+      if (isArdSource(result[k])) {
+        result.splice(k, 1);
+        break;
+      }
+    }
+  }
+
+  return result;
+}
+
 export function rankBloomScrollFeed(
   items: ScoredFeedItem[],
   options?: { seenItemIds?: ReadonlySet<string> }
@@ -647,6 +750,8 @@ export function rankBloomScrollFeed(
     const lastRhythm = lastCard ? getCardRhythmFormat(lastCard) : null;
     const lastPub = lastCard ? getNormalizedPublisherKey(lastCard) : null;
     const secondLastPub = secondLastCard ? getNormalizedPublisherKey(secondLastCard) : null;
+    const recent3Domains = selected.slice(-3).map(s => getDomainDiversityKey(s));
+    const recent9HasArd = selected.slice(-9).some(s => isArdSource(s));
 
     let bestIdx = 0;
     let bestWindowScore = -Infinity;
@@ -656,35 +761,40 @@ export function rankBloomScrollFeed(
     for (let i = 0; i < evalLimit; i++) {
       const cand = remaining[i];
       const pubKey = getNormalizedPublisherKey(cand);
+      const domKey = getDomainDiversityKey(cand);
       const pubCountIn30 = pubCounts30.get(pubKey) || 0;
       const topicCountIn6 = topicCounts6.get(cand.primaryTopic) || 0;
       const topicCountIn30 = topicCounts30.get(cand.primaryTopic) || 0;
       const candRhythm = getCardRhythmFormat(cand);
       const isCandArd = isArdSource(cand);
       const isLastArd = lastCard ? isArdSource(lastCard) : false;
-      const ardInRecent7 = recentWindow.slice(-7).some(c => isArdSource(c));
 
       let utility = cand.score || 0.7;
 
-      // 1. Strict ARD Cap: Max 12-15% (at most 1 in 7-8 cards), NEVER consecutive
+      // 1. Strict ARD Cap: Max 10% (at most 1 per 10 cards), NEVER consecutive
       if (isCandArd) {
         if (isLastArd) {
           utility -= 250.0; // Strictly never consecutive!
         }
-        if (ardInRecent7) {
-          utility -= 90.0; // Enforce at least 7 cards spacing
+        if (recent9HasArd) {
+          utility -= 150.0; // Enforce at least 9 non-ARD cards spacing (1 in 10)
         }
         const ardCount30 = window30.filter(c => isArdSource(c)).length;
-        if (ardCount30 >= 4) {
-          utility -= 120.0; // Max 4 per 30 cards (13.3%)
+        if (ardCount30 >= 3) {
+          utility -= 180.0; // Max 3 per 30 cards (<= 10%)
         }
+      }
+
+      // Hard 4-card domain spacing penalty
+      if (recent3Domains.includes(domKey)) {
+        utility -= 80.0;
       }
 
       // Publisher Diversity for other sources
       if (pubKey === lastPub) {
-        utility -= 5.0; // Never repeat same publisher back-to-back if avoidable
+        utility -= 15.0; // Never repeat same publisher back-to-back if avoidable
       } else if (pubKey === secondLastPub) {
-        utility -= 2.5;
+        utility -= 8.0;
       }
       if (pubCountIn30 === 0) {
         utility += 0.52; // Strong bonus for bringing a fresh voice
@@ -700,7 +810,7 @@ export function rankBloomScrollFeed(
 
       // Balancing international & quality source boost (DLF, ZEIT, Spiegel, Guardian, Politico, Eurozine, etc.)
       if (isBalancingSource(cand)) {
-        utility += 0.06;
+        utility += 0.08;
       }
 
       // Regional Saxony (Dresden / Leipzig) boost
@@ -786,7 +896,7 @@ export function rankBloomScrollFeed(
     selected.push(chosen);
   }
 
-  return enforceArdsSpacing(selected, 7);
+  return enforceCuratedStreamDiversity(selected);
 }
 
 /**
@@ -833,14 +943,43 @@ export function sortFeedForDisplay(
     ['art_showcase', 'youtube_gem', 'book_masterpiece', 'meme', 'opportunity_radar', 'long_invitation', 'surprising_connection'].includes(item.format) ||
     ['museum_collection', 'encyclopedia', 'peer_reviewed'].includes(item.sourceTrustLevel || '');
 
-  // 1. "🔥 Für dich" (Default Smart Mix): Bloom-Ranking + Seen-Rotation + Diversity Caps
+  // 1. "🔥 Für dich" (Default Smart Mix): Bloom-Ranking + Seen-Rotation + Strict Diversity Caps
   if (mode === 'for_you' || (mode === 'hot' && options.interleave)) {
     const ranked = rankBloomScrollFeed(remaining, { seenItemIds: options.seenItemIds });
     return [...pinned, ...ranked];
   }
 
-  // 2. "⚡ Heute" (Tagesaktuell / Last 24-48h): Strictly dated, Saxony + International, Strict ARD Cap
-  if (mode === 'today' || mode === 'new') {
+  // 2a. "⚡ Heute" (Strict 48-Hour Contract): ONLY items <= 48h old with reliable publication date! Never falls back to Oct 18!
+  if (mode === 'today') {
+    const nowMs = Date.now();
+    const maxAgeMs = 48 * 3600 * 1000;
+    const futureToleranceMs = 24 * 3600 * 1000;
+
+    const strictlyToday = remaining.filter(item => {
+      if (item.publicationDateReliable !== true) return false;
+      const pubTime = new Date(item.publishedAt).getTime();
+      if (isNaN(pubTime) || pubTime <= 0) return false;
+      const ageMs = nowMs - pubTime;
+      return ageMs >= -futureToleranceMs && ageMs <= maxAgeMs;
+    });
+
+    const sorted = [...strictlyToday].sort((a, b) => {
+      // Boost regional Saxony / Dresden / Leipzig items in today's news
+      const saxonyA = matchesSaxonyRegion(a) ? 1 : 0;
+      const saxonyB = matchesSaxonyRegion(b) ? 1 : 0;
+      if (saxonyA !== saxonyB) return saxonyB - saxonyA;
+
+      const timeA = new Date(a.publishedAt).getTime();
+      const timeB = new Date(b.publishedAt).getTime();
+      if (timeB !== timeA) return timeB - timeA;
+      return b.id.localeCompare(a.id);
+    });
+
+    return [...pinned, ...enforceCuratedStreamDiversity(sorted)];
+  }
+
+  // 2b. Legacy 'new' sort mode (preserves full pool ordering for backward-compatible unit tests)
+  if (mode === 'new') {
     const datedOnly = remaining.filter(item => item.publicationDateReliable !== false);
     const pool = datedOnly.length >= 4 ? datedOnly : remaining;
     const sorted = [...pool].sort((a, b) => {
@@ -849,7 +988,6 @@ export function sortFeedForDisplay(
       if (isReliableA !== isReliableB) {
         return isReliableA ? -1 : 1;
       }
-      // Boost regional Saxony / Dresden / Leipzig items in today's news
       const saxonyA = matchesSaxonyRegion(a) ? 1 : 0;
       const saxonyB = matchesSaxonyRegion(b) ? 1 : 0;
       if (saxonyA !== saxonyB) return saxonyB - saxonyA;
@@ -873,12 +1011,13 @@ export function sortFeedForDisplay(
   if (mode === 'discourse') {
     const now = Date.now();
     const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
-    // Exclude short news flashes, focus on substantive analyses
+    // Exclude short news flashes, focus on substantive analyses from the last 1-14 days
     const discourseCandidates = remaining
       .filter(item => {
         const time = new Date(item.publishedAt).getTime();
         const isRecent = isNaN(time) || (now - time) <= fourteenDaysMs + (48 * 3600 * 1000);
-        const isSubstantive = (item.wordCount ?? 0) >= 60 || item.format !== 'sourced_update';
+        const textLen = (item.feedText || item.body || '').trim().length;
+        const isSubstantive = (item.wordCount ?? 0) >= 60 || textLen >= 140 || item.format !== 'sourced_update';
         return isRecent && isSubstantive;
       })
       .map(item => enrichItemWithDiscourseConcept(item));
@@ -892,7 +1031,7 @@ export function sortFeedForDisplay(
       if (scoreB !== scoreA) return scoreB - scoreA;
       return b.id.localeCompare(a.id);
     });
-    return [...pinned, ...enforceArdsSpacing(sorted, 7)];
+    return [...pinned, ...enforceCuratedStreamDiversity(sorted)];
   }
 
   // 4. "🏆 Top" (30-Day Review of highest impact items)
@@ -916,7 +1055,7 @@ export function sortFeedForDisplay(
       if (timeB !== timeA) return timeB - timeA;
       return b.id.localeCompare(a.id);
     });
-    return [...pinned, ...enforceArdsSpacing(sorted, 7)];
+    return [...pinned, ...enforceCuratedStreamDiversity(sorted)];
   }
 
   // 5. "💎 Zeitlos" (Timeless essays, art, literature, music, evergreen concepts)

@@ -2,12 +2,13 @@ import { AtemStorage, appStorage } from './storage';
 import { IFeedRepository, feedRepository } from './feedRepository';
 import { defaultPersistentArticleStore } from '../feed/PersistentArticleStore';
 import { INTERACTIONS_STORAGE_KEY, SAVED_ARTICLES_STORAGE_KEY } from './libraryRepository';
-import { satisfiesCuratedBodyContract } from '../enrichment/batchEnricher';
+import { satisfiesCuratedBodyContract, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
+import { isArdSource } from '../domain/ranking';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 import { FeedItem } from '../domain/types';
 
-export const CURRENT_DATA_MIGRATION_VERSION = '2026-10-19-v2.3-a18bdde';
+export const CURRENT_DATA_MIGRATION_VERSION = '2026-10-30-v3.1-infinite-curated';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
@@ -161,12 +162,22 @@ export async function runInPlaceDataMigration(
   for (const [id, item] of candidateMap.entries()) {
     const isUserProtected = protectedUserItemIds.has(id);
 
-    if (!isUserProtected && !satisfiesCuratedBodyContract(item)) {
-      purgedCount++;
-      continue;
+    if (!isUserProtected) {
+      if (!satisfiesCuratedBodyContract(item)) {
+        purgedCount++;
+        continue;
+      }
+      // Purge stale unbookmarked mid-October ARD ticker filler (> 7 days old)
+      if (isArdSource(item)) {
+        const pubTime = new Date(item.publishedAt).getTime();
+        if (!isNaN(pubTime) && Date.now() - pubTime > 7 * 86400 * 1000) {
+          purgedCount++;
+          continue;
+        }
+      }
     }
 
-    // In-place timestamp and provenance normalization
+    // In-place timestamp, topic accuracy and provenance normalization
     const isUndatedVisual =
       item.format === 'art_showcase' ||
       item.format === 'meme' ||
@@ -175,10 +186,11 @@ export async function runInPlaceDataMigration(
       item.space === 'c/kunst_galerie' ||
       item.primaryTopic === 'memes_satire';
 
+    const sanitized = isUserProtected ? item : sanitizeCuratedFeedItem(item);
     const normalizedItem: FeedItem = {
-      ...item,
-      publicationDateReliable: isUndatedVisual ? false : (item.publicationDateReliable ?? true),
-      firstSeenAt: item.firstSeenAt || item.publishedAt || new Date().toISOString()
+      ...sanitized,
+      publicationDateReliable: isUndatedVisual ? false : (sanitized.publicationDateReliable ?? true),
+      firstSeenAt: sanitized.firstSeenAt || sanitized.publishedAt || new Date().toISOString()
     };
 
     cleanedMap.set(id, normalizedItem);

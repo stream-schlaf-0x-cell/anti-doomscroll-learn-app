@@ -7,7 +7,12 @@ import { deduplicateFeedItems } from '../src/core/ingestion/deduplicator';
 import { normalizePipelineResults } from '../src/core/ingestion/pipelineCandidates';
 import { parseSnapshotPayload } from '../src/core/feed/snapshotPayload';
 import { SourceHealthInfo } from '../src/core/ingestion/sourceHealth';
-import { BatchEditionEnricher } from '../src/core/enrichment/batchEnricher';
+import {
+  BatchEditionEnricher,
+  satisfiesDefaultCuratedStandard,
+  sanitizeCuratedFeedItem
+} from '../src/core/enrichment/batchEnricher';
+import { enforceCuratedStreamDiversity } from '../src/core/domain/ranking';
 import { defaultUsageLedger } from '../src/core/enrichment/ledger';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from '../src/core/ai/atmenAiClient';
 
@@ -97,10 +102,16 @@ async function runIngestionPipeline() {
     );
 
     console.log('\nApplying Batch Edition Enrichment (semantic classification & German synthesis)...');
-    const itemsToEnrich = interleavedItems.slice(0, 30);
-    const tailItems = interleavedItems.slice(30);
+    const preCurated = interleavedItems
+      .map(sanitizeCuratedFeedItem)
+      .filter(satisfiesDefaultCuratedStandard);
+    const itemsToEnrich = preCurated.slice(0, 30);
+    const tailItems = preCurated.slice(30);
     const enriched = await enricher.enrichBatch(itemsToEnrich);
-    const finalItems = [...enriched, ...tailItems];
+    const combinedCurated = [...enriched, ...tailItems]
+      .map(sanitizeCuratedFeedItem)
+      .filter(satisfiesDefaultCuratedStandard);
+    const finalItems = enforceCuratedStreamDiversity(combinedCurated);
 
     fs.mkdirSync(path.dirname(PIPELINE_OUTPUT_PATH), { recursive: true });
     fs.writeFileSync(PIPELINE_OUTPUT_PATH, JSON.stringify(finalItems, null, 2), 'utf-8');
