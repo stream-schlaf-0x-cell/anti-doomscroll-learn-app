@@ -35,7 +35,6 @@ import { HivemindStreamModal } from '../../ui/components/HivemindStreamModal';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { ContinuousLiveNewsService, NewsHubFilterCategory } from '../../core/data/continuousLiveNewsService';
 import { NewsHubModal } from '../../ui/components/NewsHubModal';
-import { defaultSourceRepository } from '../../core/data/sourceRepository';
 import {
   defaultBatchEditionEnricher,
   satisfiesCuratedBodyContract,
@@ -47,6 +46,8 @@ import { REAL_KNOWLEDGE_VAULT } from '../../core/data/realKnowledgeVault';
 import { seenImpressionsService } from '../../core/data/seenImpressionsService';
 import { loadAiCredentials } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
+import { SubchannelFlourishService } from '../../core/ingestion/subchannelFlourishService';
+import { LiveCivicPulseService, ManualPipelineStage } from '../../core/ingestion/liveCivicPulseService';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
 import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
 import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
@@ -95,13 +96,15 @@ export const FeedScreen: React.FC = () => {
     setActiveFeedOption,
     profile,
     interactions,
+    dismissedItemIds,
+    dismissItem,
+    undoDismissItem,
     selectedFilter,
     setSelectedFilter,
     searchQuery,
     setSearchQuery,
     openArticle,
     toggleSaveItem,
-    updateTopicWeight,
     spaces,
     updateSpace
   } = useApp();
@@ -402,8 +405,10 @@ export const FeedScreen: React.FC = () => {
     );
   }, [searchQuery]);
 
+  const dismissedSet = useMemo(() => new Set(dismissedItemIds), [dismissedItemIds]);
+
   const latestScoredLiveItems = useMemo(() => {
-    let items = liveNewsItems;
+    let items = liveNewsItems.filter(item => !dismissedSet.has(item.id));
     if (newsSearchQuery.trim()) {
       const q = newsSearchQuery.toLowerCase().trim();
       items = items.filter(item =>
@@ -424,30 +429,35 @@ export const FeedScreen: React.FC = () => {
       });
     }
     return items.map(item => scoreFeedItem(item, profile, interactions));
-  }, [liveNewsItems, newsSearchQuery, liveNewsWindowMode, profile, interactions]);
+  }, [liveNewsItems, dismissedSet, newsSearchQuery, liveNewsWindowMode, profile, interactions]);
   const scoredLiveItems = useReadingStableFeed(latestScoredLiveItems, isScrolledDown, `${presentationScope}:${liveNewsCategory}:${liveNewsWindowMode}:${newsSearchQuery}`);
 
   const scoredClassicsItems = useMemo(() => {
-    const scored = classicsItems.filter(matchesSelectedSpace).map(item => scoreFeedItem(item, profile, interactions));
+    const scored = classicsItems
+      .filter(item => !dismissedSet.has(item.id))
+      .filter(matchesSelectedSpace)
+      .map(item => scoreFeedItem(item, profile, interactions));
     return filterByQuery(scored);
-  }, [classicsItems, matchesSelectedSpace, profile, interactions, filterByQuery]);
+  }, [classicsItems, dismissedSet, matchesSelectedSpace, profile, interactions, filterByQuery]);
 
   // Filter daily edition items
   const filteredDaily = useMemo(() => {
-    const spaceFiltered = dailyEdition.filter(matchesSelectedSpace);
+    const spaceFiltered = dailyEdition.filter(item => !dismissedSet.has(item.id)).filter(matchesSelectedSpace);
     return filterByQuery(spaceFiltered);
-  }, [dailyEdition, matchesSelectedSpace, filterByQuery]);
+  }, [dailyEdition, dismissedSet, matchesSelectedSpace, filterByQuery]);
 
   // Filter discovery pool items
   const filteredDiscovery = useMemo(() => {
-    const spaceFiltered = discoveryItems.filter(matchesSelectedSpace);
+    const spaceFiltered = discoveryItems.filter(item => !dismissedSet.has(item.id)).filter(matchesSelectedSpace);
     return filterByQuery(spaceFiltered);
-  }, [discoveryItems, matchesSelectedSpace, filterByQuery]);
+  }, [discoveryItems, dismissedSet, matchesSelectedSpace, filterByQuery]);
 
   // OpenWeb harvested candidates scored and filtered
   const scoredOpenWebItems = useMemo(() => {
-    return openWebItems.map(item => scoreFeedItem(item, profile, interactions));
-  }, [openWebItems, profile, interactions]);
+    return openWebItems
+      .filter(item => !dismissedSet.has(item.id))
+      .map(item => scoreFeedItem(item, profile, interactions));
+  }, [openWebItems, dismissedSet, profile, interactions]);
 
   const filteredOpenWeb = useMemo(() => {
     const spaceFiltered = scoredOpenWebItems.filter(matchesSelectedSpace);
@@ -461,6 +471,7 @@ export const FeedScreen: React.FC = () => {
     const seenCanon = new Set<string>();
     const unique: ScoredFeedItem[] = [];
     for (const item of combined) {
+      if (dismissedSet.has(item.id)) continue;
       if (seen.has(item.id)) continue;
       const canon = item.canonicalUrl?.toLowerCase().trim();
       if (canon && seenCanon.has(canon)) continue;
@@ -477,7 +488,7 @@ export const FeedScreen: React.FC = () => {
       : sanitized.filter(item => satisfiesCuratedBodyContract(item));
 
     return sortFeedForDisplay(curatedPool, sortMode, { pinnedIds, interleave: true, seenItemIds: seenIds });
-  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, profile, interactions, selectedFilter, sortMode, pinnedIds, seenIds]);
+  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, dismissedSet, profile, interactions, selectedFilter, sortMode, pinnedIds, seenIds]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
   // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
@@ -486,19 +497,22 @@ export const FeedScreen: React.FC = () => {
     const freshIds = new Set(infiniteInterleavedBase.map(i => i.id));
     const rawClassics = ContinuousLiveNewsService.getEvergreenClassics();
     const scored = rawClassics
-      .filter(item => !freshIds.has(item.id))
+      .filter(item => !freshIds.has(item.id) && !dismissedSet.has(item.id))
       .filter(matchesSelectedSpace)
       .filter(satisfiesDefaultCuratedStandard)
       .map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions));
     return filterByQuery(scored);
-  }, [sortMode, infiniteInterleavedBase, profile, interactions, matchesSelectedSpace, filterByQuery]);
+  }, [sortMode, infiniteInterleavedBase, dismissedSet, profile, interactions, matchesSelectedSpace, filterByQuery]);
 
   const scoredRevealedItems = useMemo(() => {
     if (revealedNewItems.length === 0) return [];
-    const spaceFiltered = revealedNewItems.filter(matchesSelectedSpace).filter(satisfiesDefaultCuratedStandard);
+    const spaceFiltered = revealedNewItems
+      .filter(item => !dismissedSet.has(item.id))
+      .filter(matchesSelectedSpace)
+      .filter(satisfiesDefaultCuratedStandard);
     const scored = spaceFiltered.map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions));
     return filterByQuery(scored);
-  }, [revealedNewItems, matchesSelectedSpace, filterByQuery, profile, interactions]);
+  }, [revealedNewItems, dismissedSet, matchesSelectedSpace, filterByQuery, profile, interactions]);
 
   const renderedInfiniteFreshItems = useMemo(() => {
     return infiniteInterleavedBase.slice(0, Math.min(visibleInfiniteCount, infiniteInterleavedBase.length));
@@ -518,7 +532,9 @@ export const FeedScreen: React.FC = () => {
   // Active items array depending on selected feed option
   const currentFeedItems = useMemo((): ScoredFeedItem[] => {
     if (curatedSelection && curatedSelection.items.length > 0) {
-      return curatedSelection.items.map(item => scoreFeedItem(item, profile, interactions));
+      return curatedSelection.items
+        .filter(item => !dismissedSet.has(item.id))
+        .map(item => scoreFeedItem(item, profile, interactions));
     }
     if (activeFeedOption === 'live_news') return scoredLiveItems;
     if (activeFeedOption === 'classics') return scoredClassicsItems;
@@ -526,7 +542,121 @@ export const FeedScreen: React.FC = () => {
       return historyItems.map(h => scoreFeedItem(h.item, profile, interactions));
     }
     return renderedInfiniteItems;
-  }, [curatedSelection, activeFeedOption, renderedInfiniteItems, scoredLiveItems, scoredClassicsItems, historyItems, profile, interactions]);
+  }, [curatedSelection, dismissedSet, activeFeedOption, renderedInfiniteItems, scoredLiveItems, scoredClassicsItems, historyItems, profile, interactions]);
+
+  // 1-Tap "🚫 Weniger davon" state & Undo handler
+  const [lastDismissedItem, setLastDismissedItem] = useState<{ id: string; title: string } | null>(null);
+  const dismissToastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleDismissCard = useCallback(async (item: FeedItem) => {
+    if (dismissToastTimerRef.current) {
+      clearTimeout(dismissToastTimerRef.current);
+    }
+    await dismissItem(item.id);
+    setLastDismissedItem({ id: item.id, title: item.title });
+    dismissToastTimerRef.current = setTimeout(() => {
+      setLastDismissedItem(null);
+    }, 5500);
+  }, [dismissItem]);
+
+  const handleUndoDismissCard = useCallback(async () => {
+    if (!lastDismissedItem) return;
+    if (dismissToastTimerRef.current) {
+      clearTimeout(dismissToastTimerRef.current);
+    }
+    const idToRestore = lastDismissedItem.id;
+    setLastDismissedItem(null);
+    await undoDismissItem(idToRestore);
+  }, [lastDismissedItem, undoDismissItem]);
+
+  // Universal Subchannel Flourishing Engine (Work Package 2)
+  const [isFlourishingChannel, setIsFlourishingChannel] = useState<boolean>(false);
+  const [flourishStageText, setFlourishStageText] = useState<string>('');
+  const autoFlourishedHandlesRef = React.useRef<Set<string>>(new Set());
+
+  const handleFlourishActiveChannel = useCallback(async (silent = false) => {
+    if (selectedFilter === 'all' || isFlourishingChannel) return;
+    const channelObj = subchannels.find(
+      s => s.handle.toLowerCase() === selectedFilter.toLowerCase() || s.primaryTopic === selectedFilter
+    ) || selectedFilter;
+
+    setIsFlourishingChannel(true);
+    if (!silent) {
+      setFlourishStageText('Suche neue Studien, Diskurse & Perspektiven…');
+    }
+    try {
+      const existingIds = new Set(
+        (feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id)
+      );
+      const res = await SubchannelFlourishService.flourishChannel(channelObj, {
+        existingIds,
+        targetCount: 15,
+        onProgress: (_pct, label) => {
+          if (!silent) setFlourishStageText(label);
+        }
+      });
+      if (res.items.length > 0) {
+        feedRepository.addItems(res.items);
+        await recomputeFeed();
+        await refreshFeed();
+        if (!silent) {
+          setSimToast(`⚡ ${res.items.length} neue Fundstücke für ${selectedFilter} kuratiert (${res.mode === 'ai' ? 'KI-Synthese' : 'Primärquellen'})`);
+          setTimeout(() => setSimToast(null), 3500);
+        }
+      }
+    } catch {
+      // Non-fatal
+    } finally {
+      setIsFlourishingChannel(false);
+      setFlourishStageText('');
+    }
+  }, [selectedFilter, isFlourishingChannel, subchannels, recomputeFeed, refreshFeed]);
+
+  // Automatically flourish any selected c/... subchannel when it has < 15 unseen cards
+  React.useEffect(() => {
+    if (selectedFilter === 'all') return;
+    const normalized = normalizeSpaceHandle(selectedFilter).toLowerCase();
+    const unseenInChannel = infiniteInterleavedBase.filter(i => !seenIds.has(i.id)).length;
+    if (unseenInChannel < 15 && !autoFlourishedHandlesRef.current.has(normalized)) {
+      autoFlourishedHandlesRef.current.add(normalized);
+      void handleFlourishActiveChannel(true);
+    }
+  }, [selectedFilter, infiniteInterleavedBase, seenIds, handleFlourishActiveChannel]);
+
+  // Manual Research Pipeline Runner ("🔄 Recherche jetzt starten" - Work Package 5)
+  const [isRunningManualPipeline, setIsRunningManualPipeline] = useState<boolean>(false);
+  const [manualPipelineStageLabel, setManualPipelineStageLabel] = useState<string>('');
+
+  const handleRunManualResearchPipeline = useCallback(async () => {
+    if (isRunningManualPipeline || LiveCivicPulseService.isPipelineRunning()) return;
+    setIsRunningManualPipeline(true);
+    setManualPipelineStageLabel('Quellen abrufen');
+    try {
+      const existingIds = new Set(
+        (feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id)
+      );
+      const result = await LiveCivicPulseService.runManualResearchPipeline({
+        existingIds,
+        onStageChange: (_stage: ManualPipelineStage, label: string) => {
+          setManualPipelineStageLabel(label);
+        }
+      });
+      if (result.items.length > 0) {
+        feedRepository.addItems(result.items);
+        await recomputeFeed();
+        await refreshFeed();
+      }
+      const modeText = result.mode === 'ai' ? 'KI-Synthese' : 'Lokal';
+      setSimToast(`${result.curatedCount} neu kuratiert · ${result.discardedCount} verworfen · Modus: ${modeText}`);
+      setTimeout(() => setSimToast(null), 4500);
+    } catch {
+      setSimToast('Recherche abgeschlossen.');
+      setTimeout(() => setSimToast(null), 3000);
+    } finally {
+      setIsRunningManualPipeline(false);
+      setManualPipelineStageLabel('');
+    }
+  }, [isRunningManualPipeline, recomputeFeed, refreshFeed]);
 
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
@@ -900,8 +1030,6 @@ export const FeedScreen: React.FC = () => {
     }
   };
 
-  const healthOverview = defaultSourceRepository.getHealthOverview();
-
   const [activeCardIndex, setActiveCardIndex] = useState<number>(0);
   const [expandedCardIds, setExpandedCardIds] = useState<Record<string, boolean>>({});
 
@@ -1194,73 +1322,155 @@ export const FeedScreen: React.FC = () => {
         <View style={[styles.mainLayoutWrapper, isDesktop && styles.desktopLayoutWrapper]}>
           {/* Feed Column (Center) */}
           <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn]}>
-            {/* Global Active Space / Channel Banner */}
+            {/* Global Active Space / Channel Header (Clean Subchannel Header + Single Flourish Button) */}
             {selectedFilter !== 'all' && (
               <View
                 style={[
                   styles.activeFilterBanner,
-                  { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+                  { backgroundColor: colors.surface, borderColor: colors.borderSubtle, flexWrap: 'wrap', gap: 10 }
                 ]}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 200 }}>
                   <View
                     style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: 4,
-                      backgroundColor: colors.accent
+                      width: 26,
+                      height: 26,
+                      borderRadius: 8,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: (activeSpace?.accentColor || colors.accent) + '20'
                     }}
-                  />
-                  <Ionicons name="filter" size={14} color={colors.accent} />
-                  <Text style={[styles.activeFilterBannerTitle, { color: colors.textPrimary }]}>
-                    Kanal aktiv:{' '}
-                    <Text style={{ color: colors.accent, fontWeight: '700' }}>
+                  >
+                    <Ionicons
+                      name={(activeSpace?.icon as any) || 'planet-outline'}
+                      size={14}
+                      color={activeSpace?.accentColor || colors.accent}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.activeFilterBannerTitle, { color: colors.textPrimary }]}>
+                      <Text style={{ color: activeSpace?.accentColor || colors.accent, fontWeight: '700' }}>
+                        {activeSpace?.handle || selectedFilter}
+                      </Text>
+                      {' · '}
                       {activeSpaceName}
                     </Text>
-                  </Text>
+                    {activeSpace?.description ? (
+                      <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }} numberOfLines={1}>
+                        {activeSpace.description}
+                      </Text>
+                    ) : null}
+                  </View>
                 </View>
-                {activeSpace?.isCustom && (
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <TouchableOpacity
-                    onPress={() => setEditingChannel({
-                      originalHandle: activeSpace.handle,
-                      handle: activeSpace.handle,
-                      title: activeSpace.title || activeSpace.handle,
-                      description: activeSpace.description || '',
-                      accentColor: activeSpace.accentColor || '#3B82F6'
-                    })}
+                    onPress={() => void handleFlourishActiveChannel(false)}
+                    disabled={isFlourishingChannel}
                     style={[
                       styles.activeFilterBannerReset,
-                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginRight: 8 }
+                      {
+                        backgroundColor: colors.accentSubtle,
+                        borderColor: colors.accent,
+                        opacity: isFlourishingChannel ? 0.65 : 1
+                      }
                     ]}
                     accessibilityRole="button"
-                    accessibilityLabel="Kanal bearbeiten"
+                    accessibilityLabel="Channel mit neuen Fundstücken anreichern"
                   >
-                    <Ionicons name="pencil-outline" size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
-                    <Text style={[styles.activeFilterBannerResetText, { color: colors.textSecondary }]}>
-                      Bearbeiten
+                    {isFlourishingChannel ? (
+                      <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 6 }} />
+                    ) : (
+                      <Text style={{ fontSize: 12, marginRight: 4 }}>⚡</Text>
+                    )}
+                    <Text style={[styles.activeFilterBannerResetText, { color: colors.accent, fontWeight: '700' }]}>
+                      {isFlourishingChannel
+                        ? (flourishStageText || 'Recherchiere…')
+                        : 'Channel mit neuen Fundstücken anreichern'}
                     </Text>
                   </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  onPress={() => handleFilterChange('all')}
-                  style={[
-                    styles.activeFilterBannerReset,
-                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Filter aufheben"
-                >
-                  <Ionicons name="close-circle-outline" size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
-                  <Text style={[styles.activeFilterBannerResetText, { color: colors.textSecondary }]}>
-                    Alle Spaces
-                  </Text>
-                </TouchableOpacity>
+
+                  {activeSpace?.isCustom && (
+                    <TouchableOpacity
+                      onPress={() => setEditingChannel({
+                        originalHandle: activeSpace.handle,
+                        handle: activeSpace.handle,
+                        title: activeSpace.title || activeSpace.handle,
+                        description: activeSpace.description || '',
+                        accentColor: activeSpace.accentColor || '#3B82F6'
+                      })}
+                      style={[
+                        styles.activeFilterBannerReset,
+                        { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Kanal bearbeiten"
+                    >
+                      <Ionicons name="pencil-outline" size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                      <Text style={[styles.activeFilterBannerResetText, { color: colors.textSecondary }]}>
+                        Bearbeiten
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <TouchableOpacity
+                    onPress={() => handleFilterChange('all')}
+                    style={[
+                      styles.activeFilterBannerReset,
+                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Filter aufheben"
+                  >
+                    <Ionicons name="close-circle-outline" size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
+                    <Text style={[styles.activeFilterBannerResetText, { color: colors.textSecondary }]}>
+                      Alle Spaces
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
 
             {/* MODE: ENDLESS DISCOVERY STREAM (UNIFIED CONTINUOUS STREAM) */}
             {activeFeedOption !== 'live_news' && activeFeedOption !== 'classics' && activeFeedOption !== 'history' && (
               <>
+                {/* 1-Tap "🚫 Weniger davon" Toast with Undo */}
+                {lastDismissedItem && (
+                  <View
+                    style={[
+                      styles.simToastContainer,
+                      {
+                        backgroundColor: colors.surface,
+                        borderWidth: 1,
+                        borderColor: colors.accent,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12
+                      }
+                    ]}
+                  >
+                    <Text style={[styles.simToastText, { color: colors.textPrimary, flex: 1 }]}>
+                      Verstanden — weniger zu diesem Thema/dieser Quelle
+                    </Text>
+                    <TouchableOpacity
+                      onPress={handleUndoDismissCard}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 5,
+                        borderRadius: radius.pill,
+                        backgroundColor: colors.accent
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Rückgängig"
+                    >
+                      <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
+                        Rückgängig
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 {simToast && (
                   <View style={[styles.simToastContainer, { backgroundColor: colors.accent }]}>
                     <Text style={styles.simToastText}>{simToast}</Text>
@@ -1279,7 +1489,7 @@ export const FeedScreen: React.FC = () => {
                   </View>
                 )}
 
-                {/* 5 Distinct Sort Horizons */}
+                {/* 5 Distinct Sort Horizons + Manual Pipeline Control */}
                 <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                   <TouchableOpacity
                     onPress={() => handleSortChange('for_you')}
@@ -1357,10 +1567,32 @@ export const FeedScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <View style={styles.sortRightInfo}>
-                    <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-                    <Text style={[styles.sortInfoText, { color: colors.textMuted }]}>
-                      {healthOverview.deliveringCount}/{healthOverview.totalSources} Quellen aktiv
-                    </Text>
+                    <TouchableOpacity
+                      onPress={handleRunManualResearchPipeline}
+                      disabled={isRunningManualPipeline}
+                      style={[
+                        styles.sortTab,
+                        {
+                          backgroundColor: isRunningManualPipeline ? colors.accentSubtle : colors.surfaceSecondary,
+                          borderColor: isRunningManualPipeline ? colors.accent : colors.borderSubtle,
+                          paddingVertical: 5,
+                          paddingHorizontal: 10
+                        }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Recherche jetzt starten"
+                    >
+                      {isRunningManualPipeline ? (
+                        <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 5 }} />
+                      ) : (
+                        <Text style={{ fontSize: 12, marginRight: 4 }}>🔄</Text>
+                      )}
+                      <Text style={[styles.sortTabText, { color: isRunningManualPipeline ? colors.accent : colors.textPrimary, fontSize: 11.5 }]}>
+                        {isRunningManualPipeline
+                          ? `Pipeline: ${manualPipelineStageLabel || 'Läuft…'}`
+                          : 'Recherche jetzt starten'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
 
@@ -1395,63 +1627,6 @@ export const FeedScreen: React.FC = () => {
                   </View>
                 )}
 
-                {/* Subchannel Quick Tuning Header */}
-                {selectedFilter !== 'all' && activeTopic && (
-                  <View style={[styles.subchannelTuningHeader, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Ionicons name="funnel-outline" size={14} color={colors.accent} />
-                        <Text style={[styles.subchannelTuningTitle, { color: colors.textPrimary }]}>
-                          Kanal {selectedFilter}
-                        </Text>
-                      </View>
-                      <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
-                        Relevanz in deinem Feed: {Math.round((profile.derivedWeights?.[activeTopic] ?? profile.explicitInterests[activeTopic] ?? 0.5) * 100)}%
-                      </Text>
-                    </View>
-                    <View style={{ flexDirection: 'row', gap: 6 }}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          const curr = profile.explicitInterests[activeTopic] ?? 0.5;
-                          updateTopicWeight(activeTopic, Math.min(1.0, Math.round((curr + 0.15) * 100) / 100));
-                          setSimToast(`✓ Fokus auf ${selectedFilter} erhöht!`);
-                          setTimeout(() => setSimToast(null), 2000);
-                        }}
-                        style={[styles.tuningBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Fokus für dieses Thema erhöhen"
-                      >
-                        <Ionicons name="arrow-up" size={13} color={colors.accent} style={{ marginRight: 3 }} />
-                        <Text style={[styles.tuningBtnText, { color: colors.accent, fontWeight: '700' }]}>+ Fokus</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => {
-                          const curr = profile.explicitInterests[activeTopic] ?? 0.5;
-                          updateTopicWeight(activeTopic, Math.max(0.1, Math.round((curr - 0.15) * 100) / 100));
-                          setSimToast(`✓ Fokus auf ${selectedFilter} verringert.`);
-                          setTimeout(() => setSimToast(null), 2000);
-                        }}
-                        style={[styles.tuningBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Fokus für dieses Thema verringern"
-                      >
-                        <Ionicons name="arrow-down" size={13} color={colors.textMuted} style={{ marginRight: 3 }} />
-                        <Text style={[styles.tuningBtnText, { color: colors.textSecondary }]}>- Weniger</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => handleFilterChange('all')}
-                        style={[styles.tuningBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Alle Spaces anzeigen"
-                      >
-                        <Text style={[styles.tuningBtnText, { color: colors.textMuted }]}>✕ Alle</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-
                 {curatedSelection && curatedSelection.items.length > 0 ? (
                   <>
                     {curatedSelection.items.map((rawItem, index) => {
@@ -1473,6 +1648,7 @@ export const FeedScreen: React.FC = () => {
                               }));
                             }}
                             onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                            onDismissItem={handleDismissCard}
                           />
                         </View>
                       );
@@ -1547,17 +1723,18 @@ export const FeedScreen: React.FC = () => {
                             }));
                           }}
                           onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                          onDismissItem={handleDismissCard}
                         />
 
-                        {/* Bloomscrolling Quiz Checkpoint every 3 cards */}
-                        {(index + 1) % 3 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
+                        {/* Gentle Bloomscrolling Quiz Checkpoint every 9 cards (8-10 items) */}
+                        {(index + 1) % 9 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
                           <View style={{ marginVertical: spacing.md }}>
                             <QuizCheckpointCard
                               questions={renderedInfiniteFreshItems
                                 .slice(Math.max(0, index - 2), index + 1)
                                 .map(a => a.quiz || generateQuizForArticle(a))}
-                              title={`Wissens-Checkpoint #${Math.floor((index + 1) / 3)}`}
-                              subtitle="Überprüfe deine Erkenntnis der letzten 3 Beiträge"
+                              title={`Wissens-Checkpoint #${Math.floor((index + 1) / 9)}`}
+                              subtitle="Überprüfe deine Erkenntnis aus den letzten Beiträgen"
                             />
                           </View>
                         )}
@@ -1598,17 +1775,18 @@ export const FeedScreen: React.FC = () => {
                                   }));
                                 }}
                                 onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                                onDismissItem={handleDismissCard}
                               />
 
-                              {/* Bloomscrolling Quiz Checkpoint every 3 cards */}
-                              {(idx + 1) % 3 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
+                              {/* Gentle Bloomscrolling Quiz Checkpoint every 9 cards (8-10 items) */}
+                              {(idx + 1) % 9 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
                                 <View style={{ marginVertical: spacing.md }}>
                                   <QuizCheckpointCard
                                     questions={renderedInfiniteEvergreenItems
                                       .slice(Math.max(0, idx - 2), idx + 1)
                                       .map(a => a.quiz || generateQuizForArticle(a))}
-                                    title={`Wissens-Checkpoint #${Math.floor((globalIdx + 1) / 3)}`}
-                                    subtitle="Überprüfe deine Erkenntnis der letzten 3 Beiträge"
+                                    title={`Wissens-Checkpoint #${Math.floor((globalIdx + 1) / 9)}`}
+                                    subtitle="Überprüfe deine Erkenntnis aus den letzten Beiträgen"
                                   />
                                 </View>
                               )}

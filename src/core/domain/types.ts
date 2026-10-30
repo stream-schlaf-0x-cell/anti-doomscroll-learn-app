@@ -457,7 +457,8 @@ export const FeedItemSchema = z.object({
   curatedAt: z.string().optional(),
   publicationDateReliable: z.boolean().optional(),
   firstSeenAt: z.string().optional(),
-  historicalYearOrEra: z.string().optional()
+  historicalYearOrEra: z.string().optional(),
+  enrichmentTier: z.enum(['ai', 'local', 'none']).optional()
 });
 export const ArtMetaSchema = z.object({
   artist: z.string(),
@@ -764,7 +765,8 @@ export const UserProfileSchema = z.object({
     why_this_transparency: true
   }),
   isOnboarded: z.boolean().default(false),
-  lastActiveDate: z.string().optional()
+  lastActiveDate: z.string().optional(),
+  mutedSources: z.array(z.string()).optional()
 });
 export type UserProfile = z.infer<typeof UserProfileSchema>;
 export type EditionPreferences = UserProfile['editionPreferences'];

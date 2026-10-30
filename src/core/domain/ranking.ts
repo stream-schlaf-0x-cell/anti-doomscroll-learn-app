@@ -900,6 +900,87 @@ export function rankBloomScrollFeed(
 }
 
 /**
+ * Interleaves a genuine "Überraschungs-Impuls" (Serendipity Slot) every 5th-6th card
+ * (indices 5, 11, 17, 23...) in the `for_you` stream: a high-substance (`curationScore >= 7.5`)
+ * mind-expanding item outside the dominant top 2 topics of the preceding window.
+ */
+export function interleaveSerendipitySlot(items: ScoredFeedItem[]): ScoredFeedItem[] {
+  if (items.length < 6) return items;
+
+  const result = [...items];
+
+  // Determine the two most frequent topics in the top 10 items (the user's dominant top 2 topics)
+  const topWindow = result.slice(0, Math.min(10, result.length));
+  const topicFrequency = new Map<string, number>();
+  for (const item of topWindow) {
+    topicFrequency.set(item.primaryTopic, (topicFrequency.get(item.primaryTopic) ?? 0) + 1);
+  }
+  const dominantTop2Topics = new Set(
+    [...topicFrequency.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([t]) => t)
+  );
+
+  for (let slotIdx = 5; slotIdx < result.length; slotIdx += 6) {
+    const recentSlice = result.slice(Math.max(0, slotIdx - 4), slotIdx);
+    const recentTopics = new Set(recentSlice.map(x => x.primaryTopic));
+    const currentAtSlot = result[slotIdx];
+
+    const isAlreadySerendipitous =
+      (currentAtSlot.curationScore ?? 7.8) >= 7.5 &&
+      !dominantTop2Topics.has(currentAtSlot.primaryTopic) &&
+      !recentTopics.has(currentAtSlot.primaryTopic);
+
+    if (isAlreadySerendipitous) {
+      continue;
+    }
+
+    // Look ahead for a high-quality mind-expanding item outside dominantTop2Topics and recentTopics
+    let swapCandidateIdx = -1;
+    for (let j = slotIdx + 1; j < result.length; j++) {
+      const cand = result[j];
+      const score = cand.curationScore ?? 7.8;
+      const isSerendipitousFormat =
+        cand.format === 'surprising_connection' ||
+        cand.format === 'art_showcase' ||
+        cand.format === 'long_invitation' ||
+        cand.isEvergreenGem === true ||
+        cand.isChallengingPerspective === true;
+
+      if (
+        score >= 7.5 &&
+        !dominantTop2Topics.has(cand.primaryTopic) &&
+        !recentTopics.has(cand.primaryTopic) &&
+        (isSerendipitousFormat || score >= 8.0)
+      ) {
+        swapCandidateIdx = j;
+        break;
+      }
+    }
+
+    // Fallback: any item with score >= 7.5 not in recentTopics
+    if (swapCandidateIdx === -1) {
+      for (let j = slotIdx + 1; j < result.length; j++) {
+        const cand = result[j];
+        const score = cand.curationScore ?? 7.8;
+        if (score >= 7.5 && !recentTopics.has(cand.primaryTopic)) {
+          swapCandidateIdx = j;
+          break;
+        }
+      }
+    }
+
+    if (swapCandidateIdx !== -1) {
+      const [serendipityItem] = result.splice(swapCandidateIdx, 1);
+      result.splice(slotIdx, 0, serendipityItem);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Alias kept for backward compatibility across components and tests.
  * Uses the sliding-window Bloom-Ranking algorithm.
  */
@@ -943,10 +1024,11 @@ export function sortFeedForDisplay(
     ['art_showcase', 'youtube_gem', 'book_masterpiece', 'meme', 'opportunity_radar', 'long_invitation', 'surprising_connection'].includes(item.format) ||
     ['museum_collection', 'encyclopedia', 'peer_reviewed'].includes(item.sourceTrustLevel || '');
 
-  // 1. "🔥 Für dich" (Default Smart Mix): Bloom-Ranking + Seen-Rotation + Strict Diversity Caps
+  // 1. "🔥 Für dich" (Default Smart Mix): Bloom-Ranking + Seen-Rotation + Serendipity Slot + Strict Diversity Caps
   if (mode === 'for_you' || (mode === 'hot' && options.interleave)) {
     const ranked = rankBloomScrollFeed(remaining, { seenItemIds: options.seenItemIds });
-    return [...pinned, ...ranked];
+    const withSerendipity = interleaveSerendipitySlot(ranked);
+    return [...pinned, ...withSerendipity];
   }
 
   // 2a. "⚡ Heute" (Strict 48-Hour Contract): ONLY items <= 48h old with reliable publication date! Never falls back to Oct 18!
@@ -1354,4 +1436,90 @@ export function rankEditionFeed(
   if (items.length === 0) return [];
   const allAllocations = allocateDailyEditions(items, profile, interactions, dateSeed, shuffleOffset, previouslyShownIds);
   return allAllocations[editionType] || [];
+}
+
+/**
+ * Pure helper that computes updated profile weights and muted source indicators
+ * when a user triggers "🚫 Weniger davon" on an item.
+ */
+export function applyDismissFeedbackToProfile(
+  profile: UserProfile,
+  item: FeedItem
+): UserProfile {
+  const topic = item.primaryTopic;
+  const currentExplicit = profile.explicitInterests[topic] ?? 0.5;
+  const nextExplicit = Math.max(0.05, Math.round((currentExplicit - 0.12) * 100) / 100);
+
+  const currentDerived = profile.derivedWeights?.[topic] ?? currentExplicit;
+  const nextDerived = Math.max(0.05, Math.round((currentDerived - 0.15) * 100) / 100);
+
+  const sourceId = (
+    item.sourceDomain ||
+    item.sourceReferences?.[0]?.publisher ||
+    item.sourceBroadcasterName ||
+    ''
+  )
+    .toLowerCase()
+    .trim();
+
+  const existingMuted = profile.mutedSources || [];
+  const nextMuted =
+    sourceId && !existingMuted.includes(sourceId)
+      ? [...existingMuted, sourceId]
+      : existingMuted;
+
+  return {
+    ...profile,
+    explicitInterests: {
+      ...profile.explicitInterests,
+      [topic]: nextExplicit
+    },
+    derivedWeights: {
+      ...(profile.derivedWeights || profile.explicitInterests),
+      [topic]: nextDerived
+    },
+    mutedSources: nextMuted
+  };
+}
+
+/**
+ * Pure helper that reverts a previous "🚫 Weniger davon" action ("Rückgängig").
+ */
+export function revertDismissFeedbackFromProfile(
+  profile: UserProfile,
+  item: FeedItem
+): UserProfile {
+  const topic = item.primaryTopic;
+  const currentExplicit = profile.explicitInterests[topic] ?? 0.5;
+  const nextExplicit = Math.min(1.0, Math.round((currentExplicit + 0.12) * 100) / 100);
+
+  const currentDerived = profile.derivedWeights?.[topic] ?? currentExplicit;
+  const nextDerived = Math.min(1.0, Math.round((currentDerived + 0.15) * 100) / 100);
+
+  const sourceId = (
+    item.sourceDomain ||
+    item.sourceReferences?.[0]?.publisher ||
+    item.sourceBroadcasterName ||
+    ''
+  )
+    .toLowerCase()
+    .trim();
+
+  const existingMuted = profile.mutedSources || [];
+  const nextMuted = sourceId
+    ? existingMuted.filter(s => s !== sourceId)
+    : existingMuted;
+
+  return {
+    ...profile,
+    explicitInterests: {
+      ...profile.explicitInterests,
+      [topic]: nextExplicit
+    },
+    derivedWeights: {
+      ...(profile.derivedWeights || profile.explicitInterests),
+      [topic]: nextDerived
+    },
+    mutedSources: nextMuted
+  };
 }

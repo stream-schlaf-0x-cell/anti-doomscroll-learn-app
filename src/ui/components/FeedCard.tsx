@@ -25,7 +25,7 @@ import { typography, radius, spacing } from '../theme';
 import { LinkPreviewModal } from './LinkPreviewModal';
 import { MusicTrackCard } from './MusicTrackCard';
 import { CURATED_SOUND_MASTERS, MusicTrackItem } from '../../core/music/musicRecommendationService';
-import { optimizeImageUrl, assessEditorialImage } from '../../core/utils/imageQuality';
+import { optimizeImageUrl, upgradeImageResolutionUrl, assessEditorialImage } from '../../core/utils/imageQuality';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { QuizCheckpointCard } from './QuizCheckpointCard';
 import { SubchannelBadge } from './SubchannelBadge';
@@ -38,6 +38,7 @@ interface FeedCardProps {
   isExpanded?: boolean;
   onToggleKurzCheck?: () => void;
   onInvestigateTopic?: (topic: TopicTag) => void;
+  onDismissItem?: (item: ScoredFeedItem) => void;
 }
 
 function formatRelativeTime(isoString?: string): string {
@@ -136,7 +137,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   isFocused = false,
   isExpanded,
   onToggleKurzCheck,
-  onInvestigateTopic
+  onInvestigateTopic,
+  onDismissItem
 }) => {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -150,7 +152,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     voteItem,
     setFeedback,
     addNote,
-    openInvestigation
+    openInvestigation,
+    dismissItem
   } = useApp();
 
   const [localKurzCheckOpen, setLocalKurzCheckOpen] = useState(false);
@@ -173,6 +176,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const [selectedTag, setSelectedTag] = useState<'einwand' | 'unterricht' | 'these' | 'notiz'>('einwand');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [imageRejected, setImageRejected] = useState(false);
   const [usedFallbackUrl, setUsedFallbackUrl] = useState(false);
   const [showLinkPreview, setShowLinkPreview] = useState(false);
   const [showImageLightbox, setShowImageLightbox] = useState(false);
@@ -180,6 +184,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
 
   useEffect(() => {
     setImageError(false);
+    setImageRejected(false);
     setUsedFallbackUrl(false);
   }, [item.imageUrl, item.id]);
 
@@ -248,11 +253,23 @@ export const FeedCard: React.FC<FeedCardProps> = ({
 
   const rawArtUri = item.artMeta?.highResImageUrl || item.imageUrl || '';
   const rawItemUri = item.imageUrl || '';
-  const showAuthenticImage = !isArtCard && !imageError && isAuthenticCardImage(item) && editorialAssessment.isValid;
+  const upgradedItemUri = useMemo(() => {
+    if (!rawItemUri) return undefined;
+    return isMemeCard ? optimizeImageUrl(rawItemUri) : upgradeImageResolutionUrl(rawItemUri, 1080);
+  }, [rawItemUri, isMemeCard]);
+
+  const showAuthenticImage =
+    !isArtCard &&
+    !imageError &&
+    !imageRejected &&
+    isAuthenticCardImage(item) &&
+    editorialAssessment.isValid &&
+    Boolean(upgradedItemUri);
+
   const activeVisualUri = isArtCard
     ? (usedFallbackUrl ? rawArtUri : (optimizeImageUrl(rawArtUri, 1200) || rawArtUri))
     : showAuthenticImage
-    ? (usedFallbackUrl ? rawItemUri : (optimizeImageUrl(rawItemUri) || rawItemUri))
+    ? (usedFallbackUrl ? rawItemUri : (upgradedItemUri || rawItemUri))
     : '';
 
   const handleImageError = () => {
@@ -261,10 +278,11 @@ export const FeedCard: React.FC<FeedCardProps> = ({
       setUsedFallbackUrl(true);
     } else {
       setImageError(true);
+      setImageRejected(true);
     }
   };
 
-  // Dynamically measure real image dimensions so comics, portraits & diagrams are NEVER cropped
+  // Dynamically measure real image dimensions; reject blurry low-res thumbnails (< 380x200)
   useEffect(() => {
     if (!activeVisualUri) return;
     let cancelled = false;
@@ -272,17 +290,50 @@ export const FeedCard: React.FC<FeedCardProps> = ({
       activeVisualUri,
       (w, h) => {
         if (!cancelled && w > 0 && h > 0) {
+          if (!isMemeCard && !isArtCard && (w < 380 || h < 200)) {
+            setImageRejected(true);
+            return;
+          }
           setNaturalAspectRatio(w / h);
         }
       },
       () => {
-        // Fallback handled by onLoad on <Image>
+        // Handled by onError / onLoad on <Image>
       }
     );
     return () => {
       cancelled = true;
     };
-  }, [activeVisualUri]);
+  }, [activeVisualUri, isMemeCard, isArtCard]);
+
+  // Engaging Reddit-style text-only card hook when no high-res image is rendered
+  const textCardPresentation = useMemo(() => {
+    if (showAuthenticImage || isArtCard || isMemeCard) {
+      return { hookQuote: null as string | null, bodyExcerpt: displayFeedText };
+    }
+    const cleanTitle = item.title.trim().toLowerCase();
+    const rawInsight = (item.keyInsight || '').trim();
+    const isInsightValid =
+      rawInsight.length >= 25 &&
+      rawInsight.length <= 240 &&
+      !rawInsight.toLowerCase().includes('originalbeitrag veröffentlicht bei') &&
+      rawInsight.toLowerCase() !== cleanTitle &&
+      !displayFeedText.toLowerCase().startsWith(rawInsight.toLowerCase().slice(0, 35));
+
+    if (isInsightValid) {
+      return { hookQuote: rawInsight, bodyExcerpt: displayFeedText };
+    }
+
+    const sentences = displayFeedText.split(/(?<=[.!?])\s+/).filter(Boolean);
+    if (sentences.length >= 2 && sentences[0].length >= 30 && sentences[0].length <= 220) {
+      return {
+        hookQuote: sentences[0].trim(),
+        bodyExcerpt: sentences.slice(1).join(' ').trim()
+      };
+    }
+
+    return { hookQuote: null as string | null, bodyExcerpt: displayFeedText };
+  }, [showAuthenticImage, isArtCard, isMemeCard, item.title, item.keyInsight, displayFeedText]);
 
   // Defensive check: hide subtitle if feedText, title, or metadata already says the same thing
   const isSubtitleRedundant = useMemo(() => {
@@ -386,50 +437,27 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         </View>
 
         <View style={styles.topRightActions}>
-          {/* Live AI Curation Badge */}
-          {Boolean(item.isNewlyCurated) ? (
-            <View
+          {/* Transparent Synthesis Mode Badge: 🤖 KI-Synthese vs 📄 Originalauszug */}
+          <View
+            style={[
+              styles.provenancePill,
+              {
+                backgroundColor: item.aiAssisted ? 'rgba(16, 185, 129, 0.14)' : colors.surfaceSecondary,
+                borderColor: item.aiAssisted ? '#10B981' : colors.borderSubtle,
+                marginRight: 4
+              }
+            ]}
+          >
+            <Text
               style={[
-                styles.provenancePill,
-                {
-                  backgroundColor: colors.accentSubtle,
-                  borderColor: colors.accent,
-                  marginRight: 4
-                }
+                styles.provenancePillText,
+                { color: item.aiAssisted ? '#10B981' : colors.textSecondary, fontWeight: '700' }
               ]}
+              numberOfLines={1}
             >
-              <Text
-                style={[
-                  styles.provenancePillText,
-                  { color: colors.accent, fontWeight: '700' }
-                ]}
-                numberOfLines={1}
-              >
-                {formatCuratedLabel(item.curatedAt)}
-              </Text>
-            </View>
-          ) : Boolean(item.aiAssisted) && (
-            <View
-              style={[
-                styles.provenancePill,
-                {
-                  backgroundColor: 'rgba(16, 185, 129, 0.14)',
-                  borderColor: '#10B981',
-                  marginRight: 4
-                }
-              ]}
-            >
-              <Text
-                style={[
-                  styles.provenancePillText,
-                  { color: '#10B981', fontWeight: '700' }
-                ]}
-                numberOfLines={1}
-              >
-                ✨ Live-KI veredelt
-              </Text>
-            </View>
-          )}
+              {item.aiAssisted ? '🤖 KI-Synthese' : '📄 Originalauszug'}
+            </Text>
+          </View>
 
           {/* Honest Provenance Pill */}
           <View
@@ -502,7 +530,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         )}
       </TouchableOpacity>
 
-      {/* 3. AUTHENTIC VISUALS: Uncropped Comics, Museum Artworks & Science Photos */}
+      {/* 3. AUTHENTIC VISUALS: Uncropped Comics, Museum Artworks & High-Res Science/Editorial Photos */}
       {isArtCard && (item.artMeta?.highResImageUrl || item.imageUrl) && !imageError && (
         <View style={[styles.artContainer, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
           <TouchableOpacity
@@ -563,9 +591,13 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             ]}
             resizeMode={isMemeCard || isArtCard || editorialAssessment.category === 'comic' || editorialAssessment.category === 'square_photo' ? 'contain' : 'cover'}
             onLoad={(e) => {
-              const { width, height } = e.nativeEvent.source;
-              if (width > 0 && height > 0) {
-                setNaturalAspectRatio(width / height);
+              const { width: loadedW, height: loadedH } = e.nativeEvent.source;
+              if (loadedW > 0 && loadedH > 0) {
+                if (!isMemeCard && !isArtCard && (loadedW < 380 || loadedH < 200)) {
+                  setImageRejected(true);
+                  return;
+                }
+                setNaturalAspectRatio(loadedW / loadedH);
               }
             }}
             onError={handleImageError}
@@ -586,8 +618,30 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         </TouchableOpacity>
       )}
 
+      {/* 3b. ENGAGING REDDIT-STYLE TEXT-ONLY CALLOUT (When no high-res image is rendered) */}
+      {!showAuthenticImage && !isArtCard && !isMemeCard && textCardPresentation.hookQuote && (
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={handleCardPress}
+          style={[
+            styles.redditTextHookCallout,
+            {
+              backgroundColor: colors.surfaceSecondary,
+              borderLeftColor: spaceColor
+            }
+          ]}
+        >
+          <Text style={[styles.redditTextHookLabel, { color: spaceColor }]}>
+            💡 Kernthese & Impuls
+          </Text>
+          <Text style={[styles.redditTextHookText, { color: colors.textPrimary }]}>
+            „{textCardPresentation.hookQuote}“
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {/* 4. ADAPTIVE CARD BODY (Hidden if redundant comic/HN boilerplate) */}
-      {shouldShowBodyText && (
+      {shouldShowBodyText && Boolean(textCardPresentation.bodyExcerpt) && (
         <TouchableOpacity activeOpacity={0.92} onPress={handleCardPress}>
           <Text
             style={[
@@ -597,7 +651,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             ]}
             numberOfLines={isQuick20sCard ? undefined : isHero ? 6 : 4}
           >
-            {displayFeedText}
+            {textCardPresentation.bodyExcerpt}
           </Text>
         </TouchableOpacity>
       )}
@@ -994,6 +1048,24 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             </Text>
           </TouchableOpacity>
         )}
+
+        {/* 9.5b 1-Tap Sovereign Control: 🚫 Weniger davon */}
+        <TouchableOpacity
+          onPress={() => {
+            if (onDismissItem) {
+              onDismissItem(item);
+            } else {
+              void dismissItem(item.id, item);
+            }
+          }}
+          style={[styles.actionChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+          accessibilityRole="button"
+          accessibilityLabel="Weniger davon"
+        >
+          <Text style={[styles.actionChipText, { color: colors.textMuted }]} numberOfLines={1}>
+            🚫 Weniger davon
+          </Text>
+        </TouchableOpacity>
 
         {/* 9.6 Right-Aligned Why? Info */}
         {isFeatureEnabled(profile, 'why_this_transparency') && (
@@ -1590,5 +1662,25 @@ const styles = StyleSheet.create({
   },
   completedBadge: {
     marginLeft: 2
+  },
+  redditTextHookCallout: {
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderLeftWidth: 3.5
+  },
+  redditTextHookLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    marginBottom: 4
+  },
+  redditTextHookText: {
+    fontSize: 15.5,
+    lineHeight: 22,
+    fontWeight: '600'
   }
 });

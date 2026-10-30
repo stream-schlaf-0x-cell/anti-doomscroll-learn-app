@@ -34,7 +34,7 @@ import { defaultFeedOperationManager } from '../feed/FeedOperationManager';
 import { runInPlaceDataMigration } from '../data/migrationService';
 import { satisfiesDefaultCuratedStandard, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
 
-function extractSalientKeywords(title: string): string[] {
+export function extractSalientKeywords(title: string): string[] {
   const STOPWORDS = new Set([
     'eine', 'einer', 'eines', 'einem', 'einen', 'oder', 'aber', 'wenn', 'dann', 'weil',
     'dass', 'dies', 'diese', 'dieser', 'dieses', 'über', 'unter', 'nach', 'vor',
@@ -46,7 +46,83 @@ function extractSalientKeywords(title: string): string[] {
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
     .filter(w => w.length >= 4 && !STOPWORDS.has(w))
-    .slice(0, 2);
+    .slice(0, 3);
+}
+
+/**
+ * Pure helper for 1-Tap "🚫 Weniger davon" (`dismissItem`).
+ * Penalizes the item's source domain and salient sub-keywords in `feedbackMemory`.
+ */
+export function applyDismissFeedbackToProfile(
+  profile: UserProfile,
+  item: FeedItem
+): { updatedProfile: UserProfile; domain: string; keywords: string[] } {
+  const primaryTopic = item.primaryTopic || 'philosophy_ethics';
+  const author = item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '';
+  const domain = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || '').toLowerCase().trim();
+  const space = item.space ? item.space.toLowerCase() : '';
+  const keywords = extractSalientKeywords(item.title);
+
+  const mem = { ...profile.feedbackMemory };
+  mem.penalizedTopics = { ...mem.penalizedTopics, [primaryTopic]: (mem.penalizedTopics[primaryTopic] || 0) + 1 };
+  if (author) {
+    mem.penalizedAuthors = { ...mem.penalizedAuthors, [author]: (mem.penalizedAuthors[author] || 0) + 1 };
+  }
+  if (domain) {
+    mem.penalizedDomains = { ...mem.penalizedDomains, [domain]: (mem.penalizedDomains[domain] || 0) + 2 };
+  }
+  if (space) {
+    mem.penalizedSpaces = { ...mem.penalizedSpaces, [space]: (mem.penalizedSpaces[space] || 0) + 1 };
+  }
+  if (keywords.length > 0) {
+    const kwMap = { ...mem.penalizedKeywords };
+    keywords.forEach(kw => {
+      kwMap[kw] = (kwMap[kw] || 0) + 2;
+    });
+    mem.penalizedKeywords = kwMap;
+  }
+
+  return {
+    updatedProfile: {
+      ...profile,
+      feedbackMemory: mem
+    },
+    domain,
+    keywords
+  };
+}
+
+export function revertDismissFeedbackFromProfile(profile: UserProfile, item: FeedItem): UserProfile {
+  const primaryTopic = item.primaryTopic || 'philosophy_ethics';
+  const author = item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '';
+  const domain = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || '').toLowerCase().trim();
+  const space = item.space ? item.space.toLowerCase() : '';
+  const keywords = extractSalientKeywords(item.title);
+
+  const mem = { ...profile.feedbackMemory };
+  const dec = (rec: Record<string, number>, k: string, delta: number) => {
+    const next = { ...rec };
+    const val = (next[k] || 0) - delta;
+    if (val <= 0) delete next[k];
+    else next[k] = val;
+    return next;
+  };
+  mem.penalizedTopics = dec(mem.penalizedTopics, primaryTopic, 1);
+  if (author) mem.penalizedAuthors = dec(mem.penalizedAuthors, author, 1);
+  if (domain) mem.penalizedDomains = dec(mem.penalizedDomains, domain, 2);
+  if (space) mem.penalizedSpaces = dec(mem.penalizedSpaces, space, 1);
+  if (keywords.length > 0) {
+    let kwMap = { ...mem.penalizedKeywords };
+    keywords.forEach(kw => {
+      kwMap = dec(kwMap, kw, 2);
+    });
+    mem.penalizedKeywords = kwMap;
+  }
+
+  return {
+    ...profile,
+    feedbackMemory: mem
+  };
 }
 
 export type StartupState =
@@ -156,7 +232,12 @@ interface AppContextValue {
   removeFeedbackPenalty: (category: 'topic' | 'author' | 'keyword' | 'domain' | 'space', key: string) => Promise<void>;
   updateFeedMixRatio: (focusRatio: number, socraticRatio: number, serendipityRatio: number) => Promise<void>;
   clearFeedbackMemory: () => Promise<void>;
+  dismissedItemIds: string[];
+  dismissItem: (id: string, itemOverride?: FeedItem) => Promise<{ item: FeedItem | null; domain: string; keywords: string[] }>;
+  undoDismissItem: (id: string, itemOverride?: FeedItem) => Promise<void>;
 }
+
+const DISMISSED_ITEMS_STORAGE_KEY = '@atem:dismissed_items:v1';
 
 const AppContext = createContext<AppContextValue | null>(null);
 
@@ -191,6 +272,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [remoteSnapshotUrl, setRemoteSnapshotUrlState] = useState<string>('');
   const [snapshotSyncInfo, setSnapshotSyncInfo] = useState<string | null>(null);
   const [spaces, setSpaces] = useState<Subchannel[]>([]);
+  const [dismissedItemIds, setDismissedItemIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    void appStorage.getItem(DISMISSED_ITEMS_STORAGE_KEY).then(raw => {
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) setDismissedItemIds(parsed);
+        } catch {}
+      }
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     void defaultSpaceRepository.getAllSpaces().then(setSpaces);
@@ -1089,6 +1182,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [scheduleFeedRecompute]);
 
+  const dismissItem = useCallback(async (id: string, itemOverride?: FeedItem) => {
+    setDismissedItemIds(prev => {
+      const next = prev.includes(id) ? prev : [...prev, id];
+      void appStorage.setItem(DISMISSED_ITEMS_STORAGE_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+
+    try {
+      const updatedInteraction = await libraryRepository.setFeedback(id, 'less_like_this');
+      const nextInteractions = { ...latestInteractionsRef.current, [id]: updatedInteraction };
+      latestInteractionsRef.current = nextInteractions;
+      setInteractions(nextInteractions);
+
+      let item: FeedItem | null =
+        itemOverride ??
+        dailyEdition.find(i => i.id === id) ??
+        discoveryItems.find(i => i.id === id) ??
+        openWebItems.find(i => i.id === id) ??
+        (await feedRepository.getItemById(id));
+
+      if (item) {
+        let domainOut = '';
+        let keywordsOut: string[] = [];
+        const committed = await userProfileRepository.updateProfile(curr => {
+          const res = applyDismissFeedbackToProfile(curr, item!);
+          domainOut = res.domain;
+          keywordsOut = res.keywords;
+          return res.updatedProfile;
+        });
+        latestProfileRef.current = committed;
+        setProfile(committed);
+        await scheduleFeedRecompute(committed, nextInteractions);
+        return { item, domain: domainOut, keywords: keywordsOut };
+      }
+
+      await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
+      return { item: null, domain: '', keywords: [] };
+    } catch {
+      return { item: itemOverride ?? null, domain: '', keywords: [] };
+    }
+  }, [dailyEdition, discoveryItems, openWebItems, scheduleFeedRecompute]);
+
+  const undoDismissItem = useCallback(async (id: string, itemOverride?: FeedItem) => {
+    setDismissedItemIds(prev => {
+      const next = prev.filter(x => x !== id);
+      void appStorage.setItem(DISMISSED_ITEMS_STORAGE_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+
+    try {
+      const updatedInteraction = await libraryRepository.setFeedback(id, 'neutral');
+      const nextInteractions = { ...latestInteractionsRef.current, [id]: updatedInteraction };
+      latestInteractionsRef.current = nextInteractions;
+      setInteractions(nextInteractions);
+
+      let item: FeedItem | null =
+        itemOverride ??
+        dailyEdition.find(i => i.id === id) ??
+        discoveryItems.find(i => i.id === id) ??
+        openWebItems.find(i => i.id === id) ??
+        (await feedRepository.getItemById(id));
+
+      if (item) {
+        const committed = await userProfileRepository.updateProfile(curr =>
+          revertDismissFeedbackFromProfile(curr, item!)
+        );
+        latestProfileRef.current = committed;
+        setProfile(committed);
+        await scheduleFeedRecompute(committed, nextInteractions);
+      } else {
+        await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
+      }
+    } catch {}
+  }, [dailyEdition, discoveryItems, openWebItems, scheduleFeedRecompute]);
+
   const removeFeedbackBoost = useCallback(async (
     category: 'topic' | 'author' | 'keyword' | 'domain' | 'space',
     key: string
@@ -1477,7 +1645,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeFeedbackBoost,
         removeFeedbackPenalty,
         updateFeedMixRatio,
-        clearFeedbackMemory
+        clearFeedbackMemory,
+        dismissedItemIds,
+        dismissItem,
+        undoDismissItem
       }}
     >
       {children}

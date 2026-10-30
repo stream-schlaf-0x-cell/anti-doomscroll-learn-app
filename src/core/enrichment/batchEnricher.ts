@@ -13,6 +13,8 @@ import { EnrichmentCache, StorageDriverCacheStorage, CacheKeyParams } from './ca
 import { pureJsSha256 } from '../ingestion/normalizer';
 import { EnrichmentUsageLedger, defaultUsageLedger } from './ledger';
 import { synthesizeDidacticTransfer } from '../synthesis/backgroundResearchPipeline';
+import { upgradeImageResolutionUrl } from '../utils/imageQuality';
+export { upgradeImageResolutionUrl };
 
 export interface BatchEnrichmentItemInput {
   id: string;
@@ -29,6 +31,7 @@ export interface EnrichedItemData {
   rejectionReason?: string;
   feedText: string;
   keyInsight: string;
+  counterPerspective?: string;
   primaryTopic: TopicTag;
   topics: TopicTag[];
   didacticTransfer: string;
@@ -66,6 +69,7 @@ const BatchDecisionSchema = z.object({
   rejectionReason: z.string().max(1000).optional(),
   feedText: z.string().max(10000).default(''),
   keyInsight: z.string().max(2000).default(''),
+  counterPerspective: z.string().max(4000).optional().default(''),
   primaryTopic: TopicTagSchema,
   topics: z.array(TopicTagSchema).max(3).default([]),
   didacticTransfer: z.string().max(4000).default('')
@@ -269,6 +273,16 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     ? item.topics
     : [correctedTopic, ...(item.topics || []).filter(t => t !== correctedTopic)].slice(0, 3);
 
+  const isVisualArtOrMeme =
+    item.format === 'art_showcase' ||
+    item.format === 'meme' ||
+    item.space === 'c/memes' ||
+    item.space === 'c/kunst_galerie';
+
+  const upgradedImageUrl = isVisualArtOrMeme
+    ? item.imageUrl
+    : upgradeImageResolutionUrl(item.imageUrl);
+
   return {
     ...item,
     primaryTopic: correctedTopic,
@@ -276,7 +290,9 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     feedText: cleanedFeedText || item.feedText,
     body: cleanedBody || item.body,
     ...(cleanedArticleBody ? { articleBody: cleanedArticleBody } : {}),
-    keyInsight: cleanedInsight
+    keyInsight: cleanedInsight,
+    imageUrl: upgradedImageUrl,
+    hasAuthenticImage: Boolean(upgradedImageUrl)
   };
 }
 
@@ -519,14 +535,35 @@ export class BatchEditionEnricher {
   private applyDecision(original: FeedItem, decision: EnrichedItemData): FeedItem {
     const topics = decision.topics.includes(decision.primaryTopic)
       ? decision.topics : [decision.primaryTopic, ...decision.topics].slice(0, 3);
+    const counterText = decision.counterPerspective?.trim() || '';
+    const hasRealCounter = counterText.split(/\s+/).filter(Boolean).length >= 12;
+    const transferText = decision.didacticTransfer?.trim() || '';
     return {
       ...original,
       feedText: decision.feedText || original.feedText,
       keyInsight: decision.keyInsight || original.keyInsight || original.subtitle,
       primaryTopic: decision.primaryTopic,
       topics,
-      didacticTransfer: decision.didacticTransfer || original.didacticTransfer,
-      didacticSeed: decision.didacticTransfer || original.didacticSeed,
+      ...(hasRealCounter
+        ? {
+            perspectiveDetails: {
+              claim: decision.keyInsight || original.perspectiveDetails?.claim || original.title,
+              humanSource:
+                original.perspectiveDetails?.humanSource ||
+                original.sourceReferences?.[0]?.author ||
+                original.sourceReferences?.[0]?.publisher ||
+                'Redaktion',
+              counterPerspective: counterText
+            },
+            deepeningOptions: {
+              ...original.deepeningOptions,
+              counterArgument: counterText,
+              ...(transferText ? { didacticSeed: transferText } : {})
+            }
+          }
+        : {}),
+      didacticTransfer: transferText || original.didacticTransfer,
+      didacticSeed: transferText || original.didacticSeed,
       curationScore: decision.curationScore,
       aiAssisted: true
     };
@@ -673,13 +710,14 @@ Deine Aufgabe ist zweistufig:
    - Ein Score von mindestens 7 (7 bis 10) ist die zwingende Hürde für die Aufnahme in Atmen.
 
 2. Veredelung (nur für Beiträge mit curationScore >= 7):
-   - "feedText": Prägnanter, hochsubstanzieller Lesetext (50-80 Wörter).
-   - "keyInsight": Prägnante 1-Satz-Kernthese.
+   - "feedText": Prägnanter, hochsubstanzieller Lesetext (50-80 Wörter, null Boilerplate).
+   - "keyInsight": Prägnante 1-Satz-Kernthese (konzeptioneller Mehrwert).
+   - "counterPerspective": Eine echte dialektische Gegenposition, ein blinder Fleck oder eine methodische Gültigkeitsgrenze (mindestens 35 Wörter spezifische Analyse; keine Floskeln).
    - "primaryTopic": Exakte semantische Zuordnung aus: ${VALID_TOPICS.join(', ')}.
    - "topics": 1 bis 3 passende Themen-Tags.
-   - "didacticTransfer": Ein konkreter pädagogischer oder kontemplativer Reflexionsimpuls (1-2 Sätze).
+   - "didacticTransfer": NUR wenn der Beitrag einen echten pädagogischen, didaktischen oder praktischen Transfer hergibt (~10-15% der Beiträge): Ein konkreter Transfer-Impuls (mindestens 35 Wörter). Sonst leerer String "".
 
-Für abgelehnte Beiträge (Score < 7): Setze feedText, keyInsight und didacticTransfer auf "" und gib einen kurzen rejectionReason an.
+Für abgelehnte Beiträge (Score < 7): Setze feedText, keyInsight, counterPerspective und didacticTransfer auf "" und gib einen kurzen rejectionReason an.
 
 SPRACH-REGEL:
 Behalte die Ausgangssprache des Originalartikels bei! (sourceLanguage === "en" -> Englisch, sourceLanguage === "de" -> Deutsch).
@@ -692,6 +730,7 @@ Antworte AUSSCHLIESSLICH als JSON-Array:
     "rejectionReason": "",
     "feedText": "...",
     "keyInsight": "...",
+    "counterPerspective": "...",
     "primaryTopic": "...",
     "topics": ["..."],
     "didacticTransfer": "..."
@@ -846,4 +885,136 @@ export const defaultBatchEditionEnricher = new BatchEditionEnricher();
 
 export function enrichDeterministically(item: FeedItem): FeedItem {
   return defaultBatchEditionEnricher.enrichDeterministically(item);
+}
+
+/**
+ * Checks whether an editorial synthesis section (Kernaussage, Gegenperspektive, Transfer)
+ * contains genuine, non-boilerplate substance (default >= 35 words for deep sections, >= 10 words for short insights).
+ */
+export function hasSubstantiveEditorialSection(text?: string | null, minWords = 35): boolean {
+  if (!text || typeof text !== 'string') return false;
+  const cleaned = stripPublisherBoilerplate(text).trim();
+  if (!cleaned) return false;
+
+  const lower = cleaned.toLowerCase();
+  const boilerplatePatterns = [
+    'originalbeitrag veröffentlicht bei',
+    'methodische einschränkung: die einordnung basiert auf dem original-abstract',
+    'enzyklopädischer konsensartikel: gibt den aktuellen forschungsstand wieder',
+    'diskutiert auf hacker news',
+    'keine angabe',
+    'nicht verfügbar'
+  ];
+  if (boilerplatePatterns.some(pat => lower.includes(pat))) {
+    return false;
+  }
+
+  const wordCount = cleaned.split(/\s+/).filter(Boolean).length;
+  return wordCount >= minWords;
+}
+
+/**
+ * On-demand single-article LLM synthesis & dialectical enrichment when a paid API key is configured.
+ * Generates a sharp conceptual synthesis, a genuine >=35-word Gegenperspektive / Blinder Fleck,
+ * and (only if genuinely applicable) a concrete didactic/practical transfer.
+ */
+export async function enrichArticleOnDemandWithAi(
+  item: FeedItem,
+  overrideCredentials?: AiCredentials,
+  ledger: EnrichmentUsageLedger = defaultUsageLedger
+): Promise<FeedItem> {
+  let creds = overrideCredentials;
+  if (!creds) {
+    try {
+      creds = await loadAiCredentials();
+    } catch {
+      return sanitizeCuratedFeedItem(item);
+    }
+  }
+
+  if (!hasAiConfiguration(creds)) {
+    return sanitizeCuratedFeedItem(item);
+  }
+
+  const canSpend = await ledger.canSpend(0.002);
+  if (!canSpend) {
+    return sanitizeCuratedFeedItem(item);
+  }
+
+  const rawBody = (item.articleBody || item.body || item.feedText || item.subtitle || '').slice(0, 1800);
+  const systemInstruction = `Du bist die Chefredaktion von ATMEN.
+Erstelle für den vorliegenden Artikel eine tiefenscharfe deutsche Synthese ohne Floskeln:
+1. "keyInsight": Die zentrale These oder Erkenntnis in 1-2 präzisen Sätzen (mind. 18 Wörter).
+2. "feedText": Substanzielle Zusammenfassung der Argumentation und Befunde auf Deutsch (55-85 Wörter).
+3. "counterPerspective": Stärkster dialektischer Einwand, blinder Fleck oder methodische Grenze (MINDESTENS 38 Wörter spezifische Analyse).
+4. "didacticTransfer": NUR wenn der Beitrag sinnvoll für Unterricht (Philosophie/Ethik/Deutsch) oder Lebenspraxis übertragbar ist: Ein konkreter Impuls (mind. 38 Wörter). Andernfalls "".
+
+Antworte AUSSCHLIESSLICH als valides JSON-Objekt:
+{
+  "keyInsight": "...",
+  "feedText": "...",
+  "counterPerspective": "...",
+  "didacticTransfer": ""
+}`;
+
+  const prompt = `Titel: ${item.title}\nQuelle: ${item.sourceReferences?.[0]?.publisher || item.sourceDomain || 'Unbekannt'}\nInhalt:\n${rawBody}`;
+
+  try {
+    const res = await callAiModel(prompt, {
+      systemInstruction,
+      jsonMode: true,
+      maxTokens: 900,
+      timeoutMs: 18_000,
+      credentials: creds,
+      ledger,
+      itemId: `ondemand-enrich-${item.id}`
+    });
+
+    const parsed = JSON.parse(res.text);
+    const keyInsight = typeof parsed?.keyInsight === 'string' && parsed.keyInsight.trim().length > 20
+      ? parsed.keyInsight.trim()
+      : item.keyInsight;
+    const feedText = typeof parsed?.feedText === 'string' && parsed.feedText.trim().length > 80
+      ? parsed.feedText.trim()
+      : item.feedText;
+    const counterPerspective = typeof parsed?.counterPerspective === 'string' && parsed.counterPerspective.trim().length > 60
+      ? parsed.counterPerspective.trim()
+      : undefined;
+    const didacticTransfer = typeof parsed?.didacticTransfer === 'string' && parsed.didacticTransfer.trim().length > 60
+      ? parsed.didacticTransfer.trim()
+      : undefined;
+
+    return sanitizeCuratedFeedItem({
+      ...item,
+      feedText,
+      keyInsight,
+      aiAssisted: true,
+      ...(counterPerspective
+        ? {
+            perspectiveDetails: {
+              claim: keyInsight || item.title,
+              humanSource:
+                item.perspectiveDetails?.humanSource ||
+                item.sourceReferences?.[0]?.author ||
+                item.sourceReferences?.[0]?.publisher ||
+                'Redaktion',
+              counterPerspective
+            },
+            deepeningOptions: {
+              ...item.deepeningOptions,
+              counterArgument: counterPerspective,
+              ...(didacticTransfer ? { didacticSeed: didacticTransfer } : {})
+            }
+          }
+        : {}),
+      ...(didacticTransfer
+        ? {
+            didacticTransfer,
+            didacticSeed: didacticTransfer
+          }
+        : {})
+    });
+  } catch {
+    return sanitizeCuratedFeedItem(item);
+  }
 }

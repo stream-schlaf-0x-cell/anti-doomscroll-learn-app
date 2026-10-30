@@ -18,10 +18,16 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import {
+  FeedItem,
+  FeedQuizQuestion,
   formatFactReviewStatus,
   formatVerifiedProvenanceLabel
 } from '../../core/domain/types';
 import { synthesizeEditorialAbstract } from '../../core/synthesis/backgroundResearchPipeline';
+import {
+  enrichArticleOnDemandWithAi,
+  hasSubstantiveEditorialSection
+} from '../../core/enrichment/batchEnricher';
 import { ReadingTimeBadge } from '../../ui/components/ReadingTimeBadge';
 import { DeepeningCard } from '../../ui/components/DeepeningCard';
 import { typography, radius, spacing } from '../../ui/theme';
@@ -33,7 +39,10 @@ import { MarkdownContent } from '../../ui/components/MarkdownContent';
 import { RabbitHoleService, RabbitHoleEntry } from '../../core/synthesis/rabbitHoleService';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { QuizCheckpointCard } from '../../ui/components/QuizCheckpointCard';
-import { generateQuizForArticle } from '../../core/quiz/quizGenerator';
+import {
+  generateQuizForArticle,
+  generateSingleArticleQuizWithAi
+} from '../../core/quiz/quizGenerator';
 import { AtmenSymbol } from '../../ui/components/AtmenSymbol';
 
 export const ReaderScreen: React.FC = () => {
@@ -73,7 +82,41 @@ export const ReaderScreen: React.FC = () => {
   const [showReaderImageLightbox, setShowReaderImageLightbox] = useState<boolean>(false);
   const [rabbitHoleEntries, setRabbitHoleEntries] = useState<RabbitHoleEntry[]>([]);
   const [loadingRabbitHole, setLoadingRabbitHole] = useState<boolean>(false);
+  const [aiEnrichedOverride, setAiEnrichedOverride] = useState<FeedItem | null>(null);
+  const [aiQuizOverride, setAiQuizOverride] = useState<FeedQuizQuestion | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // Automatically run on-demand AI synthesis & Socratic quiz generation when a paid API key is configured
+  useEffect(() => {
+    setAiEnrichedOverride(null);
+    setAiQuizOverride(null);
+    if (!selectedArticle) return;
+
+    let isMounted = true;
+    enrichArticleOnDemandWithAi(selectedArticle)
+      .then((enriched) => {
+        if (isMounted && enriched.enrichmentTier === 'ai') {
+          setAiEnrichedOverride(enriched);
+        }
+      })
+      .catch(() => {
+        // Non-fatal fallback
+      });
+
+    generateSingleArticleQuizWithAi(selectedArticle)
+      .then((quiz) => {
+        if (isMounted && quiz) {
+          setAiQuizOverride(quiz);
+        }
+      })
+      .catch(() => {
+        // Non-fatal fallback
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedArticle]);
 
   useEffect(() => {
     const uri = selectedArticle?.artMeta?.highResImageUrl || selectedArticle?.imageUrl;
@@ -188,24 +231,42 @@ export const ReaderScreen: React.FC = () => {
     );
   }
 
+  const activeArticle = aiEnrichedOverride || selectedArticle;
+  const isAiSynthesized = activeArticle.enrichmentTier === 'ai';
   const currentInteraction = interactions[selectedArticle.id];
   const isSaved = currentInteraction?.saved ?? false;
   const currentFeedback = currentInteraction?.feedback;
   const savedProgress = currentInteraction?.progressPercent ?? 0;
 
-  const abstract = selectedArticle.editorialAbstract ?? synthesizeEditorialAbstract(selectedArticle);
-  const fullArticleText = (selectedArticle.articleBody && selectedArticle.articleBody.trim().length > 20)
-    ? selectedArticle.articleBody.trim()
-    : (selectedArticle.feedText || selectedArticle.body || '').trim();
-  const originalUrl = selectedArticle.canonicalUrl || selectedArticle.sourceReferences?.[0]?.originalUrl;
-  const isExcerpt = selectedArticle.evidenceTier === 'publisher_excerpt' || selectedArticle.evidenceTier === 'metadata_only';
-  const isThinEvidence = selectedArticle.evidenceTier === 'metadata_only' || fullArticleText.length < 180;
+  const abstract = activeArticle.editorialAbstract ?? synthesizeEditorialAbstract(activeArticle);
+  const fullArticleText = (activeArticle.articleBody && activeArticle.articleBody.trim().length > 20)
+    ? activeArticle.articleBody.trim()
+    : (activeArticle.feedText || activeArticle.body || '').trim();
+  const originalUrl = activeArticle.canonicalUrl || activeArticle.sourceReferences?.[0]?.originalUrl;
+  const isExcerpt = activeArticle.evidenceTier === 'publisher_excerpt' || activeArticle.evidenceTier === 'metadata_only';
+  const isThinEvidence = activeArticle.evidenceTier === 'metadata_only' || fullArticleText.length < 180;
   const hasAuthenticReaderImage = Boolean(
-    selectedArticle.imageUrl &&
-      selectedArticle.hasAuthenticImage !== false &&
-      !selectedArticle.imageUrl.includes('images.unsplash.com')
+    activeArticle.imageUrl &&
+      activeArticle.hasAuthenticImage !== false &&
+      !activeArticle.imageUrl.includes('images.unsplash.com')
   );
-  const provenanceLabel = formatVerifiedProvenanceLabel(selectedArticle);
+  const provenanceLabel = formatVerifiedProvenanceLabel(activeArticle);
+
+  const validKeyInsight = hasSubstantiveEditorialSection(activeArticle.keyInsight, 10)
+    ? activeArticle.keyInsight
+    : undefined;
+  const rawTransfer = activeArticle.didacticTransfer || activeArticle.didacticSeed;
+  const validDidacticTransfer = hasSubstantiveEditorialSection(rawTransfer, 35)
+    ? rawTransfer
+    : undefined;
+  const rawCounterPerspective =
+    activeArticle.perspectiveDetails?.counterPerspective || activeArticle.deepeningOptions?.counterArgument;
+  const validCounterPerspective = hasSubstantiveEditorialSection(rawCounterPerspective, 35)
+    ? rawCounterPerspective
+    : undefined;
+  const validEvergreenContext = hasSubstantiveEditorialSection(activeArticle.evergreenContext, 35)
+    ? activeArticle.evergreenContext
+    : undefined;
 
   // Magazine Font sizing calculations: generous leading & golden measure
   const fontPref = profile.readingPreferences.fontSize;
@@ -1007,9 +1068,11 @@ export const ReaderScreen: React.FC = () => {
                         REDAKTIONELLES ATMEN-ABSTRACT
                       </Text>
                     </View>
-                    <Text style={[styles.abstractReadingEstimate, { color: colors.textMuted }]}>
-                      Kompakte Orientierung & Kern-Synthese
-                    </Text>
+                    <View style={[styles.synthesisTypeBadge, { backgroundColor: isAiSynthesized ? colors.accentSubtle : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                      <Text style={[styles.synthesisTypeBadgeText, { color: isAiSynthesized ? colors.accent : colors.textSecondary, fontWeight: '700' }]}>
+                        {isAiSynthesized ? '🤖 KI-Synthese' : '📄 Originalauszug / Lokale Extraktion'}
+                      </Text>
+                    </View>
                   </View>
 
                   {abstract.overview ? (
@@ -1207,34 +1270,34 @@ export const ReaderScreen: React.FC = () => {
                   </View>
                 </View>
 
-                {/* 3.1 Konkrete Kernaussage */}
-                {selectedArticle.keyInsight && (
+                {/* 3.1 Konkrete Kernaussage (nur wenn substantiell & ohne Boilerplate) */}
+                {validKeyInsight && (
                   <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                     <View style={styles.networkCardBadgeRow}>
                       <Text style={{ fontSize: 13, marginRight: 5 }}>💡</Text>
                       <Text style={[styles.networkCardLabel, { color: colors.accent }]}>Inhaltlicher Kernpunkt</Text>
                     </View>
                     <Text style={[styles.networkCardText, { color: colors.textPrimary }]}>
-                      {selectedArticle.keyInsight}
+                      {validKeyInsight}
                     </Text>
                   </View>
                 )}
 
-                {/* 3.2 Lehr- & Praxis-Transfer (wenn konkret vorhanden) */}
-                {isFeatureEnabled(profile, 'didactic_transfer') && (selectedArticle.didacticTransfer || selectedArticle.didacticSeed) && (
+                {/* 3.2 Lehr- & Praxis-Transfer (nur wenn konkret >= 35 Wörter vorhanden) */}
+                {isFeatureEnabled(profile, 'didactic_transfer') && validDidacticTransfer && (
                   <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: '#10B98140', borderLeftColor: '#10B981', borderLeftWidth: 3 }]}>
                     <View style={styles.networkCardBadgeRow}>
                       <Text style={{ fontSize: 13, marginRight: 5 }}>🏫</Text>
                       <Text style={[styles.networkCardLabel, { color: '#10B981' }]}>Praxis- & Unterrichts-Transfer</Text>
                     </View>
                     <Text style={[styles.networkCardText, { color: colors.textSecondary }]}>
-                      {selectedArticle.didacticTransfer || selectedArticle.didacticSeed}
+                      {validDidacticTransfer}
                     </Text>
                   </View>
                 )}
 
-                {/* 3.3 Konkrete Gegenperspektive (nur wenn am Beitrag hinterlegt) */}
-                {(selectedArticle.perspectiveDetails?.counterPerspective || selectedArticle.deepeningOptions?.counterArgument) && (
+                {/* 3.3 Konkrete Gegenperspektive (nur wenn substantiell >= 35 Wörter hinterlegt) */}
+                {validCounterPerspective && (
                   <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: '#8B5CF640', borderLeftColor: '#8B5CF6', borderLeftWidth: 3 }]}>
                     <View style={styles.networkCardBadgeRow}>
                       <View style={styles.counterBadgePill}>
@@ -1243,20 +1306,20 @@ export const ReaderScreen: React.FC = () => {
                       </View>
                     </View>
                     <Text style={[styles.networkCardText, { color: colors.textSecondary }]}>
-                      {selectedArticle.perspectiveDetails?.counterPerspective || selectedArticle.deepeningOptions?.counterArgument}
+                      {validCounterPerspective}
                     </Text>
                   </View>
                 )}
 
-                {/* 3.4 Zeitloser Klassiker-Verweis (nur bei echter inhaltlicher Übereinstimmung) */}
-                {selectedArticle.evergreenContext && (
+                {/* 3.4 Zeitloser Klassiker-Verweis (nur bei echter inhaltlicher Übereinstimmung >= 35 Wörter) */}
+                {validEvergreenContext && (
                   <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: '#D9770640', borderLeftColor: '#D97706', borderLeftWidth: 3 }]}>
                     <View style={styles.networkCardBadgeRow}>
                       <Text style={{ fontSize: 13, marginRight: 5 }}>🏛</Text>
                       <Text style={[styles.networkCardLabel, { color: '#D97706' }]}>Inhaltlich verwandter Klassiker</Text>
                     </View>
                     <Text style={[styles.networkCardText, { color: colors.textSecondary }]}>
-                      {selectedArticle.evergreenContext}
+                      {validEvergreenContext}
                     </Text>
                   </View>
                 )}
@@ -1354,7 +1417,7 @@ export const ReaderScreen: React.FC = () => {
               {isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
                 <View style={{ marginBottom: spacing.lg }}>
                   <QuizCheckpointCard
-                    questions={[selectedArticle.quiz || generateQuizForArticle(selectedArticle)]}
+                    questions={[aiQuizOverride || activeArticle.quiz || generateQuizForArticle(activeArticle)]}
                     title="Wissen testen: Kernverständnis"
                     subtitle="Überprüfe deine Erkenntnis aus diesem Beitrag mit einer schnellen Frage"
                   />
@@ -1363,7 +1426,7 @@ export const ReaderScreen: React.FC = () => {
 
               {/* Socratic Sparring Options */}
               {isFeatureEnabled(profile, 'socratic_sparring') && (
-                <DeepeningCard options={selectedArticle.deepeningOptions} />
+                <DeepeningCard options={activeArticle.deepeningOptions} />
               )}
 
               {/* Dialectic Discussion Thread */}
