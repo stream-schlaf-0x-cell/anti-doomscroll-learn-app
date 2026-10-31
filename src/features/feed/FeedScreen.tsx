@@ -83,6 +83,10 @@ function formatCuratedAge(isoString: string): string {
   }
 }
 
+// Inline feed quiz checkpoints disabled by default: reading starts immediately with clean article cards,
+// while deep quizzes remain accessible on click inside ReaderScreen.
+const ENABLE_INLINE_FEED_QUIZZES = false;
+
 export const FeedScreen: React.FC = () => {
   const {
     dailyEdition,
@@ -1754,8 +1758,8 @@ export const FeedScreen: React.FC = () => {
                           onDismissItem={handleDismissCard}
                         />
 
-                        {/* Gentle Bloomscrolling Quiz Checkpoint every 9 cards (8-10 items) */}
-                        {(index + 1) % 9 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
+                        {/* Gentle Bloomscrolling Quiz Checkpoint every 9 cards (Off by default in feed, available in Reader) */}
+                        {ENABLE_INLINE_FEED_QUIZZES && (index + 1) % 9 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
                           <View style={{ marginVertical: spacing.md }}>
                             <QuizCheckpointCard
                               questions={renderedInfiniteFreshItems
@@ -1806,8 +1810,8 @@ export const FeedScreen: React.FC = () => {
                                 onDismissItem={handleDismissCard}
                               />
 
-                              {/* Gentle Bloomscrolling Quiz Checkpoint every 9 cards (8-10 items) */}
-                              {(idx + 1) % 9 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
+                              {/* Gentle Bloomscrolling Quiz Checkpoint every 9 cards (Off by default in feed, available in Reader) */}
+                              {ENABLE_INLINE_FEED_QUIZZES && (idx + 1) % 9 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
                                 <View style={{ marginVertical: spacing.md }}>
                                   <QuizCheckpointCard
                                     questions={renderedInfiniteEvergreenItems
@@ -2537,7 +2541,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: spacing.pageHorizontal,
-    paddingTop: spacing.md,
+    paddingTop: 18,
     paddingBottom: spacing.xxl
   },
   mainLayoutWrapper: {

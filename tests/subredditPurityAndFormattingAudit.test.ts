@@ -207,4 +207,61 @@ describe('Subreddit Purity, Visual Art Gallery & Formatting Sanitizer Audit', ()
     assert.ok(!appTsx.includes('Tagesausgabe wird vorbereitet'));
     assert.ok(appTsx.includes('Stream wird kuratiert'));
   });
+
+  it('9. Short podcast / video teaser stub guard replaces stubs and strips sponsors', () => {
+    // Case A: Podcast stub with rich subsequent paragraphs
+    const richSnippet =
+      'Listen to the interview with Jay McTighe (transcript):\n\n' +
+      'Sponsored by Highfive and Mastering the Lesson Plan\n\n' +
+      'This page contains Bookshop.org links. When you make a purchase through these links, Cult of Pedagogy gets a small percentage of the sale at no extra cost to you. What’s the difference between Amazon and Bookshop.org?\n\n' +
+      'Imagine a basketball coach spending an entire season teaching players how to dribble, pass, and shoot, but never letting them play an actual game.\n\n' +
+      'When we want to find out what students have learned, a traditional test can tell us quite a bit.';
+
+    const cleanedBody = cleanArticleBodyFormatting(richSnippet, 'Rethinking Performance Assessment');
+    assert.ok(!cleanedBody.includes('Listen to the interview'));
+    assert.ok(!cleanedBody.includes('Sponsored by Highfive'));
+    assert.ok(cleanedBody.startsWith('Imagine a basketball coach'));
+
+    // Case B: Pure teaser stub without rich body (synthesized conceptual summary)
+    const baseItem: FeedItem = {
+      id: 'test-podcast-stub-001',
+      type: 'deep_dive',
+      format: 'concise_insight',
+      title: 'Listen to: The Future of Didactics in Digital Classrooms',
+      subtitle: 'Listen to the interview with Dr. Smith (transcript): ...',
+      feedText: 'Listen to the podcast episode (transcript): ...',
+      body: 'Listen to the interview with Dr. Smith (transcript): ...',
+      topics: ['german_didactics'],
+      primaryTopic: 'german_didactics',
+      publishedAt: '2026-10-31T10:00:00.000Z',
+      generatedAt: '2026-10-31T10:00:00.000Z',
+      sourceReferences: [{
+        publisher: 'Didaktik Podcast',
+        originalUrl: 'https://example.com/didaktik-podcast',
+        isVerified: true,
+        publicationTimestamp: '2026-10-31T10:00:00.000Z',
+        retrievalTimestamp: '2026-10-31T10:00:00.000Z',
+        title: 'The Future of Didactics in Digital Classrooms'
+      }]
+    };
+
+    const sanitized = sanitizeCuratedFeedItem(baseItem);
+    assert.ok(!sanitized.feedText.includes('Listen to the podcast episode'));
+    assert.ok(sanitized.feedText.length >= 100);
+    assert.ok(sanitized.feedText.includes('Aufgabenkultur'));
+    assert.ok(!sanitized.subtitle.includes('Listen to the interview'));
+    assert.ok(sanitized.keyInsight.length >= 15);
+  });
+
+  it('10. PWA viewport-fit=cover, 100dvh reset and App.tsx safe-area anchoring prevent iOS dead space', () => {
+    const indexHtml = fs.readFileSync(path.resolve(__dirname, '../public/index.html'), 'utf8');
+    assert.ok(indexHtml.includes('viewport-fit=cover'), 'index.html must have viewport-fit=cover');
+    assert.ok(indexHtml.includes('100dvh'), 'index.html must use 100dvh for standalone PWA');
+    assert.ok(indexHtml.includes('-webkit-fill-available'), 'index.html must support -webkit-fill-available');
+
+    const appTsx = fs.readFileSync(path.resolve(__dirname, '../App.tsx'), 'utf8');
+    assert.ok(appTsx.includes("bottom: 'off'"), "SafeAreaView must set bottom: 'off' to prevent double insets");
+    assert.ok(appTsx.includes("paddingBottom: Platform.OS === 'web'"));
+    assert.ok(appTsx.includes("Math.max(insets.bottom, 10)"));
+  });
 });

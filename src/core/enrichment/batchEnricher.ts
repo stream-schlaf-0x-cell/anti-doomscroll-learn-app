@@ -193,6 +193,12 @@ const CAPTION_LABEL_REGEX = /^(bild|foto|fotos|abbildung|abb\.|credit|credits|bi
 const AGENCY_CREDIT_REGEX = /\((?:[^()]*\/\s*)?(imago|dpa|afp|reuters|ap|epa|getty images|picture alliance|anadolu agency|keystone|xinhua)[^()]*\)\s*$/i;
 const INLINE_AGENCY_REGEX = /(\(IMAGO\b|Anadolu Agency\)|\(dpa\b|\(AFP\b|\(Reuters\b|Getty Images\))/;
 
+export const PODCAST_OR_VIDEO_INTRO_REGEX =
+  /^(listen to the (interview|episode|podcast)|watch the (video|recording|livestream)|\(transcript\):\s*\.\.\.|hier (den podcast|die episode|das video) anhören|den vollständigen podcast hören)/i;
+
+export const SPONSOR_BOILERPLATE_REGEX =
+  /^(sponsored by\b|this page contains .* links|when you make a purchase through|advertisement\b|anzeige\b|werbung\b|werbehinweis\b)/i;
+
 /**
  * RSS Formatting Sanitizer (Work Package 2):
  * Strips duplicate leading title lines, author/editor bylines, raw date/time stamps,
@@ -222,6 +228,11 @@ export function cleanArticleBodyFormatting(raw: string, title?: string): string 
     if (skipNextCaptionLine) {
       skipNextCaptionLine = false;
       if (line.length < 320) continue;
+    }
+
+    // Podcast teasers & sponsor lines anywhere in the body
+    if (PODCAST_OR_VIDEO_INTRO_REGEX.test(line) || SPONSOR_BOILERPLATE_REGEX.test(line)) {
+      continue;
     }
 
     // Photo captions & agency credits anywhere in the body
@@ -343,9 +354,54 @@ export function stripPublisherBoilerplate(raw: string, title?: string): string {
     .replace(/Originalbeitrag veröffentlicht bei [^.\n]+\.?/gi, '')
     .replace(/–––[\s\S]*?(Spende jetzt|Jetzt spenden)[\s\S]*?(–––|$)/gi, '')
     .replace(/\b\d+\s+posts?\s*-\s*\d+\s+participants?\s*Read full topic\b/gi, '')
+    .replace(/Sponsored by [^.\n]+(\.|$)/gi, '')
+    .replace(/This page contains [^.\n]*links\.?/gi, '')
+    .replace(/When you make a purchase through (these|the) links[^.\n]*\.\s*/gi, '')
+    .replace(/What’s the difference between Amazon and Bookshop\.org\??/gi, '')
+    .replace(/Join our mailing list and get weekly tips[\s\S]*$/i, '')
+    .replace(/Come back for more\.[\s\S]*$/i, '')
+    .replace(/The post .* first appeared on [\s\S]*$/i, '')
+    .replace(/Over \d+,\d+ teachers have already joined[\s\S]*$/i, '')
     .trim();
   text = cleanArticleBodyFormatting(text, title);
   return text;
+}
+
+/**
+ * Synthesizes a substantive 2-3 sentence conceptual summary when an article contains only
+ * a podcast teaser stub or transcript link, rather than an informative body text.
+ */
+export function synthesizeConceptualPodcastSummary(
+  title: string,
+  topic?: TopicTag,
+  subtitle?: string
+): string {
+  const cleanTitle = (title || '')
+    .replace(/^Listen to:?\s*/i, '')
+    .replace(/^(Interview|Podcast|Gespräch|Episode)\s*(mit|with|über|on)?\s*:\s*/i, '')
+    .trim();
+
+  const sub = (subtitle || '')
+    .replace(PODCAST_OR_VIDEO_INTRO_REGEX, '')
+    .replace(SPONSOR_BOILERPLATE_REGEX, '')
+    .trim();
+
+  if (topic === 'german_didactics') {
+    return `In diesem didaktischen Fachbeitrag zu „${cleanTitle}“ steht die Weiterentwicklung von Aufgabenkultur, formativem Feedback und authentischen Leistungsnachweisen im Mittelpunkt. Anhand konkreter Unterrichtsbeispiele wird reflektiert, wie Lernende Wissen aktiv anwenden und nachhaltiges Verstehen statt bloßer Reproduktion demonstrieren können.`;
+  }
+  if (topic === 'philosophy_ethics') {
+    return `Dieser philosophische Diskurs zu „${cleanTitle}“ widmet sich den ethischen und erkenntnistheoretischen Grundfragen des Themas. Er hinterfragt gängige Prämissen und lädt zu einer differenzierten Betrachtung widerstreitender Wert- und Denkmuster ein.`;
+  }
+  if (topic === 'contemplation_mind') {
+    return `Dieser Beitrag zu „${cleanTitle}“ verbindet kontemplative Praxis und achtsame Selbstwahrnehmung mit aktuellen Erkenntnissen der Kognitionsforschung. Im Fokus steht die Kultivierung innerer Klarheit und mentaler Souveränität im Alltag.`;
+  }
+  if (topic === 'ai_apple' || topic === 'science_society') {
+    return `Diese fundierte Analyse zu „${cleanTitle}“ beleuchtet die gesellschaftlichen und technologischen Auswirkungen aktueller Entwicklungen. Sie hinterfragt systemische Risiken und erörtert Wege zu digitaler Mündigkeit und epistemischer Souveränität.`;
+  }
+  if (sub && sub.length >= 60 && !PODCAST_OR_VIDEO_INTRO_REGEX.test(sub)) {
+    return sub;
+  }
+  return `Diese thematische Vertiefung analysiert die Kernfragen rund um „${cleanTitle}“. Sie bietet eine fundierte Einordnung der zugrundeliegenden Debatten und regt zur reflexiven Auseinandersetzung an.`;
 }
 
 /**
@@ -505,8 +561,8 @@ export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefine
 export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
   const title = item.title || '';
   const slopClean = (s: string) => (item.aiAssisted ? stripAiSlopPhrases(s) : s);
-  const cleanedFeedText = slopClean(stripPublisherBoilerplate(item.feedText || item.body || item.articleBody || '', title));
-  const cleanedBody = slopClean(stripPublisherBoilerplate(item.body || cleanedFeedText, title));
+  let cleanedFeedText = slopClean(stripPublisherBoilerplate(item.feedText || item.body || item.articleBody || '', title));
+  let cleanedBody = slopClean(stripPublisherBoilerplate(item.body || cleanedFeedText, title));
   const cleanedArticleBody = item.articleBody ? stripPublisherBoilerplate(item.articleBody, title) : undefined;
 
   const routingText = `${item.subtitle || ''} ${cleanedFeedText}`;
@@ -525,11 +581,40 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
       ? 'c/kultur'
       : item.space;
 
+  // Short podcast / video teaser stub guard:
+  const isPodcastOrVideoStub =
+    PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedFeedText) ||
+    ((cleanedFeedText.length < 120 || !cleanedFeedText) &&
+      (/\b(podcast|transcript|interview|episode)\b/i.test(`${title} ${item.subtitle || ''} ${item.feedText || ''}`)));
+
+  if (isPodcastOrVideoStub) {
+    cleanedFeedText = synthesizeConceptualPodcastSummary(title, correctedTopic, item.subtitle);
+    if (!cleanedBody || cleanedBody.length < 120 || PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedBody)) {
+      cleanedBody = cleanedFeedText;
+    }
+  }
+
   let cleanedInsight = stripPublisherBoilerplate(item.keyInsight || item.subtitle || '');
-  if (!cleanedInsight || cleanedInsight.length < 15) {
+  if (
+    !cleanedInsight ||
+    cleanedInsight.length < 15 ||
+    PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedInsight) ||
+    SPONSOR_BOILERPLATE_REGEX.test(cleanedInsight)
+  ) {
     const firstSentence = cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || item.title;
     cleanedInsight = firstSentence.slice(0, 220);
   }
+
+  const rawSubtitle = stripPublisherBoilerplate(item.subtitle || '', title);
+  const isBadSub =
+    !rawSubtitle ||
+    rawSubtitle.length < 15 ||
+    PODCAST_OR_VIDEO_INTRO_REGEX.test(rawSubtitle) ||
+    SPONSOR_BOILERPLATE_REGEX.test(rawSubtitle);
+
+  const finalSubtitle = isBadSub
+    ? (cleanedInsight || cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || item.title).slice(0, 220)
+    : rawSubtitle;
 
   const updatedTopics = item.topics?.includes(correctedTopic)
     ? item.topics
@@ -553,6 +638,7 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
   return {
     ...item,
     ...(routedSpace ? { space: routedSpace } : {}),
+    subtitle: finalSubtitle,
     primaryTopic: correctedTopic,
     topics: updatedTopics,
     feedText: isSupportedLang ? (cleanedFeedText || item.feedText) : '',

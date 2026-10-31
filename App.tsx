@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator, useWindowDimensions, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -99,8 +99,14 @@ const MainNavigator: React.FC = () => {
 
   return (
     <SafeAreaView
-      style={[styles.mainSafeArea, { backgroundColor: colors.background }]}
-      edges={['top', 'left', 'right']}
+      style={[
+        styles.mainSafeArea,
+        {
+          backgroundColor: colors.background,
+          paddingBottom: 0
+        }
+      ]}
+      edges={{ top: 'additive', left: 'additive', right: 'additive', bottom: 'off' }}
     >
       <StatusBar style={isDark ? 'light' : 'dark'} />
 
@@ -333,7 +339,9 @@ const MainNavigator: React.FC = () => {
             {
               backgroundColor: colors.surface,
               borderTopColor: colors.borderSubtle,
-              paddingBottom: Math.max(insets.bottom, 10)
+              paddingBottom: Platform.OS === 'web'
+                ? 14
+                : Math.max(insets.bottom, 10)
             }
           ]}
         >
@@ -623,7 +631,9 @@ const styles = StyleSheet.create({
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.05,
-    shadowRadius: 4
+    shadowRadius: 4,
+    height: 'auto',
+    width: '100%'
   },
   tabBarInner: {
     flexDirection: 'row',

@@ -28,6 +28,7 @@ function cleanTextFields(item: FeedItem): FeedItem {
   const title = item.title || '';
   return {
     ...item,
+    subtitle: item.subtitle ? cleanArticleBodyFormatting(item.subtitle, title) : item.subtitle,
     feedText: item.feedText ? cleanArticleBodyFormatting(item.feedText, title) : item.feedText,
     body: item.body ? cleanArticleBodyFormatting(item.body, title) : item.body,
     ...(item.articleBody ? { articleBody: cleanArticleBodyFormatting(item.articleBody, title) } : {})
