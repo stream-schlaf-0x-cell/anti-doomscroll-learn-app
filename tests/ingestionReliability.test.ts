@@ -6,6 +6,7 @@ import { SnapshotLoader } from '../src/core/feed/SnapshotLoader';
 import { ContinuousLiveNewsService } from '../src/core/data/continuousLiveNewsService';
 import { FeedItemSchema } from '../src/core/domain/types';
 import { REAL_KNOWLEDGE_VAULT } from '../src/core/data/realKnowledgeVault';
+import { STARTUP_SNAPSHOT_MAX_ITEMS } from '../src/core/feed/snapshotPayload';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -102,15 +103,17 @@ describe('Ingestion reliability regressions (no network)', () => {
 
 describe('Bounded snapshot delivery', () => {
   it('limits startup cards while retaining publisher diversity and complete reader bodies', async () => {
-    const items = Array.from({ length: 230 }, (_, index) => ({
-      ...sampleItem(), id: `snapshot-${index}`, canonicalUrl: `https://publisher-${index % 115}.example/article-${index}`,
-      sourceDomain: `publisher-${index % 115}.example`, articleBody: `Complete body ${index}: ${'A source paragraph. '.repeat(30)}`,
-      sourceReferences: [{ ...sampleItem().sourceReferences[0], publisher: `Publisher ${index % 115}` }]
+    const totalCount = STARTUP_SNAPSHOT_MAX_ITEMS + 30;
+    const publisherCount = Math.floor(totalCount / 2);
+    const items = Array.from({ length: totalCount }, (_, index) => ({
+      ...sampleItem(), id: `snapshot-${index}`, canonicalUrl: `https://publisher-${index % publisherCount}.example/article-${index}`,
+      sourceDomain: `publisher-${index % publisherCount}.example`, articleBody: `Complete body ${index}: ${'A source paragraph. '.repeat(30)}`,
+      sourceReferences: [{ ...sampleItem().sourceReferences[0], publisher: `Publisher ${index % publisherCount}` }]
     }));
     globalThis.fetch = async () => new Response(JSON.stringify({ generatedAt: '2024-01-03T06:00:00.000Z', items }));
     const result = await new SnapshotLoader(createRepository()).loadSnapshot('https://example.org/large.json');
-    assert.equal(result.items.length, 200);
-    assert.equal(new Set(result.items.map(item => item.sourceDomain)).size, 115);
+    assert.equal(result.items.length, STARTUP_SNAPSHOT_MAX_ITEMS);
+    assert.equal(new Set(result.items.map(item => item.sourceDomain)).size, publisherCount);
     for (const item of result.items) assert.equal(item.articleBody, items.find(candidate => candidate.id === item.id)?.articleBody);
   });
 });
@@ -135,7 +138,7 @@ describe('Snapshot provenance and payload budget', () => {
     globalThis.fetch = async () => new Response(JSON.stringify({ generatedAt: '2024-01-03T06:00:00.000Z', items }));
     const result = await new SnapshotLoader(createRepository()).loadSnapshot('https://example.org/huge.json');
     assert.ok(result.items.length > 0);
-    assert.ok(Buffer.byteLength(JSON.stringify(result.items), 'utf8') < 1_500_000);
+    assert.ok(Buffer.byteLength(JSON.stringify(result.items), 'utf8') < 3_500_000);
     assert.ok(result.items.length < 10);
     for (const item of result.items) assert.equal(item.articleBody, '🌍'.repeat(100_000));
   });

@@ -23,7 +23,13 @@ import { typography, radius, spacing } from '../theme';
 import { LinkPreviewModal } from './LinkPreviewModal';
 import { MusicTrackCard } from './MusicTrackCard';
 import { CURATED_SOUND_MASTERS, MusicTrackItem } from '../../core/music/musicRecommendationService';
-import { optimizeImageUrl, upgradeImageResolutionUrl, assessEditorialImage } from '../../core/utils/imageQuality';
+import {
+  optimizeImageUrl,
+  upgradeImageResolutionUrl,
+  assessEditorialImage,
+  isTrustedMuseumOrArtDomain
+} from '../../core/utils/imageQuality';
+import { detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { SubchannelBadge } from './SubchannelBadge';
 
@@ -205,8 +211,14 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   }, [item]);
 
   // Determine whether this card is a 20-second quick card (readable in full right on the card)
-  const isArtCard = item.format === 'art_showcase' || item.space === 'c/kunst_galerie' || Boolean(item.artMeta);
   const isMemeCard = item.format === 'meme' || item.space === 'c/memes' || item.primaryTopic === 'memes_satire' || Boolean(item.memeMeta);
+  // Universal archetype detection: any visual_gallery channel renders artwork-first (never hardcoded to one channel)
+  const isVisualGalleryArchetype =
+    !isMemeCard &&
+    Boolean(item.imageUrl) &&
+    detectChannelArchetype({ handle: spaceName, primaryTopic: item.primaryTopic }) === 'visual_gallery';
+  const isArtCard = item.format === 'art_showcase' || isVisualGalleryArchetype || Boolean(item.artMeta);
+  const isTrustedArtImage = isTrustedMuseumOrArtDomain(item.artMeta?.highResImageUrl || item.imageUrl);
   const isQuick20sCard =
     !isArtCard &&
     (isMemeCard ||
@@ -261,7 +273,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
       activeVisualUri,
       (w, h) => {
         if (!cancelled && w > 0 && h > 0) {
-          if (!isMemeCard && !isArtCard && (w < 380 || h < 200)) {
+          if (!isMemeCard && !isArtCard && !isTrustedArtImage && (w < 380 || h < 200)) {
             setImageRejected(true);
             return;
           }
@@ -275,7 +287,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [activeVisualUri, isMemeCard, isArtCard]);
+  }, [activeVisualUri, isMemeCard, isArtCard, isTrustedArtImage]);
 
   // Defensive check: hide subtitle if feedText, title, or metadata already says the same thing
   const isSubtitleRedundant = useMemo(() => {
@@ -477,7 +489,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             onLoad={(e) => {
               const { width: loadedW, height: loadedH } = e.nativeEvent.source;
               if (loadedW > 0 && loadedH > 0) {
-                if (!isMemeCard && !isArtCard && (loadedW < 380 || loadedH < 200)) {
+                if (!isMemeCard && !isArtCard && !isTrustedArtImage && (loadedW < 380 || loadedH < 200)) {
                   setImageRejected(true);
                   return;
                 }
@@ -927,6 +939,7 @@ const styles = StyleSheet.create({
   },
   artImageWrapper: {
     width: '100%',
+    minHeight: 280,
     position: 'relative',
     backgroundColor: '#0F172A'
   },

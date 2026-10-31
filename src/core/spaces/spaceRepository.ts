@@ -1,4 +1,4 @@
-import { TopicTag } from '../domain/types';
+import { TopicTag, TOPIC_SPACE_MAP } from '../domain/types';
 import { appStorage, AtemStorage } from '../data/storage';
 import { feedRepository } from '../data/feedRepository';
 
@@ -205,8 +205,38 @@ export const DEFAULT_SUBCHANNELS: Subchannel[] = [
 export function normalizeSpaceHandle(raw: string): string {
   const trimmed = (raw || '').trim().toLowerCase();
   const withoutPrefix = trimmed.replace(/^c\//, '');
-  const clean = withoutPrefix.replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+  const clean = withoutPrefix
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
   return `c/${clean || 'channel'}`;
+}
+
+const LEGACY_SPACE_ALIASES: Record<string, string> = {
+  'c/visivle_learning': 'c/visible_learning',
+  'c/singularity': 'c/acceleration',
+  'c/philosophie': 'c/dialektik',
+  'c/klang': 'c/synth_alchemie',
+  'c/buecher': 'c/books',
+  'c/hebel': 'c/chancen',
+  'c/wissenschaft': 'c/serendipity'
+};
+
+/**
+ * Canonical space handle for strict subchannel matching (normalizes legacy aliases + typos).
+ */
+export function canonicalSpaceHandle(raw: string): string {
+  const normalized = normalizeSpaceHandle(raw);
+  return LEGACY_SPACE_ALIASES[normalized] || normalized;
+}
+
+/**
+ * 100% Subchannel Purity: resolves the effective channel handle of an item.
+ * An explicit `item.space` always wins; otherwise the topic's default channel applies.
+ */
+export function resolveItemSpaceHandle(item: { space?: string; primaryTopic: TopicTag }): string | null {
+  if (item.space && item.space.trim()) return canonicalSpaceHandle(item.space);
+  const topicSpace = TOPIC_SPACE_MAP[item.primaryTopic]?.space;
+  return topicSpace ? canonicalSpaceHandle(topicSpace) : null;
 }
 
 export class SpaceRepository {

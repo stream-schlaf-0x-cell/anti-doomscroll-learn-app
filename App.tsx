@@ -45,7 +45,7 @@ const MainNavigator: React.FC = () => {
   if (startupState.status === 'loading') {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
-        <AtmenLogo size={44} isDark={isDark} variant="full" showSubtitle={true} subtitleText="Tagesausgabe wird vorbereitet…" style={{ marginBottom: 20 }} />
+        <AtmenLogo size={44} isDark={isDark} variant="full" showSubtitle={true} subtitleText="Stream wird kuratiert …" style={{ marginBottom: 20 }} />
         <ActivityIndicator size="small" color={colors.accent} />
       </View>
     );

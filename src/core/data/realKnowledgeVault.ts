@@ -1000,7 +1000,7 @@ In einer Welt permanenter Reizüberflutung fordert Friedrichs Meisterwerk das Ge
     contentOrigin: 'live_ingested',
     contentHash: 'vault-art-friedrich-1818',
     canonicalUrl: 'https://www.hamburger-kunsthalle.de/sammlung-online/caspar-david-friedrich/wanderer-ueber-dem-nebelmeer',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b9/Caspar_David_Friedrich_-_Wanderer_%C3%BCber_dem_Nebelmeer.jpg/1200px-Caspar_David_Friedrich_-_Wanderer_%C3%BCber_dem_Nebelmeer.jpg',
+    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b9/Caspar_David_Friedrich_-_Wanderer_%C3%BCber_dem_Nebelmeer.jpg/800px-Caspar_David_Friedrich_-_Wanderer_%C3%BCber_dem_Nebelmeer.jpg',
     space: 'c/kunst_galerie',
     flair: '🎨 Romantik',
     isEvergreenGem: true,
@@ -1017,7 +1017,7 @@ In einer Welt permanenter Reizüberflutung fordert Friedrichs Meisterwerk das Ge
       year: '1818',
       medium: 'Öl auf Leinwand',
       museum: 'Hamburger Kunsthalle',
-      highResImageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b9/Caspar_David_Friedrich_-_Wanderer_%C3%BCber_dem_Nebelmeer.jpg/1200px-Caspar_David_Friedrich_-_Wanderer_%C3%BCber_dem_Nebelmeer.jpg',
+      highResImageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b9/Caspar_David_Friedrich_-_Wanderer_%C3%BCber_dem_Nebelmeer.jpg/800px-Caspar_David_Friedrich_-_Wanderer_%C3%BCber_dem_Nebelmeer.jpg',
       styleMovement: 'Deutsche Romantik',
       aestheticImpulse: 'Der Rücken des Wanderers wendet sich uns zu: Nicht das Gesicht des Betrachters zählt, sondern der Blick in die unermessliche Tiefe der Natur. Die Landschaft wird zum Spiegel des menschlichen Innenlebens.'
     },
@@ -1074,7 +1074,7 @@ Mathematiker stellten fest: Die kleineren Schaumkronen wiederholen exakt die For
     contentOrigin: 'live_ingested',
     contentHash: 'vault-art-hokusai-1831',
     canonicalUrl: 'https://www.artic.edu/artworks/24645/under-the-wave-off-kanagawa-kanagawa-oki-nami-ura-from-the-series-thirty-six-views-of-mount-fuji-fugaku-sanjurokkei',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/Great_Wave_off_Kanagawa2.jpg/1200px-Great_Wave_off_Kanagawa2.jpg',
+    imageUrl: 'https://www.artic.edu/iiif/2/b3974542-b9b4-7568-fc4b-966738f61d78/full/843,/0/default.jpg',
     space: 'c/kunst_galerie',
     flair: '🎨 Ukiyo-e',
     isEvergreenGem: true,
@@ -1090,7 +1090,7 @@ Mathematiker stellten fest: Die kleineren Schaumkronen wiederholen exakt die For
       year: 'ca. 1831',
       medium: 'Farbholzschnitt (Ukiyo-e)',
       museum: 'Art Institute of Chicago',
-      highResImageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/Great_Wave_off_Kanagawa2.jpg/1200px-Great_Wave_off_Kanagawa2.jpg',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/b3974542-b9b4-7568-fc4b-966738f61d78/full/843,/0/default.jpg',
       styleMovement: 'Japanische Holzschnittkunst',
       aestheticImpulse: 'Die Welle friert den Augenblick vor dem Brechen ein: Ihre Krallen greifen nach den Booten, während der heilige Berg Fuji unerschütterlich im Zentrum ruht. Vergänglichkeit und Ewigkeit in einem Schnitt.'
     },
@@ -1144,7 +1144,7 @@ Scharfe Linien schneiden wie Geigenbögen durch sanfte Farbnebel. Die Kompositio
     contentOrigin: 'live_ingested',
     contentHash: 'vault-art-kandinsky-1923',
     canonicalUrl: 'https://www.guggenheim.org/artwork/1924',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Vassily_Kandinsky%2C_1923_-_Composition_8%2C_huile_sur_toile%2C_140_x_201_cm%2C_Guggenheim_Museum%2C_New_York.jpg/1200px-Vassily_Kandinsky%2C_1923_-_Composition_8%2C_huile_sur_toile%2C_140_x_201_cm%2C_Guggenheim_Museum%2C_New_York.jpg',
+    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Vassily_Kandinsky%2C_1923_-_Composition_8%2C_huile_sur_toile%2C_140_x_201_cm%2C_Guggenheim_Museum%2C_New_York.jpg/800px-Vassily_Kandinsky%2C_1923_-_Composition_8%2C_huile_sur_toile%2C_140_x_201_cm%2C_Guggenheim_Museum%2C_New_York.jpg',
     space: 'c/kunst_galerie',
     flair: '🎨 Bauhaus',
     isEvergreenGem: true,
@@ -1160,7 +1160,7 @@ Scharfe Linien schneiden wie Geigenbögen durch sanfte Farbnebel. Die Kompositio
       year: '1923',
       medium: 'Öl auf Leinwand',
       museum: 'Solomon R. Guggenheim Museum',
-      highResImageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Vassily_Kandinsky%2C_1923_-_Composition_8%2C_huile_sur_toile%2C_140_x_201_cm%2C_Guggenheim_Museum%2C_New_York.jpg/1200px-Vassily_Kandinsky%2C_1923_-_Composition_8%2C_huile_sur_toile%2C_140_x_201_cm%2C_Guggenheim_Museum%2C_New_York.jpg',
+      highResImageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Vassily_Kandinsky%2C_1923_-_Composition_8%2C_huile_sur_toile%2C_140_x_201_cm%2C_Guggenheim_Museum%2C_New_York.jpg/800px-Vassily_Kandinsky%2C_1923_-_Composition_8%2C_huile_sur_toile%2C_140_x_201_cm%2C_Guggenheim_Museum%2C_New_York.jpg',
       styleMovement: 'Abstrakte Kunst & Bauhaus',
       aestheticImpulse: 'Kreise, Dreiecke und Vektoren treten in einen musikalischen Kontrapunkt: Kandinsky übersetzt synästhetische Klänge in Farbspannungen. Formen sprechen direkt zur Seele, ohne die sichtbare Welt nachzuahmen.'
     },
@@ -1214,7 +1214,7 @@ Die Finger des Mannes berühren fast die Hand der rothaarigen Frau – doch die 
     contentOrigin: 'live_ingested',
     contentHash: 'vault-art-hopper-1942',
     canonicalUrl: 'https://www.artic.edu/artworks/111628/nighthawks',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/Edward_Hopper_-_Nighthawks_-_Google_Art_Project.jpg/1200px-Edward_Hopper_-_Nighthawks_-_Google_Art_Project.jpg',
+    imageUrl: 'https://www.artic.edu/iiif/2/831a05de-d3f6-f4fa-a460-23008dd58dda/full/843,/0/default.jpg',
     space: 'c/kunst_galerie',
     flair: '🎨 Realismus',
     isEvergreenGem: true,
@@ -1230,7 +1230,7 @@ Die Finger des Mannes berühren fast die Hand der rothaarigen Frau – doch die 
       year: '1942',
       medium: 'Öl auf Leinwand',
       museum: 'Art Institute of Chicago',
-      highResImageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/Edward_Hopper_-_Nighthawks_-_Google_Art_Project.jpg/1200px-Edward_Hopper_-_Nighthawks_-_Google_Art_Project.jpg',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/831a05de-d3f6-f4fa-a460-23008dd58dda/full/843,/0/default.jpg',
       styleMovement: 'Amerikanischer Realismus',
       aestheticImpulse: 'Vier Fremde an einer Bar, eingeschlossen in einer gläsernen Ecke ohne sichtbare Ausgangstür. Hoppers Licht schneidet durch die Dunkelheit und seziert die moderne Isolation der Metropole.'
     },
@@ -1284,7 +1284,7 @@ Gropius wollte keine Paläste für Fürsten bauen, sondern lichtdurchflutete Wer
     contentOrigin: 'live_ingested',
     contentHash: 'vault-art-bauhaus-1926',
     canonicalUrl: 'https://www.bauhaus-dessau.de/de/architektur/bauhausgebaeude.html',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Bauhaus_Dessau_Werkstattfluegel_2012.jpg/1200px-Bauhaus_Dessau_Werkstattfluegel_2012.jpg',
+    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Bauhaus_Dessau_Werkstattfluegel_2012.jpg/800px-Bauhaus_Dessau_Werkstattfluegel_2012.jpg',
     space: 'c/kunst_galerie',
     flair: '🎨 Architektur',
     isEvergreenGem: true,
@@ -1300,7 +1300,7 @@ Gropius wollte keine Paläste für Fürsten bauen, sondern lichtdurchflutete Wer
       year: '1926',
       medium: 'Architektur (Stahl, Glas, Beton)',
       museum: 'Bauhaus Dessau / Stiftung Bauhaus',
-      highResImageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Bauhaus_Dessau_Werkstattfluegel_2012.jpg/1200px-Bauhaus_Dessau_Werkstattfluegel_2012.jpg',
+      highResImageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Bauhaus_Dessau_Werkstattfluegel_2012.jpg/800px-Bauhaus_Dessau_Werkstattfluegel_2012.jpg',
       styleMovement: 'Klassische Moderne / Neues Bauen',
       aestheticImpulse: 'Entmaterialisierung der Wand: Indem Glas und Stahl die tragende Funktion übernehmen, wird das Innere des Gebäudes nach außen gekehrt. Form folgt Funktion – eine Revolution des Raumbewusstseins.'
     },
@@ -1354,7 +1354,7 @@ Euklidische Geometrie kennt nur glatte Kreise, Kegel und Dreiecke. Doch Wolken s
     contentOrigin: 'live_ingested',
     contentHash: 'vault-art-mandelbrot-1980',
     canonicalUrl: 'https://mathshistory.st-andrews.ac.uk/Biographies/Mandelbrot/',
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/21/Mandel_zoom_00_mandelbrot_set.jpg/1200px-Mandel_zoom_00_mandelbrot_set.jpg',
+    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/21/Mandel_zoom_00_mandelbrot_set.jpg/800px-Mandel_zoom_00_mandelbrot_set.jpg',
     space: 'c/kunst_galerie',
     flair: '🎨 Fraktal-Ästhetik',
     isEvergreenGem: true,
@@ -1370,9 +1370,1129 @@ Euklidische Geometrie kennt nur glatte Kreise, Kegel und Dreiecke. Doch Wolken s
       year: '1980',
       medium: 'Algorithmische Computergrafik',
       museum: 'Science History & Mathematics Museum',
-      highResImageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/21/Mandel_zoom_00_mandelbrot_set.jpg/1200px-Mandel_zoom_00_mandelbrot_set.jpg',
+      highResImageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/21/Mandel_zoom_00_mandelbrot_set.jpg/800px-Mandel_zoom_00_mandelbrot_set.jpg',
       styleMovement: 'Generative Geometrie & Chaostheorie',
       aestheticImpulse: 'Aus einer verblüffend einfachen iterativen Gleichung (z_{n+1} = z_n^2 + c) entspringt eine unendlich reiche Küstenlinie der Mathematik. Die Natur entfaltet sich in Fraktalen – vom Farnblatt bis zur Galaxie.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-007-seurat-grande-jatte',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Ein Sonntagmittag auf der Insel La Grande Jatte: Optische Farbmischung und monumentale Stille',
+    subtitle: 'Georges Seurat (1884–1886) • Art Institute of Chicago • Neoimpressionismus (Pointillismus)',
+    feedText: 'Zwei Jahre lang setzte Georges Seurat Millionen winziger Farbpunkte nebeneinander, statt Pigmente auf der Palette zu mischen. Erst auf der Netzhaut des Betrachters verschmelzen Komplementärfarben zu leuchtenden Flächen, während die Pariser Ausflügler am Seine-Ufer wie zeitlose ägyptische Relief-Skulpturen erstarren.',
+    articleBody: `### Die Physik des Lichts auf der Leinwand
+
+Georges Seurat studierte die Farbtheorien der Physiker Michel Eugène Chevreul und Ogden Rood. Sein Ziel war es, die flüchtige Intuition des Impressionismus in eine streng wissenschaftliche Methode zu überführen: den **Chromoluminarismus** (Pointillismus).
+
+#### 1. Optische statt materieller Mischung
+Wenn man Blau und Gelb auf der Palette mischt, verliert das Grün an Leuchtkraft (subtraktive Mischung). Setzt man jedoch winzige Punkte aus reinem Kobaltblau und Kadmiumgelb dicht nebeneinander, vollzieht das menschliche Auge aus der Distanz die Mischung selbst – mit einer ungekannten Vibration des Lichts.
+
+#### 2. Archaische Ruhe mitten in der Moderne
+Obwohl Seurat einen modernen Freizeitmoment am Rand von Paris zeigt, wirken die Spaziergänger mit ihren Sonnenschirmen und Zylindern feierlich entrückt wie Figuren auf einem antiken Tempelfries.`,
+    body: 'Analyse von Georges Seurats Hauptwerk La Grande Jatte im Art Institute of Chicago.',
+    topics: ['art_aesthetics', 'science_society', 'philosophy_ethics'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'A Sunday on La Grande Jatte — 1884',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Georges Seurat',
+        originalUrl: 'https://www.artic.edu/artworks/27992/a-sunday-on-la-grande-jatte-1884',
+        publicationTimestamp: '1886-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T09:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 4,
+    relevanceExplanation: 'Schlüsselwerk der optischen Wahrnehmungsästhetik und Farbtheorie.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Helen Birch Bartlett Memorial Collection.',
+    wordCount: 380,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-seurat-1884',
+    canonicalUrl: 'https://www.artic.edu/artworks/27992/a-sunday-on-la-grande-jatte-1884',
+    imageUrl: 'https://www.artic.edu/iiif/2/2d484387-2509-5e8e-2c43-22f9981972eb/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Pointillismus',
+    isEvergreenGem: true,
+    keyInsight: 'Aus der Nähe betrachtet zerfällt die Welt in isolierte Farbpunkte; erst der bewusste Schritt zurück lässt auf der Netzhaut die große Ordnung entstehen.',
+    challengePrompt: 'Welche Details deines Alltags wirken aus der Nähe chaotisch, ergeben aber aus der Distanz ein stimmiges Gesamtbild?',
+    upvotesCount: 0,
+    awardsCount: { gold: 28, brain: 84, spark: 61 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Georges Seurat',
+      year: '1884–1886',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/2d484387-2509-5e8e-2c43-22f9981972eb/full/843,/0/default.jpg',
+      styleMovement: 'Neoimpressionismus',
+      aestheticImpulse: 'Millionen präzise gesetzter Farbpunkte verschmelzen erst im Auge des Betrachters zu flirrendem Sommerlicht am Ufer der Seine.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-008-vangogh-bedroom',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Das Schlafzimmer in Arles: Farbpsychologie der Geborgenheit und gekippte Perspektive',
+    subtitle: 'Vincent van Gogh (1889) • Art Institute of Chicago • Post-Impressionismus',
+    feedText: 'Mit leuchtendem Chromgelb, Fliederblau und Smaragdgrün wollte Vincent van Gogh im „Gelben Haus“ in Arles absolute geistige Ruhe ausdrücken. Doch der steil ansteigende Holzboden und die schräg aufeinander zulaufenden Wände verraten die innere seelische Hochspannung des Malers.',
+    articleBody: `### Das Paradox der ersehnten Ruhe
+
+In einem Brief an seinen Bruder Theo schrieb Vincent van Gogh über dieses Bild: „Das Betrachten des Bildes soll den Kopf, oder vielmehr die Phantasie, ausruhen lassen.“
+
+#### 1. Farbe als emotionaler Anker
+Van Gogh verzichtete bewusst auf Schlagschatten. Stattdessen baute er den Raum aus reinen Komplementärkontrasten auf: Das warme Gelb des Holzbetts antwortet dem kühlen Violettblau der Wände, die rote Bettdecke bildet den kraftvollen Akzent zum grünlichen Fenster.
+
+#### 2. Der Raum ohne rechte Winkel
+Die Architektur des Zimmers gehorcht nicht den Gesetzen der Zentralperspektive, sondern einem trapezförmigen Grundriss. Jedes Möbelstück tritt paarweise auf (zwei Stühle, zwei Kissen, zwei Porträts) – Ausdruck seiner Sehnsucht nach menschlicher Gemeinschaft.`,
+    body: 'Kunsthistorische Betrachtung von Vincent van Goghs Schlafzimmer in Arles.',
+    topics: ['art_aesthetics', 'contemplation_mind', 'philosophy_ethics'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'The Bedroom (1889)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Vincent van Gogh',
+        originalUrl: 'https://www.artic.edu/artworks/28560/the-bedroom',
+        publicationTimestamp: '1889-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T10:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 4,
+    relevanceExplanation: 'Meisterwerk des Post-Impressionismus über Raumwahrnehmung und seelische Zuflucht.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Helen Birch Bartlett Memorial Collection.',
+    wordCount: 360,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-vangogh-1889',
+    canonicalUrl: 'https://www.artic.edu/artworks/28560/the-bedroom',
+    imageUrl: 'https://www.artic.edu/iiif/2/6644829f-f292-c5c4-a73c-0356a6fdbf0d/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Post-Impressionismus',
+    isEvergreenGem: true,
+    keyInsight: 'Wahre Ruhe im Bild entsteht hier nicht durch fotografische Glätte, sondern durch die mutige Versöhnung starker Farbkontraste auf engstem Raum.',
+    challengePrompt: 'Welche drei Gegenstände in deinem eigenen Zimmer stiften für dich unmittelbare innere Ruhe?',
+    upvotesCount: 0,
+    awardsCount: { gold: 32, brain: 89, spark: 74 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Vincent van Gogh',
+      year: '1889',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/6644829f-f292-c5c4-a73c-0356a6fdbf0d/full/843,/0/default.jpg',
+      styleMovement: 'Post-Impressionismus',
+      aestheticImpulse: 'Leuchtendes Chromgelb und kühles Fliederblau verwandeln eine karge Kammer in Arles in ein zeitloses Monument der Kontemplation.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-009-caillebotte-paris-rain',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Straße in Paris an einem regnerischen Tag: Die Geometrie der modernen Großstadt',
+    subtitle: 'Gustave Caillebotte (1877) • Art Institute of Chicago • Französischer Impressionismus',
+    feedText: 'Nasses Kopfsteinpflaster reflektiert das silbergraue Himmelslicht über den neu angelegten Boulevards Baron Haussmanns. Gustave Caillebotte teilt die monumentale Leinwand exakt durch eine gusseiserne Gaslaterne und fängt den kühlen choreografierten Gleichschritt der anonymen Passanten unter schwarzen Regenschirmen ein.',
+    articleBody: `### Der fotografische Blick auf das umgebaute Paris
+
+Als Gustave Caillebotte dieses über zwei Meter hohe Gemälde 1877 auf der dritten Impressionisten-Ausstellung zeigte, verblüffte er die Kritik durch seine radikale Bildarchitektur.
+
+#### 1. Die vertikale Achse der Gaslaterne
+Eine grüne Straßenlaterne teilt das Bild exakt in der Mitte: Rechts treten ein Herr und eine Dame in scharfem Fokus direkt auf den Betrachter zu – angeschnitten wie in einer modernen Momentfotografie. Links öffnet sich die weite Flucht der Place de Dublin.
+
+#### 2. Gleichförmigkeit und Distanz
+Unter den identischen schwarzen Schirmen bewegen sich die Städter durch Haussmanns schnurgerade Kalksteinfassaden, jeder im eigenen Radius geschützt und doch dem gemeinsamen Rhythmus der Metropole unterworfen.`,
+    body: 'Analyse von Gustave Caillebottes Pariser Straßenszene im Art Institute of Chicago.',
+    topics: ['art_aesthetics', 'science_society', 'philosophy_ethics'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'Paris Street; Rainy Day (1877)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Gustave Caillebotte',
+        originalUrl: 'https://www.artic.edu/artworks/20684/paris-street-rainy-day',
+        publicationTimestamp: '1877-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T11:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 4,
+    relevanceExplanation: 'Meisterwerk urbaner Perspektive an der Schwelle zwischen Malerei und Fotografie.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Charles H. and Mary F. S. Worcester Collection.',
+    wordCount: 350,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-caillebotte-1877',
+    canonicalUrl: 'https://www.artic.edu/artworks/20684/paris-street-rainy-day',
+    imageUrl: 'https://www.artic.edu/iiif/2/f8fd76e9-c396-5678-36ed-6a348c904d27/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Impressionismus',
+    isEvergreenGem: true,
+    keyInsight: 'Die moderne Stadtplanung ordnet nicht nur Häuserblocks, sondern formt subtil die Blickachsen und Abstände zwischen den Menschen.',
+    challengePrompt: 'Wohin wandert dein Blick auf einem Spaziergang durch den Regen: auf das Pflaster vor deinen Füßen oder hinauf zu den Dachlinien?',
+    upvotesCount: 0,
+    awardsCount: { gold: 24, brain: 76, spark: 58 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Gustave Caillebotte',
+      year: '1877',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/f8fd76e9-c396-5678-36ed-6a348c904d27/full/843,/0/default.jpg',
+      styleMovement: 'Französischer Impressionismus',
+      aestheticImpulse: 'Fotografischer Bildausschnitt und kühles Regenlicht auf dem Pariser Pflaster machen die Choreografie der modernen Metropole sichtbar.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-010-monet-water-lilies',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Seerosen (Nymphéas): Das Verschwinden des Horizonts im spiegelnden Wasser',
+    subtitle: 'Claude Monet (1906) • Art Institute of Chicago • Spätimpressionismus',
+    feedText: 'In seinem Wassergarten in Giverny verbannte Claude Monet die Horizontlinie komplett aus dem Gemälde. Der Blick fällt ausschließlich auf die Wasseroberfläche, in der schwimmende Seeroseninseln und die gespiegelten Wolken des Himmels unauflösbar ineinanderfließen.',
+    articleBody: `### Die Geburt der abstrakten Fläche aus dem Teich von Giverny
+
+In den letzten drei Jahrzehnten seines Lebens widmete sich Claude Monet fast ausschließlich seinem Seerosenteich. Das Gemälde von 1906 markiert einen radikalen Wendepunkt.
+
+#### 1. Der Sturz des traditionellen Bildraums
+Es gibt kein Ufer mehr, keinen Himmel am oberen Bildrand, keinen festen Standpunkt. Das Oben (die Spiegelung der Wolken und Baumkronen) und das Unten (die dunkle Wassertiefe und die schwimmenden Blütenblätter) existieren auf einer einzigen schwebenden Bildebene.
+
+#### 2. Vorbote des Abstrakten Expressionismus
+Ein halbes Jahrhundert später erkannten Maler wie Jackson Pollock und Mark Rothko in Monets späten Seerosenbildern die Befreiung der reinen Farblandschaft („All-over Painting“).`,
+    body: 'Kunstphilosophische Betrachtung von Claude Monets Seerosen (1906).',
+    topics: ['art_aesthetics', 'contemplation_mind', 'philosophy_ethics'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'Water Lilies (1906)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Claude Monet',
+        originalUrl: 'https://www.artic.edu/artworks/16568/water-lilies',
+        publicationTimestamp: '1906-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T12:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 4,
+    relevanceExplanation: 'Schlüsselwerk der kontemplativen Naturwahrnehmung ohne festen Horizont.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Mr. and Mrs. Martin A. Ryerson Collection.',
+    wordCount: 340,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-monet-1906',
+    canonicalUrl: 'https://www.artic.edu/artworks/16568/water-lilies',
+    imageUrl: 'https://www.artic.edu/iiif/2/3c27b499-af56-f0d5-93b5-a7f2f1ad5813/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Spätimpressionismus',
+    isEvergreenGem: true,
+    keyInsight: 'Indem Monet das Ufer weglässt, verwandelt sich die Wasseroberfläche in einen unbegrenzten Meditationsraum aus Licht und Spiegelung.',
+    challengePrompt: 'Was geschieht mit deiner Wahrnehmung, wenn du aufhörst, nach festen Begrenzungen zu suchen, und dich dem Fließen überlässt?',
+    upvotesCount: 0,
+    awardsCount: { gold: 30, brain: 82, spark: 69 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Claude Monet',
+      year: '1906',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/3c27b499-af56-f0d5-93b5-a7f2f1ad5813/full/843,/0/default.jpg',
+      styleMovement: 'Impressionismus',
+      aestheticImpulse: 'Ohne Horizontlinie verschmelzen die tiefen Schatten des Wassers mit den gespiegelten Wolken des Himmels zu reiner Farbpoesie.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-011-cezanne-basket-apples',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Der Apfelkorb: Gebrochene Tischkanten und die Geburt des mehrperspektivischen Sehens',
+    subtitle: 'Paul Cézanne (ca. 1893) • Art Institute of Chicago • Wegbereiter des Kubismus',
+    feedText: 'Auf den ersten Blick wirkt es wie ein klassisches Stillleben mit Weinflasche, Gebäck und einem gekippten Korb voller Äpfel. Doch wer genau hinsieht, entdeckt ein visuelles Erdbeben: Die rechte und die linke Tischkante liegen auf völlig unterschiedlichen Höhen, die Flasche neigt sich schräg – Paul Cézanne malt das Sehen mit zwei wandernden Augen.',
+    articleBody: `### Warum ein gekippter Tisch die moderne Kunst einleitete
+
+Seit der Renaissance galt die Ein-Punkt-Zentralperspektive als unantastbares Gesetz: Die Kamera hat ein einziges starres Auge. Paul Cézanne erkannte, dass die menschliche Wahrnehmung ganz anders funktioniert.
+
+#### 1. Binokulare und zeitliche Wahrnehmung
+Wir blicken auf einen Tisch nicht mit einem einzigen eingefrorenen Linsenauge, sondern mit zwei Augen, die sich unablässig im Raum bewegen. Cézanne kombiniert auf einer einzigen Leinwand die Aufsicht auf den Obstkorb mit der Seitenansicht der Flasche.
+
+#### 2. Die Spannung der Dinge
+Das gefaltete weiße Tischtuch wirkt wie ein zerklüftetes Gebirgsmassiv, auf dem die runden Farbkugeln der Äpfel kurz vor dem Herabrollen im Gleichgewicht gehalten werden. Pablo Picasso nannte Cézanne deshalb „unser aller Vater“.`,
+    body: 'Analyse von Paul Cézannes Stillleben Der Apfelkorb im Art Institute of Chicago.',
+    topics: ['art_aesthetics', 'philosophy_ethics', 'science_society'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'The Basket of Apples (c. 1893)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Paul Cézanne',
+        originalUrl: 'https://www.artic.edu/artworks/111436/the-basket-of-apples',
+        publicationTimestamp: '1893-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T13:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 4,
+    relevanceExplanation: 'Epistemologisches Meisterwerk über den Unterschied zwischen Kameraoptik und lebendigem menschlichem Sehen.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Helen Birch Bartlett Memorial Collection.',
+    wordCount: 360,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-cezanne-1893',
+    canonicalUrl: 'https://www.artic.edu/artworks/111436/the-basket-of-apples',
+    imageUrl: 'https://www.artic.edu/iiif/2/52ac8996-3460-cf71-cb42-5c4d0aa29b74/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Wegbereiter der Moderne',
+    isEvergreenGem: true,
+    keyInsight: 'Wahrheit in der Kunst entsteht nicht durch geometrisch korrekte Illusion, sondern durch das ehrliche Protokollieren unseres bewegten Blicks.',
+    challengePrompt: 'Entdeckst du den Versatz der Tischkante links und rechts hinter dem weißen Tuch?',
+    upvotesCount: 0,
+    awardsCount: { gold: 25, brain: 91, spark: 63 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Paul Cézanne',
+      year: 'ca. 1893',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/52ac8996-3460-cf71-cb42-5c4d0aa29b74/full/843,/0/default.jpg',
+      styleMovement: 'Post-Impressionismus / Proto-Kubismus',
+      aestheticImpulse: 'Gebrochene Tischlinien und simultan kombinierte Blickwinkel sprengen die starre Zentralperspektive und bereiten dem Kubismus den Weg.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-012-monet-saint-lazare',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Ankunft des Zuges aus der Normandie, Gare Saint-Lazare: Dampf, Eisen und Lichtkathedrale',
+    subtitle: 'Claude Monet (1877) • Art Institute of Chicago • Industrielle Moderne',
+    feedText: 'Unter dem gewaltigen Glas- und Eisendach des Pariser Bahnhofs Saint-Lazare löst sich die schwere Dampflokomotive in bläuliche und rosafarbene Rauchwolken auf. Claude Monet feiert die Bahnhofshalle als neue Kathedrale der industriellen Beschleunigung.',
+    articleBody: `### Als die Eisenbahn in die hohe Kunst einfuhr
+
+Während akademische Maler 1877 noch mythologische Göttinnen malten, stellte Claude Monet seine Staffelei mitten auf den rußigen Bahnsteig des Gare Saint-Lazare.
+
+#### 1. Die Ästhetik des Dampfes
+Für Monet war der ausgestoßene Wasserdampf der Lokomotiven ein ideales optisches Medium: Er streute das durch das Glasdach fallende Tageslicht in hundert Nuancen von Violett, Kobaltblau und Goldweiß.
+
+#### 2. Materie wird Atmosphäre
+Das schwere Gusseisen der Dachkonstruktion und der schwarze Stahl der Lokomotive verlieren im wogenden Dampf ihre Schwere und verwandeln sich in ein flirrendes Farbgespinst.`,
+    body: 'Analyse von Claude Monets Bahnhofsbild Gare Saint-Lazare im Art Institute of Chicago.',
+    topics: ['art_aesthetics', 'science_society'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'Arrival of the Normandy Train, Gare Saint-Lazare (1877)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Claude Monet',
+        originalUrl: 'https://www.artic.edu/artworks/16571/arrival-of-the-normandy-train-gare-saint-lazare',
+        publicationTimestamp: '1877-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T14:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Visuelle Synthese aus Ingenieurbaukunst und impressionistischer Lichtmalerei.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Mr. and Mrs. Martin A. Ryerson Collection.',
+    wordCount: 310,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-monet-lazare-1877',
+    canonicalUrl: 'https://www.artic.edu/artworks/16571/arrival-of-the-normandy-train-gare-saint-lazare',
+    imageUrl: 'https://www.artic.edu/iiif/2/0f1cc0e0-e42e-be16-3f71-2022da38cb93/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Industriemoderne',
+    isEvergreenGem: true,
+    keyInsight: 'Selbst aus Ruß, Stahl und Maschinenlärm lässt sich Poesie gewinnen, wenn der Blick auf das Spiel des Lichts gerichtet bleibt.',
+    challengePrompt: 'Welcher alltägliche technische Ort unserer Gegenwart besitzt eine ähnlich unerkannte visuelle Schönheit?',
+    upvotesCount: 0,
+    awardsCount: { gold: 19, brain: 64, spark: 51 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Claude Monet',
+      year: '1877',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/0f1cc0e0-e42e-be16-3f71-2022da38cb93/full/843,/0/default.jpg',
+      styleMovement: 'Impressionismus',
+      aestheticImpulse: 'Unter dem Glasdach des Pariser Bahnhofs verwandelt sich der Dampf der Lokomotive in ein leuchtendes Farbprisma.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-013-toulouse-lautrec-moulin-rouge',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Im Moulin Rouge: Schräge Balustraden und das grünliche Rampenlicht der Bohème',
+    subtitle: 'Henri de Toulouse-Lautrec (1892–1895) • Art Institute of Chicago • Fin de Siècle',
+    feedText: 'Am rechten Bildrand taucht das Gesicht der Tänzerin May Milton auf, von unten durch das grelle Gaslicht giftgrün angestrahlt wie eine Theatermaske. Henri de Toulouse-Lautrec zieht eine steile Holzbalustrade quer durch den Raum und seziert den Glanz des Pariser Nachtlebens ohne jede Beschönigung.',
+    articleBody: `### Jenseits der Postkarten-Idylle von Montmartre
+
+Henri de Toulouse-Lautrec war im 1889 eröffneten Kabarett Moulin Rouge Stammgast und unbestechlicher Chronist zugleich.
+
+#### 1. Die schneidende Diagonale
+Eine braune Holzbrüstung schießt von der unteren Mitte steil nach links oben und trennt den Betrachter vom Tisch der Stammgäste, an dem Kritiker, Tänzerinnen und im Hintergrund Lautrec selbst (als kleine Silhouette neben seinem hochgewachsenen Cousin) sitzen.
+
+#### 2. Das unheimliche Gaslicht
+Die extrem angeschnittene Figur rechts vorne bricht mit allen Regeln des akademischen Porträts: Das künstliche Rampenlicht legt die Erschöpfung und Maskerade hinter der nächtlichen Unterhaltung offen.`,
+    body: 'Analyse von Henri de Toulouse-Lautrecs Gemälde Im Moulin Rouge.',
+    topics: ['art_aesthetics', 'philosophy_ethics'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'At the Moulin Rouge (1892–95)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Henri de Toulouse-Lautrec',
+        originalUrl: 'https://www.artic.edu/artworks/61128/at-the-moulin-rouge',
+        publicationTimestamp: '1895-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T15:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Psychologisch scharfe Studie über Inszenierung und Entfremdung in der Vergnügungskultur.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Helen Birch Bartlett Memorial Collection.',
+    wordCount: 310,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-lautrec-1895',
+    canonicalUrl: 'https://www.artic.edu/artworks/61128/at-the-moulin-rouge',
+    imageUrl: 'https://www.artic.edu/iiif/2/defb4004-b500-218d-3d9b-9a02423f097d/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Fin de Siècle',
+    isEvergreenGem: true,
+    keyInsight: 'Künstliches Rampenlicht entlarvt oft mehr über die innere Einsamkeit einer Gesellschaft als das helle Tageslicht.',
+    challengePrompt: 'Wie unterscheidet sich echte gesellige Verbundenheit von bloßer kollektiver Zerstreuung?',
+    upvotesCount: 0,
+    awardsCount: { gold: 22, brain: 71, spark: 54 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Henri de Toulouse-Lautrec',
+      year: '1892–1895',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/defb4004-b500-218d-3d9b-9a02423f097d/full/843,/0/default.jpg',
+      styleMovement: 'Post-Impressionismus / Jugendstil',
+      aestheticImpulse: 'Kühne japanische Bildanschnitte und giftgrünes Gaslicht entlarven die nächtliche Maskerade des Montmartre.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-014-renoir-two-sisters',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Zwei Schwestern (Auf der Terrasse): Ein Fest aus Kobaltblau, Zinnoberrot und Frühlingslicht',
+    subtitle: 'Pierre-Auguste Renoir (1881) • Art Institute of Chicago • Französischer Impressionismus',
+    feedText: 'Auf der Terrasse des Restaurants Maison Fournaise an der Seine in Chatou sitzen eine junge Frau und ein Mädchen vor flirrendem Uferlaub. Im Korb im Vordergrund leuchten bunte Wollknäuel wie eine Offenlegung von Renoirs eigener Farbpalette.',
+    articleBody: `### Die pure Feier des Augenblicks
+
+Pierre-Auguste Renoir malte „Zwei Schwestern“ im Frühjahr 1881 auf der Seine-Insel von Chatou.
+
+#### 1. Der Korb mit den Wollknäueln als Schlüssel
+Links unten liegt ein offener Strohkorb mit ungeordneten Knäueln aus reiner roter, blauer, weißer und grüner Wolle. Genau aus diesen unvermischten Farbtönen webt Renoir im restlichen Bild die Hüte, die Kleider und die glitzernde Flusslandschaft im Hintergrund.
+
+#### 2. Kontrast von Textur und Unschärfe
+Während die Gesichter der beiden Modelle (sie waren im wirklichen Leben keine Schwestern) porzellanfein modelliert sind, löst sich die Landschaft hinter dem Terrassengeländer in federleichte Pinselstriche auf.`,
+    body: 'Analyse von Pierre-Auguste Renoirs Gemälde Zwei Schwestern im Art Institute of Chicago.',
+    topics: ['art_aesthetics', 'contemplation_mind'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'Two Sisters (On the Terrace) (1881)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Pierre-Auguste Renoir',
+        originalUrl: 'https://www.artic.edu/artworks/14655/two-sisters-on-the-terrace',
+        publicationTimestamp: '1881-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T16:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Meisterstück impressionistischer Farbharmonie und Texturkontraste.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Mr. and Mrs. Lewis Larned Coburn Memorial Collection.',
+    wordCount: 300,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-renoir-1881',
+    canonicalUrl: 'https://www.artic.edu/artworks/14655/two-sisters-on-the-terrace',
+    imageUrl: 'https://www.artic.edu/iiif/2/3a608f55-d76e-fa96-d0b1-0789fbc48f1e/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Farbharmonie',
+    isEvergreenGem: true,
+    keyInsight: 'Der Korb voller bunter Wollknäuel verrät das Geheimnis der Malerei: Aus einfachen Grundfarben entsteht durch Rhythmus die Fülle des Lebens.',
+    challengePrompt: 'Wo findest du heute Momente unbeschwerter Geistesgegenwart?',
+    upvotesCount: 0,
+    awardsCount: { gold: 21, brain: 65, spark: 59 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Pierre-Auguste Renoir',
+      year: '1881',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/3a608f55-d76e-fa96-d0b1-0789fbc48f1e/full/843,/0/default.jpg',
+      styleMovement: 'Französischer Impressionismus',
+      aestheticImpulse: 'Leuchtendes Zinnoberrot auf tiefem Kobaltblau vor dem flirrenden Grün der Seine-Insel von Chatou.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-015-vangogh-self-portrait-1887',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Selbstbildnis (1887): Wirbelnde Farbstiche und der unbestechliche Blick nach innen',
+    subtitle: 'Vincent van Gogh (1887) • Art Institute of Chicago • Pariser Periode',
+    feedText: 'In Paris begegnete Vincent van Gogh der Punkttechnik Georges Seurats – und verwandelte deren kühle wissenschaftliche Berechnung sofort in ein energetisches Kraftfeld: Tausende rot-grüne und blau-orangefarbene Pinselhiebe kreisen wie ein Magnetfeld um seine durchdringenden Augen.',
+    articleBody: `### Die Geburt der expressiven Linie aus dem Punkt
+
+Zwischen 1886 und 1888 malte Vincent van Gogh in Paris über zwanzig Selbstporträts – teils weil ihm das Geld für bezahlte Modelle fehlte, vor allem aber als schonungsloses Experimentierfeld für eine neue Bildsprache.
+
+#### 1. Magnetische Feldlinien
+Statt gleichmäßiger Punkte setzt van Gogh kurze, gerichtete Striche, die sich konzentrisch um seinen Kopf legen wie ein Halo aus elektrischer Energie.
+
+#### 2. Komplementäre Funken
+Im rötlichen Bart blitzen smaragdgrüne Tupfer auf; im blaugrünen Hintergrund leuchten rote und ockerfarbene Punkte. Der Blick des Malers trifft den Betrachter ohne jede Eitelkeit.`,
+    body: 'Analyse von Vincent van Goghs Pariser Selbstbildnis von 1887 im Art Institute of Chicago.',
+    topics: ['art_aesthetics', 'contemplation_mind', 'philosophy_ethics'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'Self-Portrait (1887)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Vincent van Gogh',
+        originalUrl: 'https://www.artic.edu/artworks/80607/self-portrait',
+        publicationTimestamp: '1887-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T17:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Intensive Studie über Selbstbeobachtung und expressive Farbtechnik.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Joseph Winterbotham Collection.',
+    wordCount: 290,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-vangogh-self-1887',
+    canonicalUrl: 'https://www.artic.edu/artworks/80607/self-portrait',
+    imageUrl: 'https://www.artic.edu/iiif/2/47c5bcb8-62ef-e5d7-55e7-f5121f409a30/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Porträtkunst',
+    isEvergreenGem: true,
+    keyInsight: 'Selbstporträts sind keine Denkmäler des Egos, sondern Protokolle schonungsloser Selbstbefragung.',
+    challengePrompt: 'Was siehst du, wenn du dir selbst ohne soziale Rolle begegnest?',
+    upvotesCount: 0,
+    awardsCount: { gold: 26, brain: 79, spark: 66 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Vincent van Gogh',
+      year: '1887',
+      medium: 'Öl auf Malpappe',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/47c5bcb8-62ef-e5d7-55e7-f5121f409a30/full/843,/0/default.jpg',
+      styleMovement: 'Post-Impressionismus',
+      aestheticImpulse: 'Rhythmische Pinselhiebe in Rot und Smaragdgrün verwandeln den pointillistischen Tupfen in ein energetisches Kraftfeld.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-016-monet-stacks-of-wheat',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Getreideschober (Ende des Sommers): Wie ein einziges Motiv den Fluss der Zeit sichtbar macht',
+    subtitle: 'Claude Monet (1890–1891) • Art Institute of Chicago • Serienmalerei',
+    feedText: 'Fünfundzwanzigmal malte Claude Monet dieselben schlichten Getreideschober auf dem Feld neben seinem Haus in Giverny – bei Raureif, im Mittagsglast, im Nebel und bei sinkender Spätsommersonne. Nicht der Gegenstand selbst war sein Thema, sondern die Luft und das sich sekündlich wandelnde Licht zwischen Objekt und Auge.',
+    articleBody: `### Die Erfindung der seriellen Wahrnehmung
+
+Als Wassily Kandinsky 1896 in Moskau erstmals eines von Monets Getreideschober-Bildern sah, erkannte er den Gegenstand im Katalog zunächst gar nicht – und begriff genau dadurch, dass die Farbe selbst zum eigentlichen Träger der Kunst geworden war.
+
+#### 1. Die „Enveloppe“ des Lichts
+Monet nannte die farbige Atmosphäre, die alle Dinge umhüllt, die *Enveloppe*. Im Gegenlicht des Spätsommers leuchten die Schatten der Schober nicht grau, sondern in violetten, rosafarbenen und blauen Zwischentönen.
+
+#### 2. Malen gegen den Uhrzeigersinn
+Monet arbeitete oft an bis zu zehn Leinwänden gleichzeitig und wechselte das Bild alle paar Minuten, sobald der Sonnenwinkel sich verschob.`,
+    body: 'Analyse von Claude Monets Getreideschober-Serie im Art Institute of Chicago.',
+    topics: ['art_aesthetics', 'contemplation_mind', 'philosophy_ethics'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'Stacks of Wheat (End of Summer) (1890–91)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Claude Monet',
+        originalUrl: 'https://www.artic.edu/artworks/64818/stacks-of-wheat-end-of-summer',
+        publicationTimestamp: '1891-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T18:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Schlüsselwerk über Achtsamkeit für feinste atmosphärische Veränderungen.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Arthur M. Wood Memorial.',
+    wordCount: 310,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-monet-wheat-1891',
+    canonicalUrl: 'https://www.artic.edu/artworks/64818/stacks-of-wheat-end-of-summer',
+    imageUrl: 'https://www.artic.edu/iiif/2/a38e2828-ec6f-ece1-a30f-70243449197b/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Lichtstudie',
+    isEvergreenGem: true,
+    keyInsight: 'Man muss nicht ständig neue Orte suchen, um Neues zu sehen: Wer lange genug auf denselben Ort blickt, entdeckt den Wandel des Lichts.',
+    challengePrompt: 'Wie verändert sich ein vertrauter Ort vor deinem Fenster im Lauf eines einzigen Tages?',
+    upvotesCount: 0,
+    awardsCount: { gold: 20, brain: 68, spark: 55 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Claude Monet',
+      year: '1890–1891',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/a38e2828-ec6f-ece1-a30f-70243449197b/full/843,/0/default.jpg',
+      styleMovement: 'Impressionismus',
+      aestheticImpulse: 'Schlichte Getreideschober im Gegenlicht des Spätsommers werden zum Prisma für den Lauf der Zeit.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-017-kandinsky-troika',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Malerei mit Troika: Der dramatische Schwellenmoment zwischen Figur und Abstraktion',
+    subtitle: 'Wassily Kandinsky (1911) • Art Institute of Chicago • Der Blaue Reiter',
+    feedText: 'Am 18. Januar 1911 vollendete Wassily Kandinsky dieses Gemälde – nur wenige Tage nach seinem lebensverändernden Besuch eines Konzerts von Arnold Schönberg in München. Ein russisches Dreigespann (Troika) jagt im Galopp einen steilen Hügel hinauf, während sich Landschaft, Reiter und Himmel bereits in freie expressive Farbwogen auflösen.',
+    articleBody: `### Der Aufbruch in die Gegenstandslosigkeit
+
+Das Jahr 1911 gilt als das Geburtsjahr der abstrakten Kunst. In „Malerei mit Troika“ lässt sich der Übergang wie im Zeitraffer beobachten.
+
+#### 1. Die versteckte Chiffre der drei Pferde
+Oben links sind die drei gebogenen Hälse der Pferde nur noch als schwarze kalligrafische Schwünge angedeutet. Kandinsky reduzierte reale Motive schrittweise auf rhythmische Kürzel, die wie musikalische Akkorde wirken.
+
+#### 2. Der bemalte Originalrahmen
+Kandinsky bemalte sogar den Holzrahmen des Bildes eigenhändig weiter, damit der Farbensturm nicht an der Leinwandkante abbricht.`,
+    body: 'Analyse von Wassily Kandinskys Gemälde Malerei mit Troika (1911).',
+    topics: ['art_aesthetics', 'sound_synthesis', 'philosophy_ethics'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'Painting with Troika (1911)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Wassily Kandinsky',
+        originalUrl: 'https://www.artic.edu/artworks/8983/painting-with-troika',
+        publicationTimestamp: '1911-01-18T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T19:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Historischer Schwellenmoment des Blauen Reiters zwischen Gegenstand und freier Klangfarbe.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Arthur Jerome Eddy Memorial Collection.',
+    wordCount: 300,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-kandinsky-troika-1911',
+    canonicalUrl: 'https://www.artic.edu/artworks/8983/painting-with-troika',
+    imageUrl: 'https://www.artic.edu/iiif/2/a45e5f55-d02b-ce98-8bab-3af549684f58/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Der Blaue Reiter',
+    isEvergreenGem: true,
+    keyInsight: 'Bevor das Neue ganz frei stehen kann, löst es die alten Formen von innen her in Bewegung und Klang auf.',
+    challengePrompt: 'Erkennst du oben links die drei geschwungenen Linien des russischen Pferdegespanns?',
+    upvotesCount: 0,
+    awardsCount: { gold: 18, brain: 63, spark: 49 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Wassily Kandinsky',
+      year: '1911',
+      medium: 'Öl auf Karton (im original bemalten Künstlerrahmen)',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/a45e5f55-d02b-ce98-8bab-3af549684f58/full/843,/0/default.jpg',
+      styleMovement: 'Expressionismus / Der Blaue Reiter',
+      aestheticImpulse: 'Wenige Tage nach Arnold Schönbergs Konzert in München löst Kandinsky Landschaft und Figuren in wogende Farbklänge auf.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-018-morisot-toilette',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Frau bei der Toilette: Silberner Duft aus Perlmutt, Lavendel und flüchtigem Licht',
+    subtitle: 'Berthe Morisot (1875–1880) • Art Institute of Chicago • Impressionismus',
+    feedText: 'Wie hingehaucht gleiten federleichte Pinselstriche in Silberweiß, zartem Rosa, Himmelblau und Aschgrau über die Leinwand. Berthe Morisot verwandelt einen stillen Morgenmoment vor dem Spiegel in ein schwebendes Gewebe aus Licht, in dem Konturen nicht mehr begrenzen, sondern atmen.',
+    articleBody: `### Die radikalste Pinselhandschrift des Impressionismus
+
+Die Zeitgenossen nannten Berthe Morisot die virtuoseste Koloristin des gesamten Impressionisten-Kreises: Sie brauche „Blumenblätter und Schmetterlingsstaub“ statt schwerer Ölfarbe.
+
+#### 1. Das Unvollendete als künstlerische Vollendung
+Morisot lässt an den Rändern bewusst Partien der hell grundierten Leinwand durchscheinen. Das Bild wirkt, als entstehe es genau in der Sekunde, in der wir es betrachten.
+
+#### 2. Subjekt statt Objekt
+Anders als ihre männlichen Malerkollegen inszeniert Morisot die Frau vor dem Spiegel nicht für einen voyeuristischen fremden Blick, sondern als selbstversunkene Präsenz im eigenen intimen Lichtraum.`,
+    body: 'Analyse von Berthe Morisots Gemälde Frau bei der Toilette im Art Institute of Chicago.',
+    topics: ['art_aesthetics', 'contemplation_mind'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'Woman at Her Toilette (1875–80)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Berthe Morisot',
+        originalUrl: 'https://www.artic.edu/artworks/11723/woman-at-her-toilette',
+        publicationTimestamp: '1880-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T20:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Meisterwerk weiblicher Blicksouveränität und malerischer Leichtigkeit.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Stickney Fund.',
+    wordCount: 295,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-morisot-1880',
+    canonicalUrl: 'https://www.artic.edu/artworks/11723/woman-at-her-toilette',
+    imageUrl: 'https://www.artic.edu/iiif/2/78c80988-6524-cec7-c661-a4c0a706d06f/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Perlmutt-Licht',
+    isEvergreenGem: true,
+    keyInsight: 'Leichtigkeit in der Kunst ist kein Mangel an Ernst, sondern die höchste Souveränität über das Material.',
+    challengePrompt: 'Wo in deinem Schaffen darfst du den Mut zur offenen, atmenden Skizze wagen?',
+    upvotesCount: 0,
+    awardsCount: { gold: 21, brain: 67, spark: 58 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Berthe Morisot',
+      year: '1875–1880',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/78c80988-6524-cec7-c661-a4c0a706d06f/full/843,/0/default.jpg',
+      styleMovement: 'Französischer Impressionismus',
+      aestheticImpulse: 'Federleichte Pinselzüge in Perlmutt, Silber und Lavendel lösen jede starre Kontur in reines Morgenlicht auf.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-019-cole-niagara-falls',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Fernblick auf die Niagarafälle: Das amerikanische Erhabene und die Urgewalt der Wildnis',
+    subtitle: 'Thomas Cole (1830) • Art Institute of Chicago • Hudson River School',
+    feedText: 'Unter einem dramatisch aufreißenden Gewitterhimmel stürzen die Wassermassen des Niagara in die Tiefe, gerahmt von herbstlich glühenden Urwäldern. Thomas Cole, Begründer der Hudson River School, ließ Hotels und Touristenstege bewusst weg, um die unberührte Erhabenheit der Natur vor der Industrialisierung festzuhalten.',
+    articleBody: `### Die Natur als moralischer Spiegel
+
+Als Thomas Cole 1829 die Niagarafälle besuchte, gab es vor Ort bereits Aussichtstürme, Fabriken und Hotels. Doch in seinem Gemälde von 1830 tilgte er jede Spur moderner Zivilisation.
+
+#### 1. Zwei indigene Zeugen auf dem Felsvorsprung
+In der Bildmitte stehen zwei winzige Figuren amerikanischer Ureinwohner auf einem Felsplateau. Ihr ruhiges Betrachten kontrastiert mit dem donnernden Abgrund des Wassers und der heranziehenden Sturmfront.
+
+#### 2. Das Philosophisch-Erhabene (The Sublime)
+Im Sinne von Edmund Burke und Immanuel Kant weckt Coles Landschaft jenes Gemisch aus Erschauern und geistiger Erhebung, das uns unsere eigene Endlichkeit vor der Erdgeschichte vor Augen führt.`,
+    body: 'Analyse von Thomas Coles Gemälde Fernblick auf die Niagarafälle (1830).',
+    topics: ['art_aesthetics', 'philosophy_ethics', 'science_society'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'Distant View of Niagara Falls (1830)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Thomas Cole',
+        originalUrl: 'https://www.artic.edu/artworks/90048/distant-view-of-niagara-falls',
+        publicationTimestamp: '1830-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T21:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Meisterwerk der amerikanischen Landschaftsromantik über das Erhabene (Sublime).',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Friends of American Art Collection.',
+    wordCount: 305,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-cole-niagara-1830',
+    canonicalUrl: 'https://www.artic.edu/artworks/90048/distant-view-of-niagara-falls',
+    imageUrl: 'https://www.artic.edu/iiif/2/18092196-50ae-3ff1-9205-1b3110e966c3/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Hudson River School',
+    isEvergreenGem: true,
+    keyInsight: 'Das Erhabene der Natur relativiert unsere menschlichen Maßstäbe und heilt uns von der Illusion totaler Verfügbarkeit.',
+    challengePrompt: 'Welche Naturlandschaft hat dich zuletzt durch ihre schiere Weite still werden lassen?',
+    upvotesCount: 0,
+    awardsCount: { gold: 17, brain: 59, spark: 48 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Thomas Cole',
+      year: '1830',
+      medium: 'Öl auf Holztafel',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/18092196-50ae-3ff1-9205-1b3110e966c3/full/843,/0/default.jpg',
+      styleMovement: 'Amerikanische Romantik (Hudson River School)',
+      aestheticImpulse: 'Donnernde Wassermassen, herbstliches Urwaldrot und aufziehende Gewitterwolken verdichten sich zu einer Vision des Erhabenen.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-020-cassatt-childs-bath',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Das Bad des Kindes: Steile Aufsicht, japanische Linienführung und unsentimentale Würde',
+    subtitle: 'Mary Cassatt (1893) • Art Institute of Chicago • Impressionismus & Japonismus',
+    feedText: 'Nach dem Besuch einer großen Ausstellung japanischer Farbholzschnitte von Utamaro in Paris schuf Mary Cassatt ihr Hauptwerk: Aus steiler Aufsicht blicken wir auf eine Mutter, die die Füße ihres Kindes in einer Wasserschüssel wäscht – eingefasst von kühnen gestreiften und ornamentalen Flächen.',
+    articleBody: `### Zärtlichkeit ohne Kitsch durch formale Strenge
+
+Das Thema „Mutter und Kind“ war im 19. Jahrhundert oft von süßlicher Sentimentalität geprägt. Die in Paris lebende Amerikanerin Mary Cassatt fand durch die Begegnung mit der japanischen Druckgrafik (Ukiyo-e) eine völlig neue Formensprache.
+
+#### 1. Die steile Perspektive
+Der Teppich und die Kommode kippen steil nach oben, sodass der Bildraum flächig verdichtet wird. Die kräftigen Streifen des Kleides führen das Auge unweigerlich zur Geste der haltenden Hände und zu den kleinen Füßen im Wasser.
+
+#### 2. Gemeinsame Konzentration
+Mutter und Kind blicken in dieselbe Richtung hinab auf die Wasserschüssel. Es ist ein stiller Moment konzentrierter Fürsorge auf Augenhöhe.`,
+    body: 'Analyse von Mary Cassatts Meisterwerk Das Bad des Kindes (1893).',
+    topics: ['art_aesthetics', 'contemplation_mind'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: "The Child's Bath (1893)",
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Mary Cassatt',
+        originalUrl: 'https://www.artic.edu/artworks/111442/the-child-s-bath',
+        publicationTimestamp: '1893-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T22:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Synthese aus westlicher Ölmalerei und japanischer Raumkomposition.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Robert A. Waller Fund.',
+    wordCount: 300,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-cassatt-1893',
+    canonicalUrl: 'https://www.artic.edu/artworks/111442/the-child-s-bath',
+    imageUrl: 'https://www.artic.edu/iiif/2/3b885ae0-4d46-5fe4-d70a-00474827f02c/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Japonismus',
+    isEvergreenGem: true,
+    keyInsight: 'Echte menschliche Nähe braucht kein Pathos; sie zeigt sich in der ruhigen, geteilten Aufmerksamkeit einer alltäglichen Handlung.',
+    challengePrompt: 'Welche alltägliche Geste der Fürsorge gewinnt durch volle Präsenz eine fast meditative Würde?',
+    upvotesCount: 0,
+    awardsCount: { gold: 23, brain: 72, spark: 60 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Mary Cassatt',
+      year: '1893',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/3b885ae0-4d46-5fe4-d70a-00474827f02c/full/843,/0/default.jpg',
+      styleMovement: 'Impressionismus / Japonismus',
+      aestheticImpulse: 'Inspiriert von japanischen Farbholzschnitten verbindet Cassatt steile Aufsicht und klare Muster mit unsentimentaler Innigkeit.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-021-breton-song-of-the-lark',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Das Lied der Lerche: Das Innehalten im Morgengrauen und der Klang des Unsichtbaren',
+    subtitle: 'Jules Breton (1884) • Art Institute of Chicago • Französischer Realismus',
+    feedText: 'Barfuß auf dem Stoppelfeld, die Sichel in der Hand, hält eine junge Schnitterin mitten im Schritt inne und hebt den Blick zum Himmel, während hinter ihr die glutrote Morgensonne aufgeht. Sie lauscht dem unsichtbaren Gesang einer aufsteigenden Feldlerche.',
+    articleBody: `### Wie man einen unsichtbaren Klang malt
+
+Vincent van Gogh bewunderte den Maler und Dichter Jules Breton zutiefst. Als „Das Lied der Lerche“ 1934 auf der Weltausstellung in Chicago gewählt wurde, kürten es die Besucher zum beliebtesten Gemälde Amerikas.
+
+#### 1. Das Hören im Sehen
+Der Vogel selbst ist am Himmel kaum zu ahnen. Wir erkennen den Klang der Lerche allein durch die leicht geöffneten Lippen, den erhobenen Kopf und das plötzliche Innehalten der Feldarbeiterin.
+
+#### 2. Würde inmitten harter Arbeit
+Breton verwandelt den Beginn eines entbehrungsreichen Arbeitstages auf dem Feld in einen Moment ästhetischer Empfänglichkeit: Die Schönheit des Vogelgesangs gehört jedem, der innehält und lauscht.`,
+    body: 'Analyse von Jules Bretons Gemälde Das Lied der Lerche (1884).',
+    topics: ['art_aesthetics', 'contemplation_mind', 'sound_synthesis'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'The Song of the Lark (1884)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Jules Breton',
+        originalUrl: 'https://www.artic.edu/artworks/94841/the-song-of-the-lark',
+        publicationTimestamp: '1884-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T22:30:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Ikonisches Bild des Innehaltens und der akustischen Achtsamkeit im Alltag.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Henry Field Memorial Collection.',
+    wordCount: 290,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-breton-1884',
+    canonicalUrl: 'https://www.artic.edu/artworks/94841/the-song-of-the-lark',
+    imageUrl: 'https://www.artic.edu/iiif/2/48b2de88-ba73-8e19-f448-d1cef4a1c847/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Realismus & Klang',
+    isEvergreenGem: true,
+    keyInsight: 'Mitten im Pflichttakt des Morgens genügt ein einziger Atemzug des Lauschens, um den Horizont wieder weit zu machen.',
+    challengePrompt: 'Wann hast du heute mitten im Tun kurz innegehalten, um einem Geräusch oder Gedanken nachzulauschen?',
+    upvotesCount: 0,
+    awardsCount: { gold: 19, brain: 64, spark: 57 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Jules Breton',
+      year: '1884',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/48b2de88-ba73-8e19-f448-d1cef4a1c847/full/843,/0/default.jpg',
+      styleMovement: 'Französischer Realismus / Naturalismus',
+      aestheticImpulse: 'Vor der glutroten Morgensonne wird das unsichtbare Lied der Lerche im aufmerksamen Lauschen der Schnitterin sichtbar.'
+    },
+    comments: []
+  },
+  {
+    id: 'vault-art-022-zurbaran-crucifixion',
+    type: 'deep_dive',
+    format: 'art_showcase',
+    title: 'Die Kreuzigung (1627): Skulpturales Chiaroscuro und die Illusion der dritten Dimension',
+    subtitle: 'Francisco de Zurbarán (1627) • Art Institute of Chicago • Spanischer Barock (Tenebrismus)',
+    feedText: 'Vor einem vollkommen nachtschwarzen Hintergrund tritt der hell beleuchtete Körper mit solcher plastischer Schärfe hervor, dass die Zeitgenossen im Kloster San Pablo Real in Sevilla schworen, vor einer geschnitzten Holzskulptur statt vor einer flachen Leinwand zu stehen.',
+    articleBody: `### Licht als Meißel der Malerei
+
+Mit diesem Werk begründete der 29-jährige Francisco de Zurbarán 1627 in Sevilla seinen Ruhm als Meister des spanischen **Tenebrismus** (Kellerlicht-Malerei in der Nachfolge Caravaggios).
+
+#### 1. Trompe-l’œil durch extremes Seitenlicht
+Das Gemälde hing ursprünglich in einer dunklen Sakristei-Nische, die von rechts durch ein echtes Fenster beleuchtet wurde. Zurbarán berechnete den Lichteinfall im Bild exakt nach diesem realen Fenster, sodass das weiße Lendentuch wie gemeißelter Marmor aus der Dunkelheit ragt.
+
+#### 2. Stille statt barockem Aufruhr
+Anders als Rubens verzichtet Zurbarán auf jede theatralische Geste: Absolute Stille und geometrische Strenge beherrschen den Raum.`,
+    body: 'Analyse von Francisco de Zurbaráns Meisterwerk des Chiaroscuro (1627).',
+    topics: ['art_aesthetics', 'philosophy_ethics'],
+    primaryTopic: 'art_aesthetics',
+    sourceReferences: [
+      {
+        title: 'The Crucifixion (1627)',
+        publisher: 'The Art Institute of Chicago Collection',
+        author: 'Francisco de Zurbarán',
+        originalUrl: 'https://www.artic.edu/artworks/80084/the-crucifixion',
+        publicationTimestamp: '1627-01-01T00:00:00.000Z',
+        retrievalTimestamp: '2026-10-30T10:00:00.000Z',
+        isVerified: true
+      }
+    ],
+    publishedAt: '2026-10-29T23:00:00.000Z',
+    generatedAt: '2026-10-30T08:00:00.000Z',
+    estimatedReadingMinutes: 3,
+    relevanceExplanation: 'Meisterwerk der Licht-Schatten-Modellierung (Chiaroscuro) des spanischen Goldenen Zeitalters.',
+    contentStatus: 'philosophical_perspective',
+    isDailyEdition: false,
+    editionDate: '2026-10-30',
+    isTeachingRelated: false,
+    isChallengingPerspective: false,
+    isDemonstration: false,
+    aiAssisted: false,
+    factReviewStatus: 'historical_reference',
+    provenanceSummary: 'Art Institute of Chicago, Robert A. Waller Memorial Fund.',
+    wordCount: 300,
+    evidenceTier: 'permitted_full_text',
+    contentOrigin: 'live_ingested',
+    contentHash: 'vault-art-zurbaran-1627',
+    canonicalUrl: 'https://www.artic.edu/artworks/80084/the-crucifixion',
+    imageUrl: 'https://www.artic.edu/iiif/2/c8ee825f-bc8c-c76b-1f05-5d692d9a6b47/full/843,/0/default.jpg',
+    space: 'c/kunst_galerie',
+    flair: '🎨 Chiaroscuro / Barock',
+    isEvergreenGem: true,
+    keyInsight: 'Erst die radikale Reduktion des Hintergrunds auf tiefes Schwarz verleiht dem Licht seine fast greifbare skulpturale Kraft.',
+    challengePrompt: 'Wie verändert sich deine Konzentration, wenn du alles Überflüssige im Hintergrund ausblendest?',
+    upvotesCount: 0,
+    awardsCount: { gold: 22, brain: 74, spark: 52 },
+    sourceTrustLevel: 'museum_collection',
+    sourceDomain: 'artic.edu',
+    sourceBroadcasterName: 'Art Institute of Chicago',
+    artMeta: {
+      artist: 'Francisco de Zurbarán',
+      year: '1627',
+      medium: 'Öl auf Leinwand',
+      museum: 'Art Institute of Chicago',
+      highResImageUrl: 'https://www.artic.edu/iiif/2/c8ee825f-bc8c-c76b-1f05-5d692d9a6b47/full/843,/0/default.jpg',
+      styleMovement: 'Spanischer Barock (Siglo de Oro)',
+      aestheticImpulse: 'Radikales Chiaroscuro lässt Malerei auf flacher Leinwand wie eine dreidimensionale Skulptur im Raum erscheinen.'
     },
     comments: []
   },
@@ -1752,6 +2872,16 @@ Jeder Klick, jedes Scrollen ist eine Entscheidung über die eigene Aufmerksamkei
   ...MEME_VAULT_ENTRIES
 ];
 
+const LEGACY_VAULT_SPACE_MAP: Record<string, string> = {
+  'c/singularity': 'c/acceleration',
+  'c/philosophie': 'c/dialektik',
+  'c/klang': 'c/synth_alchemie',
+  'c/buecher': 'c/books',
+  'c/hebel': 'c/chancen',
+  'c/wissenschaft': 'c/serendipity',
+  'c/wissen_gesellschaft': 'c/serendipity'
+};
+
 export const REAL_KNOWLEDGE_VAULT: FeedItem[] = RAW_KNOWLEDGE_VAULT.map(item => {
   const isGenericUnsplash = Boolean(
     item.imageUrl &&
@@ -1763,8 +2893,12 @@ export const REAL_KNOWLEDGE_VAULT: FeedItem[] = RAW_KNOWLEDGE_VAULT.map(item => 
   const cleanImageUrl = isGenericUnsplash ? undefined : item.imageUrl;
   const isArtShowcase = item.format === 'art_showcase';
   const isWiki = Boolean(item.sourceDomain && item.sourceDomain.includes('wikipedia.org'));
+  const normalizedSpace = item.space && LEGACY_VAULT_SPACE_MAP[item.space]
+    ? LEGACY_VAULT_SPACE_MAP[item.space]
+    : item.space;
   return {
     ...item,
+    space: normalizedSpace,
     imageUrl: cleanImageUrl,
     hasAuthenticImage: Boolean(cleanImageUrl),
     sourceTrustLevel: isArtShowcase

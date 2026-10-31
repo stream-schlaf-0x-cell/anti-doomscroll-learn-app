@@ -13,7 +13,7 @@ import { EnrichmentCache, StorageDriverCacheStorage, CacheKeyParams } from './ca
 import { pureJsSha256 } from '../ingestion/normalizer';
 import { EnrichmentUsageLedger, defaultUsageLedger } from './ledger';
 import { synthesizeDidacticTransfer } from '../synthesis/backgroundResearchPipeline';
-import { upgradeImageResolutionUrl } from '../utils/imageQuality';
+import { upgradeImageResolutionUrl, isRejectedLowResOrLogoUrl } from '../utils/imageQuality';
 export { upgradeImageResolutionUrl };
 
 export interface BatchEnrichmentItemInput {
@@ -183,10 +183,155 @@ export function isSupportedFeedLanguage(title: string, text: string = ''): boole
   return true;
 }
 
+const GERMAN_MONTHS =
+  'Januar|Februar|März|Maerz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember|Jan\\.?|Feb\\.?|Mär\\.?|Apr\\.?|Jun\\.?|Jul\\.?|Aug\\.?|Sep\\.?|Sept\\.?|Okt\\.?|Nov\\.?|Dez\\.?';
+const DATE_LINE_REGEX = new RegExp(
+  `^(stand:\\s*)?(\\d{1,2}\\.\\s*(${GERMAN_MONTHS})\\s+\\d{4}|\\d{1,2}\\.\\d{1,2}\\.\\d{2,4}|(January|February|March|April|May|June|July|August|September|October|November|December)\\s+\\d{1,2},?\\s+\\d{4})([\\s,–\\-|]*(\\d{1,2}[:.]\\d{2})(\\s*uhr)?)?\\s*$`,
+  'i'
+);
+const CAPTION_LABEL_REGEX = /^(bild|foto|fotos|abbildung|abb\.|credit|credits|bildquelle|bildnachweis|quelle bild|image|photo)\s*:/i;
+const AGENCY_CREDIT_REGEX = /\((?:[^()]*\/\s*)?(imago|dpa|afp|reuters|ap|epa|getty images|picture alliance|anadolu agency|keystone|xinhua)[^()]*\)\s*$/i;
+const INLINE_AGENCY_REGEX = /(\(IMAGO\b|Anadolu Agency\)|\(dpa\b|\(AFP\b|\(Reuters\b|Getty Images\))/;
+
+/**
+ * RSS Formatting Sanitizer (Work Package 2):
+ * Strips duplicate leading title lines, author/editor bylines, raw date/time stamps,
+ * photo captions & agency credits, and collapses whitespace-only / multi-newline gaps.
+ */
+export function cleanArticleBodyFormatting(raw: string, title?: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  let text = raw
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n');
+
+  const lines = text.split('\n');
+  const out: string[] = [];
+  const normTitle = (title || '').trim().toLowerCase().replace(/[.:!?…\s]+$/, '');
+  let leadingPhase = true;
+  let skipNextCaptionLine = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) {
+      out.push('');
+      continue;
+    }
+
+    if (skipNextCaptionLine) {
+      skipNextCaptionLine = false;
+      if (line.length < 320) continue;
+    }
+
+    // Photo captions & agency credits anywhere in the body
+    if (CAPTION_LABEL_REGEX.test(line)) {
+      const rest = line.replace(CAPTION_LABEL_REGEX, '').trim();
+      if (!rest) skipNextCaptionLine = true;
+      continue;
+    }
+    if (line.length < 320 && (AGENCY_CREDIT_REGEX.test(line) || INLINE_AGENCY_REGEX.test(line))) {
+      continue;
+    }
+
+    if (leadingPhase) {
+      const lower = line.toLowerCase().replace(/[.:!?…\s]+$/, '');
+      // Duplicate leading title line
+      if (normTitle && (lower === normTitle || (normTitle.length > 12 && lower.startsWith(normTitle) && line.length <= normTitle.length + 3))) {
+        continue;
+      }
+      // Raw date / time line
+      if (DATE_LINE_REGEX.test(line)) {
+        continue;
+      }
+      // Author / editor bylines
+      const nextNonEmpty = lines.slice(i + 1).map(l => l.trim()).find(l => l.length > 0) || '';
+      const isShortNameLine =
+        line.length <= 48 &&
+        line.split(/\s+/).length <= 5 &&
+        !/[.!?;]$/.test(line) &&
+        DATE_LINE_REGEX.test(nextNonEmpty);
+      if (
+        /^(von|by|text:|autor(in)?:)\s+\S+/i.test(line) && line.length <= 80 ||
+        /\bredaktion\b/i.test(line) && line.length <= 48 && !/[.!?]$/.test(line) ||
+        isShortNameLine
+      ) {
+        continue;
+      }
+      leadingPhase = false;
+    }
+    out.push(line);
+  }
+
+  return out
+    .join('\n')
+    .replace(/\n{2,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Zero AI-Slop filter: removes generic LLM clichés from synthesized editorial prose.
+ */
+export function stripAiSlopPhrases(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  const capitalize = (s: string) => s.replace(/^(\s*)(\p{Ll})/u, (_m, ws, ch) => `${ws}${ch.toUpperCase()}`);
+  let out = text
+    // Whole cliché sentences
+    .replace(/(^|[.!?]\s+)(In einer Welt,? (in der|die|wo)[^.!?]*[.!?])\s*/gi, '$1')
+    .replace(/(^|[.!?]\s+)(In einer (zunehmend|immer)[^.!?]*Welt[^.!?]*[.!?])\s*/gi, '$1')
+    .replace(/(^|[.!?]\s+)(Tauchen wir (ein|tiefer ein)[^.!?]*[.!?])\s*/gi, '$1')
+    .replace(/(^|[.!?]\s+)(Lass(t)? uns (eintauchen|gemeinsam eintauchen)[^.!?]*[.!?])\s*/gi, '$1');
+
+  // Lead-in phrases: strip and re-capitalize the remainder of the sentence
+  const leadIns = [
+    /Zusammenfassend lässt sich sagen,? dass\s+/gi,
+    /Zusammenfassend lässt sich festhalten,? dass\s+/gi,
+    /Abschließend lässt sich sagen,? dass\s+/gi,
+    /Es zeigt sich,? dass\s+/gi,
+    /Es ist wichtig zu betonen,? dass\s+/gi,
+    /Es lässt sich festhalten,? dass\s+/gi
+  ];
+  for (const re of leadIns) {
+    out = out.replace(re, '');
+  }
+  out = out
+    .replace(/\b(Dieses|Diese|Dieser) faszinierende(n|r|s)?\s+/g, '$1 ')
+    .replace(/\bnicht nur ([^,.;!?]{1,80}?),?\s+sondern auch\s+/gi, '$1 und ');
+
+  // Re-capitalize sentence starts after removals
+  out = out
+    .split(/(?<=[.!?])\s+/)
+    .map(s => capitalize(s))
+    .join(' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+  return capitalize(out);
+}
+
+const PARTY_POLITICS_CASE_SENSITIVE = /\b(SPD|AfD|CDU|CSU|FDP|BSW|Linke|Grüne|Grünen)\b/g;
+const PARTY_POLITICS_REGEX = /\b(linkspartei|linkskoalition|bündnis 90|koalitionsvertrag|koalitionsverhandlung\w*|regierungsbildung|wahlkampf|landtagswahl|bundestagswahl|wahlparty|kampfplatz berlin|bundestag|landtag|ampel-koalition|groko)\b/gi;
+
+/** Detects domestic party-politics articles so they never land in c/serendipity or c/dialektik. */
+export function isDomesticPartyPolitics(title: string, text: string = ''): boolean {
+  const t = title || '';
+  const titleHits = (t.match(PARTY_POLITICS_CASE_SENSITIVE) || []).length + (t.match(PARTY_POLITICS_REGEX) || []).length;
+  if (titleHits >= 1) return true;
+  const body = (text || '').slice(0, 1600);
+  const bodyHits = (body.match(PARTY_POLITICS_CASE_SENSITIVE) || []).length + (body.match(PARTY_POLITICS_REGEX) || []).length;
+  return bodyHits >= 3;
+}
+
+const CELEBRITY_FLUFF_REGEX = /(\bKurt Russell\b|\bHollywood-(Star|Legende|Ikone)\b|\b(wird|turns)\s+[5-9]\d\b(?!\s*(prozent|%|millionen|milliarden))|\bfeiert\s+(seinen|ihren)\s+\d{2}\.\s*Geburtstag\b|\bzum\s+\d{2}\.\s*Geburtstag\b|\bbirthday\b.*\bstar\b)/i;
+
+/** Detects pure celebrity birthday / boulevard interview fluff. */
+export function isCelebrityFluff(title: string): boolean {
+  return CELEBRITY_FLUFF_REGEX.test(title || '');
+}
+
 /**
  * Strips affiliate footers, donation banners, and generic publisher boilerplate from raw text.
  */
-export function stripPublisherBoilerplate(raw: string): string {
+export function stripPublisherBoilerplate(raw: string, title?: string): string {
   if (!raw || typeof raw !== 'string') return '';
   let text = raw
     .replace(/Amazon Blitzangebote:[\s\S]*$/i, '')
@@ -199,6 +344,7 @@ export function stripPublisherBoilerplate(raw: string): string {
     .replace(/–––[\s\S]*?(Spende jetzt|Jetzt spenden)[\s\S]*?(–––|$)/gi, '')
     .replace(/\b\d+\s+posts?\s*-\s*\d+\s+participants?\s*Read full topic\b/gi, '')
     .trim();
+  text = cleanArticleBodyFormatting(text, title);
   return text;
 }
 
@@ -264,11 +410,33 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
     item.space === 'c/kunst_galerie' ||
     item.primaryTopic === 'memes_satire';
 
+  const isMemeLike =
+    item.format === 'meme' ||
+    item.format === 'comic' ||
+    item.space === 'c/memes' ||
+    item.primaryTopic === 'memes_satire' ||
+    Boolean(item.memeMeta);
+  const isArtLike =
+    !isMemeLike &&
+    (item.format === 'art_showcase' ||
+      item.space === 'c/kunst_galerie' ||
+      (item.primaryTopic === 'art_aesthetics' && (!item.space || item.space === 'c/kunst_galerie')));
+
+  if (isArtLike) {
+    // Visual-first gallery contract: a sharp, non-logo image AND real descriptive text
+    const hasValidImage = Boolean(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
+    const descriptive = getCardRenderableText(item);
+    return hasValidImage && descriptive.length >= 60 && !isCelebrityFluff(item.title || '');
+  }
+
   if (isVisual) {
     return true;
   }
 
   const title = (item.title || '').trim();
+  if (isCelebrityFluff(title)) {
+    return false;
+  }
   if (!title || /^schlagzeilen$/i.test(title)) {
     return false;
   }
@@ -315,7 +483,8 @@ export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefine
     item.format === 'comic' ||
     item.space === 'c/memes' ||
     item.space === 'c/kunst_galerie' ||
-    item.primaryTopic === 'memes_satire';
+    item.primaryTopic === 'memes_satire' ||
+    (item.primaryTopic === 'art_aesthetics' && !item.space);
 
   if (isVisual) return true;
 
@@ -334,15 +503,27 @@ export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefine
  * - Ensures a genuine conceptual keyInsight
  */
 export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
-  const cleanedFeedText = stripPublisherBoilerplate(item.feedText || item.body || item.articleBody || '');
-  const cleanedBody = stripPublisherBoilerplate(item.body || cleanedFeedText);
-  const cleanedArticleBody = item.articleBody ? stripPublisherBoilerplate(item.articleBody) : undefined;
+  const title = item.title || '';
+  const slopClean = (s: string) => (item.aiAssisted ? stripAiSlopPhrases(s) : s);
+  const cleanedFeedText = slopClean(stripPublisherBoilerplate(item.feedText || item.body || item.articleBody || '', title));
+  const cleanedBody = slopClean(stripPublisherBoilerplate(item.body || cleanedFeedText, title));
+  const cleanedArticleBody = item.articleBody ? stripPublisherBoilerplate(item.articleBody, title) : undefined;
 
-  const correctedTopic = classifyTopicDeterministically(
-    item.title || '',
-    `${item.subtitle || ''} ${cleanedFeedText}`,
-    item.primaryTopic
-  );
+  const routingText = `${item.subtitle || ''} ${cleanedFeedText}`;
+  const isPartyPolitics = isDomesticPartyPolitics(title, routingText);
+  const isCelebrity = isCelebrityFluff(title);
+  const currentSpace = (item.space || '').toLowerCase();
+  const isRoutableSpace = !currentSpace || currentSpace === 'c/serendipity' || currentSpace === 'c/dialektik';
+
+  const correctedTopic: TopicTag = isPartyPolitics && isRoutableSpace
+    ? 'science_society'
+    : classifyTopicDeterministically(title, routingText, item.primaryTopic);
+  const routedSpace: string | undefined =
+    isPartyPolitics && isRoutableSpace
+      ? 'c/gesellschaft_politik'
+      : isCelebrity && (!currentSpace || currentSpace === 'c/dialektik')
+      ? 'c/kultur'
+      : item.space;
 
   let cleanedInsight = stripPublisherBoilerplate(item.keyInsight || item.subtitle || '');
   if (!cleanedInsight || cleanedInsight.length < 15) {
@@ -371,6 +552,7 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
 
   return {
     ...item,
+    ...(routedSpace ? { space: routedSpace } : {}),
     primaryTopic: correctedTopic,
     topics: updatedTopics,
     feedText: isSupportedLang ? (cleanedFeedText || item.feedText) : '',
@@ -460,6 +642,15 @@ export function evaluateSignalVsNoiseDeterministically(
       score: 2,
       passed: false,
       reason: 'Kommerzielles Angebot / Affiliate-Deal'
+    };
+  }
+
+  // 2b. Celebrity birthday / boulevard interview fluff
+  if (isCelebrityFluff(title)) {
+    return {
+      score: 4,
+      passed: false,
+      reason: 'Promi-Geburtstag / Boulevard-Interview ohne Erkenntniswert'
     };
   }
 

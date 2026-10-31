@@ -24,7 +24,13 @@ import { DesktopSidebar } from '../../ui/components/DesktopSidebar';
 import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
 import { ScoredFeedItem, scoreFeedItem, sortFeedForDisplay, FeedSortMode } from '../../core/domain/ranking';
-import { Subchannel, defaultSpaceRepository, normalizeSpaceHandle } from '../../core/spaces/spaceRepository';
+import {
+  Subchannel,
+  defaultSpaceRepository,
+  normalizeSpaceHandle,
+  canonicalSpaceHandle,
+  resolveItemSpaceHandle
+} from '../../core/spaces/spaceRepository';
 import { UltraMasterModal, MasterTab } from '../../ui/components/UltraMasterModal';
 import { OnTheFlyStreamService, generateHivemindStream } from '../../core/synthesis/onTheFlyStreamService';
 import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerationProgressModal';
@@ -46,7 +52,7 @@ import { REAL_KNOWLEDGE_VAULT } from '../../core/data/realKnowledgeVault';
 import { seenImpressionsService } from '../../core/data/seenImpressionsService';
 import { loadAiCredentials } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
-import { SubchannelFlourishService } from '../../core/ingestion/subchannelFlourishService';
+import { SubchannelFlourishService, detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { LiveCivicPulseService, ManualPipelineStage } from '../../core/ingestion/liveCivicPulseService';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
 import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
@@ -254,36 +260,49 @@ export const FeedScreen: React.FC = () => {
     }
   }, [activeFeedOption, loadLiveNews]);
 
-  const matchesSelectedSpace = useCallback((item: FeedItem): boolean => {
-    if (selectedFilter === 'all') return true;
+  // 100% Subchannel Purity: inside a c/... channel, ONLY items belonging to that channel are shown.
+  // Never pad or backfill a subchannel with cards from other channels.
+  const selectedSpaceContext = useMemo(() => {
+    if (selectedFilter === 'all') return null;
     const filterLower = selectedFilter.toLowerCase();
-    const currentSpace = subchannels.find(s => s.handle.toLowerCase() === filterLower);
+    const currentSpace = subchannels.find(
+      s => s.handle.toLowerCase() === filterLower || s.primaryTopic === selectedFilter
+    );
+    const targetHandle = currentSpace
+      ? canonicalSpaceHandle(currentSpace.handle)
+      : filterLower.startsWith('c/')
+      ? canonicalSpaceHandle(selectedFilter)
+      : null;
+    const archetype = detectChannelArchetype(
+      currentSpace
+        ? {
+            handle: currentSpace.handle,
+            title: currentSpace.title,
+            description: currentSpace.description,
+            primaryTopic: currentSpace.primaryTopic
+          }
+        : selectedFilter
+    );
+    return { targetHandle, archetype };
+  }, [selectedFilter, subchannels]);
 
-    // Exact space match
-    if (item.space && item.space.toLowerCase() === filterLower) return true;
+  const matchesSelectedSpace = useCallback((item: FeedItem): boolean => {
+    if (selectedFilter === 'all' || !selectedSpaceContext) return true;
+    const { targetHandle, archetype } = selectedSpaceContext;
 
-    // For custom channels (e.g. c/visible_learning): only match if assigned to this space or explicit title/keyword match
-    if (currentSpace?.isCustom) {
-      const raw = filterLower.replace(/^c\//, '');
-      if (raw.length > 2) {
-        const hay = `${item.title} ${item.subtitle || ''} ${item.feedText || ''} ${item.topics.join(' ')}`.toLowerCase();
-        if (hay.includes(raw)) return true;
-      }
+    // Visual-first archetype (e.g. c/kunst_galerie, c/architektur): strictly require an image
+    if (archetype === 'visual_gallery' && !(item.imageUrl && item.imageUrl.trim().length > 0)) {
       return false;
     }
 
-    if (activeTopic) {
-      if (item.primaryTopic === activeTopic || item.topics.includes(activeTopic)) {
-        return true;
-      }
+    if (targetHandle) {
+      return resolveItemSpaceHandle(item) === targetHandle;
     }
-    const raw = filterLower.replace(/^c\//, '');
-    if (raw.length > 2) {
-      const hay = `${item.title} ${item.subtitle || ''} ${item.feedText || ''} ${item.primaryTopic} ${item.topics.join(' ')}`.toLowerCase();
-      if (hay.includes(raw)) return true;
-    }
-    return false;
-  }, [selectedFilter, activeTopic, subchannels]);
+
+    // Pure topic filter (no channel handle)
+    const topicFilter = (activeTopic || selectedFilter) as TopicTag;
+    return item.primaryTopic === topicFilter || item.topics.includes(topicFilter);
+  }, [selectedFilter, selectedSpaceContext, activeTopic]);
 
   // Context-accurate pending changes: only count inserted items matching current space and search query
   React.useEffect(() => defaultFeedOperationManager.subscribe(result => {
@@ -466,7 +485,12 @@ export const FeedScreen: React.FC = () => {
 
   // Combined endless stream with Always-On "Frisch kuratiert" Quality Gate & Sliding-Window Bloom-Ranking
   const latestInfiniteInterleavedBase = useMemo(() => {
-    const combined = [...filteredDaily, ...filteredOpenWeb, ...filteredDiscovery, ...scoredLiveItems];
+    const combined = [
+      ...filteredDaily,
+      ...filteredOpenWeb,
+      ...filteredDiscovery,
+      ...scoredLiveItems.filter(matchesSelectedSpace)
+    ];
     const seen = new Set<string>();
     const seenCanon = new Set<string>();
     const unique: ScoredFeedItem[] = [];
@@ -482,13 +506,16 @@ export const FeedScreen: React.FC = () => {
 
     // 100% Default Curated Quality Gate ("Frisch kuratiert" standard on every stream card)
     const sanitized = unique.map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions));
-    const strictCurated = sanitized.filter(item => satisfiesDefaultCuratedStandard(item));
+    // Re-check purity after sanitization (sanitizer may re-route e.g. party politics to c/gesellschaft_politik)
+    const strictCurated = sanitized
+      .filter(item => satisfiesDefaultCuratedStandard(item))
+      .filter(matchesSelectedSpace);
     const curatedPool = strictCurated.length >= 3 || selectedFilter === 'all'
       ? strictCurated
-      : sanitized.filter(item => satisfiesCuratedBodyContract(item));
+      : sanitized.filter(item => satisfiesCuratedBodyContract(item)).filter(matchesSelectedSpace);
 
     return sortFeedForDisplay(curatedPool, sortMode, { pinnedIds, interleave: true, seenItemIds: seenIds });
-  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, dismissedSet, profile, interactions, selectedFilter, sortMode, pinnedIds, seenIds]);
+  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, matchesSelectedSpace, dismissedSet, profile, interactions, selectedFilter, sortMode, pinnedIds, seenIds]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
   // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
@@ -500,7 +527,8 @@ export const FeedScreen: React.FC = () => {
       .filter(item => !freshIds.has(item.id) && !dismissedSet.has(item.id))
       .filter(matchesSelectedSpace)
       .filter(satisfiesDefaultCuratedStandard)
-      .map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions));
+      .map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions))
+      .filter(matchesSelectedSpace);
     return filterByQuery(scored);
   }, [sortMode, infiniteInterleavedBase, dismissedSet, profile, interactions, matchesSelectedSpace, filterByQuery]);
 
@@ -590,7 +618,7 @@ export const FeedScreen: React.FC = () => {
       );
       const res = await SubchannelFlourishService.flourishChannel(channelObj, {
         existingIds,
-        targetCount: 15,
+        targetCount: 25,
         onProgress: (_pct, label) => {
           if (!silent) setFlourishStageText(label);
         }
@@ -612,12 +640,12 @@ export const FeedScreen: React.FC = () => {
     }
   }, [selectedFilter, isFlourishingChannel, subchannels, recomputeFeed, refreshFeed]);
 
-  // Automatically flourish any selected c/... subchannel when it has < 15 unseen cards
+  // Automatically flourish any selected c/... subchannel when it has < 25 unseen cards
   React.useEffect(() => {
     if (selectedFilter === 'all') return;
     const normalized = normalizeSpaceHandle(selectedFilter).toLowerCase();
     const unseenInChannel = infiniteInterleavedBase.filter(i => !seenIds.has(i.id)).length;
-    if (unseenInChannel < 15 && !autoFlourishedHandlesRef.current.has(normalized)) {
+    if (unseenInChannel < 25 && !autoFlourishedHandlesRef.current.has(normalized)) {
       autoFlourishedHandlesRef.current.add(normalized);
       void handleFlourishActiveChannel(true);
     }

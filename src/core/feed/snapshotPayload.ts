@@ -1,8 +1,8 @@
 import { FeedItem, FeedItemSchema } from '../domain/types';
 import { isDeliveringHealth, parseSourceHealth, SourceHealthInfo } from '../ingestion/sourceHealth';
 
-export const STARTUP_SNAPSHOT_MAX_ITEMS = 200;
-export const STARTUP_SNAPSHOT_MAX_BYTES = 1_500_000;
+export const STARTUP_SNAPSHOT_MAX_ITEMS = 450;
+export const STARTUP_SNAPSHOT_MAX_BYTES = 3_500_000;
 
 export interface SnapshotPayload {
   generatedAt?: string;
@@ -26,7 +26,10 @@ export function utf8ByteLength(value: string): number {
 export function selectStartupItems(items: FeedItem[], byteBudget = STARTUP_SNAPSHOT_MAX_BYTES): FeedItem[] {
   const buckets = new Map<string, FeedItem[]>();
   for (const item of items) {
-    const publisher = item.sourceDomain || item.sourceReferences[0]?.publisher || item.id;
+    // Treat curated knowledge vault items as distinct high-signal entries so museum collections are preserved
+    const publisher = item.id.startsWith('vault-')
+      ? item.id
+      : (item.sourceDomain || item.sourceReferences[0]?.publisher || item.id);
     const queue = buckets.get(publisher) || [];
     queue.push(item);
     buckets.set(publisher, queue);

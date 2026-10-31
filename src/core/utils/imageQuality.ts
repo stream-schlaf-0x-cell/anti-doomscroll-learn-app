@@ -24,8 +24,31 @@ const REJECTED_IMAGE_PATTERNS = [
   'default-thumb',
   'spacer.gif',
   'blank.gif',
-  'images.unsplash.com'
+  'images.unsplash.com',
+  's.w.org/images/core/emoji',
+  'wp-includes/images/smilies'
 ];
+
+const TRUSTED_MUSEUM_OR_ART_DOMAINS = [
+  'artic.edu',
+  'wikimedia.org',
+  'wikipedia.org',
+  'metmuseum.org',
+  'rijksmuseum.nl',
+  'nga.gov',
+  'guggenheim.org',
+  'moma.org',
+  'hamburger-kunsthalle.de',
+  'bauhaus-dessau.de',
+  'thisiscolossal.com',
+  'hyperallergic.com'
+];
+
+export function isTrustedMuseumOrArtDomain(url?: string): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const clean = url.trim().toLowerCase();
+  return TRUSTED_MUSEUM_OR_ART_DOMAINS.some(d => clean.includes(d));
+}
 
 export function isRejectedLowResOrLogoUrl(url?: string, allowMemeSvg = false): boolean {
   if (!url || typeof url !== 'string') return true;
@@ -36,6 +59,10 @@ export function isRejectedLowResOrLogoUrl(url?: string, allowMemeSvg = false): b
 
   if (clean.endsWith('.ico')) return true;
   if (clean.endsWith('.svg') && !allowMemeSvg) return true;
+
+  if (isTrustedMuseumOrArtDomain(clean)) {
+    return false;
+  }
 
   for (const pattern of REJECTED_IMAGE_PATTERNS) {
     if (clean.includes(pattern)) {
@@ -72,14 +99,14 @@ export function upgradeImageResolutionUrl(url?: string, targetWidth = 1080): str
   try {
     let upgraded = trimmed;
 
-    // 1. Wikimedia / Wikipedia: upgrade /thumb/.../200px-... to /800px-...
+    // 1. Wikimedia / Wikipedia: upgrade /thumb/.../200px-... to standard /800px-... step width
     if (
       (upgraded.includes('upload.wikimedia.org') || upgraded.includes('wikipedia.org')) &&
       upgraded.includes('/thumb/')
     ) {
       upgraded = upgraded.replace(/\/(\d+)px-/g, (_match, pxStr) => {
         const px = parseInt(pxStr, 10);
-        return px < 800 ? '/800px-' : `/${px}px-`;
+        return px < 800 || px === 960 ? '/800px-' : `/${px}px-`;
       });
     }
 

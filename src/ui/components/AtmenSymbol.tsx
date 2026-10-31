@@ -31,11 +31,7 @@ export const AtmenSymbol: React.FC<AtmenSymbolProps> = ({
         styles.container,
         {
           width: size,
-          height: size,
-          shadowColor: isDark ? '#38BDF8' : '#0284C7',
-          shadowOpacity: isDark ? 0.45 : 0.2,
-          shadowRadius: isDark ? Math.max(3, size * 0.25) : 2,
-          shadowOffset: { width: 0, height: 1 }
+          height: size
         },
         style
       ]}

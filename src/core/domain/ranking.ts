@@ -998,7 +998,9 @@ export type FeedSortMode =
   | 'for_you'
   | 'today'
   | 'discourse'
+  | 'discourse_14d'
   | 'top'
+  | 'top_30d'
   | 'timeless'
   | 'hot'
   | 'new'
@@ -1012,11 +1014,40 @@ export interface SortFeedOptions {
 }
 
 /** The final presentation boundary: pin order wins over every score and diversity rule unless ignorePins is true. */
+const DISJOINT_HORIZON_TOP_N = 10;
+const DISJOINT_HORIZON_MIN_POOL = 24;
+
+/**
+ * Disjoint Horizon Tabs: moves items that already lead another horizon's top-N to the back,
+ * so ⚡ Heute, 🧭 Diskurs, 🏆 Top and 💎 Zeitlos present genuinely different leaderboards.
+ */
+function demoteItemsLeadingOtherHorizons(
+  sorted: ScoredFeedItem[],
+  pool: ScoredFeedItem[],
+  otherModes: FeedSortMode[],
+  seenItemIds?: ReadonlySet<string>
+): ScoredFeedItem[] {
+  if (pool.length < DISJOINT_HORIZON_MIN_POOL || otherModes.length === 0) return sorted;
+  const leaderIds = new Set<string>();
+  for (const other of otherModes) {
+    const otherTop = sortFeedForDisplay(pool, other, { ignorePins: true, interleave: true, seenItemIds })
+      .slice(0, DISJOINT_HORIZON_TOP_N);
+    for (const it of otherTop) leaderIds.add(it.id);
+  }
+  const fresh = sorted.filter(it => !leaderIds.has(it.id));
+  // Keep enough items so the horizon never looks empty on tiny pools
+  if (fresh.length < DISJOINT_HORIZON_TOP_N) return sorted;
+  const demoted = sorted.filter(it => leaderIds.has(it.id));
+  return [...fresh, ...demoted];
+}
+
 export function sortFeedForDisplay(
   items: ScoredFeedItem[],
-  mode: FeedSortMode,
+  requestedMode: FeedSortMode,
   options: SortFeedOptions = {}
 ): ScoredFeedItem[] {
+  const mode: FeedSortMode =
+    requestedMode === 'discourse_14d' ? 'discourse' : requestedMode === 'top_30d' ? 'top' : requestedMode;
   const unique = new Map(items.map(item => [item.id, item]));
   const pinned = (options.ignorePins ? [] : (options.pinnedIds ?? [])).flatMap(id => {
     const item = unique.get(id);
@@ -1119,7 +1150,8 @@ export function sortFeedForDisplay(
       if (scoreB !== scoreA) return scoreB - scoreA;
       return b.id.localeCompare(a.id);
     });
-    return [...pinned, ...enforceCuratedStreamDiversity(sorted)];
+    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today'], options.seenItemIds);
+    return [...pinned, ...enforceCuratedStreamDiversity(disjoint)];
   }
 
   // 4. "🏆 Top" (30-Day Review of highest impact items)
@@ -1143,7 +1175,8 @@ export function sortFeedForDisplay(
       if (timeB !== timeA) return timeB - timeA;
       return b.id.localeCompare(a.id);
     });
-    return [...pinned, ...enforceCuratedStreamDiversity(sorted)];
+    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today', 'discourse'], options.seenItemIds);
+    return [...pinned, ...enforceCuratedStreamDiversity(disjoint)];
   }
 
   // 5. "💎 Zeitlos" (Timeless essays, art, literature, music, evergreen concepts)
@@ -1159,7 +1192,8 @@ export function sortFeedForDisplay(
       if (scoreB !== scoreA) return scoreB - scoreA;
       return b.id.localeCompare(a.id);
     });
-    return [...pinned, ...sorted];
+    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today', 'discourse'], options.seenItemIds);
+    return [...pinned, ...disjoint];
   }
 
   // Fallback: Default hot/score order

@@ -12,7 +12,7 @@ import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 import { FeedItem } from '../domain/types';
 
-export const CURRENT_DATA_MIGRATION_VERSION = '2026-10-31-v3.2-mobile-polish-lang-gate';
+export const CURRENT_DATA_MIGRATION_VERSION = '2026-10-31-v3.3-subreddit-purity-art-gallery';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
