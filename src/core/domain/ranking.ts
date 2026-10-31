@@ -395,14 +395,19 @@ export function scoreFeedItem(
     }
 
     if (memory.penalizedKeywords) {
-      const titleLower = item.title.toLowerCase();
+      const textLower = `${item.title} ${item.subtitle || ''} ${item.keyInsight || ''}`.toLowerCase();
       for (const [kw, count] of Object.entries(memory.penalizedKeywords)) {
-        if (titleLower.includes(kw.toLowerCase())) {
+        if (textLower.includes(kw.toLowerCase())) {
           feedbackAdjustment -= Math.min(0.25, (count || 1) * 0.10);
         }
       }
     }
   }
+
+  // Upvote / Downvote Concept & Keyword Similarity Boost across unseen articles
+  const similarityDelta = computeUpvoteSimilarityBoost(item, profile, interactions);
+  feedbackAdjustment += similarityDelta;
+
   if (interaction?.feedback === 'more_like_this') feedbackAdjustment += 0.40;
   if (interaction?.feedback === 'less_like_this') feedbackAdjustment -= 0.50;
   if (interaction?.voteScore === 1) feedbackAdjustment += 0.25;
@@ -429,7 +434,8 @@ export function scoreFeedItem(
     readingTimeFit * 0.18 +
     editorialValue * 0.06 +
     feedbackAdjustment * 0.18 +
-    behavioralAdjustment * 0.04;
+    behavioralAdjustment * 0.04 +
+    similarityDelta * 0.35;
 
   // Direct explicit interaction overrides on the item itself
   if (interaction?.feedback === 'less_like_this' || interaction?.voteScore === -1) {
@@ -1522,4 +1528,192 @@ export function revertDismissFeedbackFromProfile(
     },
     mutedSources: nextMuted
   };
+}
+
+const CONCEPT_STOPWORDS = new Set([
+  'eine', 'einer', 'eines', 'einem', 'einen', 'oder', 'aber', 'wenn', 'dann', 'weil',
+  'dass', 'dies', 'diese', 'dieser', 'dieses', 'über', 'unter', 'nach', 'vor',
+  'nicht', 'auch', 'noch', 'schon', 'durch', 'für', 'gegen', 'ohne', 'beim',
+  'sind', 'wird', 'werden', 'wurde', 'wurden', 'haben', 'hatte', 'kann', 'können',
+  'mehr', 'sehr', 'hier', 'dort', 'alle', 'viele', 'neue', 'neuen', 'neuer',
+  'warum', 'wieso', 'weshalb', 'sowie', 'zwischen', 'ihre', 'ihren', 'ihrem',
+  'what', 'with', 'from', 'this', 'that', 'about', 'into', 'over', 'after',
+  'their', 'there', 'where', 'which', 'while', 'would', 'could', 'should',
+  'have', 'been', 'were', 'they', 'them', 'some', 'more', 'most', 'other'
+]);
+
+/**
+ * Extracts 4-6 salient concept/subject keywords from an item's title, subtitle, and keyInsight.
+ */
+export function extractConceptKeywords(
+  input: Pick<FeedItem, 'title' | 'subtitle' | 'keyInsight' | 'feedText'> | string
+): string[] {
+  const combined =
+    typeof input === 'string'
+      ? input
+      : `${input.title || ''} ${input.subtitle || ''} ${input.keyInsight || ''}`;
+
+  const tokens = combined
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+    .split(/\s+/)
+    .map(w => w.replace(/^-+|-+$/g, ''))
+    .filter(w => w.length >= 4 && !CONCEPT_STOPWORDS.has(w));
+
+  const unique: string[] = [];
+  for (const token of tokens) {
+    if (!unique.includes(token)) {
+      unique.push(token);
+      if (unique.length >= 6) break;
+    }
+  }
+  return unique;
+}
+
+/**
+ * Applies an explicit upvote or downvote signal to a UserProfile's feedbackMemory and derivedWeights
+ * so unseen articles sharing concepts, subchannels, or domains immediately adapt.
+ */
+export function applyVoteFeedbackToProfile(
+  profile: UserProfile,
+  item: FeedItem,
+  direction: 'up' | 'down'
+): UserProfile {
+  const isUp = direction === 'up';
+  const primaryTopic = item.primaryTopic || 'philosophy_ethics';
+  const secondaryTopics = (item.topics || []).filter(t => t !== primaryTopic);
+  const author = item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '';
+  const domain = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || '').toLowerCase().trim();
+  const space = item.space ? item.space.toLowerCase().trim() : '';
+  const keywords = extractConceptKeywords(item);
+
+  const mem = {
+    boostedTopics: { ...(profile.feedbackMemory?.boostedTopics || {}) },
+    penalizedTopics: { ...(profile.feedbackMemory?.penalizedTopics || {}) },
+    boostedAuthors: { ...(profile.feedbackMemory?.boostedAuthors || {}) },
+    penalizedAuthors: { ...(profile.feedbackMemory?.penalizedAuthors || {}) },
+    boostedDomains: { ...(profile.feedbackMemory?.boostedDomains || {}) },
+    penalizedDomains: { ...(profile.feedbackMemory?.penalizedDomains || {}) },
+    boostedSpaces: { ...(profile.feedbackMemory?.boostedSpaces || {}) },
+    penalizedSpaces: { ...(profile.feedbackMemory?.penalizedSpaces || {}) },
+    boostedKeywords: { ...(profile.feedbackMemory?.boostedKeywords || {}) },
+    penalizedKeywords: { ...(profile.feedbackMemory?.penalizedKeywords || {}) }
+  };
+
+  if (isUp) {
+    mem.boostedTopics[primaryTopic] = (mem.boostedTopics[primaryTopic] || 0) + 2;
+    for (const sec of secondaryTopics) {
+      mem.boostedTopics[sec] = (mem.boostedTopics[sec] || 0) + 1;
+    }
+    if (author) mem.boostedAuthors[author] = (mem.boostedAuthors[author] || 0) + 1;
+    if (domain) mem.boostedDomains[domain] = (mem.boostedDomains[domain] || 0) + 2;
+    if (space) mem.boostedSpaces[space] = (mem.boostedSpaces[space] || 0) + 2;
+    for (const kw of keywords) {
+      mem.boostedKeywords[kw] = (mem.boostedKeywords[kw] || 0) + 2;
+    }
+  } else {
+    mem.penalizedTopics[primaryTopic] = (mem.penalizedTopics[primaryTopic] || 0) + 2;
+    for (const sec of secondaryTopics) {
+      mem.penalizedTopics[sec] = (mem.penalizedTopics[sec] || 0) + 1;
+    }
+    if (author) mem.penalizedAuthors[author] = (mem.penalizedAuthors[author] || 0) + 1;
+    if (domain) mem.penalizedDomains[domain] = (mem.penalizedDomains[domain] || 0) + 2;
+    if (space) mem.penalizedSpaces[space] = (mem.penalizedSpaces[space] || 0) + 2;
+    for (const kw of keywords) {
+      mem.penalizedKeywords[kw] = (mem.penalizedKeywords[kw] || 0) + 2;
+    }
+  }
+
+  return {
+    ...profile,
+    feedbackMemory: mem
+  };
+}
+
+/**
+ * Computes a concept, keyword, subchannel, and domain similarity adjustment for an unseen article
+ * based on the user's upvoted/downvoted feedbackMemory and mutedSources.
+ * - Unseen articles sharing >= 2 core concepts/keywords or strong channel/domain affinity with upvoted items
+ *   receive a clear positive boost (+0.12 to +0.30).
+ * - Unseen articles matching downregulated keywords/domains receive a decisive negative penalty (-0.25 to -0.45).
+ */
+export function computeUpvoteSimilarityBoost(
+  item: FeedItem,
+  userProfile: UserProfile,
+  _interactions: Record<string, ReadingInteraction> = {}
+): number {
+  const memory = userProfile.feedbackMemory;
+  const mutedSources = userProfile.mutedSources || [];
+  const domain = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || '').toLowerCase().trim();
+  const space = item.space ? item.space.toLowerCase().trim() : '';
+
+  let boost = 0;
+  let penalty = 0;
+
+  if (domain && mutedSources.some(m => domain.includes(m.toLowerCase()))) {
+    penalty += 0.35;
+  }
+
+  if (!memory) {
+    return -penalty;
+  }
+
+  const itemKeywords = extractConceptKeywords(item);
+  const fullSearchText = `${item.title || ''} ${item.subtitle || ''} ${item.keyInsight || ''} ${item.feedText || ''}`.toLowerCase();
+
+  let matchedBoostKeywords = 0;
+  if (memory.boostedKeywords) {
+    for (const [kw, count] of Object.entries(memory.boostedKeywords)) {
+      if ((count || 0) <= 0) continue;
+      const kwNorm = kw.toLowerCase();
+      if (itemKeywords.includes(kwNorm) || fullSearchText.includes(kwNorm)) {
+        matchedBoostKeywords += 1;
+      }
+    }
+  }
+
+  let matchedPenaltyKeywords = 0;
+  if (memory.penalizedKeywords) {
+    for (const [kw, count] of Object.entries(memory.penalizedKeywords)) {
+      if ((count || 0) <= 0) continue;
+      const kwNorm = kw.toLowerCase();
+      if (itemKeywords.includes(kwNorm) || fullSearchText.includes(kwNorm)) {
+        matchedPenaltyKeywords += 1;
+      }
+    }
+  }
+
+  const spaceBoostCount = space ? (memory.boostedSpaces?.[space] ?? 0) : 0;
+  const domainBoostCount = domain ? (memory.boostedDomains?.[domain] ?? 0) : 0;
+  const spacePenCount = space ? (memory.penalizedSpaces?.[space] ?? 0) : 0;
+  const domainPenCount = domain ? (memory.penalizedDomains?.[domain] ?? 0) : 0;
+
+  if (matchedBoostKeywords >= 2) {
+    boost += Math.min(0.24, 0.12 + (matchedBoostKeywords - 2) * 0.04);
+  } else if (matchedBoostKeywords === 1 && (spaceBoostCount > 0 || domainBoostCount > 0)) {
+    boost += 0.14;
+  }
+
+  if (spaceBoostCount > 0) {
+    boost += Math.min(0.08, spaceBoostCount * 0.04);
+  }
+  if (domainBoostCount > 0) {
+    boost += Math.min(0.08, domainBoostCount * 0.04);
+  }
+
+  if (matchedPenaltyKeywords >= 2) {
+    penalty += Math.min(0.35, 0.25 + (matchedPenaltyKeywords - 2) * 0.05);
+  } else if (matchedPenaltyKeywords === 1) {
+    penalty += 0.15;
+  }
+
+  if (spacePenCount > 0) {
+    penalty += Math.min(0.20, spacePenCount * 0.08);
+  }
+  if (domainPenCount > 0) {
+    penalty += Math.min(0.28, domainPenCount * 0.12);
+  }
+
+  const net = Math.min(0.30, boost) - Math.min(0.45, penalty);
+  return Math.round(net * 1000) / 1000;
 }

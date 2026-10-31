@@ -2,6 +2,7 @@ import { FeedItem, FeedItemSchema } from '../domain/types';
 import { FeedFetchResult } from './feedFetcher';
 import { normalizeFeedEntry } from './normalizer';
 import { SourceHealthInfo } from './sourceHealth';
+import { isSupportedFeedLanguage } from '../enrichment/batchEnricher';
 
 export function normalizePipelineResults(results: FeedFetchResult[], previous: Record<string, SourceHealthInfo>, editionDate: string) {
   const normalizedCandidates: FeedItem[] = [];
@@ -16,8 +17,12 @@ export function normalizePipelineResults(results: FeedFetchResult[], previous: R
         try {
           const parsed = FeedItemSchema.safeParse(normalizeFeedEntry(entry, result.source, editionDate));
           if (parsed.success) {
-            normalizedCandidates.push(parsed.data);
-            validForSource++;
+            const item = parsed.data;
+            const isVisual = item.format === 'meme' || item.format === 'art_showcase';
+            if (isVisual || isSupportedFeedLanguage(item.title, `${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`)) {
+              normalizedCandidates.push(item);
+              validForSource++;
+            }
           }
         } catch { /* Malformed entries do not count as deliveries. */ }
       }

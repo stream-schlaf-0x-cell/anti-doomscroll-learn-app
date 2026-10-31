@@ -9,7 +9,7 @@ import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPi
 import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
 import { parseSnapshotPayload } from '../feed/snapshotPayload';
 import { getSourceKind } from '../ingestion/sourceHealth';
-import { classifyTopicDeterministically } from '../enrichment/batchEnricher';
+import { classifyTopicDeterministically, isSupportedFeedLanguage } from '../enrichment/batchEnricher';
 
 let staticPipelineItems: FeedItem[] = [];
 if (typeof process !== 'undefined' && process.versions?.node) {
@@ -248,7 +248,13 @@ export class ContinuousLiveNewsService {
     const valid: FeedItem[] = [];
     for (const item of items) {
       const parsed = FeedItemSchema.safeParse(item);
-      if (parsed.success) valid.push(this.sanitizeProvenanceItem(parsed.data));
+      if (parsed.success) {
+        const d = parsed.data;
+        const isVisual = d.format === 'meme' || d.format === 'art_showcase';
+        if (isVisual || isSupportedFeedLanguage(d.title || '', `${d.subtitle || ''} ${d.feedText || ''} ${d.body || ''}`)) {
+          valid.push(this.sanitizeProvenanceItem(d));
+        }
+      }
     }
     return valid;
   }

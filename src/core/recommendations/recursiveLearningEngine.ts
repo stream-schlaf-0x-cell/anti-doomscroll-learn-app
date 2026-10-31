@@ -9,6 +9,7 @@
  */
 
 import { TopicTag, UserProfile, FeedItem } from '../domain/types';
+import { applyVoteFeedbackToProfile } from '../domain/ranking';
 import { appStorage } from '../data/storage';
 
 export interface LearningTelemetryEvent {
@@ -110,11 +111,11 @@ export class RecursiveLearningEngine {
 
     switch (eventType) {
       case 'upvote':
-        delta = 0.06;
+        delta = 0.10;
         reason = `Positives Votum für „${item.title.slice(0, 30)}…“`;
         break;
       case 'downvote':
-        delta = -0.10;
+        delta = -0.14;
         reason = `Kritisches Votum für „${item.title.slice(0, 30)}…“`;
         break;
       case 'completed_reading':
@@ -184,11 +185,19 @@ export class RecursiveLearningEngine {
 
     await appStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
 
+    // Propagate concept, keyword, subchannel, and domain affinity into feedbackMemory on vote/feedback
+    let baseProfile = profile;
+    if (eventType === 'upvote' || eventType === 'feedback_positive') {
+      baseProfile = applyVoteFeedbackToProfile(profile, item, 'up');
+    } else if (eventType === 'downvote' || eventType === 'feedback_negative') {
+      baseProfile = applyVoteFeedbackToProfile(profile, item, 'down');
+    }
+
     // Update derivedWeights while keeping explicitInterests untouched
     const updatedProfile: UserProfile = {
-      ...profile,
+      ...baseProfile,
       derivedWeights: {
-        ...(profile.derivedWeights || {}),
+        ...(baseProfile.derivedWeights || {}),
         [primaryTopic]: Math.round(newWeight * 100) / 100
       }
     };

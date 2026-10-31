@@ -338,10 +338,10 @@ const MainNavigator: React.FC = () => {
           ]}
         >
           <View style={styles.tabBarInner}>
-            {/* Tab 1: Ausgabe */}
+            {/* Tab 1: Stream */}
             <TouchableOpacity
               accessibilityRole="tab"
-              accessibilityLabel="Ausgabe"
+              accessibilityLabel="Stream"
               accessibilityState={{ selected: activeTab === 'feed' }}
               onPress={() => {
                 if (activeTab === 'feed') {
@@ -364,7 +364,7 @@ const MainNavigator: React.FC = () => {
                   { color: activeTab === 'feed' ? colors.accent : colors.textMuted }
                 ]}
               >
-                Ausgabe
+                Stream
               </Text>
             </TouchableOpacity>
 

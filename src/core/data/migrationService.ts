@@ -2,13 +2,17 @@ import { AtemStorage, appStorage } from './storage';
 import { IFeedRepository, feedRepository } from './feedRepository';
 import { defaultPersistentArticleStore } from '../feed/PersistentArticleStore';
 import { INTERACTIONS_STORAGE_KEY, SAVED_ARTICLES_STORAGE_KEY } from './libraryRepository';
-import { satisfiesCuratedBodyContract, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
+import {
+  isSupportedFeedLanguage,
+  satisfiesCuratedBodyContract,
+  sanitizeCuratedFeedItem
+} from '../enrichment/batchEnricher';
 import { isArdSource } from '../domain/ranking';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 import { FeedItem } from '../domain/types';
 
-export const CURRENT_DATA_MIGRATION_VERSION = '2026-10-30-v3.1-infinite-curated';
+export const CURRENT_DATA_MIGRATION_VERSION = '2026-10-31-v3.2-mobile-polish-lang-gate';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
@@ -163,6 +167,10 @@ export async function runInPlaceDataMigration(
     const isUserProtected = protectedUserItemIds.has(id);
 
     if (!isUserProtected) {
+      if (!isSupportedFeedLanguage(item.title || '', `${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`)) {
+        purgedCount++;
+        continue;
+      }
       if (!satisfiesCuratedBodyContract(item)) {
         purgedCount++;
         continue;

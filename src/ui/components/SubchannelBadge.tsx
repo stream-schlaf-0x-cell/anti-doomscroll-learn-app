@@ -127,6 +127,7 @@ export const SubchannelBadge: React.FC<SubchannelBadgeProps> = ({
       <TouchableOpacity
         onPress={onPress}
         activeOpacity={0.75}
+        style={styles.touchableWrapper}
         accessibilityRole="button"
         accessibilityLabel={`Kanal ${formattedHandle} filtern`}
       >
@@ -139,12 +140,16 @@ export const SubchannelBadge: React.FC<SubchannelBadgeProps> = ({
 };
 
 const styles = StyleSheet.create({
+  touchableWrapper: {
+    flexShrink: 0
+  },
   badgeBase: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     borderRadius: 12,
     alignSelf: 'flex-start',
+    flexShrink: 0
   },
   badgeSm: {
     paddingHorizontal: 7,

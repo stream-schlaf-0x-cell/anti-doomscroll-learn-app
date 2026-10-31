@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   Image,
-  TextInput,
   Linking,
   Modal,
   ScrollView,
@@ -16,8 +15,7 @@ import { ScoredFeedItem } from '../../core/domain/ranking';
 import {
   formatVerifiedProvenanceLabel,
   TOPIC_SPACE_MAP,
-  TopicTag,
-  UserNote
+  TopicTag
 } from '../../core/domain/types';
 import { getCardRenderableText } from '../../core/enrichment/batchEnricher';
 import { useApp } from '../../core/context/AppContext';
@@ -27,9 +25,7 @@ import { MusicTrackCard } from './MusicTrackCard';
 import { CURATED_SOUND_MASTERS, MusicTrackItem } from '../../core/music/musicRecommendationService';
 import { optimizeImageUrl, upgradeImageResolutionUrl, assessEditorialImage } from '../../core/utils/imageQuality';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
-import { QuizCheckpointCard } from './QuizCheckpointCard';
 import { SubchannelBadge } from './SubchannelBadge';
-import { generateQuizForArticle } from '../../core/quiz/quizGenerator';
 
 interface FeedCardProps {
   item: ScoredFeedItem;
@@ -135,8 +131,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   item,
   isHero = false,
   isFocused = false,
-  isExpanded,
-  onToggleKurzCheck,
   onInvestigateTopic,
   onDismissItem
 }) => {
@@ -148,33 +142,11 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     interactions,
     toggleSaveItem,
     openArticle,
-    openWhyModal,
     voteItem,
     setFeedback,
-    addNote,
-    openInvestigation,
     dismissItem
   } = useApp();
 
-  const [localKurzCheckOpen, setLocalKurzCheckOpen] = useState(false);
-  const isKurzCheckOpen = isExpanded !== undefined ? isExpanded : localKurzCheckOpen;
-  const toggleKurzCheck = () => {
-    if (onToggleKurzCheck) {
-      onToggleKurzCheck();
-    } else {
-      setLocalKurzCheckOpen(prev => !prev);
-    }
-  };
-
-  const [isComposerOpen, setIsComposerOpen] = useState(false);
-  const [isQuizOpen, setIsQuizOpen] = useState(false);
-  const isQuizFeatureEnabled = isFeatureEnabled(profile, 'bloomscroll_quizzes');
-  const cardQuiz = useMemo(() => {
-    return item.quiz || generateQuizForArticle(item);
-  }, [item]);
-  const [noteText, setNoteText] = useState('');
-  const [selectedTag, setSelectedTag] = useState<'einwand' | 'unterricht' | 'these' | 'notiz'>('einwand');
-  const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [imageRejected, setImageRejected] = useState(false);
   const [usedFallbackUrl, setUsedFallbackUrl] = useState(false);
@@ -213,7 +185,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const isCompleted = interaction?.completedAt !== undefined || progress >= 95;
   const voteScore = interaction?.voteScore ?? 0;
   const currentFeedback = interaction?.feedback ?? 'neutral';
-  const userNotes: UserNote[] = interaction?.userNotes ?? [];
 
   // Space metadata (colorful Reddit-like community identity)
   const spaceMeta = TOPIC_SPACE_MAP[item.primaryTopic as TopicTag];
@@ -306,35 +277,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     };
   }, [activeVisualUri, isMemeCard, isArtCard]);
 
-  // Engaging Reddit-style text-only card hook when no high-res image is rendered
-  const textCardPresentation = useMemo(() => {
-    if (showAuthenticImage || isArtCard || isMemeCard) {
-      return { hookQuote: null as string | null, bodyExcerpt: displayFeedText };
-    }
-    const cleanTitle = item.title.trim().toLowerCase();
-    const rawInsight = (item.keyInsight || '').trim();
-    const isInsightValid =
-      rawInsight.length >= 25 &&
-      rawInsight.length <= 240 &&
-      !rawInsight.toLowerCase().includes('originalbeitrag veröffentlicht bei') &&
-      rawInsight.toLowerCase() !== cleanTitle &&
-      !displayFeedText.toLowerCase().startsWith(rawInsight.toLowerCase().slice(0, 35));
-
-    if (isInsightValid) {
-      return { hookQuote: rawInsight, bodyExcerpt: displayFeedText };
-    }
-
-    const sentences = displayFeedText.split(/(?<=[.!?])\s+/).filter(Boolean);
-    if (sentences.length >= 2 && sentences[0].length >= 30 && sentences[0].length <= 220) {
-      return {
-        hookQuote: sentences[0].trim(),
-        bodyExcerpt: sentences.slice(1).join(' ').trim()
-      };
-    }
-
-    return { hookQuote: null as string | null, bodyExcerpt: displayFeedText };
-  }, [showAuthenticImage, isArtCard, isMemeCard, item.title, item.keyInsight, displayFeedText]);
-
   // Defensive check: hide subtitle if feedText, title, or metadata already says the same thing
   const isSubtitleRedundant = useMemo(() => {
     if (!item.subtitle) return true;
@@ -353,8 +295,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({
 
   // Hide boilerplate feedText when it merely repeats HN metadata or comic alt-text punchline
   const shouldShowBodyText = Boolean(displayFeedText);
-
-  const isSubstantiallyLonger = (item.articleBody?.length ?? 0) > item.feedText.length * 1.25;
 
   const handleCardPress = () => {
     openArticle(item.id);
@@ -382,25 +322,19 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     }
   };
 
-  const handleSaveNote = async () => {
-    if (!noteText.trim()) return;
-    setIsSubmittingNote(true);
-    try {
-      await addNote(item.id, noteText.trim(), selectedTag);
-      setNoteText('');
-      setIsComposerOpen(false);
-    } finally {
-      setIsSubmittingNote(false);
+  // Single compact badge only when meaningful (never duplicate "Originalauszug" + "RSS-Originalauszug")
+  const compactBadge = useMemo(() => {
+    if (item.aiAssisted) {
+      return { label: '🤖 KI', color: '#10B981', bg: 'rgba(16, 185, 129, 0.14)' };
     }
-  };
-
-  // Single high-signal callout (only when it adds real value beyond the feedText)
-  const counterClaim =
-    item.perspectiveDetails?.counterPerspective ||
-    item.deepeningOptions?.counterArgument ||
-    null;
-  const didacticTransfer =
-    item.didacticTransfer || item.didacticSeed || null;
+    if (item.sourceTrustLevel === 'peer_reviewed') {
+      return { label: '🔬 Studie', color: '#3B82F6', bg: 'rgba(59, 130, 246, 0.12)' };
+    }
+    if (item.sourceTrustLevel === 'museum_collection') {
+      return { label: '🏛️ Museum', color: '#D97706', bg: 'rgba(245, 158, 11, 0.14)' };
+    }
+    return null;
+  }, [item.aiAssisted, item.sourceTrustLevel]);
 
   return (
     <View
@@ -415,7 +349,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         isHero && styles.heroCard
       ]}
     >
-      {/* 1. SINGLE-LINE REDDIT HEADER: [c/space] • Publisher • Time • ~Min + [Provenance] [Bookmark] */}
+      {/* 1. SINGLE-LINE REDDIT HEADER: [c/space] (flexShrink: 0) • Publisher • Time */}
       <View style={styles.topHeaderRow}>
         <View style={styles.topLeftMeta}>
           <SubchannelBadge
@@ -430,85 +364,35 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             {publisherName}
           </Text>
           <Text style={[styles.dotSeparator, { color: colors.textMuted }]}>•</Text>
-          <Text style={[styles.timeText, { color: colors.textMuted }]}>
+          <Text style={[styles.timeText, { color: colors.textMuted }]} numberOfLines={1}>
             {timeAgo}
-            {!isQuick20sCard && item.estimatedReadingMinutes > 1 ? ` • ${item.estimatedReadingMinutes} Min.` : ''}
+            {!isQuick20sCard && item.estimatedReadingMinutes > 1 ? ` · ${item.estimatedReadingMinutes}m` : ''}
           </Text>
         </View>
 
-        <View style={styles.topRightActions}>
-          {/* Transparent Synthesis Mode Badge: 🤖 KI-Synthese vs 📄 Originalauszug */}
-          <View
-            style={[
-              styles.provenancePill,
-              {
-                backgroundColor: item.aiAssisted ? 'rgba(16, 185, 129, 0.14)' : colors.surfaceSecondary,
-                borderColor: item.aiAssisted ? '#10B981' : colors.borderSubtle,
-                marginRight: 4
-              }
-            ]}
-          >
-            <Text
+        {compactBadge && (
+          <View style={styles.topRightActions}>
+            <View
               style={[
-                styles.provenancePillText,
-                { color: item.aiAssisted ? '#10B981' : colors.textSecondary, fontWeight: '700' }
-              ]}
-              numberOfLines={1}
-            >
-              {item.aiAssisted ? '🤖 KI-Synthese' : '📄 Originalauszug'}
-            </Text>
-          </View>
-
-          {/* Honest Provenance Pill */}
-          <View
-            style={[
-              styles.provenancePill,
-              {
-                backgroundColor:
-                  item.sourceTrustLevel === 'public_broadcaster'
-                    ? 'rgba(16, 185, 129, 0.12)'
-                    : item.sourceTrustLevel === 'peer_reviewed'
-                    ? 'rgba(59, 130, 246, 0.12)'
-                    : item.sourceTrustLevel === 'museum_collection'
-                    ? 'rgba(245, 158, 11, 0.14)'
-                    : colors.surfaceSecondary,
-                borderColor: colors.borderSubtle
-              }
-            ]}
-          >
-            <Text
-              style={[
-                styles.provenancePillText,
+                styles.provenancePill,
                 {
-                  color:
-                    item.sourceTrustLevel === 'public_broadcaster'
-                      ? '#10B981'
-                      : item.sourceTrustLevel === 'peer_reviewed'
-                      ? '#3B82F6'
-                      : item.sourceTrustLevel === 'museum_collection'
-                      ? '#D97706'
-                      : colors.textSecondary
+                  backgroundColor: compactBadge.bg,
+                  borderColor: colors.borderSubtle
                 }
               ]}
-              numberOfLines={1}
             >
-              {provenanceLabel}
-            </Text>
+              <Text
+                style={[
+                  styles.provenancePillText,
+                  { color: compactBadge.color }
+                ]}
+                numberOfLines={1}
+              >
+                {compactBadge.label}
+              </Text>
+            </View>
           </View>
-
-          <TouchableOpacity
-            onPress={() => toggleSaveItem(item.id)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={[styles.bookmarkBtn, { backgroundColor: isSaved ? colors.accentSubtle : 'transparent' }]}
-            accessibilityLabel={isSaved ? 'Aus Bibliothek entfernen' : 'Merken'}
-          >
-            <Ionicons
-              name={isSaved ? 'bookmark' : 'bookmark-outline'}
-              size={16}
-              color={isSaved ? colors.accent : colors.textMuted}
-            />
-          </TouchableOpacity>
-        </View>
+        )}
       </View>
 
       {/* 2. HEADLINE & NON-REDUNDANT SUBTITLE */}
@@ -618,30 +502,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         </TouchableOpacity>
       )}
 
-      {/* 3b. ENGAGING REDDIT-STYLE TEXT-ONLY CALLOUT (When no high-res image is rendered) */}
-      {!showAuthenticImage && !isArtCard && !isMemeCard && textCardPresentation.hookQuote && (
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPress={handleCardPress}
-          style={[
-            styles.redditTextHookCallout,
-            {
-              backgroundColor: colors.surfaceSecondary,
-              borderLeftColor: spaceColor
-            }
-          ]}
-        >
-          <Text style={[styles.redditTextHookLabel, { color: spaceColor }]}>
-            💡 Kernthese & Impuls
-          </Text>
-          <Text style={[styles.redditTextHookText, { color: colors.textPrimary }]}>
-            „{textCardPresentation.hookQuote}“
-          </Text>
-        </TouchableOpacity>
-      )}
-
-      {/* 4. ADAPTIVE CARD BODY (Hidden if redundant comic/HN boilerplate) */}
-      {shouldShowBodyText && Boolean(textCardPresentation.bodyExcerpt) && (
+      {/* 4. ADAPTIVE CARD BODY: Clean 3-4 line readable excerpt (AI Summary & Deep Tools open on click in ReaderScreen) */}
+      {shouldShowBodyText && Boolean(displayFeedText) && (
         <TouchableOpacity activeOpacity={0.92} onPress={handleCardPress}>
           <Text
             style={[
@@ -649,9 +511,9 @@ export const FeedCard: React.FC<FeedCardProps> = ({
               isQuick20sCard && styles.quick20sFeedText,
               { color: colors.textPrimary }
             ]}
-            numberOfLines={isQuick20sCard ? undefined : isHero ? 6 : 4}
+            numberOfLines={isQuick20sCard ? undefined : isHero ? 5 : 4}
           >
-            {textCardPresentation.bodyExcerpt}
+            {displayFeedText}
           </Text>
         </TouchableOpacity>
       )}
@@ -681,172 +543,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({
 
       {matchedMusicTrack && isFeatureEnabled(profile, 'sound_grounding') && <MusicTrackCard track={matchedMusicTrack} />}
 
-      {/* 5. INLINE REDDIT EXPANDO: Kurz-Check (Abstract, Gegenstimme & Praxis-Transfer on demand) */}
-      {isKurzCheckOpen && (
-        <View style={[styles.kurzCheckBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-          <View style={styles.kurzCheckHeader}>
-            <Text style={[styles.kurzCheckHeaderTitle, { color: spaceColor }]}>
-              ⚡ Kompakt-Einordnung & Perspektive
-            </Text>
-            <TouchableOpacity onPress={toggleKurzCheck} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="close-circle-outline" size={18} color={colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-
-          {item.keyInsight && (
-            <View style={styles.kurzCheckSection}>
-              <Text style={[styles.kurzCheckLabel, { color: colors.accent }]}>💡 Kernaussage</Text>
-              <Text style={[styles.kurzCheckText, { color: colors.textPrimary }]}>{item.keyInsight}</Text>
-            </View>
-          )}
-
-          {counterClaim && (
-            <View style={styles.kurzCheckSection}>
-              <Text style={[styles.kurzCheckLabel, { color: '#8B5CF6' }]}>⚖️ Gegenperspektive</Text>
-              <Text style={[styles.kurzCheckText, { color: colors.textSecondary }]}>{counterClaim}</Text>
-            </View>
-          )}
-
-          {didacticTransfer && isFeatureEnabled(profile, 'didactic_transfer') && (
-            <View style={styles.kurzCheckSection}>
-              <Text style={[styles.kurzCheckLabel, { color: '#10B981' }]}>🏫 Transfer & Praxis</Text>
-              <Text style={[styles.kurzCheckText, { color: colors.textSecondary }]}>{didacticTransfer}</Text>
-            </View>
-          )}
-
-          <View style={styles.kurzCheckFooterRow}>
-            <TouchableOpacity
-              onPress={handleCardPress}
-              style={[styles.tieferGrabenBtn, { backgroundColor: colors.accent }]}
-            >
-              <Ionicons name="book-outline" size={13} color="#FFFFFF" style={{ marginRight: 5 }} />
-              <Text style={styles.tieferGrabenBtnText}>
-                {isSubstantiallyLonger ? 'Vollständige Lektüre & Einordnung öffnen →' : 'Quell-Kontext & Sparring öffnen →'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {/* 5b. INLINE QUIZ CHECKPOINT */}
-      {isQuizOpen && isQuizFeatureEnabled && (
-        <View style={{ marginHorizontal: spacing.md, marginBottom: spacing.md }}>
-          <QuizCheckpointCard questions={[cardQuiz]} compact={true} />
-        </View>
-      )}
-
-      {/* 7. ON-DEMAND INLINE NOTE & SPARRING COMPOSER (Only visible when clicked or when user has notes) */}
-      {(isComposerOpen || userNotes.length > 0) && (
-        <View style={[styles.composerContainer, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-          {isComposerOpen && (
-            <View style={styles.composerBox}>
-              <Text style={[styles.composerTitle, { color: colors.textPrimary }]}>
-                {item.challengePrompt || 'Eigene Notiz, Einwand oder Unterrichts-Idee festhalten:'}
-              </Text>
-              <View style={styles.tagSelectorRow}>
-                {[
-                  { id: 'einwand', label: '⚡ Einwand' },
-                  { id: 'unterricht', label: '🏫 Unterricht' },
-                  { id: 'these', label: '💡 These' },
-                  { id: 'notiz', label: '📝 Notiz' }
-                ].map(tag => (
-                  <TouchableOpacity
-                    key={tag.id}
-                    onPress={() => setSelectedTag(tag.id as any)}
-                    style={[
-                      styles.tagButton,
-                      {
-                        backgroundColor: selectedTag === tag.id ? colors.accent : colors.surface,
-                        borderColor: selectedTag === tag.id ? colors.accent : colors.borderSubtle
-                      }
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.tagButtonText,
-                        { color: selectedTag === tag.id ? '#FFFFFF' : colors.textSecondary }
-                      ]}
-                    >
-                      {tag.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <TextInput
-                value={noteText}
-                onChangeText={setNoteText}
-                placeholder="Deinen Gedanken oder Widerspruch lokal notieren…"
-                placeholderTextColor={colors.textMuted}
-                multiline
-                numberOfLines={3}
-                style={[
-                  styles.composerInput,
-                  {
-                    color: colors.textPrimary,
-                    backgroundColor: colors.surface,
-                    borderColor: colors.borderSubtle
-                  }
-                ]}
-              />
-
-              <View style={styles.composerActions}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setNoteText('');
-                    setIsComposerOpen(false);
-                  }}
-                  style={styles.composerCancelButton}
-                >
-                  <Text style={[styles.composerCancelText, { color: colors.textMuted }]}>Schließen</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={handleSaveNote}
-                  disabled={!noteText.trim() || isSubmittingNote}
-                  style={[
-                    styles.composerSaveButton,
-                    { backgroundColor: noteText.trim() ? colors.accent : colors.borderSubtle }
-                  ]}
-                >
-                  <Ionicons name="checkmark" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                  <Text style={styles.composerSaveText}>
-                    {isSubmittingNote ? 'Speichern…' : 'Notiz sichern'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {userNotes.length > 0 && (
-            <View style={styles.savedNotesList}>
-              {userNotes.map(n => (
-                <View
-                  key={n.id}
-                  style={[styles.userNoteItem, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                >
-                  <View style={styles.userNoteHeader}>
-                    <Text style={[styles.userNoteTagText, { color: colors.accent }]}>
-                      {n.tag === 'einwand'
-                        ? '⚡ Dein Einwand'
-                        : n.tag === 'unterricht'
-                        ? '🏫 Unterrichtsidee'
-                        : n.tag === 'these'
-                        ? '💡 Deine These'
-                        : '📝 Deine Notiz'}
-                    </Text>
-                    <Text style={[styles.userNoteDate, { color: colors.textMuted }]}>
-                      {formatRelativeTime(n.createdAt)}
-                    </Text>
-                  </View>
-                  <Text style={[styles.userNoteContent, { color: colors.textPrimary }]}>{n.text}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-      )}
-
       {/* 8. READING PROGRESS BAR (When partially read) */}
       {progress > 0 && !isCompleted && (
         <View style={[styles.progressTrack, { backgroundColor: colors.surfaceSecondary }]}>
@@ -854,9 +550,9 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         </View>
       )}
 
-      {/* 9. CLEAN REDDIT-STYLE ACTION BAR (Direct, Playful, Zero Duplication) */}
+      {/* 9. SINGLE-ROW CARD FOOTER: [ ↑ Vote ↓ ] · [ domain.de ↗ ] · [ 🚫 Weniger ] · [ 🔖 ] */}
       <View style={[styles.actionBar, { borderTopColor: colors.borderSubtle }]}>
-        {/* 9.1 Vote Pill (Local relevance signal + Honest external HN score if present) */}
+        {/* Left: Compact Vote Pill */}
         <View style={[styles.votePill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
           <TouchableOpacity
             onPress={handleUpvote}
@@ -883,9 +579,10 @@ export const FeedCard: React.FC<FeedCardProps> = ({
                     : colors.textSecondary
               }
             ]}
+            numberOfLines={1}
           >
             {item.externalCommunityScore && item.externalCommunityScore.points > 0
-              ? `${item.externalCommunityScore.points + voteScore} ${item.externalCommunityScore.platform === 'Hacker News' ? 'HN' : item.externalCommunityScore.platform}`
+              ? `${item.externalCommunityScore.points + voteScore}`
               : voteScore > 0
               ? '+1'
               : voteScore < 0
@@ -907,183 +604,76 @@ export const FeedCard: React.FC<FeedCardProps> = ({
           </TouchableOpacity>
         </View>
 
-        {/* 9.2 Primary Reader Button */}
-        <TouchableOpacity
-          onPress={handleCardPress}
-          style={[styles.primaryReadBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-          accessibilityLabel="Im Reader öffnen"
-        >
-          <Ionicons name="book-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
-          <Text style={[styles.primaryReadBtnText, { color: colors.accent }]}>
-            {isQuick20sCard
-              ? 'Einordnung'
-              : isSubstantiallyLonger
-              ? `Lesen (${item.estimatedReadingMinutes}m)`
-              : 'Kontext & Sparring'}
-          </Text>
-        </TouchableOpacity>
-
-        {/* 9.3 Reddit-style Inline Expando (⚡ Abstract / Kurz-Check) */}
-        {(Boolean(item.keyInsight) || Boolean(counterClaim) || Boolean(didacticTransfer)) && (
-          <TouchableOpacity
-            onPress={toggleKurzCheck}
-            style={[
-              styles.actionChip,
-              {
-                backgroundColor: isKurzCheckOpen ? colors.accentSubtle : colors.surfaceSecondary,
-                borderColor: isKurzCheckOpen ? colors.accent : colors.borderSubtle
-              }
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="Kompakt-Einordnung aufklappen"
-          >
-            <Ionicons
-              name={isKurzCheckOpen ? 'flash' : 'flash-outline'}
-              size={13}
-              color={isKurzCheckOpen ? colors.accent : colors.textSecondary}
-              style={{ marginRight: 4 }}
-            />
-            <Text
-              style={[
-                styles.actionChipText,
-                { color: isKurzCheckOpen ? colors.accent : colors.textSecondary }
-              ]}
-            >
-              Abstract
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {/* 9.3b Wissen testen Pill */}
-        {isQuizFeatureEnabled && (
-          <TouchableOpacity
-            onPress={() => setIsQuizOpen(prev => !prev)}
-            style={[
-              styles.actionChip,
-              {
-                backgroundColor: isQuizOpen ? colors.accentSubtle : colors.surfaceSecondary,
-                borderColor: isQuizOpen ? colors.accent : colors.borderSubtle
-              }
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="Wissen testen"
-          >
-            <Ionicons
-              name={isQuizOpen ? 'school' : 'school-outline'}
-              size={12}
-              color={isQuizOpen ? colors.accent : colors.textSecondary}
-              style={{ marginRight: 4 }}
-            />
-            <Text
-              style={[
-                styles.actionChipText,
-                { color: isQuizOpen ? colors.accent : colors.textSecondary }
-              ]}
-            >
-              Wissen testen
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {/* 9.4 Local Note / Reflection Toggle */}
-        <TouchableOpacity
-          onPress={() => setIsComposerOpen(prev => !prev)}
-          style={[
-            styles.actionChip,
-            {
-              backgroundColor:
-                isComposerOpen || userNotes.length > 0 ? colors.accentSubtle : colors.surfaceSecondary,
-              borderColor:
-                isComposerOpen || userNotes.length > 0 ? colors.accent : colors.borderSubtle
-            }
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Eigene Notiz schreiben"
-        >
-          <Ionicons
-            name="chatbubble-outline"
-            size={12}
-            color={isComposerOpen || userNotes.length > 0 ? colors.accent : colors.textSecondary}
-            style={{ marginRight: 4 }}
-          />
-          <Text
-            style={[
-              styles.actionChipText,
-              { color: isComposerOpen || userNotes.length > 0 ? colors.accent : colors.textSecondary }
-            ]}
-          >
-            {userNotes.length > 0 ? `${userNotes.length} Notiz` : 'Notiz'}
-          </Text>
-        </TouchableOpacity>
-
-        {/* 9.4b Gezielte Untersuchung (Neugier ausführen) */}
-        {isFeatureEnabled(profile, 'investigation') && (
-          <TouchableOpacity
-            onPress={() => openInvestigation(item)}
-            style={[styles.actionChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-            accessibilityRole="button"
-            accessibilityLabel="Untersuchung zu diesem Beitrag starten"
-          >
-            <Ionicons name="telescope-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
-            <Text style={[styles.actionChipText, { color: colors.accent }]}>
-              Untersuchen
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {/* 9.5 Direct Source Link */}
-        {originalUrl && (
+        {/* Center: Direct Source Domain Link (or Reader fallback) */}
+        {originalUrl ? (
           <TouchableOpacity
             onPress={handleOpenOriginalSource}
             onLongPress={() => setShowLinkPreview(true)}
-            style={[styles.actionChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+            style={[styles.domainChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
             accessibilityRole="link"
             accessibilityLabel="Originalquelle im Browser öffnen"
           >
-            <Ionicons name="open-outline" size={12} color={colors.textSecondary} style={{ marginRight: 3 }} />
             <Text style={[styles.actionChipText, { color: colors.textSecondary }]} numberOfLines={1}>
               {item.sourceDomain || 'Quelle'} ↗
             </Text>
           </TouchableOpacity>
-        )}
-
-        {/* 9.5b 1-Tap Sovereign Control: 🚫 Weniger davon */}
-        <TouchableOpacity
-          onPress={() => {
-            if (onDismissItem) {
-              onDismissItem(item);
-            } else {
-              void dismissItem(item.id, item);
-            }
-          }}
-          style={[styles.actionChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-          accessibilityRole="button"
-          accessibilityLabel="Weniger davon"
-        >
-          <Text style={[styles.actionChipText, { color: colors.textMuted }]} numberOfLines={1}>
-            🚫 Weniger davon
-          </Text>
-        </TouchableOpacity>
-
-        {/* 9.6 Right-Aligned Why? Info */}
-        {isFeatureEnabled(profile, 'why_this_transparency') && (
+        ) : (
           <TouchableOpacity
-            onPress={() => openWhyModal(item)}
-            style={styles.whyIconBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="Warum sehe ich diesen Beitrag?"
+            onPress={handleCardPress}
+            style={[styles.domainChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+            accessibilityRole="button"
+            accessibilityLabel="Im Reader öffnen"
           >
-            <Ionicons name="sparkles-outline" size={14} color={colors.textMuted} />
+            <Text style={[styles.actionChipText, { color: colors.textSecondary }]} numberOfLines={1}>
+              Lesen →
+            </Text>
           </TouchableOpacity>
         )}
 
-        {isCompleted && (
-          <View style={styles.completedBadge}>
-            <Ionicons name="checkmark-circle" size={14} color={colors.success} />
-          </View>
-        )}
+        {/* Right: [ 🚫 Weniger ] + [ 🔖 Bookmark ] */}
+        <View style={styles.footerRightGroup}>
+          <TouchableOpacity
+            onPress={() => {
+              if (onDismissItem) {
+                onDismissItem(item);
+              } else {
+                void dismissItem(item.id, item);
+              }
+            }}
+            style={[styles.wenigerChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+            accessibilityRole="button"
+            accessibilityLabel="Weniger davon"
+          >
+            <Text style={[styles.actionChipText, { color: colors.textMuted }]} numberOfLines={1}>
+              🚫 Weniger
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => toggleSaveItem(item.id)}
+            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+            style={[
+              styles.bookmarkBtn,
+              {
+                backgroundColor: isSaved ? colors.accentSubtle : colors.surfaceSecondary,
+                borderColor: isSaved ? colors.accent : colors.borderSubtle
+              }
+            ]}
+            accessibilityLabel={isSaved ? 'Aus Bibliothek entfernen' : 'Merken'}
+          >
+            <Ionicons
+              name={isSaved ? 'bookmark' : 'bookmark-outline'}
+              size={15}
+              color={isSaved ? colors.accent : colors.textSecondary}
+            />
+          </TouchableOpacity>
+
+          {isCompleted && (
+            <View style={styles.completedBadge}>
+              <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+            </View>
+          )}
+        </View>
       </View>
 
       {/* Quick Link Preview Modal (on long-press of source link) */}
@@ -1240,8 +830,10 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
+    borderWidth: 0.5,
     justifyContent: 'center',
-    alignItems: 'center'
+    alignItems: 'center',
+    flexShrink: 0
   },
   title: {
     fontFamily: typography.fontFamilies.serif,
@@ -1608,7 +1200,8 @@ const styles = StyleSheet.create({
   actionBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    flexWrap: 'nowrap',
     gap: 6,
     paddingTop: 8,
     borderTopWidth: 0.5
@@ -1618,9 +1211,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: radius.pill,
     borderWidth: 0.5,
-    paddingHorizontal: 6,
+    paddingHorizontal: 7,
     paddingVertical: 3,
-    gap: 4
+    gap: 4,
+    flexShrink: 0
   },
   voteBtn: {
     padding: 1
@@ -1628,20 +1222,34 @@ const styles = StyleSheet.create({
   voteLabel: {
     fontSize: 11.5,
     fontWeight: '700',
-    minWidth: 28,
+    minWidth: 26,
     textAlign: 'center'
   },
-  primaryReadBtn: {
+  domainChip: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 4,
     borderRadius: radius.pill,
-    borderWidth: 1
+    borderWidth: 0.5,
+    flexShrink: 1,
+    maxWidth: 165
   },
-  primaryReadBtnText: {
-    fontSize: 11.5,
-    fontWeight: '700'
+  footerRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0
+  },
+  wenigerChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 0.5,
+    flexShrink: 0
   },
   actionChip: {
     flexDirection: 'row',
@@ -1656,31 +1264,7 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '600'
   },
-  whyIconBtn: {
-    marginLeft: 'auto',
-    padding: 4
-  },
   completedBadge: {
     marginLeft: 2
-  },
-  redditTextHookCallout: {
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.sm,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: radius.md,
-    borderLeftWidth: 3.5
-  },
-  redditTextHookLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-    marginBottom: 4
-  },
-  redditTextHookText: {
-    fontSize: 15.5,
-    lineHeight: 22,
-    fontWeight: '600'
   }
 });

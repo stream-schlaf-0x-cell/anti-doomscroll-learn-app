@@ -107,6 +107,82 @@ export function detectLanguage(text: string): 'de' | 'en' {
   return enCount > deCount ? 'en' : 'de';
 }
 
+const STRICT_CORE_DE_EN_WORDS =
+  /\b(der|die|das|den|dem|des|ein|eine|einer|eines|einem|einen|und|oder|aber|in|im|ins|von|vom|mit|für|auf|ist|sind|war|wird|werden|wurde|nicht|auch|sich|als|aus|bei|beim|nach|über|vor|zum|zur|wie|wir|sie|dass|wenn|durch|the|and|of|to|is|for|that|with|on|as|are|this|from|by|at|an|be|has|have|it|we|you|not|or|was|were|will|can)\b/gi;
+const STRICT_DE_EN_ANCHORS =
+  /\b(der|die|das|den|dem|des|ein|eine|einer|eines|einem|einen|und|oder|aber|in|im|ins|von|vom|mit|für|auf|ist|sind|war|wird|werden|wurde|nicht|auch|sich|als|aus|bei|beim|nach|über|vor|zum|zur|wie|wir|sie|dass|wenn|durch|gegen|ohne|unter|zwischen|the|and|of|to|is|for|that|with|on|as|are|this|from|by|at|an|be|has|have|it|we|you|me|my|not|or|was|were|will|can|do|does|did|don|how|why|what|who|which|their|our|into|about|more|than|but|all|when|there|been|being|really|tell|turns|light|color|spaces|early|years|making|inside|free|online)\b/gi;
+const CZECH_POLISH_SLAVIC_CHARS = /[ěščřžůďťňłąćęńśźżőűășțğış]/gi;
+const BROAD_FOREIGN_DIACRITICS = /[ěščřžýáíéúůďťňłąćęńóśźżőűășțğış]/gi;
+const NON_DE_EN_STOPWORDS =
+  /\b(podle|nebo|který|která|které|jsou|jako|více|před|přes|není|bude|aby|když|proč|dějiny|vítězů|však|jejich|mezi|než|také|tento|této|tomto|všechny|kterou|kterých|ještě|své|české|český|získal|režimů|zažil|nepsal|příběhy|souladu|výklady|minulosti|něž|opírala|platilo|témata|odboje|vztahu|společnosti|autoritářství|oraz|który|która|które|przez|tylko|bardzo|więcej|między|jednak|będzie|jego|jej|tych|może|kiedy|gdzie|dlaczego|wszystkich|społeczeństwo|historii|polsce|polski|sztuczna|inteligencja|edukację|les|une|dans|pour|avec|sont|cette|aux|comme|mais|nous|vous|leur|leurs|ces|tout|tous|être|avoir|même|aussi|entre|los|las|una|del|como|más|pero|sus|cuando|todo|también|sobre|estos|estas|puede|todos|desde|hasta|porque|della|delle|degli|nella|nelle|sono|più|anche|questo|questa|dalla|hanno|essere|tutto|tutti|perché|stato|stata|loro)\b/gi;
+const NON_LATIN_SCRIPT_CHARS =
+  /[\u0400-\u04FF\u0600-\u06FF\u0590-\u05FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/g;
+
+/**
+ * Strict DE/EN Language Gate:
+ * Deterministically allows ONLY German ('de') and English ('en') articles into the feed.
+ * Rejects untranslated Czech, Polish, Hungarian, Romanian, Turkish, French, Spanish, Italian, etc.
+ */
+export function isSupportedFeedLanguage(title: string, text: string = ''): boolean {
+  const cleanTitle = (title || '').trim();
+  const cleanText = (text || '').trim();
+  const combined = `${cleanTitle} ${cleanText}`.trim();
+  if (!combined) return false;
+
+  const nonLatinCount = (combined.match(NON_LATIN_SCRIPT_CHARS) || []).length;
+  if (nonLatinCount >= 8 && nonLatinCount > combined.length * 0.1) {
+    return false;
+  }
+
+  const coreDeEnCount = (combined.match(STRICT_CORE_DE_EN_WORDS) || []).length;
+  const allDeEnCount = (combined.match(STRICT_DE_EN_ANCHORS) || []).length;
+  const titleCoreDeEnCount = (cleanTitle.match(STRICT_CORE_DE_EN_WORDS) || []).length;
+  const titleAllDeEnCount = (cleanTitle.match(STRICT_DE_EN_ANCHORS) || []).length;
+  const slavicCharCount = (combined.match(CZECH_POLISH_SLAVIC_CHARS) || []).length;
+  const titleSlavicCharCount = (cleanTitle.match(CZECH_POLISH_SLAVIC_CHARS) || []).length;
+  const broadForeignDiacriticCount = (combined.match(BROAD_FOREIGN_DIACRITICS) || []).length;
+  const foreignStopwordCount = (combined.match(NON_DE_EN_STOPWORDS) || []).length;
+  const words = combined.split(/\s+/).filter(Boolean);
+
+  // 1. Reject titles with Czech/Polish/Slavic diacritics that lack German/English function words
+  if (
+    titleSlavicCharCount >= 1 &&
+    titleCoreDeEnCount === 0 &&
+    titleAllDeEnCount === 0 &&
+    (broadForeignDiacriticCount >= 2 || foreignStopwordCount >= 1 || coreDeEnCount < 4)
+  ) {
+    return false;
+  }
+
+  // 2. Reject texts with Czech/Polish/Hungarian/Romanian/Turkish diacritics & stopwords
+  if (
+    slavicCharCount >= 2 &&
+    (foreignStopwordCount >= 1 || (broadForeignDiacriticCount >= 4 && coreDeEnCount < slavicCharCount * 3))
+  ) {
+    return false;
+  }
+
+  if (broadForeignDiacriticCount >= 3 && coreDeEnCount < 2) {
+    return false;
+  }
+
+  // 3. Reject texts dominated by French/Spanish/Italian/Czech/Polish stopwords
+  if (foreignStopwordCount >= 2 && foreignStopwordCount >= Math.max(2, coreDeEnCount * 0.45)) {
+    return false;
+  }
+
+  if (foreignStopwordCount >= 1 && coreDeEnCount === 0 && allDeEnCount === 0) {
+    return false;
+  }
+
+  // 4. Verify minimum presence of standard German or English function words on substantive texts
+  if (words.length >= 14 && coreDeEnCount < 2 && allDeEnCount < 2) {
+    return false;
+  }
+
+  return true;
+}
+
 /**
  * Strips affiliate footers, donation banners, and generic publisher boilerplate from raw text.
  */
@@ -197,7 +273,12 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
     return false;
   }
 
-  const combinedText = `${title} ${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`;
+  const proseContext = `${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''} ${item.articleBody || ''}`.trim();
+  if (!isSupportedFeedLanguage(title, proseContext)) {
+    return false;
+  }
+
+  const combinedText = `${title} ${proseContext}`;
   if (SPORTS_GOSSIP_REGEX.test(combinedText)) {
     return false;
   }
@@ -283,14 +364,20 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     ? item.imageUrl
     : upgradeImageResolutionUrl(item.imageUrl);
 
+  const isSupportedLang = isSupportedFeedLanguage(
+    item.title || '',
+    `${item.subtitle || ''} ${cleanedFeedText} ${cleanedBody}`
+  );
+
   return {
     ...item,
     primaryTopic: correctedTopic,
     topics: updatedTopics,
-    feedText: cleanedFeedText || item.feedText,
-    body: cleanedBody || item.body,
-    ...(cleanedArticleBody ? { articleBody: cleanedArticleBody } : {}),
-    keyInsight: cleanedInsight,
+    feedText: isSupportedLang ? (cleanedFeedText || item.feedText) : '',
+    body: isSupportedLang ? (cleanedBody || item.body) : '',
+    ...(cleanedArticleBody ? { articleBody: isSupportedLang ? cleanedArticleBody : '' } : {}),
+    keyInsight: isSupportedLang ? cleanedInsight : '',
+    ...(isSupportedLang ? {} : { curationScore: 0 }),
     imageUrl: upgradedImageUrl,
     hasAuthenticImage: Boolean(upgradedImageUrl)
   };
@@ -331,6 +418,15 @@ export function evaluateSignalVsNoiseDeterministically(
       score: 8,
       passed: true,
       reason: 'Visuelle Satire / Meme-Klassiker / Comic'
+    };
+  }
+
+  // Strict Language Gate: Reject non-DE/EN items
+  if (!isSupportedFeedLanguage(title, snippet)) {
+    return {
+      score: 1,
+      passed: false,
+      reason: 'Nicht unterstützte Sprache (nur Deutsch & Englisch erlaubt)'
     };
   }
 

@@ -11,7 +11,12 @@ import {
   TOPIC_SPACE_MAP
 } from '../domain/types';
 import { Subchannel, defaultSpaceRepository, normalizeSpaceHandle } from '../spaces/spaceRepository';
-import { ScoredFeedItem, determineCurrentEditionType } from '../domain/ranking';
+import {
+  ScoredFeedItem,
+  determineCurrentEditionType,
+  extractConceptKeywords,
+  applyVoteFeedbackToProfile
+} from '../domain/ranking';
 import { feedRepository } from '../data/feedRepository';
 import { libraryRepository } from '../data/libraryRepository';
 import { userProfileRepository } from '../data/userProfileRepository';
@@ -34,19 +39,8 @@ import { defaultFeedOperationManager } from '../feed/FeedOperationManager';
 import { runInPlaceDataMigration } from '../data/migrationService';
 import { satisfiesDefaultCuratedStandard, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
 
-export function extractSalientKeywords(title: string): string[] {
-  const STOPWORDS = new Set([
-    'eine', 'einer', 'eines', 'einem', 'einen', 'oder', 'aber', 'wenn', 'dann', 'weil',
-    'dass', 'dies', 'diese', 'dieser', 'dieses', 'über', 'unter', 'nach', 'vor',
-    'nicht', 'auch', 'noch', 'schon', 'durch', 'für', 'gegen', 'ohne', 'beim',
-    'what', 'with', 'from', 'this', 'that', 'about', 'into', 'over', 'after'
-  ]);
-  return title
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter(w => w.length >= 4 && !STOPWORDS.has(w))
-    .slice(0, 3);
+export function extractSalientKeywords(titleOrItem: string | Pick<FeedItem, 'title' | 'subtitle' | 'keyInsight' | 'feedText'>): string[] {
+  return extractConceptKeywords(titleOrItem);
 }
 
 /**
@@ -1126,40 +1120,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       if (item && (direction === 'up' || direction === 'down')) {
         const isUp = direction === 'up';
-        const primaryTopic = item.primaryTopic || 'philosophy_ethics';
-        const author = item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '';
-        const domain = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || '').toLowerCase();
-        const space = item.space ? item.space.toLowerCase() : '';
-        const keywords = extractSalientKeywords(item.title);
-
-        const committed = await userProfileRepository.updateProfile(curr => {
-          const mem = { ...curr.feedbackMemory };
-          if (isUp) {
-            mem.boostedTopics = { ...mem.boostedTopics, [primaryTopic]: (mem.boostedTopics[primaryTopic] || 0) + 1 };
-            if (author) mem.boostedAuthors = { ...mem.boostedAuthors, [author]: (mem.boostedAuthors[author] || 0) + 1 };
-            if (domain) mem.boostedDomains = { ...mem.boostedDomains, [domain]: (mem.boostedDomains[domain] || 0) + 1 };
-            if (space) mem.boostedSpaces = { ...mem.boostedSpaces, [space]: (mem.boostedSpaces[space] || 0) + 1 };
-            if (keywords.length > 0) {
-              const kwMap = { ...mem.boostedKeywords };
-              keywords.forEach(kw => { kwMap[kw] = (kwMap[kw] || 0) + 1; });
-              mem.boostedKeywords = kwMap;
-            }
-          } else {
-            mem.penalizedTopics = { ...mem.penalizedTopics, [primaryTopic]: (mem.penalizedTopics[primaryTopic] || 0) + 1 };
-            if (author) mem.penalizedAuthors = { ...mem.penalizedAuthors, [author]: (mem.penalizedAuthors[author] || 0) + 1 };
-            if (domain) mem.penalizedDomains = { ...mem.penalizedDomains, [domain]: (mem.penalizedDomains[domain] || 0) + 1 };
-            if (space) mem.penalizedSpaces = { ...mem.penalizedSpaces, [space]: (mem.penalizedSpaces[space] || 0) + 1 };
-            if (keywords.length > 0) {
-              const kwMap = { ...mem.penalizedKeywords };
-              keywords.forEach(kw => { kwMap[kw] = (kwMap[kw] || 0) + 1; });
-              mem.penalizedKeywords = kwMap;
-            }
-          }
-          return {
-            ...curr,
-            feedbackMemory: mem
-          };
-        });
+        const committed = await userProfileRepository.updateProfile(curr =>
+          applyVoteFeedbackToProfile(curr, item, direction)
+        );
 
         latestProfileRef.current = committed;
         setProfile(committed);

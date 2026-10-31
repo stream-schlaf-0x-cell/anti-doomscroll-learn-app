@@ -9,6 +9,7 @@ import { parseSnapshotPayload } from '../src/core/feed/snapshotPayload';
 import { SourceHealthInfo } from '../src/core/ingestion/sourceHealth';
 import {
   BatchEditionEnricher,
+  isSupportedFeedLanguage,
   satisfiesDefaultCuratedStandard,
   sanitizeCuratedFeedItem
 } from '../src/core/enrichment/batchEnricher';
@@ -103,6 +104,7 @@ async function runIngestionPipeline() {
 
     console.log('\nApplying Batch Edition Enrichment (semantic classification & German synthesis)...');
     const preCurated = interleavedItems
+      .filter(i => isSupportedFeedLanguage(i.title || '', `${i.subtitle || ''} ${i.feedText || ''} ${i.body || ''}`))
       .map(sanitizeCuratedFeedItem)
       .filter(satisfiesDefaultCuratedStandard);
     const itemsToEnrich = preCurated.slice(0, 30);
