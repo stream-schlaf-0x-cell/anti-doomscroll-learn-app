@@ -339,9 +339,7 @@ const MainNavigator: React.FC = () => {
             {
               backgroundColor: colors.surface,
               borderTopColor: colors.borderSubtle,
-              paddingBottom: Platform.OS === 'web'
-                ? 14
-                : Math.max(insets.bottom, 10)
+              paddingBottom: Math.max(insets.bottom, 14)
             }
           ]}
         >

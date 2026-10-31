@@ -223,7 +223,8 @@ describe('Subreddit Purity, Visual Art Gallery & Formatting Sanitizer Audit', ()
     assert.ok(cleanedBody.startsWith('Imagine a basketball coach'));
 
     // Case B: Pure teaser stub without rich body (synthesized conceptual summary)
-    const baseItem: FeedItem = {
+    const baseItem: FeedItem = FeedItemSchema.parse({
+      ...REAL_KNOWLEDGE_VAULT[0],
       id: 'test-podcast-stub-001',
       type: 'deep_dive',
       format: 'concise_insight',
@@ -243,14 +244,14 @@ describe('Subreddit Purity, Visual Art Gallery & Formatting Sanitizer Audit', ()
         retrievalTimestamp: '2026-10-31T10:00:00.000Z',
         title: 'The Future of Didactics in Digital Classrooms'
       }]
-    };
+    });
 
     const sanitized = sanitizeCuratedFeedItem(baseItem);
     assert.ok(!sanitized.feedText.includes('Listen to the podcast episode'));
     assert.ok(sanitized.feedText.length >= 100);
     assert.ok(sanitized.feedText.includes('Aufgabenkultur'));
     assert.ok(!sanitized.subtitle.includes('Listen to the interview'));
-    assert.ok(sanitized.keyInsight.length >= 15);
+    assert.ok((sanitized.keyInsight || '').length >= 15);
   });
 
   it('10. PWA viewport-fit=cover, 100dvh reset and App.tsx safe-area anchoring prevent iOS dead space', () => {
@@ -261,7 +262,6 @@ describe('Subreddit Purity, Visual Art Gallery & Formatting Sanitizer Audit', ()
 
     const appTsx = fs.readFileSync(path.resolve(__dirname, '../App.tsx'), 'utf8');
     assert.ok(appTsx.includes("bottom: 'off'"), "SafeAreaView must set bottom: 'off' to prevent double insets");
-    assert.ok(appTsx.includes("paddingBottom: Platform.OS === 'web'"));
-    assert.ok(appTsx.includes("Math.max(insets.bottom, 10)"));
+    assert.ok(appTsx.includes("paddingBottom: Math.max(insets.bottom, 14)"));
   });
 });
