@@ -20,9 +20,6 @@ import {
   SubchannelVibe,
   generateSubchannelDraft
 } from '../../core/studio/subchannelAssistant';
-import {
-  RecursiveLearningEngine
-} from '../../core/recommendations/recursiveLearningEngine';
 
 export type MasterTab = 'channels' | 'feed_control';
 
@@ -85,21 +82,6 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
-
-  const loadLearningData = async () => {
-    try {
-      const state = await RecursiveLearningEngine.getEngineState();
-      setLearningState(state);
-    } catch (e) {
-      console.warn('Failed to load learning state in Studio:', e);
-    }
-  };
-
-  useEffect(() => {
-    if (visible) {
-      void loadLearningData();
-    }
-  }, [visible]);
 
   // Handle title change: auto-derive handle unless user typed a custom one
   const handleTitleChange = (text: string) => {
