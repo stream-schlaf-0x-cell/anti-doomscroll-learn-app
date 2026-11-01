@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,147 +8,137 @@ import {
   Pressable,
   ScrollView,
   TextInput,
-  Image,
   ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import QRCode from 'qrcode';
 import { useApp } from '../../core/context/AppContext';
-import { TrendRadarService, DialecticalTrend } from '../../core/synthesis/trendRadarService';
-import { ArchiveService, ArchivedEdition } from '../../core/archive/archiveService';
-import {
-  FoundationalCanonService,
-  FoundationalCanon
-} from '../../core/archive/foundationalCanonService';
-import {
-  RecursiveLearningEngine,
-  LearningEngineState
-} from '../../core/recommendations/recursiveLearningEngine';
-import { DailyGenerationService, DailyGenerationStatus } from '../../core/daily/dailyGenerationService';
-import { copyToClipboard, downloadMarkdownFile, downloadJsonFile } from '../../core/export/craftExport';
 import { typography, radius, spacing } from '../theme';
-import { TopicTag, TOPIC_SPACE_MAP } from '../../core/domain/types';
+import { TopicTag, TOPIC_SPACE_MAP, TOPIC_METADATA } from '../../core/domain/types';
+import { SubchannelFeedPriority, normalizeSpaceHandle } from '../../core/spaces/spaceRepository';
 import {
-  STUDIO_LENSES,
-  StudioLens,
-  StudioOutput,
-  defaultAtmenStudioService
-} from '../../core/studio/atmenStudio';
+  SUBCHANNEL_VIBES,
+  SubchannelVibe,
+  generateSubchannelDraft
+} from '../../core/studio/subchannelAssistant';
+import {
+  RecursiveLearningEngine
+} from '../../core/recommendations/recursiveLearningEngine';
 
-export type MasterTab = 'studio' | 'channels' | 'trends' | 'daily' | 'learning' | 'archive' | 'mobile';
+export type MasterTab = 'channels' | 'feed_control';
 
 interface UltraMasterModalProps {
   visible: boolean;
   onClose: () => void;
-  initialTab?: MasterTab;
+  initialTab?: MasterTab | string;
 }
 
 export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onClose, initialTab }) => {
-  const { colors, profile, refreshFeed, spaces, createSpace, deleteSpace, togglePinSpace } = useApp();
+  const {
+    colors,
+    profile,
+    refreshFeed,
+    spaces,
+    createSpace,
+    deleteSpace,
+    togglePinSpace,
+    setSpaceFeedPriority,
+    removeFeedbackBoost,
+    removeFeedbackPenalty,
+    updateTopicWeight,
+    updateFeedMixRatio,
+    clearFeedbackMemory
+  } = useApp();
 
-  const [activeTab, setActiveTab] = useState<MasterTab>(initialTab || 'channels');
+  const [activeTab, setActiveTab] = useState<MasterTab>('channels');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (visible && initialTab) {
-      setActiveTab(initialTab);
+      if (initialTab === 'feed_control' || initialTab === 'learning') {
+        setActiveTab('feed_control');
+      } else {
+        setActiveTab('channels');
+      }
     }
   }, [visible, initialTab]);
 
-  // Atmen Studio 3 Lenses state
-  const [studioLens, setStudioLens] = useState<StudioLens>('contemplation');
-  const [studioTitle, setStudioTitle] = useState<string>('Digitale Reizüberflutung & Souveränität');
-  const [studioText, setStudioText] = useState<string>('Wie wir in einer Welt permanenter Dopamin-Pings unsere kognitive Autonomie bewahren und Raum für tiefes Denken schaffen.');
-  const [isTransformingLens, setIsTransformingLens] = useState<boolean>(false);
-  const [studioOutput, setStudioOutput] = useState<StudioOutput | null>(null);
-
-  // Subchannels state
+  // One-Input Subchannel Assistant State
   const [newChannelTitle, setNewChannelTitle] = useState<string>('');
   const [newChannelHandle, setNewChannelHandle] = useState<string>('');
+  const [hasCustomHandle, setHasCustomHandle] = useState<boolean>(false);
+  const [newChannelVibe, setNewChannelVibe] = useState<SubchannelVibe>('contemplation');
   const [newChannelDesc, setNewChannelDesc] = useState<string>('');
   const [newChannelFlair, setNewChannelFlair] = useState<string>('');
+  const [newChannelTopic, setNewChannelTopic] = useState<TopicTag>('contemplation_mind');
+  const [newChannelSources, setNewChannelSources] = useState<string>('');
   const [newChannelPrompt, setNewChannelPrompt] = useState<string>('');
-  const [newChannelTopic, setNewChannelTopic] = useState<TopicTag>('philosophy_ethics');
+  const [newChannelPriority, setNewChannelPriority] = useState<SubchannelFeedPriority>('normal');
+  const [isGeneratingAiDraft, setIsGeneratingAiDraft] = useState<boolean>(false);
   const [isCreatingChannel, setIsCreatingChannel] = useState<boolean>(false);
+  const [hasGeneratedDraft, setHasGeneratedDraft] = useState<boolean>(false);
+  const [isAiGeneratedBadge, setIsAiGeneratedBadge] = useState<boolean>(false);
 
-  // Trends state
-  const [trends, setTrends] = useState<DialecticalTrend[]>([]);
-
-  // Daily Generation state
-  const [dailyStatus, setDailyStatus] = useState<DailyGenerationStatus | null>(null);
-  const [isGeneratingDaily, setIsGeneratingDaily] = useState<boolean>(false);
-
-  // Learning Engine state
-  const [learningState, setLearningState] = useState<LearningEngineState | null>(null);
-
-  // Archive state
-  const [archivedEditions, setArchivedEditions] = useState<ArchivedEdition[]>([]);
-  const [selectedArchiveEdition, setSelectedArchiveEdition] = useState<ArchivedEdition | null>(null);
-  const [archiveSearchTerm, setArchiveSearchTerm] = useState<string>('');
-  const [canon, setCanon] = useState<FoundationalCanon | null>(null);
-
-  // Mobile QR state
-  const [qrDataUrl, setQrDataUrl] = useState<string>('');
-  const [copiedLink, setCopiedLink] = useState<boolean>(false);
-
-  const defaultLanUrl = 'http://192.168.178.31:8081';
-  const accessUrl = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
-    ? `${window.location.protocol}//${window.location.host}`
-    : defaultLanUrl;
+  // Learning Engine Telemetry State
+  const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  const loadData = async () => {
+  const loadLearningData = async () => {
     try {
-      const [status, learn, editions, baseCanon] = await Promise.all([
-        DailyGenerationService.getStatus(),
-        RecursiveLearningEngine.getEngineState(),
-        ArchiveService.getAllArchivedEditions(),
-        FoundationalCanonService.getCanon()
-      ]);
-      setDailyStatus(status);
-      setLearningState(learn);
-      setArchivedEditions(editions);
-      setCanon(baseCanon);
-      if (editions.length > 0 && !selectedArchiveEdition) {
-        setSelectedArchiveEdition(editions[0]);
-      }
-      setTrends(TrendRadarService.getActiveTrends());
+      const state = await RecursiveLearningEngine.getEngineState();
+      setLearningState(state);
     } catch (e) {
-      console.warn('UltraMasterModal load error:', e);
+      console.warn('Failed to load learning state in Studio:', e);
     }
-  };
-
-  const handleExportCanonMarkdown = () => {
-    if (!canon) return;
-    const md = FoundationalCanonService.exportCanonToMarkdown(canon);
-    downloadMarkdownFile('atmen-ur-fundament.md', md);
-    showToast('✓ Ur-Fundament als Markdown exportiert!');
-  };
-
-  const handleExportCanonJson = () => {
-    if (!canon) return;
-    const json = FoundationalCanonService.exportCanonToJson(canon);
-    downloadJsonFile('atmen-ur-fundament.json', json);
-    showToast('✓ Ur-Fundament als JSON exportiert!');
   };
 
   useEffect(() => {
     if (visible) {
-      void loadData();
-      QRCode.toDataURL(accessUrl, {
-        width: 280,
-        margin: 2,
-        color: { dark: '#000000', light: '#FFFFFF' }
-      })
-        .then(setQrDataUrl)
-        .catch(console.warn);
+      void loadLearningData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, accessUrl]);
+  }, [visible]);
+
+  // Handle title change: auto-derive handle unless user typed a custom one
+  const handleTitleChange = (text: string) => {
+    setNewChannelTitle(text);
+    if (!hasCustomHandle) {
+      setNewChannelHandle(normalizeSpaceHandle(text));
+    }
+  };
+
+  // AI-Assisted Subchannel Draft Generation
+  const handleGenerateAiDraft = async () => {
+    if (!newChannelTitle.trim()) {
+      showToast('Bitte zuerst einen Titel für den Subchannel eingeben');
+      return;
+    }
+    setIsGeneratingAiDraft(true);
+    try {
+      const draft = await generateSubchannelDraft(newChannelTitle, newChannelVibe);
+      setNewChannelHandle(draft.handle);
+      setNewChannelFlair(draft.flair);
+      setNewChannelDesc(draft.description);
+      setNewChannelTopic(draft.primaryTopic);
+      setNewChannelSources(draft.seedSources.join(', '));
+      if (draft.suggestedAntithesis) {
+        setNewChannelPrompt(draft.suggestedAntithesis);
+      }
+      setHasGeneratedDraft(true);
+      setIsAiGeneratedBadge(draft.isAiGenerated);
+      showToast(
+        draft.isAiGenerated
+          ? '✓ KI-Vorschlag & kuratierte Quellen geladen!'
+          : '✓ Vorschlag & kuratierte Quellen geladen!'
+      );
+    } catch {
+      showToast('Fehler bei der KI-Vorschlagsgenerierung');
+    } finally {
+      setIsGeneratingAiDraft(false);
+    }
+  };
 
   // Channel Creation
   const handleCreateChannel = async () => {
@@ -158,22 +148,34 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
     }
     setIsCreatingChannel(true);
     try {
+      const seedSources = newChannelSources
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
       const created = await createSpace({
         title: newChannelTitle.trim(),
         handle: newChannelHandle.trim() || undefined,
-        description: newChannelDesc.trim(),
+        description: newChannelDesc.trim() || undefined,
         flair: newChannelFlair.trim() || undefined,
+        primaryTopic: newChannelTopic,
+        rssFeeds: seedSources,
         antithesisPrompt: newChannelPrompt.trim() || undefined,
-        primaryTopic: newChannelTopic
+        feedPriority: newChannelPriority
       });
+
+      // Reset form
       setNewChannelTitle('');
       setNewChannelHandle('');
+      setHasCustomHandle(false);
       setNewChannelDesc('');
       setNewChannelFlair('');
+      setNewChannelSources('');
       setNewChannelPrompt('');
-      showToast(`✓ Subchannel „${created.handle}“ erfolgreich erstellt und geöffnet!`);
+      setHasGeneratedDraft(false);
+
+      showToast(`✓ Subchannel „${created.handle}“ erfolgreich erstellt und aktiviert!`);
       await refreshFeed();
-      onClose();
     } catch (err: any) {
       showToast(err?.message || 'Fehler beim Erstellen des Subchannels');
     } finally {
@@ -189,88 +191,23 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
     }
   };
 
-  const handleTogglePin = async (id: string) => {
-    await togglePinSpace(id);
-  };
-
-  // Daily Generation
-  const handleTriggerDaily = async () => {
-    setIsGeneratingDaily(true);
-    try {
-      const res = await DailyGenerationService.generateDailyEdition(profile, undefined, true);
-      await loadData();
-      await refreshFeed();
-      showToast(`✓ Tagesausgabe mit ${res.generatedItems.length} Artikeln erfolgreich generiert!`);
-    } catch {
-      showToast('Fehler bei der Tagesausgaben-Generierung');
-    } finally {
-      setIsGeneratingDaily(false);
-    }
-  };
-
-  // Trend Action
-  const handleAdoptTrend = async (trend: DialecticalTrend) => {
-    const _item = TrendRadarService.convertTrendToFeedItem(trend);
-    void _item;
-    await DailyGenerationService.generateDailyEdition(profile);
+  const handlePriorityChange = async (id: string, priority: SubchannelFeedPriority) => {
+    await setSpaceFeedPriority(id, priority);
+    showToast(`Priorität aktualisiert`);
     await refreshFeed();
-    showToast(`✓ Trend „${trend.trendTopic}“ als dialektischer Artikel im Feed verankert!`);
   };
 
-  // Archive Export
-  const handleExportArchiveMarkdown = (edition: ArchivedEdition) => {
-    const md = ArchiveService.exportEditionToMarkdown(edition);
-    const filename = `atmen-tagesausgabe-${edition.date}.md`;
-    downloadMarkdownFile(filename, md);
-    showToast(`✓ Datei ${filename} exportiert!`);
-  };
+  // Feed Mix calculation
+  const currentMix = profile?.feedMixRatio || { focusRatio: 0.60, socraticRatio: 0.20, serendipityRatio: 0.20 };
+  const focusPct = Math.round(currentMix.focusRatio * 100);
+  const socraticPct = Math.round(currentMix.socraticRatio * 100);
+  const serendipityPct = Math.round(currentMix.serendipityRatio * 100);
 
-  const handleCopyLink = async () => {
-    const ok = await copyToClipboard(accessUrl);
-    if (ok) {
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 3000);
-    }
-  };
-
-  // Atmen Studio Handlers
-  const handleTransformStudioLens = async () => {
-    if (!studioTitle.trim() || !studioText.trim()) {
-      showToast('Bitte Titel und Text für die Studio-Transformation eingeben');
-      return;
-    }
-    setIsTransformingLens(true);
-    try {
-      const output = await defaultAtmenStudioService.generateLensOutput({
-        title: studioTitle.trim(),
-        text: studioText.trim(),
-        lens: studioLens
-      });
-      setStudioOutput(output);
-      showToast(`✓ Linse „${STUDIO_LENSES[studioLens].title}“ erfolgreich berechnet!`);
-    } catch {
-      showToast('Fehler bei der Studio-Transformation');
-    } finally {
-      setIsTransformingLens(false);
-    }
-  };
-
-  const handleExportStudioMarkdown = () => {
-    if (!studioOutput) return;
-    const md = defaultAtmenStudioService.formatStudioOutputMarkdown(studioOutput);
-    const filename = `atmen-studio-${studioLens}-${Date.now()}.md`;
-    downloadMarkdownFile(filename, md);
-    showToast(`✓ Studio-Output als ${filename} exportiert!`);
-  };
-
-  const handleCopyStudioMarkdown = async () => {
-    if (!studioOutput) return;
-    const md = defaultAtmenStudioService.formatStudioOutputMarkdown(studioOutput);
-    const ok = await copyToClipboard(md);
-    if (ok) {
-      showToast('✓ Markdown in die Zwischenablage kopiert!');
-    }
-  };
+  // Feedback Memory signals
+  const feedbackMem = profile?.feedbackMemory || {};
+  const boostedDomains = useMemo(() => Object.entries(feedbackMem.boostedDomains || {}), [feedbackMem.boostedDomains]);
+  const penalizedDomains = useMemo(() => Object.entries(feedbackMem.penalizedDomains || {}), [feedbackMem.penalizedDomains]);
+  const boostedKeywords = useMemo(() => Object.entries(feedbackMem.boostedKeywords || {}), [feedbackMem.boostedKeywords]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -297,14 +234,14 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
               <View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
-                    AI Ultra Master Studio
+                    ✨ AI Studio & Subchannels
                   </Text>
                   <View style={styles.ultraPill}>
-                    <Text style={styles.ultraPillText}>ULTRA MASTER</Text>
+                    <Text style={styles.ultraPillText}>SOUVERÄN</Text>
                   </View>
                 </View>
                 <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
-                  Dialektische Kuration, Subchannels on the Go, Rekursives Lernen & Dauer-Archiv
+                  Eigene Räume mit 1 Klick anlegen & deinen kognitiven Feed steuern
                 </Text>
               </View>
             </View>
@@ -325,350 +262,218 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
             </View>
           )}
 
-          {/* Navigation Bar */}
+          {/* Clean 2-Tab Navigation Bar */}
           <View style={[styles.tabBar, { borderBottomColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary }]}>
             <TouchableOpacity
               onPress={() => setActiveTab('channels')}
-              style={[styles.tabItem, activeTab === 'channels' && { borderBottomColor: '#F59E0B', backgroundColor: colors.surface }]}
+              style={[
+                styles.tabItem,
+                activeTab === 'channels' && { borderBottomColor: '#F59E0B', backgroundColor: colors.surface }
+              ]}
+              accessibilityRole="tab"
+              accessibilityLabel="Subchannels verwalten"
             >
-              <Ionicons name="layers-outline" size={14} color={activeTab === 'channels' ? '#F59E0B' : colors.textMuted} style={{ marginRight: 6 }} />
-              <Text style={[styles.tabItemText, { color: activeTab === 'channels' ? '#F59E0B' : colors.textSecondary }]}>
-                ✨ Subchannels ({spaces.length})
+              <Ionicons
+                name="compass-outline"
+                size={15}
+                color={activeTab === 'channels' ? '#F59E0B' : colors.textMuted}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.tabItemText,
+                  { color: activeTab === 'channels' ? '#F59E0B' : colors.textSecondary, fontWeight: '700' }
+                ]}
+              >
+                🧭 Subchannels verwalten ({spaces.length})
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => setActiveTab('studio')}
-              style={[styles.tabItem, activeTab === 'studio' && { borderBottomColor: '#EC4899', backgroundColor: colors.surface }]}
+              onPress={() => setActiveTab('feed_control')}
+              style={[
+                styles.tabItem,
+                activeTab === 'feed_control' && { borderBottomColor: '#3B82F6', backgroundColor: colors.surface }
+              ]}
+              accessibilityRole="tab"
+              accessibilityLabel="Feed-Steuerung und Geschmack"
             >
-              <Ionicons name="sparkles" size={14} color={activeTab === 'studio' ? '#EC4899' : colors.textMuted} style={{ marginRight: 6 }} />
-              <Text style={[styles.tabItemText, { color: activeTab === 'studio' ? '#EC4899' : colors.textSecondary }]}>
-                Studio (3 Linsen)
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setActiveTab('trends')}
-              style={[styles.tabItem, activeTab === 'trends' && { borderBottomColor: '#EF4444', backgroundColor: colors.surface }]}
-            >
-              <Ionicons name="trending-up-outline" size={14} color={activeTab === 'trends' ? '#EF4444' : colors.textMuted} style={{ marginRight: 6 }} />
-              <Text style={[styles.tabItemText, { color: activeTab === 'trends' ? '#EF4444' : colors.textSecondary }]}>
-                Trend-Radar & Dialektik
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setActiveTab('daily')}
-              style={[styles.tabItem, activeTab === 'daily' && { borderBottomColor: '#10B981', backgroundColor: colors.surface }]}
-            >
-              <Ionicons name="calendar-outline" size={14} color={activeTab === 'daily' ? '#10B981' : colors.textMuted} style={{ marginRight: 6 }} />
-              <Text style={[styles.tabItemText, { color: activeTab === 'daily' ? '#10B981' : colors.textSecondary }]}>
-                Tages-Generator & Daemon
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setActiveTab('learning')}
-              style={[styles.tabItem, activeTab === 'learning' && { borderBottomColor: '#8B5CF6', backgroundColor: colors.surface }]}
-            >
-              <Ionicons name="bulb-outline" size={14} color={activeTab === 'learning' ? '#8B5CF6' : colors.textMuted} style={{ marginRight: 6 }} />
-              <Text style={[styles.tabItemText, { color: activeTab === 'learning' ? '#8B5CF6' : colors.textSecondary }]}>
-                Rekursives Lernen
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setActiveTab('archive')}
-              style={[styles.tabItem, activeTab === 'archive' && { borderBottomColor: '#3B82F6', backgroundColor: colors.surface }]}
-            >
-              <Ionicons name="library-outline" size={14} color={activeTab === 'archive' ? '#3B82F6' : colors.textMuted} style={{ marginRight: 6 }} />
-              <Text style={[styles.tabItemText, { color: activeTab === 'archive' ? '#3B82F6' : colors.textSecondary }]}>
-                Bibliothek & Archiv
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setActiveTab('mobile')}
-              style={[styles.tabItem, activeTab === 'mobile' && { borderBottomColor: '#06B6D4', backgroundColor: colors.surface }]}
-            >
-              <Ionicons name="phone-portrait-outline" size={14} color={activeTab === 'mobile' ? '#06B6D4' : colors.textMuted} style={{ marginRight: 6 }} />
-              <Text style={[styles.tabItemText, { color: activeTab === 'mobile' ? '#06B6D4' : colors.textSecondary }]}>
-                Smartphone QR
+              <Ionicons
+                name="options-outline"
+                size={15}
+                color={activeTab === 'feed_control' ? '#3B82F6' : colors.textMuted}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.tabItemText,
+                  { color: activeTab === 'feed_control' ? '#3B82F6' : colors.textSecondary, fontWeight: '700' }
+                ]}
+              >
+                🎚️ Feed-Steuerung & Geschmack
               </Text>
             </TouchableOpacity>
           </View>
 
           {/* Content Area */}
           <View style={styles.contentContainer}>
-            {/* TAB 0: Atmen Studio 3 Lenses */}
-            {activeTab === 'studio' && (
+            {/* TAB 1: Subchannels verwalten */}
+            {activeTab === 'channels' && (
               <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+                {/* One-Input AI Assisted Subchannel Creator Box */}
                 <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
                     <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                      ✨ Atmen Studio: Kognitive Transformation (3 Linsen)
+                      ✨ Neuen Subchannel anlegen (1-Klick KI-Assistent)
                     </Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#EC4899' + '18', paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm }}>
-                      <Ionicons name="hardware-chip-outline" size={12} color="#EC4899" />
-                      <Text style={{ fontSize: typography.sizes.micro, color: '#EC4899', fontWeight: '700' }}>
-                        Gemini 3.8 / OpenRouter + Deterministic Fallback
-                      </Text>
-                    </View>
+                    {hasGeneratedDraft && (
+                      <View style={[styles.flairBadge, { backgroundColor: isAiGeneratedBadge ? '#10B98120' : colors.surface }]}>
+                        <Text style={{ fontSize: 10, fontWeight: '800', color: isAiGeneratedBadge ? '#10B981' : colors.textMuted }}>
+                          {isAiGeneratedBadge ? '🟢 KI-Vorschlag aktiv' : '⚪ Vorschlag aktiv'}
+                        </Text>
+                      </View>
+                    )}
                   </View>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginTop: 4 }]}>
-                    Betrachte beliebige Texte oder Gedanken durch drei fundamentale erkenntnistheoretische Linsen: Didaktik (First-Principles), Kontemplation (Stoa/Zen) oder Klang-Alchemie (Resonanz).
+                  <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
+                    Gib einfach den Titel deines Wunsch-Raumes ein. Die KI ergänzt auf Knopfdruck Beschreibung, Flair, Quellen und Themengebiet.
                   </Text>
 
-                  {/* 3 Lenses Selector */}
-                  <View style={{ marginTop: spacing.md }}>
-                    <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 8 }]}>
-                      Wähle eine transformative Linse:
-                    </Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
-                      {(Object.keys(STUDIO_LENSES) as StudioLens[]).map(lensKey => {
-                        const lensInfo = STUDIO_LENSES[lensKey];
-                        const isSelected = studioLens === lensKey;
-                        const lensColor = lensKey === 'didactics' ? '#3B82F6' : lensKey === 'contemplation' ? '#10B981' : '#8B5CF6';
-                        return (
-                          <TouchableOpacity
-                            key={lensKey}
-                            onPress={() => setStudioLens(lensKey)}
-                            style={[
-                              styles.lensCard,
-                              {
-                                backgroundColor: isSelected ? lensColor + '15' : colors.surface,
-                                borderColor: isSelected ? lensColor : colors.borderSubtle
-                              }
-                            ]}
-                          >
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                              <Text style={{ fontSize: 16 }}>{lensInfo.badge.split(' ')[0]}</Text>
-                              <Text style={[styles.lensTitle, { color: isSelected ? lensColor : colors.textPrimary }]}>
-                                {lensInfo.title}
-                              </Text>
-                            </View>
-                            <Text style={[styles.lensDesc, { color: colors.textMuted }]} numberOfLines={2}>
-                              {lensInfo.description}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </View>
-
-                  {/* Input Fields */}
                   <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
-                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Titel oder Kern-Fragestellung:</Text>
-                    <TextInput
-                      value={studioTitle}
-                      onChangeText={setStudioTitle}
-                      placeholder="z.B. Informationsüberlastung & Aufmerksamkeit"
-                      placeholderTextColor={colors.textMuted}
-                      style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                    />
+                    {/* Row 1: Title and Handle */}
+                    <View style={{ flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' }}>
+                      <View style={{ flex: 1, minWidth: 220 }}>
+                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                          Titel des Raumes (Erforderlich):
+                        </Text>
+                        <TextInput
+                          value={newChannelTitle}
+                          onChangeText={handleTitleChange}
+                          placeholder="z.B. Buddhismus, Rust Systems oder Bauhaus"
+                          placeholderTextColor={colors.textMuted}
+                          style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                        />
+                      </View>
 
-                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Textkörper, Notiz oder Gedankenfragment:</Text>
-                    <TextInput
-                      value={studioText}
-                      onChangeText={setStudioText}
-                      multiline
-                      numberOfLines={4}
-                      placeholder="Füge hier deinen Text, Notizen oder Artikelabschnitt ein..."
-                      placeholderTextColor={colors.textMuted}
-                      style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary, minHeight: 90, textAlignVertical: 'top' }]}
-                    />
+                      <View style={{ flex: 1, minWidth: 200 }}>
+                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                          Handle (z.B. c/buddhismus):
+                        </Text>
+                        <TextInput
+                          value={newChannelHandle}
+                          onChangeText={text => {
+                            setNewChannelHandle(text);
+                            setHasCustomHandle(true);
+                          }}
+                          placeholder="c/..."
+                          placeholderTextColor={colors.textMuted}
+                          style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                        />
+                      </View>
+                    </View>
 
+                    {/* Vibe Selector */}
+                    <View style={{ marginTop: 2 }}>
+                      <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 6 }]}>
+                        Tonalität & Vibe wählen:
+                      </Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                        {(Object.keys(SUBCHANNEL_VIBES) as SubchannelVibe[]).map(vibeKey => {
+                          const vMeta = SUBCHANNEL_VIBES[vibeKey];
+                          const isSelected = newChannelVibe === vibeKey;
+                          return (
+                            <TouchableOpacity
+                              key={vibeKey}
+                              onPress={() => setNewChannelVibe(vibeKey)}
+                              style={[
+                                styles.vibeChip,
+                                {
+                                  backgroundColor: isSelected ? colors.accent : colors.surface,
+                                  borderColor: isSelected ? colors.accent : colors.borderSubtle
+                                }
+                              ]}
+                            >
+                              <Text style={[styles.vibeChipText, { color: isSelected ? '#FFFFFF' : colors.textPrimary }]}>
+                                {vMeta.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+
+                    {/* AI Autofill Button */}
                     <TouchableOpacity
-                      onPress={handleTransformStudioLens}
-                      disabled={isTransformingLens}
+                      onPress={handleGenerateAiDraft}
+                      disabled={isGeneratingAiDraft || !newChannelTitle.trim()}
                       style={[
-                        styles.primaryActionBtn,
+                        styles.aiAssistantBtn,
                         {
-                          backgroundColor: studioLens === 'didactics' ? '#3B82F6' : studioLens === 'contemplation' ? '#10B981' : '#8B5CF6',
-                          marginTop: spacing.sm
+                          backgroundColor: newChannelTitle.trim() ? '#8B5CF6' : colors.surface,
+                          borderColor: '#8B5CF6',
+                          opacity: newChannelTitle.trim() ? 1 : 0.6
                         }
                       ]}
                     >
-                      {isTransformingLens ? (
+                      {isGeneratingAiDraft ? (
                         <ActivityIndicator size="small" color="#FFFFFF" />
                       ) : (
                         <>
-                          <Ionicons name="sparkles" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                          <Text style={styles.primaryActionBtnText}>
-                            Durch Linse „{STUDIO_LENSES[studioLens].title}“ transformieren
+                          <Ionicons name="sparkles" size={15} color={newChannelTitle.trim() ? '#FFFFFF' : colors.textMuted} style={{ marginRight: 6 }} />
+                          <Text style={[styles.aiAssistantBtnText, { color: newChannelTitle.trim() ? '#FFFFFF' : colors.textMuted }]}>
+                            ✨ Von KI ausfüllen & kuratierte Quellen finden
                           </Text>
                         </>
                       )}
                     </TouchableOpacity>
-                  </View>
-                </View>
 
-                {/* Studio Transformation Output */}
-                {studioOutput && (
-                  <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <View style={[styles.customBadge, { backgroundColor: colors.accent + '20' }]}>
-                          <Text style={styles.customBadgeText}>
-                            {STUDIO_LENSES[studioOutput.lens].badge}
+                    {/* Editable Details (Freely adjustable before activation) */}
+                    <View style={{ marginTop: spacing.xs, gap: spacing.xs }}>
+                      <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                        Beschreibung & Fokus:
+                      </Text>
+                      <TextInput
+                        value={newChannelDesc}
+                        onChangeText={setNewChannelDesc}
+                        placeholder="Kurze kognitive Ausrichtung des Channels..."
+                        placeholderTextColor={colors.textMuted}
+                        style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                      />
+
+                      <View style={{ flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' }}>
+                        <View style={{ flex: 1, minWidth: 160 }}>
+                          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                            Badge Flair:
                           </Text>
+                          <TextInput
+                            value={newChannelFlair}
+                            onChangeText={setNewChannelFlair}
+                            placeholder="z.B. 🌱 Achtsamkeit"
+                            placeholderTextColor={colors.textMuted}
+                            style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                          />
                         </View>
-                        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                          {studioOutput.heading}
+
+                        <View style={{ flex: 2, minWidth: 220 }}>
+                          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                            Kuratierte Seed-Quellen (Domains):
+                          </Text>
+                          <TextInput
+                            value={newChannelSources}
+                            onChangeText={setNewChannelSources}
+                            placeholder="z.B. plumvillage.org, tricycle.org"
+                            placeholderTextColor={colors.textMuted}
+                            style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                          />
+                        </View>
+                      </View>
+
+                      {/* Primary Topic Chips */}
+                      <View style={{ marginTop: 2 }}>
+                        <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 4 }]}>
+                          Primäres Wissensgebiet:
                         </Text>
-                      </View>
-                      <View style={{ flexDirection: 'row', gap: 8 }}>
-                        <TouchableOpacity
-                          onPress={handleCopyStudioMarkdown}
-                          style={[styles.secondaryActionBtn, { borderColor: colors.borderSubtle, backgroundColor: colors.surface }]}
-                        >
-                          <Ionicons name="copy-outline" size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
-                          <Text style={[styles.secondaryActionBtnText, { color: colors.textSecondary }]}>Kopieren</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={handleExportStudioMarkdown}
-                          style={[styles.secondaryActionBtn, { borderColor: colors.borderSubtle, backgroundColor: colors.surface }]}
-                        >
-                          <Ionicons name="download-outline" size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
-                          <Text style={[styles.secondaryActionBtnText, { color: colors.textSecondary }]}>Export .md</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    {/* AI Generation Status Badge */}
-                    <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center' }}>
-                      {studioOutput.isAiGenerated ? (
-                        <View style={{ backgroundColor: '#10B98118', borderColor: '#10B981', borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                          <Ionicons name="sparkles" size={13} color="#10B981" />
-                          <Text style={{ fontSize: typography.sizes.micro, color: '#10B981', fontWeight: '700' }}>
-                            🟢 Live generiert mit {studioOutput.modelUsed || 'Gemini'}
-                          </Text>
-                        </View>
-                      ) : (
-                        <View style={{ backgroundColor: colors.surface, borderColor: colors.borderSubtle, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.sm, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                          <Ionicons name="hardware-chip-outline" size={13} color={colors.textMuted} />
-                          <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, fontWeight: '600' }}>
-                            ⚪ Lokale Synthese (Deterministisch)
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-
-                    {/* Core Thesis Card */}
-                    <View style={[styles.thesisCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                      <Text style={[styles.thesisLabel, { color: colors.textMuted }]}>KERNTHESE / ESSENZ</Text>
-                      <Text style={[styles.thesisText, { color: colors.textPrimary }]}>
-                        {studioOutput.coreThesis}
-                      </Text>
-                    </View>
-
-                    {/* Insights */}
-                    <View style={{ marginTop: spacing.md }}>
-                      <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 6 }]}>
-                        Erkenntnisbausteine ({studioOutput.insights.length}):
-                      </Text>
-                      {studioOutput.insights.map((insight, idx) => (
-                        <View key={idx} style={{ flexDirection: 'row', gap: 8, marginBottom: 6, alignItems: 'flex-start' }}>
-                          <Text style={{ color: colors.accent, fontWeight: '700' }}>•</Text>
-                          <Text style={{ flex: 1, color: colors.textSecondary, fontSize: typography.sizes.bodySmall, lineHeight: 20 }}>
-                            {insight}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-
-                    {/* Reflection Questions */}
-                    <View style={{ marginTop: spacing.md }}>
-                      <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 6 }]}>
-                        Reflexions-Fragen:
-                      </Text>
-                      {studioOutput.reflectionQuestions.map((q, idx) => (
-                        <View key={idx} style={{ flexDirection: 'row', gap: 8, marginBottom: 6, alignItems: 'flex-start' }}>
-                          <Text style={{ color: '#F59E0B', fontWeight: '700' }}>?</Text>
-                          <Text style={{ flex: 1, color: colors.textSecondary, fontSize: typography.sizes.bodySmall, fontStyle: 'italic', lineHeight: 20 }}>
-                            {q}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-
-                    {/* Practical Impulse */}
-                    <View style={[styles.impulseCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <Ionicons name="compass-outline" size={16} color="#10B981" />
-                        <Text style={[styles.impulseLabel, { color: '#10B981' }]}>PRAKTISCHER IMPULS</Text>
-                      </View>
-                      <Text style={[styles.impulseText, { color: colors.textPrimary }]}>
-                        {studioOutput.practicalImpulse}
-                      </Text>
-                    </View>
-                  </View>
-                )}
-              </ScrollView>
-            )}
-
-            {/* TAB 1: Subchannels */}
-            {activeTab === 'channels' && (
-              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                {/* Channel Creator Box */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    Neuen Subchannel (c/...) erstellen & konfigurieren
-                  </Text>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                    Erstelle beliebig viele thematische Räume nach Reddit-Vorbild. Definiere Handle, Flair und eine sokratische Antithese-Leitfrage.
-                  </Text>
-
-                  <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
-                    <View style={{ flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' }}>
-                      <View style={{ flex: 1, minWidth: 200 }}>
-                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Titel des Raumes:</Text>
-                        <TextInput
-                          value={newChannelTitle}
-                          onChangeText={setNewChannelTitle}
-                          placeholder="z.B. Kognitive Kybernetik oder Quanten-Kosmos"
-                          placeholderTextColor={colors.textMuted}
-                          style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                        />
-                      </View>
-
-                      <View style={{ flex: 1, minWidth: 200 }}>
-                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Handle (z.B. c/kybernetik):</Text>
-                        <TextInput
-                          value={newChannelHandle}
-                          onChangeText={setNewChannelHandle}
-                          placeholder="c/kybernetik"
-                          placeholderTextColor={colors.textMuted}
-                          style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                        />
-                      </View>
-                    </View>
-
-                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Beschreibung & Fokus-Mission:</Text>
-                    <TextInput
-                      value={newChannelDesc}
-                      onChangeText={setNewChannelDesc}
-                      placeholder="Worin besteht die kognitive Vertiefung dieses Channels?"
-                      placeholderTextColor={colors.textMuted}
-                      style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                    />
-
-                    <View style={{ flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' }}>
-                      <View style={{ flex: 1, minWidth: 200 }}>
-                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Badge Flair:</Text>
-                        <TextInput
-                          value={newChannelFlair}
-                          onChangeText={setNewChannelFlair}
-                          placeholder="z.B. ◈ Kybernetik"
-                          placeholderTextColor={colors.textMuted}
-                          style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                        />
-                      </View>
-
-                      <View style={{ flex: 1, minWidth: 200 }}>
-                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Primäres Wissensgebiet:</Text>
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-                          {(['philosophy_ethics', 'ai_apple', 'sound_synthesis', 'science_society', 'health_biohacking'] as TopicTag[]).map(t => (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                          {(['contemplation_mind', 'philosophy_ethics', 'german_didactics', 'ai_apple', 'science_society', 'art_aesthetics', 'sound_synthesis'] as TopicTag[]).map(t => (
                             <TouchableOpacity
                               key={t}
                               onPress={() => setNewChannelTopic(t)}
@@ -687,21 +492,64 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
                           ))}
                         </View>
                       </View>
+
+                      {/* Optional Antithesis Prompt */}
+                      <View style={{ marginTop: 2 }}>
+                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                          Optionale Leitfrage / Antithese (Optional):
+                        </Text>
+                        <TextInput
+                          value={newChannelPrompt}
+                          onChangeText={setNewChannelPrompt}
+                          placeholder="Welche kritische Grundannahme hinterfragt dieser Raum?"
+                          placeholderTextColor={colors.textMuted}
+                          style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                        />
+                      </View>
+
+                      {/* Feed Priority for new channel */}
+                      <View style={{ marginTop: 2 }}>
+                        <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 4 }]}>
+                          Standard-Präsenz im Stream:
+                        </Text>
+                        <View style={{ flexDirection: 'row', gap: 6 }}>
+                          {[
+                            { id: 'high' as SubchannelFeedPriority, label: '🔥 Oft im Feed' },
+                            { id: 'normal' as SubchannelFeedPriority, label: 'Normal' },
+                            { id: 'channel_only' as SubchannelFeedPriority, label: 'Nur im Channel-Tab' }
+                          ].map(p => (
+                            <TouchableOpacity
+                              key={p.id}
+                              onPress={() => setNewChannelPriority(p.id)}
+                              style={[
+                                styles.priorityPill,
+                                {
+                                  backgroundColor: newChannelPriority === p.id ? colors.accent : colors.surface,
+                                  borderColor: newChannelPriority === p.id ? colors.accent : colors.borderSubtle
+                                }
+                              ]}
+                            >
+                              <Text style={[styles.priorityPillText, { color: newChannelPriority === p.id ? '#FFFFFF' : colors.textSecondary }]}>
+                                {p.label}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
                     </View>
 
-                    <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Kritische Antithese-Leitfrage:</Text>
-                    <TextInput
-                      value={newChannelPrompt}
-                      onChangeText={setNewChannelPrompt}
-                      placeholder="Welche Grundannahme dieses Channels muss radikal hinterfragt werden?"
-                      placeholderTextColor={colors.textMuted}
-                      style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                    />
-
+                    {/* Activation Button */}
                     <TouchableOpacity
                       onPress={handleCreateChannel}
-                      disabled={isCreatingChannel}
-                      style={[styles.primaryActionBtn, { backgroundColor: '#F59E0B', marginTop: spacing.sm }]}
+                      disabled={isCreatingChannel || !newChannelTitle.trim()}
+                      style={[
+                        styles.primaryActionBtn,
+                        {
+                          backgroundColor: '#F59E0B',
+                          marginTop: spacing.sm,
+                          opacity: newChannelTitle.trim() ? 1 : 0.6
+                        }
+                      ]}
                     >
                       {isCreatingChannel ? (
                         <ActivityIndicator size="small" color="#FFFFFF" />
@@ -715,207 +563,193 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
                   </View>
                 </View>
 
-                {/* Subchannels List */}
+                {/* Subchannels List & Priority Adjuster */}
                 <View style={{ marginTop: spacing.lg }}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 4 }]}>
                     Verfügbare Subchannels ({spaces.length})
                   </Text>
+                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginBottom: spacing.md }]}>
+                    Steuere die Priorität jedes Channels: „🔥 Oft im Feed“, „Normal“ oder „Nur im Channel-Tab“ (aus dem Hauptfeed ausgeschlossen).
+                  </Text>
 
-                  {spaces.map(s => (
-                    <View
-                      key={s.id}
-                      style={[styles.channelCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                        <View style={[styles.channelIconBox, { backgroundColor: s.accentColor + '20' }]}>
-                          <Ionicons name={s.icon as any || 'layers-outline'} size={18} color={s.accentColor} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <Text style={[styles.channelHandle, { color: s.accentColor }]}>{s.handle}</Text>
-                            <View style={[styles.flairBadge, { backgroundColor: s.accentColor + '18' }]}>
-                              <Text style={[styles.flairBadgeText, { color: s.accentColor }]}>{s.flair}</Text>
-                            </View>
-                            {s.isCustom && (
-                              <View style={[styles.customBadge, { backgroundColor: '#F59E0B' + '20' }]}>
-                                <Text style={styles.customBadgeText}>CUSTOM</Text>
-                              </View>
-                            )}
+                  {spaces.map(s => {
+                    const currentPriority: SubchannelFeedPriority = s.feedPriority || (s.pinned ? 'high' : 'normal');
+                    return (
+                      <View
+                        key={s.id}
+                        style={[styles.channelCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, flex: 1 }}>
+                          <View style={[styles.channelIconBox, { backgroundColor: (s.accentColor || '#5282B8') + '20' }]}>
+                            <Ionicons name={(s.icon as any) || 'layers-outline'} size={18} color={s.accentColor || '#5282B8'} />
                           </View>
-                          <Text style={[styles.channelTitle, { color: colors.textPrimary }]}>{s.title}</Text>
-                          <Text style={[styles.channelDesc, { color: colors.textMuted }]}>{s.description}</Text>
-                          {s.antithesisPrompt && (
-                            <Text style={[styles.channelPrompt, { color: colors.textSecondary }]}>
-                              ⚖️ Antithese: {s.antithesisPrompt}
-                            </Text>
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <Text style={[styles.channelHandle, { color: s.accentColor || '#5282B8' }]}>{s.handle}</Text>
+                              <View style={[styles.flairBadge, { backgroundColor: (s.accentColor || '#5282B8') + '18' }]}>
+                                <Text style={[styles.flairBadgeText, { color: s.accentColor || '#5282B8' }]}>{s.flair}</Text>
+                              </View>
+                              {s.isCustom && (
+                                <View style={[styles.customBadge, { backgroundColor: '#F59E0B20' }]}>
+                                  <Text style={styles.customBadgeText}>CUSTOM</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={[styles.channelTitle, { color: colors.textPrimary }]}>{s.title}</Text>
+                            <Text style={[styles.channelDesc, { color: colors.textMuted }]}>{s.description}</Text>
+
+                            {/* 3-State Feed Priority Selector */}
+                            <View style={{ flexDirection: 'row', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                              {[
+                                { id: 'high' as SubchannelFeedPriority, label: '🔥 Oft im Feed' },
+                                { id: 'normal' as SubchannelFeedPriority, label: 'Normal' },
+                                { id: 'channel_only' as SubchannelFeedPriority, label: 'Nur im Channel-Tab' }
+                              ].map(p => {
+                                const isCurrent = currentPriority === p.id;
+                                return (
+                                  <TouchableOpacity
+                                    key={p.id}
+                                    onPress={() => handlePriorityChange(s.id, p.id)}
+                                    style={[
+                                      styles.priorityChip,
+                                      {
+                                        backgroundColor: isCurrent ? colors.accent : colors.surface,
+                                        borderColor: isCurrent ? colors.accent : colors.borderSubtle
+                                      }
+                                    ]}
+                                  >
+                                    <Text style={[styles.priorityChipText, { color: isCurrent ? '#FFFFFF' : colors.textSecondary }]}>
+                                      {p.label}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          </View>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+                          <TouchableOpacity
+                            onPress={() => void togglePinSpace(s.id)}
+                            style={[styles.iconActionBtn, { backgroundColor: colors.surface }]}
+                            accessibilityLabel={s.pinned ? 'Channel lösen' : 'Channel anpinnen'}
+                          >
+                            <Ionicons name={s.pinned ? 'pin' : 'pin-outline'} size={15} color={s.pinned ? '#F59E0B' : colors.textMuted} />
+                          </TouchableOpacity>
+
+                          {s.isCustom && (
+                            <TouchableOpacity
+                              onPress={() => void handleDeleteChannel(s.id, s.handle)}
+                              style={[styles.iconActionBtn, { backgroundColor: colors.surface }]}
+                              accessibilityLabel="Custom Channel löschen"
+                            >
+                              <Ionicons name="trash-outline" size={15} color="#EF4444" />
+                            </TouchableOpacity>
                           )}
                         </View>
                       </View>
-
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <TouchableOpacity
-                          onPress={() => void handleTogglePin(s.id)}
-                          style={[styles.iconActionBtn, { backgroundColor: colors.surface }]}
-                        >
-                          <Ionicons name={s.pinned ? 'pin' : 'pin-outline'} size={16} color={s.pinned ? '#F59E0B' : colors.textMuted} />
-                        </TouchableOpacity>
-
-                        {s.isCustom && (
-                          <TouchableOpacity
-                            onPress={() => void handleDeleteChannel(s.id, s.handle)}
-                            style={[styles.iconActionBtn, { backgroundColor: colors.surface }]}
-                          >
-                            <Ionicons name="trash-outline" size={16} color="#EF4444" />
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    </View>
-                  ))}
+                    );
+                  })}
                 </View>
               </ScrollView>
             )}
 
-            {/* TAB 2: Trend Radar & Dialektik */}
-            {activeTab === 'trends' && (
+            {/* TAB 2: Feed-Steuerung & Geschmack */}
+            {activeTab === 'feed_control' && (
               <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+                {/* Intro / Transparency Banner */}
                 <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                   <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    ⚡ Hegelscher Trend-Radar & Dialektik-Filter
+                    🧠 Kognitive Feed-Steuerung & Geschmack
                   </Text>
                   <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                    Erfasst akute Trends und zerlegt sie in These (Hype), Antithese (kritische Grenze) und Synthese (Erkenntnis).
+                    Atem passt Empfehlungen transparent an deine Upvotes (▲), Downvotes (▼) und „🚫 Weniger davon“-Signale an. Hier kannst du alle gelernten Gewichte einsehen, feintunen oder gezielt zurücksetzen.
                   </Text>
                 </View>
 
-                {trends.map(t => (
-                  <View key={t.id} style={[styles.trendCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <Text style={[styles.trendDomain, { color: colors.accent }]}>{t.sourceDomain} • {t.targetSpace}</Text>
-                      <View style={[styles.tierBadge, { backgroundColor: '#10B981' + '18' }]}>
-                        <Text style={[styles.tierBadgeText, { color: '#10B981' }]}>{t.evidenceTier}</Text>
-                      </View>
-                    </View>
-
-                    <Text style={[styles.trendHeadline, { color: colors.textPrimary }]}>{t.trendTopic}</Text>
-
-                    <View style={[styles.dialecticBlock, { backgroundColor: colors.surfaceSecondary }]}>
-                      <Text style={[styles.dialecticLabel, { color: colors.accent }]}>📌 THESE (Der Hype):</Text>
-                      <Text style={[styles.dialecticBody, { color: colors.textSecondary }]}>{t.thesis}</Text>
-
-                      <Text style={[styles.dialecticLabel, { color: '#EF4444', marginTop: 8 }]}>⚖️ ANTITHESE (Kritische Gegenperspektive):</Text>
-                      <Text style={[styles.dialecticBody, { color: colors.textSecondary }]}>{t.antithesis}</Text>
-
-                      <Text style={[styles.dialecticLabel, { color: '#10B981', marginTop: 8 }]}>💡 SYNTHESE (Erkenntnisgewinn):</Text>
-                      <Text style={[styles.dialecticBody, { color: colors.textPrimary, fontWeight: '600' }]}>{t.synthesis}</Text>
-                    </View>
-
-                    <TouchableOpacity
-                      onPress={() => void handleAdoptTrend(t)}
-                      style={[styles.primaryActionBtn, { backgroundColor: colors.accent, marginTop: spacing.md }]}
-                    >
-                      <Ionicons name="sparkles-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                      <Text style={styles.primaryActionBtnText}>Als vertieften Artikel in Feed übernehmen</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </ScrollView>
-            )}
-
-            {/* TAB 3: Daily Generation & Daemon */}
-            {activeTab === 'daily' && (
-              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                <View style={styles.metricsGrid}>
-                  <View style={[styles.metricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Text style={[styles.metricValue, { color: '#10B981' }]}>AKTIV</Text>
-                    <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Autonomer Daemon</Text>
-                    <Text style={[styles.metricSub, { color: colors.textMuted }]}>Läuft lokal & unbegrenzt</Text>
-                  </View>
-
-                  <View style={[styles.metricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Text style={[styles.metricValue, { color: colors.accent }]}>
-                      {dailyStatus?.totalDailyItems || 12}
-                    </Text>
-                    <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Heutige Artikel</Text>
-                    <Text style={[styles.metricSub, { color: colors.textMuted }]}>{dailyStatus?.lastGeneratedDate || 'Heute'}</Text>
-                  </View>
-
-                  <View style={[styles.metricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                    <Text style={[styles.metricValue, { color: '#F59E0B' }]}>00:00 Uhr</Text>
-                    <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Nächster Zyklus</Text>
-                    <Text style={[styles.metricSub, { color: colors.textMuted }]}>Mitternachts-Automatisierung</Text>
-                  </View>
-                </View>
-
-                {/* Daily Action Box */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    Manuelle Sofort-Generierung
-                  </Text>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                    Erzeugt auf Knopfdruck eine neue, ranggeordnete Tagesausgabe. Führt RSS-Rohdaten, Trend-Antithesen und Raindrop-Lesezeichen zusammen.
-                  </Text>
-
-                  <TouchableOpacity
-                    onPress={handleTriggerDaily}
-                    disabled={isGeneratingDaily}
-                    style={[styles.primaryActionBtn, { backgroundColor: '#10B981', marginTop: spacing.md }]}
-                  >
-                    {isGeneratingDaily ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <Ionicons name="refresh" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                        <Text style={styles.primaryActionBtnText}>⚡ Neue Tagesausgabe jetzt sofort generieren</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                {/* Permanent Autonomy Principles */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    Wie Atem „für immer“ autonom funktioniert:
-                  </Text>
-                  <Text style={[styles.privacyText, { color: colors.textSecondary }]}>
-                    1. <Text style={{ fontWeight: '700' }}>Lokaler Hintergrund-Daemon (`npm run daemon`):</Text> Läuft auf deinem Mac und synchronisiert alle 6 Stunden RSS-Feeds in die lokale SQLite/JSON-Datenbank.
-                  </Text>
-                  <Text style={[styles.privacyText, { color: colors.textSecondary }]}>
-                    2. <Text style={{ fontWeight: '700' }}>In-App Client-Generator:</Text> Selbst ohne Terminal-Daemon erkennt Atem beim Öffnen im Browser einen Datumswechsel und stellt eine frische Ausgabe bereit.
-                  </Text>
-                  <Text style={[styles.privacyText, { color: colors.textSecondary }]}>
-                    3. <Text style={{ fontWeight: '700' }}>Zero Cloud Lock-in:</Text> Funktioniert offline-first ohne externe Abo-Dienste.
-                  </Text>
-                </View>
-              </ScrollView>
-            )}
-
-            {/* TAB 4: Recursive Learning */}
-            {activeTab === 'learning' && (
-              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    🧠 Rekursive Lern-Matrix & Kognitives Benutzer-Profil
-                  </Text>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                    Atem passt die Gewichtung von Themen und Herausgebern bei jedem Lese-Event, Upvote, Notiz und Raindrop-Tag an.
-                  </Text>
-                </View>
-
-                {/* Topic Weights Bars */}
+                {/* Feed-Mix Ratio (Sovereign Dial) */}
                 <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 12 }]}>
-                    Aktuell gelernte Themen-Affinitäten:
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 4 }]}>
+                    Souveränes Mischverhältnis des Streams
                   </Text>
-                  {Object.entries(profile.explicitInterests).map(([topic, weight]) => {
+                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginBottom: spacing.md }]}>
+                    Bestimme die Balance zwischen deinen gelernten Schwerpunkten, kritischer Reibung und überraschenden Entdeckungen.
+                  </Text>
+
+                  <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md }}>
+                    <View style={[styles.mixMetricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                      <Text style={[styles.mixMetricValue, { color: '#10B981' }]}>{focusPct}%</Text>
+                      <Text style={[styles.mixMetricLabel, { color: colors.textSecondary }]}>🎯 Fokus</Text>
+                      <Text style={[styles.mixMetricSub, { color: colors.textMuted }]}>Kerninteressen</Text>
+                    </View>
+                    <View style={[styles.mixMetricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                      <Text style={[styles.mixMetricValue, { color: '#F59E0B' }]}>{socraticPct}%</Text>
+                      <Text style={[styles.mixMetricLabel, { color: colors.textSecondary }]}>⚖️ Sokratisch</Text>
+                      <Text style={[styles.mixMetricSub, { color: colors.textMuted }]}>Kritische Reibung</Text>
+                    </View>
+                    <View style={[styles.mixMetricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                      <Text style={[styles.mixMetricValue, { color: '#3B82F6' }]}>{serendipityPct}%</Text>
+                      <Text style={[styles.mixMetricLabel, { color: colors.textSecondary }]}>🌌 Serendipity</Text>
+                      <Text style={[styles.mixMetricSub, { color: colors.textMuted }]}>Offene Funde</Text>
+                    </View>
+                  </View>
+
+                  <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 6 }]}>
+                    Mischverhältnis auf Knopfdruck anpassen:
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    {[
+                      { label: 'Ausgewogen (60 / 20 / 20)', focus: 0.60, socratic: 0.20, serendipity: 0.20 },
+                      { label: 'Tiefgang & Fokus (80 / 10 / 10)', focus: 0.80, socratic: 0.10, serendipity: 0.10 },
+                      { label: 'Offener Horizont (40 / 30 / 30)', focus: 0.40, socratic: 0.30, serendipity: 0.30 }
+                    ].map(preset => (
+                      <TouchableOpacity
+                        key={preset.label}
+                        onPress={async () => {
+                          await updateFeedMixRatio(preset.focus, preset.socratic, preset.serendipity);
+                          showToast(`✓ Mischverhältnis gesetzt: ${preset.label}`);
+                        }}
+                        style={[styles.smallPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+                      >
+                        <Text style={[styles.smallPillText, { color: colors.textPrimary }]}>
+                          {preset.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Learned Topic Affinities */}
+                <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
+                    Aktuell gelernte Themen-Affinitäten (Interessen-Gewichte):
+                  </Text>
+                  {Object.entries(profile.explicitInterests || {}).map(([topic, weight]) => {
                     const pct = Math.round((weight as number) * 100);
                     const meta = TOPIC_SPACE_MAP[topic as TopicTag];
                     return (
-                      <View key={topic} style={{ marginBottom: 10 }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                      <View key={topic} style={{ marginBottom: 12 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                           <Text style={[styles.topicBarLabel, { color: colors.textPrimary }]}>
-                            {meta?.flair || topic}
+                            {meta?.flair || TOPIC_METADATA[topic as TopicTag]?.label || topic}
                           </Text>
-                          <Text style={[styles.topicBarValue, { color: colors.accent }]}>{pct}%</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text style={[styles.topicBarValue, { color: colors.accent }]}>{pct}%</Text>
+                            <TouchableOpacity
+                              onPress={() => updateTopicWeight(topic as TopicTag, Math.max(0.05, (weight as number) - 0.1))}
+                              style={[styles.adjustWeightBtn, { backgroundColor: colors.surfaceSecondary }]}
+                              accessibilityLabel={`Gewicht für ${topic} verringern`}
+                            >
+                              <Text style={{ fontSize: 13, color: colors.textPrimary, fontWeight: '800' }}>-</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => updateTopicWeight(topic as TopicTag, Math.min(1.0, (weight as number) + 0.1))}
+                              style={[styles.adjustWeightBtn, { backgroundColor: colors.surfaceSecondary }]}
+                              accessibilityLabel={`Gewicht für ${topic} erhöhen`}
+                            >
+                              <Text style={{ fontSize: 13, color: colors.textPrimary, fontWeight: '800' }}>+</Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                         <View style={[styles.barTrack, { backgroundColor: colors.surfaceSecondary }]}>
                           <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: colors.accent }]} />
@@ -925,170 +759,148 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
                   })}
                 </View>
 
-                {/* Domain Trust Multipliers */}
-                {learningState && (
-                  <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                    <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
-                      Gelehrte Quellen-Reputation (Vertrauens-Multiplikatoren):
+                {/* Favored Sources & Domains */}
+                <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <Ionicons name="arrow-up-circle" size={16} color="#10B981" />
+                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                      ▲ Bevorzugte Quellen & Domains ({boostedDomains.length})
                     </Text>
-                    {Object.entries(learningState.domainTrustScores).map(([dom, trust]) => (
-                      <View key={dom} style={styles.domainTrustRow}>
-                        <Text style={[styles.domainTrustDomain, { color: colors.textPrimary }]}>{dom}</Text>
-                        <Text style={[styles.domainTrustScore, { color: trust >= 1.2 ? '#10B981' : colors.textMuted }]}>
-                          {trust.toFixed(2)}x
-                        </Text>
-                      </View>
-                    ))}
                   </View>
-                )}
-              </ScrollView>
-            )}
-
-            {/* TAB 5: Archive & Library */}
-            {activeTab === 'archive' && (
-              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    📚 Wissens-Archiv & Dauer-Bibliothek
+                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginBottom: 8 }]}>
+                    Quellen, die du durch Upvotes gestärkt hast. Klicke auf ✕, um die Bevorzugung zu entfernen.
                   </Text>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                    Alle historischen Tagesausgaben und Tiefenbohrungen dauerhaft archiviert und durchsuchbar.
-                  </Text>
-                </View>
-
-                {/* Foundational Knowledge Canon Card */}
-                {canon && (
-                  <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={{ fontSize: 16 }}>🏛️</Text>
-                        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                          {canon.name}
-                        </Text>
-                      </View>
-                      <View style={{ flexDirection: 'row', gap: 6 }}>
-                        <TouchableOpacity
-                          onPress={handleExportCanonMarkdown}
-                          style={[styles.secondaryActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                        >
-                          <Ionicons name="document-text-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-                          <Text style={[styles.secondaryActionBtnText, { color: colors.accent, fontSize: typography.sizes.micro }]}>MD</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={handleExportCanonJson}
-                          style={[styles.secondaryActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                        >
-                          <Ionicons name="code-download-outline" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-                          <Text style={[styles.secondaryActionBtnText, { color: colors.accent, fontSize: typography.sizes.micro }]}>JSON</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-
-                    <Text style={[styles.sectionDesc, { color: colors.textSecondary, marginBottom: spacing.sm }]}>
-                      {canon.description}
+                  {boostedDomains.length === 0 ? (
+                    <Text style={{ fontSize: 12, color: colors.textMuted, fontStyle: 'italic' }}>
+                      Noch keine Quellen aktiv verstärkt.
                     </Text>
-
-                    <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, marginBottom: spacing.sm }}>
-                      Herkunft: {canon.provenance} • Stand: {canon.savedAt.slice(0, 10)} • {canon.totalBookmarks} Lesezeichen
-                    </Text>
-
-                    {/* Bookmarks Summary */}
-                    <View style={{ gap: 6, marginTop: 4 }}>
-                      {canon.bookmarks.map(b => (
-                        <View key={b._id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: colors.borderSubtle }}>
-                          <Text style={{ fontSize: typography.sizes.caption, color: colors.textPrimary, flex: 1, marginRight: 8 }} numberOfLines={1}>
-                            {b.title}
+                  ) : (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {boostedDomains.map(([dom, count]) => (
+                        <View key={dom} style={[styles.signalPill, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.3)' }]}>
+                          <Text style={[styles.signalPillText, { color: '#059669' }]}>
+                            {dom} ({count >= 0 ? `+${count}` : count})
                           </Text>
-                          <Text style={{ fontSize: typography.sizes.micro, color: colors.accent }}>
-                            {b.domain}
-                          </Text>
+                          <TouchableOpacity
+                            onPress={() => void removeFeedbackBoost('domain', dom)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={{ marginLeft: 6 }}
+                          >
+                            <Ionicons name="close" size={13} color="#059669" />
+                          </TouchableOpacity>
                         </View>
                       ))}
                     </View>
-                  </View>
-                )}
-
-                {/* Editions History */}
-                <View style={{ marginTop: spacing.md }}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
-                    Archivierte Ausgaben ({archivedEditions.length})
-                  </Text>
-
-                  <TextInput
-                    value={archiveSearchTerm}
-                    onChangeText={setArchiveSearchTerm}
-                    placeholder="Archiv durchsuchen (z.B. Datum oder Titel)..."
-                    placeholderTextColor={colors.textMuted}
-                    style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary, marginBottom: spacing.md }]}
-                  />
-
-                  {archivedEditions
-                    .filter(ed => !archiveSearchTerm.trim() || ed.date.includes(archiveSearchTerm) || ed.leadArticleTitle.toLowerCase().includes(archiveSearchTerm.toLowerCase()))
-                    .map(ed => (
-                    <View
-                      key={ed.date}
-                      style={[styles.archiveEditionCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                          <Text style={[styles.archiveDate, { color: colors.accent }]}>{ed.date}</Text>
-                          <Text style={[styles.archiveCount, { color: colors.textMuted }]}>• {ed.itemCount} Artikel</Text>
-                        </View>
-                        <Text style={[styles.archiveLeadTitle, { color: colors.textPrimary }]}>
-                          {ed.leadArticleTitle}
-                        </Text>
-                      </View>
-
-                      <TouchableOpacity
-                        onPress={() => handleExportArchiveMarkdown(ed)}
-                        style={[styles.secondaryActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                      >
-                        <Ionicons name="download-outline" size={14} color={colors.accent} style={{ marginRight: 4 }} />
-                        <Text style={[styles.secondaryActionBtnText, { color: colors.accent }]}>Als Craft-MD exportieren</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
+                  )}
                 </View>
-              </ScrollView>
-            )}
 
-            {/* TAB 6: Mobile QR Code */}
-            {activeTab === 'mobile' && (
-              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                <View style={[styles.qrHeroBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  {qrDataUrl ? (
-                    <View style={styles.qrWrapper}>
-                      <Image source={{ uri: qrDataUrl }} style={styles.qrImage} resizeMode="contain" />
-                    </View>
+                {/* Top Upvoted Concepts & Keywords */}
+                <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <Ionicons name="pricetag-outline" size={16} color="#3B82F6" />
+                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                      ▲ Verstärkte Schlagworte & Themen ({boostedKeywords.length})
+                    </Text>
+                  </View>
+                  {boostedKeywords.length === 0 ? (
+                    <Text style={{ fontSize: 12, color: colors.textMuted, fontStyle: 'italic' }}>
+                      Noch keine Schlagworte durch Upvotes hervorgehoben.
+                    </Text>
                   ) : (
-                    <View style={[styles.qrPlaceholder, { backgroundColor: colors.surface }]}>
-                      <ActivityIndicator size="large" color={colors.accent} />
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {boostedKeywords.map(([kw, count]) => (
+                        <View key={kw} style={[styles.signalPill, { backgroundColor: 'rgba(59, 130, 246, 0.12)', borderColor: 'rgba(59, 130, 246, 0.3)' }]}>
+                          <Text style={[styles.signalPillText, { color: '#2563EB' }]}>
+                            #{kw} (+{count})
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => void removeFeedbackBoost('keyword', kw)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={{ marginLeft: 6 }}
+                          >
+                            <Ionicons name="close" size={13} color="#2563EB" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
                     </View>
                   )}
-
-                  <View style={styles.urlBox}>
-                    <Text style={[styles.urlLabel, { color: colors.textMuted }]}>Lokale Netzwerk-Adresse:</Text>
-                    <Text style={[styles.urlValue, { color: colors.accent }]}>{accessUrl}</Text>
-                    <TouchableOpacity
-                      onPress={handleCopyLink}
-                      style={[styles.copyPill, { backgroundColor: copiedLink ? '#10B981' : colors.accent }]}
-                    >
-                      <Ionicons name={copiedLink ? 'checkmark' : 'copy-outline'} size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                      <Text style={styles.copyPillText}>{copiedLink ? 'Kopiert!' : 'Link kopieren'}</Text>
-                    </TouchableOpacity>
-                  </View>
                 </View>
 
-                {/* 3 Step Instructions */}
+                {/* Blocked / Downvoted Domains & "Weniger davon" */}
                 <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <Ionicons name="ban-outline" size={16} color="#EF4444" />
+                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                      ▼ Abgestrafte Quellen & „🚫 Weniger davon“ ({penalizedDomains.length})
+                    </Text>
+                  </View>
+                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginBottom: 8 }]}>
+                    Quellen oder Themen, die du mit „🚫 Weniger davon“ oder Downvotes belegt hast.
+                  </Text>
+                  {penalizedDomains.length === 0 ? (
+                    <Text style={{ fontSize: 12, color: colors.textMuted, fontStyle: 'italic' }}>
+                      Keine Quellen blockiert.
+                    </Text>
+                  ) : (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {penalizedDomains.map(([dom, count]) => (
+                        <View key={dom} style={[styles.signalPill, { backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)' }]}>
+                          <Text style={[styles.signalPillText, { color: '#DC2626' }]}>
+                            {dom} ({count})
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => void removeFeedbackPenalty('domain', dom)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={{ marginLeft: 6 }}
+                          >
+                            <Ionicons name="close" size={13} color="#DC2626" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+
+                {/* Sovereign Reset Action */}
+                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
                   <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    Als vollwertige Vollbild-App auf deinem Smartphone:
+                    Lern-Historie zurücksetzen
                   </Text>
-                  <Text style={[styles.stepDesc, { color: colors.textSecondary, marginTop: 8 }]}>
-                    1. <Text style={{ fontWeight: '700' }}>Im selben WLAN sein:</Text> Smartphone mit dem Heim-WLAN verbinden.{'\n'}
-                    2. <Text style={{ fontWeight: '700' }}>QR-Code mit Kamera scannen:</Text> Adresse im Safari oder Chrome öffnen.{'\n'}
-                    3. <Text style={{ fontWeight: '700' }}>„Zum Home-Bildschirm“ antippen:</Text> Schon hast du Atem als native App ohne App Store direkt auf deinem Phone.
+                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginBottom: spacing.md }]}>
+                    Löscht alle erfassten Signal-Verstärkungen, Downvote-Strafen und setzt die Themen-Gewichtung auf die Standard-Werte zurück.
                   </Text>
+
+                  {showClearConfirm ? (
+                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          await clearFeedbackMemory();
+                          setShowClearConfirm(false);
+                          showToast('✓ Feedback-Gedächtnis vollständig zurückgesetzt');
+                          await refreshFeed();
+                        }}
+                        style={[styles.primaryActionBtn, { backgroundColor: '#EF4444' }]}
+                      >
+                        <Text style={styles.primaryActionBtnText}>Ja, jetzt unwiderruflich zurücksetzen</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setShowClearConfirm(false)}
+                        style={[styles.secondaryActionBtn, { borderColor: colors.borderSubtle }]}
+                      >
+                        <Text style={[styles.secondaryActionBtnText, { color: colors.textPrimary }]}>Abbrechen</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      onPress={() => setShowClearConfirm(true)}
+                      style={[styles.secondaryActionBtn, { borderColor: colors.borderSubtle }]}
+                    >
+                      <Ionicons name="refresh-outline" size={15} color={colors.textPrimary} style={{ marginRight: 6 }} />
+                      <Text style={[styles.secondaryActionBtnText, { color: colors.textPrimary }]}>
+                        🔄 Feedback-Gedächtnis & Geschmack zurücksetzen
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </ScrollView>
             )}
@@ -1102,16 +914,15 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.65)',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.md
   },
   card: {
     width: '100%',
-    maxWidth: 880,
-    height: '92%',
-    maxHeight: 820,
+    maxWidth: 820,
+    maxHeight: '92%',
     borderRadius: radius.lg,
     borderWidth: 1,
     overflow: 'hidden',
@@ -1120,8 +931,8 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderBottomWidth: 1
@@ -1129,12 +940,12 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: spacing.md,
     flex: 1
   },
   iconEmblem: {
-    width: 34,
-    height: 34,
+    width: 38,
+    height: 38,
     borderRadius: radius.md,
     justifyContent: 'center',
     alignItems: 'center'
@@ -1143,20 +954,21 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.body,
     fontWeight: '800'
   },
-  headerSubtitle: {
-    fontSize: typography.sizes.micro,
-    marginTop: 1
-  },
   ultraPill: {
-    backgroundColor: '#F59E0B',
+    backgroundColor: '#F59E0B22',
     paddingHorizontal: 6,
     paddingVertical: 1,
-    borderRadius: radius.pill
+    borderRadius: radius.sm
   },
   ultraPillText: {
-    color: '#000000',
+    color: '#F59E0B',
     fontSize: 9,
-    fontWeight: '900'
+    fontWeight: '900',
+    letterSpacing: 0.5
+  },
+  headerSubtitle: {
+    fontSize: typography.sizes.micro,
+    marginTop: 2
   },
   closeBtn: {
     width: 32,
@@ -1167,35 +979,40 @@ const styles = StyleSheet.create({
   },
   toast: {
     position: 'absolute',
-    top: 60,
-    alignSelf: 'center',
-    zIndex: 9999,
-    paddingHorizontal: spacing.lg,
+    top: 65,
+    left: 20,
+    right: 20,
+    zIndex: 999,
     paddingVertical: 8,
-    borderRadius: radius.pill,
-    boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4
   },
   toastText: {
     color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: typography.sizes.caption
+    fontSize: typography.sizes.caption,
+    fontWeight: '700'
   },
   tabBar: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    overflow: 'scroll'
+    borderBottomWidth: 1
   },
   tabItem: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
+    justifyContent: 'center',
     paddingVertical: 12,
+    paddingHorizontal: spacing.sm,
     borderBottomWidth: 2,
     borderBottomColor: 'transparent'
   },
   tabItemText: {
-    fontSize: typography.sizes.caption,
-    fontWeight: '700'
+    fontSize: typography.sizes.caption
   },
   contentContainer: {
     flex: 1
@@ -1204,44 +1021,79 @@ const styles = StyleSheet.create({
     flex: 1
   },
   tabScrollContent: {
-    padding: spacing.lg,
-    gap: spacing.md
+    padding: spacing.lg
   },
   sectionBox: {
-    padding: spacing.lg,
+    padding: spacing.md,
     borderRadius: radius.md,
     borderWidth: 0.5
   },
   sectionTitle: {
     fontSize: typography.sizes.bodySmall,
-    fontWeight: '800',
-    marginBottom: 2
+    fontWeight: '800'
   },
   sectionDesc: {
     fontSize: typography.sizes.caption,
+    marginTop: 3,
     lineHeight: 18
   },
   inputLabel: {
     fontSize: typography.sizes.micro,
     fontWeight: '700',
-    marginBottom: 4
+    textTransform: 'uppercase',
+    letterSpacing: 0.3
   },
   textInput: {
-    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
     paddingVertical: 8,
-    borderRadius: radius.sm,
-    borderWidth: 0.5,
-    fontSize: typography.sizes.bodySmall
+    fontSize: typography.sizes.bodySmall,
+    marginTop: 4
+  },
+  vibeChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  vibeChipText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  aiAssistantBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    marginTop: 4
+  },
+  aiAssistantBtnText: {
+    fontSize: 12,
+    fontWeight: '700'
   },
   topicSelectChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
     borderWidth: 0.5
   },
   topicSelectText: {
-    fontSize: typography.sizes.micro,
+    fontSize: 10,
     fontWeight: '700'
+  },
+  priorityPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  priorityPillText: {
+    fontSize: 11,
+    fontWeight: '600'
   },
   primaryActionBtn: {
     flexDirection: 'row',
@@ -1271,7 +1123,7 @@ const styles = StyleSheet.create({
   },
   channelCard: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     padding: spacing.md,
     borderRadius: radius.md,
@@ -1296,11 +1148,7 @@ const styles = StyleSheet.create({
   },
   channelDesc: {
     fontSize: typography.sizes.micro,
-    lineHeight: 16
-  },
-  channelPrompt: {
-    fontSize: typography.sizes.micro,
-    fontStyle: 'italic',
+    lineHeight: 16,
     marginTop: 2
   },
   flairBadge: {
@@ -1322,82 +1170,22 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: '900'
   },
+  priorityChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  priorityChipText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
   iconActionBtn: {
-    width: 32,
-    height: 32,
+    width: 30,
+    height: 30,
     borderRadius: radius.full,
     justifyContent: 'center',
     alignItems: 'center'
-  },
-  trendCard: {
-    padding: spacing.lg,
-    borderRadius: radius.md,
-    borderWidth: 0.5,
-    marginBottom: spacing.md
-  },
-  trendDomain: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '800',
-    textTransform: 'uppercase'
-  },
-  tierBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: radius.pill
-  },
-  tierBadgeText: {
-    fontSize: 9,
-    fontWeight: '800'
-  },
-  trendHeadline: {
-    fontSize: typography.sizes.body,
-    fontWeight: '800',
-    marginBottom: spacing.sm
-  },
-  dialecticBlock: {
-    padding: spacing.md,
-    borderRadius: radius.sm,
-    gap: 4
-  },
-  dialecticLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.5
-  },
-  dialecticBody: {
-    fontSize: typography.sizes.caption,
-    lineHeight: 19
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    gap: spacing.sm
-  },
-  metricCard: {
-    flex: 1,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 0.5,
-    alignItems: 'center'
-  },
-  metricValue: {
-    fontSize: typography.sizes.title1,
-    fontWeight: '900',
-    marginBottom: 2
-  },
-  metricLabel: {
-    fontSize: typography.sizes.caption,
-    fontWeight: '700',
-    textAlign: 'center'
-  },
-  metricSub: {
-    fontSize: typography.sizes.micro,
-    textAlign: 'center',
-    marginTop: 2
-  },
-  privacyText: {
-    fontSize: typography.sizes.caption,
-    lineHeight: 20,
-    marginTop: 6
   },
   topicBarLabel: {
     fontSize: typography.sizes.caption,
@@ -1406,6 +1194,13 @@ const styles = StyleSheet.create({
   topicBarValue: {
     fontSize: typography.sizes.caption,
     fontWeight: '800'
+  },
+  adjustWeightBtn: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center'
   },
   barTrack: {
     height: 6,
@@ -1416,142 +1211,45 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 3
   },
-  domainTrustRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 6,
-    borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(128,128,128,0.1)'
-  },
-  domainTrustDomain: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '600'
-  },
-  domainTrustScore: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '800'
-  },
-  archiveEditionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: spacing.md,
+  mixMetricCard: {
+    flex: 1,
+    padding: spacing.sm,
     borderRadius: radius.md,
     borderWidth: 0.5,
-    marginBottom: spacing.sm,
-    gap: spacing.md
-  },
-  archiveDate: {
-    fontSize: typography.sizes.caption,
-    fontWeight: '800'
-  },
-  archiveCount: {
-    fontSize: typography.sizes.micro
-  },
-  archiveLeadTitle: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '700'
-  },
-  qrHeroBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: spacing.lg,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    gap: spacing.lg,
-    flexWrap: 'wrap'
-  },
-  qrWrapper: {
-    backgroundColor: '#FFFFFF',
-    padding: 10,
-    borderRadius: radius.md
-  },
-  qrImage: {
-    width: 160,
-    height: 160
-  },
-  qrPlaceholder: {
-    width: 160,
-    height: 160,
-    borderRadius: radius.md,
-    justifyContent: 'center',
     alignItems: 'center'
   },
-  urlBox: {
-    flex: 1,
-    minWidth: 200
+  mixMetricValue: {
+    fontSize: typography.sizes.title1,
+    fontWeight: '900',
+    marginBottom: 2
   },
-  urlLabel: {
+  mixMetricLabel: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '700'
+  },
+  mixMetricSub: {
     fontSize: typography.sizes.micro,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 4
+    marginTop: 1
   },
-  urlValue: {
-    fontSize: typography.sizes.body,
-    fontWeight: '800',
-    marginBottom: spacing.md
-  },
-  copyPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8,
+  smallPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: radius.pill
   },
-  copyPillText: {
-    color: '#FFFFFF',
-    fontSize: typography.sizes.caption,
+  smallPillText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  signalPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  signalPillText: {
+    fontSize: 11,
     fontWeight: '700'
-  },
-  stepDesc: {
-    fontSize: typography.sizes.caption,
-    lineHeight: 20
-  },
-  lensCard: {
-    flex: 1,
-    minWidth: 160,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1.5
-  },
-  lensTitle: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '700'
-  },
-  lensDesc: {
-    fontSize: typography.sizes.micro,
-    lineHeight: 16
-  },
-  thesisCard: {
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1
-  },
-  thesisLabel: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    marginBottom: 4
-  },
-  thesisText: {
-    fontSize: typography.sizes.body,
-    fontWeight: '600',
-    lineHeight: 22
-  },
-  impulseCard: {
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1
-  },
-  impulseLabel: {
-    fontSize: typography.sizes.micro,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  impulseText: {
-    fontSize: typography.sizes.bodySmall,
-    lineHeight: 20
   }
 });

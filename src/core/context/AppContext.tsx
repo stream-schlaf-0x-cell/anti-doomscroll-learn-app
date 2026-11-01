@@ -10,7 +10,12 @@ import {
   EditionPreferences,
   TOPIC_SPACE_MAP
 } from '../domain/types';
-import { Subchannel, defaultSpaceRepository, normalizeSpaceHandle } from '../spaces/spaceRepository';
+import {
+  Subchannel,
+  SubchannelFeedPriority,
+  defaultSpaceRepository,
+  normalizeSpaceHandle
+} from '../spaces/spaceRepository';
 import {
   ScoredFeedItem,
   determineCurrentEditionType,
@@ -221,6 +226,7 @@ interface AppContextValue {
   updateSpace: (oldHandle: string, data: Parameters<typeof defaultSpaceRepository.updateSubchannel>[1]) => Promise<Subchannel | null>;
   deleteSpace: (id: string) => Promise<boolean>;
   togglePinSpace: (id: string) => Promise<Subchannel[]>;
+  setSpaceFeedPriority: (id: string, priority: SubchannelFeedPriority) => Promise<void>;
   selectSpace: (handleOrTag: string) => void;
   removeFeedbackBoost: (category: 'topic' | 'author' | 'keyword' | 'domain' | 'space', key: string) => Promise<void>;
   removeFeedbackPenalty: (category: 'topic' | 'author' | 'keyword' | 'domain' | 'space', key: string) => Promise<void>;
@@ -327,6 +333,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const togglePinSpace = useCallback(async (id: string) => {
     const updated = await defaultSpaceRepository.togglePin(id);
     return updated;
+  }, []);
+
+  const setSpaceFeedPriority = useCallback(async (id: string, priority: SubchannelFeedPriority) => {
+    const updated = await defaultSpaceRepository.setFeedPriority(id, priority);
+    setSpaces(updated);
   }, []);
 
   const selectedEditionTypeRef = useRef<DayEditionType>(selectedEditionType);
@@ -1604,6 +1615,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateSpace,
         deleteSpace,
         togglePinSpace,
+        setSpaceFeedPriority,
         selectSpace,
         removeFeedbackBoost,
         removeFeedbackPenalty,

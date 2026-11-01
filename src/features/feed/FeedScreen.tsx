@@ -291,7 +291,17 @@ export const FeedScreen: React.FC = () => {
   }, [selectedFilter, subchannels]);
 
   const matchesSelectedSpace = useCallback((item: FeedItem): boolean => {
-    if (selectedFilter === 'all' || !selectedSpaceContext) return true;
+    if (selectedFilter === 'all' || !selectedSpaceContext) {
+      // Subchannel Priority: 'channel_only' spaces only appear when explicitly opened
+      const itemSpace = resolveItemSpaceHandle(item);
+      if (itemSpace) {
+        const space = subchannels.find(s => canonicalSpaceHandle(s.handle) === itemSpace);
+        if (space?.feedPriority === 'channel_only') {
+          return false;
+        }
+      }
+      return true;
+    }
     const { targetHandle, archetype } = selectedSpaceContext;
 
     // Visual-first archetype (e.g. c/kunst_galerie, c/architektur): strictly require an image
@@ -306,7 +316,7 @@ export const FeedScreen: React.FC = () => {
     // Pure topic filter (no channel handle)
     const topicFilter = (activeTopic || selectedFilter) as TopicTag;
     return item.primaryTopic === topicFilter || item.topics.includes(topicFilter);
-  }, [selectedFilter, selectedSpaceContext, activeTopic]);
+  }, [selectedFilter, selectedSpaceContext, activeTopic, subchannels]);
 
   // Context-accurate pending changes: only count inserted items matching current space and search query
   React.useEffect(() => defaultFeedOperationManager.subscribe(result => {

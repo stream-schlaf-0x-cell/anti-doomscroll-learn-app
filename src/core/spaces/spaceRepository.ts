@@ -2,6 +2,8 @@ import { TopicTag, TOPIC_SPACE_MAP } from '../domain/types';
 import { appStorage, AtemStorage } from '../data/storage';
 import { feedRepository } from '../data/feedRepository';
 
+export type SubchannelFeedPriority = 'high' | 'normal' | 'channel_only';
+
 export interface Subchannel {
   id: string;
   handle: string; // e.g. "c/quanten_sprung"
@@ -14,6 +16,7 @@ export interface Subchannel {
   isCustom: boolean;
   createdAt: string;
   pinned: boolean;
+  feedPriority?: SubchannelFeedPriority;
   rssFeeds?: string[];
   antithesisPrompt?: string;
   memberCount: number;
@@ -242,6 +245,7 @@ export function resolveItemSpaceHandle(item: { space?: string; primaryTopic: Top
 export class SpaceRepository {
   private static STORAGE_KEY = '@atem:custom_subchannels';
   private static PINNED_IDS_KEY = '@atem:pinned_space_ids';
+  private static PRIORITIES_KEY = '@atem:space_feed_priorities';
   private listeners = new Set<(spaces: Subchannel[]) => void>();
 
   constructor(private storage: AtemStorage = appStorage) {}
@@ -266,25 +270,33 @@ export class SpaceRepository {
 
   public async getAllSpaces(): Promise<Subchannel[]> {
     try {
-      const [rawCustom, rawPinned] = await Promise.all([
+      const [rawCustom, rawPinned, rawPriorities] = await Promise.all([
         this.storage.getItem(SpaceRepository.STORAGE_KEY),
-        this.storage.getItem(SpaceRepository.PINNED_IDS_KEY)
+        this.storage.getItem(SpaceRepository.PINNED_IDS_KEY),
+        this.storage.getItem(SpaceRepository.PRIORITIES_KEY)
       ]);
       const pinnedIds: string[] | null = rawPinned ? JSON.parse(rawPinned) : null;
+      const priorities: Record<string, SubchannelFeedPriority> = rawPriorities ? JSON.parse(rawPriorities) : {};
       const custom: Subchannel[] = rawCustom ? JSON.parse(rawCustom) : [];
 
       const map = new Map<string, Subchannel>();
       for (const d of DEFAULT_SUBCHANNELS) {
+        const isPinned = pinnedIds ? pinnedIds.includes(d.id) : d.pinned;
+        const feedPriority = priorities[d.id] || priorities[d.handle] || (isPinned ? 'high' : 'normal');
         map.set(d.id, {
           ...d,
-          pinned: pinnedIds ? pinnedIds.includes(d.id) : d.pinned
+          pinned: isPinned,
+          feedPriority
         });
       }
       for (const c of custom) {
         if (c.isCustom) {
+          const isPinned = pinnedIds ? pinnedIds.includes(c.id) : c.pinned;
+          const feedPriority = priorities[c.id] || priorities[c.handle] || c.feedPriority || (isPinned ? 'high' : 'normal');
           map.set(c.id, {
             ...c,
-            pinned: pinnedIds ? pinnedIds.includes(c.id) : c.pinned
+            pinned: isPinned,
+            feedPriority
           });
         }
       }
@@ -294,36 +306,70 @@ export class SpaceRepository {
     }
   }
 
+  public async setFeedPriority(idOrHandle: string, priority: SubchannelFeedPriority): Promise<Subchannel[]> {
+    const all = await this.getAllSpaces();
+    const rawPriorities = await this.storage.getItem(SpaceRepository.PRIORITIES_KEY);
+    const priorities: Record<string, SubchannelFeedPriority> = rawPriorities ? JSON.parse(rawPriorities) : {};
+
+    const target = all.find(s => s.id === idOrHandle || s.handle.toLowerCase() === idOrHandle.toLowerCase());
+    if (target) {
+      priorities[target.id] = priority;
+      priorities[target.handle] = priority;
+    } else {
+      priorities[idOrHandle] = priority;
+    }
+
+    let pinnedIds = all.filter(s => s.pinned).map(s => s.id);
+    if (target) {
+      if (priority === 'high' && !pinnedIds.includes(target.id)) {
+        pinnedIds.push(target.id);
+      } else if (priority === 'channel_only') {
+        pinnedIds = pinnedIds.filter(id => id !== target.id);
+      }
+    }
+
+    await Promise.all([
+      this.storage.setItem(SpaceRepository.PRIORITIES_KEY, JSON.stringify(priorities)),
+      this.storage.setItem(SpaceRepository.PINNED_IDS_KEY, JSON.stringify(pinnedIds))
+    ]);
+
+    await this.notify();
+    return await this.getAllSpaces();
+  }
+
   public async createSubchannel(data: {
     title: string;
     handle?: string;
-    description: string;
+    description?: string;
     icon?: string;
     flair?: string;
     primaryTopic?: TopicTag;
     accentColor?: string;
     antithesisPrompt?: string;
     rssFeeds?: string[];
+    feedPriority?: SubchannelFeedPriority;
   }): Promise<Subchannel> {
     const spaces = await this.getAllSpaces();
 
     // Sanitize handle to start with "c/" and use alphanumeric/underscores
     const cleanHandle = normalizeSpaceHandle(data.handle || data.title);
+    const initialPriority: SubchannelFeedPriority = data.feedPriority || 'normal';
 
     const newChannel: Subchannel = {
-      id: `custom-space-${Date.now()}`,
+      id: `custom-space-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       handle: cleanHandle,
       title: data.title.trim(),
-      description: data.description.trim() || 'Persönlicher Subchannel für vertiefte Dialektik.',
+      description: (data.description && data.description.trim()) || 'Persönlicher Subchannel.',
       icon: data.icon || 'layers-outline',
       flair: data.flair || data.title.trim(),
       primaryTopic: data.primaryTopic || 'science_society',
       accentColor: data.accentColor || '#5282B8',
       isCustom: true,
       createdAt: new Date().toISOString(),
-      pinned: true,
+      pinned: initialPriority !== 'channel_only',
+      feedPriority: initialPriority,
       rssFeeds: data.rssFeeds || [],
-      antithesisPrompt: data.antithesisPrompt || 'Welche kritische Gegenperspektive muss hier bedacht werden?',
+      antithesisPrompt: data.antithesisPrompt ? data.antithesisPrompt.trim() : undefined,
       memberCount: 1
     };
 
@@ -331,8 +377,18 @@ export class SpaceRepository {
     customOnly.push(newChannel);
     await this.storage.setItem(SpaceRepository.STORAGE_KEY, JSON.stringify(customOnly));
 
-    const pinnedIds = [...spaces.filter(s => s.pinned).map(s => s.id), newChannel.id];
+    const pinnedIds = [
+      ...spaces.filter(s => s.pinned).map(s => s.id),
+      ...(newChannel.pinned ? [newChannel.id] : [])
+    ];
     await this.storage.setItem(SpaceRepository.PINNED_IDS_KEY, JSON.stringify(pinnedIds));
+
+    // Save initial priority
+    const rawPriorities = await this.storage.getItem(SpaceRepository.PRIORITIES_KEY);
+    const priorities: Record<string, SubchannelFeedPriority> = rawPriorities ? JSON.parse(rawPriorities) : {};
+    priorities[newChannel.id] = initialPriority;
+    priorities[newChannel.handle] = initialPriority;
+    await this.storage.setItem(SpaceRepository.PRIORITIES_KEY, JSON.stringify(priorities));
 
     // Verify written data can be read back safely
     const verified = await this.storage.getItem(SpaceRepository.STORAGE_KEY);
