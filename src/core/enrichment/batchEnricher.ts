@@ -1,4 +1,5 @@
-import { FeedItem, TopicTag, TopicTagSchema } from '../domain/types';
+import { FeedItem, TopicTag, TopicTagSchema, SocraticSalonPerspectives } from '../domain/types';
+import { detectChannelArchetype, ChannelArchetype } from '../ingestion/subchannelFlourishService';
 import {
   callAiModel,
   AiCredentials,
@@ -332,6 +333,15 @@ export function isDomesticPartyPolitics(title: string, text: string = ''): boole
   return bodyHits >= 3;
 }
 
+export const POLITICAL_PROTEST_SOCIETY_REGEX =
+  /\b(protest\w*|demonstrier\w*|ausschreitung\w*|polizei|regierung\w*|koalition\w*|wahl\w*|bundestagswahl|landtagswahl|krieg\w*|streik\w*|bundestag|landtag|gericht|verfassungsgericht|afd|spd|cdu|csu|fdp|bsw|grüne|grünen|linkspartei|linke)\b/i;
+
+/** Detects protest, political conflict, legal, or societal disruption articles. */
+export function isPoliticalOrProtestNews(title: string, text: string = ''): boolean {
+  const combined = `${title || ''} ${(text || '').slice(0, 1600)}`;
+  return POLITICAL_PROTEST_SOCIETY_REGEX.test(combined);
+}
+
 const CELEBRITY_FLUFF_REGEX = /(\bKurt Russell\b|\bHollywood-(Star|Legende|Ikone)\b|\b(wird|turns)\s+[5-9]\d\b(?!\s*(prozent|%|millionen|milliarden))|\bfeiert\s+(seinen|ihren)\s+\d{2}\.\s*Geburtstag\b|\bzum\s+\d{2}\.\s*Geburtstag\b|\bbirthday\b.*\bstar\b)/i;
 
 /** Detects pure celebrity birthday / boulevard interview fluff. */
@@ -567,19 +577,25 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
 
   const routingText = `${item.subtitle || ''} ${cleanedFeedText}`;
   const isPartyPolitics = isDomesticPartyPolitics(title, routingText);
+  const isProtestOrPolitical = isPoliticalOrProtestNews(title, routingText);
   const isCelebrity = isCelebrityFluff(title);
   const currentSpace = (item.space || '').toLowerCase();
-  const isRoutableSpace = !currentSpace || currentSpace === 'c/serendipity' || currentSpace === 'c/dialektik';
+  const isRoutableSpace = !currentSpace || currentSpace === 'c/serendipity' || currentSpace === 'c/dialektik' || currentSpace === 'c/kunst_galerie';
 
   const correctedTopic: TopicTag = isPartyPolitics && isRoutableSpace
     ? 'science_society'
+    : isProtestOrPolitical
+    ? 'philosophy_ethics'
     : classifyTopicDeterministically(title, routingText, item.primaryTopic);
-  const routedSpace: string | undefined =
-    isPartyPolitics && isRoutableSpace
-      ? 'c/gesellschaft_politik'
-      : isCelebrity && (!currentSpace || currentSpace === 'c/dialektik')
-      ? 'c/kultur'
-      : item.space;
+
+  let routedSpace: string | undefined = item.space;
+  if (isPartyPolitics && isRoutableSpace) {
+    routedSpace = 'c/gesellschaft_politik';
+  } else if (isProtestOrPolitical && (currentSpace === 'c/serendipity' || currentSpace === 'c/kunst_galerie' || !currentSpace)) {
+    routedSpace = 'c/dialektik';
+  } else if (isCelebrity && (!currentSpace || currentSpace === 'c/dialektik')) {
+    routedSpace = 'c/kultur';
+  }
 
   // Short podcast / video teaser stub guard:
   const isPodcastOrVideoStub =
@@ -799,6 +815,11 @@ export function classifyTopicDeterministically(
   fallback: TopicTag = 'philosophy_ethics'
 ): TopicTag {
   const combined = `${title} ${body}`.toLowerCase();
+
+  // Political, Protest, Legal or Societal Conflict -> Philosophy & Ethics / Discourse
+  if (isPoliticalOrProtestNews(title, body)) {
+    return 'philosophy_ethics';
+  }
 
   // Science & Society / Biology / Physics / Space
   if (
@@ -1390,4 +1411,236 @@ Antworte AUSSCHLIESSLICH als valides JSON-Objekt:
   } catch {
     return sanitizeCuratedFeedItem(item);
   }
+}
+
+/**
+ * Stage 2 — Newsdesk Story Clustering (WP 6)
+ *
+ * When multiple incoming items cover the exact same event/story (sharing >= 3 distinctive
+ * title entities/nouns within 48h), bundle them into one rich Dossier Card instead of
+ * cluttering the stream with near-duplicates, noting the corroborating sources ("Auch beleuchtet von: ...").
+ */
+export function clusterRelatedStories<T extends FeedItem>(items: T[]): T[] {
+  if (items.length <= 1) return [...items];
+
+  const STOPWORDS_CLUSTER = new Set([
+    'der', 'die', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'einer', 'einem', 'einen',
+    'und', 'oder', 'aber', 'nach', 'vor', 'bei', 'mit', 'von', 'aus', 'auf', 'in', 'im',
+    'teils', 'mehr', 'neue', 'aktuell', 'bericht', 'video', 'liveticker', 'ticker', 'hintergrund',
+    'the', 'and', 'for', 'with', 'from', 'into', 'about', 'after', 'over'
+  ]);
+
+  const extractDistinctiveTokens = (title: string): Set<string> => {
+    const rawTokens = (title || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s-]/gu, '')
+      .split(/\s+/);
+    const tokens = new Set<string>();
+    for (const t of rawTokens) {
+      const clean = t.trim();
+      if (clean.length >= 4 && !STOPWORDS_CLUSTER.has(clean)) {
+        tokens.add(clean);
+      }
+    }
+    return tokens;
+  };
+
+  const itemTokens = items.map(it => extractDistinctiveTokens(it.title));
+  const clusteredIndices = new Set<number>();
+  const result: T[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    if (clusteredIndices.has(i)) continue;
+    const lead = { ...items[i] };
+    const leadTokens = itemTokens[i];
+    const pubLeadTime = new Date(lead.publishedAt).getTime();
+    const corroborating: NonNullable<FeedItem['corroboratingSources']> = [
+      ...(lead.corroboratingSources || [])
+    ];
+
+    for (let j = i + 1; j < items.length; j++) {
+      if (clusteredIndices.has(j)) continue;
+      const other = items[j];
+      const otherTokens = itemTokens[j];
+      const pubOtherTime = new Date(other.publishedAt).getTime();
+
+      // Time proximity: within 48 hours
+      const diffHours = Math.abs(pubLeadTime - pubOtherTime) / (3600 * 1000);
+      if (!isNaN(diffHours) && diffHours > 48) continue;
+
+      // Count shared distinctive tokens (>= 2 distinctive entity matches within 48h triggers clustering)
+      let sharedCount = 0;
+      for (const tok of leadTokens) {
+        if (otherTokens.has(tok)) sharedCount++;
+      }
+
+      if (sharedCount >= 2) {
+        clusteredIndices.add(j);
+        const pubName = other.sourceReferences?.[0]?.publisher || other.sourceDomain || 'Weitere Quelle';
+        corroborating.push({
+          title: other.title,
+          publisher: pubName,
+          url: other.canonicalUrl || other.sourceReferences?.[0]?.originalUrl,
+          publishedAt: other.publishedAt
+        });
+      }
+    }
+
+    if (corroborating.length > 0) {
+      lead.isStoryDossier = true;
+      lead.corroboratingSources = corroborating;
+    }
+
+    result.push(lead as T);
+  }
+
+  return result;
+}
+
+/**
+ * Stage 4 — Sokratischer Salon Perspectives Builder (WP 7)
+ *
+ * Generates 3 expert perspectives adapted to the channel's archetype / Ressort-DNA:
+ * 1. 🔍 Kontext & Einordnung (Der Hintergrund)
+ * 2. ⚡ Der Blinde Fleck (Stahlmann-Gegenrede oder sanfte Reflexion)
+ * 3. 💡 Impuls für Denken & Praxis
+ */
+export async function buildSocraticSalonPerspectives(
+  item: FeedItem,
+  credentials?: AiCredentials
+): Promise<SocraticSalonPerspectives> {
+  const archetype: ChannelArchetype = detectChannelArchetype({
+    handle: item.space,
+    space: item.space,
+    title: item.title,
+    primaryTopic: item.primaryTopic
+  });
+
+  if (item.socraticSalon?.context && item.socraticSalon?.blindSpot && item.socraticSalon?.impulse) {
+    return item.socraticSalon;
+  }
+
+  let creds = credentials;
+  if (!creds) {
+    try {
+      creds = await loadAiCredentials();
+    } catch {
+      creds = undefined;
+    }
+  }
+
+  if (creds && hasAiConfiguration(creds)) {
+    try {
+      const prompt = `Du bist die sokratische Redaktion von ATMEN. Analysiere den folgenden Beitrag und erstelle genau 3 Perspektiven („Sokratischer Salon“), exakt angepasst an das Ressort: ${archetype}.
+
+Ressort-DNA Vorgaben:
+- contemplation: Ruhiger, einsichtsvoller Ton. Weisheit, gelebte Praxis, geistige Klarheit. Keine künstliche politische Schärfe!
+- discourse_essay: Messerscharfe analytische Einordnung. Kernkonflikte, historische Einordnung, unausgesprochene Prämissen.
+- research_pedagogy: Empirische Evidenz, methodische Grenzen, Kognitionspsychologie und praktischer Transfer (Unterricht/Lernen).
+- visual_gallery: Ästhetische Komposition, kunsthistorischer Kontext und visuelle Symbolik.
+- tech_craft: Konkrete Architektur, physikalische/digitale Schwingung, Handwerk und Signal statt Hype.
+
+Beitrag:
+Titel: ${item.title}
+Untertitel: ${item.subtitle || ''}
+Inhalt: ${(item.feedText || item.body || '').slice(0, 1000)}
+
+Antworte ausschließlich im JSON-Format:
+{
+  "context": "2-3 prägnante Sätze zur Einordnung",
+  "blindSpot": "Der stärkste Einwand / Limitation bzw. sanfte Reflexion",
+  "impulse": "Ein konkreter Gedanke / Impuls für Denken und Praxis"
+}`;
+
+      const res = await callAiModel(prompt, {
+        credentials: creds,
+        jsonMode: true,
+        maxTokens: 500
+      });
+
+      if (res?.text) {
+        const jsonMatch = res.text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.context && parsed.blindSpot && parsed.impulse) {
+            return {
+              context: String(parsed.context).trim(),
+              blindSpot: String(parsed.blindSpot).trim(),
+              impulse: String(parsed.impulse).trim(),
+              generatedAt: new Date().toISOString(),
+              archetype
+            };
+          }
+        }
+      }
+    } catch {
+      // Fall through to deterministic synthesizer
+    }
+  }
+
+  return generateDeterministicSocraticSalon(item, archetype);
+}
+
+function generateDeterministicSocraticSalon(
+  item: FeedItem,
+  archetype: ChannelArchetype
+): SocraticSalonPerspectives {
+  const title = (item.title || '').trim();
+  const publisher = item.sourceReferences?.[0]?.publisher || item.sourceDomain || 'Redaktion';
+
+  if (archetype === 'contemplation') {
+    return {
+      context: `Dieser Beitrag zu „${title}“ verankert sich in der Tradition kontemplativer Selbstbeobachtung. Er lädt dazu ein, unruhige Reizüberflutung anzuhalten und die Aufmerksamkeit auf das unmittelbare Gewahrsein im Hier und Jetzt zu richten.`,
+      blindSpot: `Achtsame Stille und Kontemplation sind keine Flucht vor gesellschaftlicher Verantwortung oder bloße Entspannungstechnik, sondern bedürfen der Reifung im mitfühlenden, aufmerksamen Alltagshandeln.`,
+      impulse: `Atme einmal bewusst tief durch. Welcher Drang zur sofortigen Bewertung darf in diesem Moment einfach zur Ruhe kommen?`,
+      archetype,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  if (archetype === 'research_pedagogy') {
+    const didacticContext = item.didacticTransfer || item.didacticSeed || '';
+    return {
+      context: `Wissenschaftliche Untersuchung aus ${publisher}: Die dargestellte Erkenntnis beleuchtet empirische Wirkmechanismen des Lernens und kognitiver Verarbeitung, die über intuitive Didaktik-Mythen hinausgehen.`,
+      blindSpot: item.perspectiveDetails?.counterPerspective ||
+        `Methodische Begrenzung: Laborstudien oder begrenzte Stichproben lassen sich nicht ohne qualitative Anpassung 1:1 auf komplexe Klassen- oder Alltagskontexte übertragen.`,
+      impulse: didacticContext ||
+        `Wie lässt sich diese Erkenntnis in eine konkrete Reflexionsfrage oder eine authentische Aufgabenstellung für Lernende überführen?`,
+      archetype,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  if (archetype === 'visual_gallery') {
+    return {
+      context: `Ausstellung & visuelle Form: Dieses Werk thematisiert Komposition, Lichtführung und die Verdichtung menschlicher Erfahrung im materiellen oder fotografischen Bildraum.`,
+      blindSpot: `Visuelle Ästhetik oszilliert stets zwischen zeitloser Kontemplation und historisch gebundenen Repräsentationsinteressen.`,
+      impulse: `Betrachte das Werk für sechzig Sekunden ohne Ablenkung: Welche Bildachse oder Auslassung lenkt deinen Blick unwillkürlich?`,
+      archetype,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  if (archetype === 'tech_craft') {
+    return {
+      context: `Architektur & Systementwurf: Die Arbeit an „${title}“ berührt die fundamentale Frage nach technischer Eleganz, Signalintegrität und epistemischer Souveränität digitaler Werkzeuge.`,
+      blindSpot: item.perspectiveDetails?.counterPerspective ||
+        `Ingenieurmäßiger Vorbehalt: Jede algorithmische Beschleunigung erkauft ihren Durchsatz mit Abstraktionsverlusten, Latenzen oder Abhängigkeiten im Tech-Stack.`,
+      impulse: `Welcher minimale, selbstbestimmte Baustein deines digitalen Workflows stärkt deine Autonomie gegenüber proprietären Plattform-Monopolen?`,
+      archetype,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  // Fallback: discourse_essay (Society & Philosophical Debate)
+  return {
+    context: item.editorialAbstract?.overview ||
+      `Historische & gesellschaftliche Verortung: „${title}“ (via ${publisher}) berührt grundlegende Spannungsverhältnisse moderner Demokratien und ethischer Wertordnungen.`,
+    blindSpot: item.perspectiveDetails?.counterPerspective || item.challengePrompt ||
+      `Der blinde Fleck: Die scheinbare Eindeutigkeit der Argumentation unterschlägt die berechtigten Einwände jener Akteure, die die Folgelasten der vorgeschlagenen Lösung tragen müssten.`,
+    impulse: item.didacticTransfer ||
+      `Welche unhinterfragte Grundannahme dieses Diskurses verdient es, sokratisch auf den Prüfstand gestellt zu werden?`,
+    archetype,
+    generatedAt: new Date().toISOString()
+  };
 }

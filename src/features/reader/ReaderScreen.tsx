@@ -21,12 +21,14 @@ import {
   FeedItem,
   FeedQuizQuestion,
   formatFactReviewStatus,
-  formatVerifiedProvenanceLabel
+  formatVerifiedProvenanceLabel,
+  SocraticSalonPerspectives
 } from '../../core/domain/types';
 import { synthesizeEditorialAbstract } from '../../core/synthesis/backgroundResearchPipeline';
 import {
   enrichArticleOnDemandWithAi,
-  hasSubstantiveEditorialSection
+  hasSubstantiveEditorialSection,
+  buildSocraticSalonPerspectives
 } from '../../core/enrichment/batchEnricher';
 import { ReadingTimeBadge } from '../../ui/components/ReadingTimeBadge';
 import { DeepeningCard } from '../../ui/components/DeepeningCard';
@@ -84,7 +86,24 @@ export const ReaderScreen: React.FC = () => {
   const [loadingRabbitHole, setLoadingRabbitHole] = useState<boolean>(false);
   const [aiEnrichedOverride, setAiEnrichedOverride] = useState<FeedItem | null>(null);
   const [aiQuizOverride, setAiQuizOverride] = useState<FeedQuizQuestion | null>(null);
+  const [socraticSalon, setSocraticSalon] = useState<SocraticSalonPerspectives | null>(
+    selectedArticle?.socraticSalon || null
+  );
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // Stage 4: Socratic Salon generator for ReaderScreen (WP 7)
+  useEffect(() => {
+    let isMounted = true;
+    if (!selectedArticle) return;
+    if (selectedArticle.socraticSalon) {
+      setSocraticSalon(selectedArticle.socraticSalon);
+    } else {
+      void buildSocraticSalonPerspectives(selectedArticle).then(salon => {
+        if (isMounted && salon) setSocraticSalon(salon);
+      }).catch(() => {});
+    }
+    return () => { isMounted = false; };
+  }, [selectedArticle]);
 
   // Automatically run on-demand AI synthesis & Socratic quiz generation when a paid API key is configured
   useEffect(() => {
@@ -426,6 +445,91 @@ export const ReaderScreen: React.FC = () => {
   };
 
   const userNotes = currentInteraction?.userNotes || [];
+
+  const renderSocraticSalon = () => {
+    if (!socraticSalon) return null;
+
+    return (
+      <View style={[styles.socraticSalonBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <View style={styles.socraticSalonHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+            <Text style={{ fontSize: 16, marginRight: 8 }}>💬</Text>
+            <Text style={[styles.socraticSalonTitle, { color: colors.textPrimary }]}>
+              Sokratischer Salon · 3 Perspektiven zum Beitrag
+            </Text>
+          </View>
+          <Text style={[styles.socraticSalonSubtitle, { color: colors.textMuted }]}>
+            Tiefendiskurs wie bei r/DepthHub & r/AskScience · Hintergrund, Gegenrede & Praxis-Transfer
+          </Text>
+        </View>
+
+        {/* 1. Kontext & Einordnung */}
+        <View style={[styles.socraticPerspectiveCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <View style={styles.socraticPerspectiveHeader}>
+            <Text style={{ fontSize: 14, marginRight: 6 }}>🔍</Text>
+            <Text style={[styles.socraticPerspectiveTag, { color: colors.accent }]}>
+              Kontext & Einordnung
+            </Text>
+            <Text style={[styles.socraticPerspectiveRole, { color: colors.textMuted }]}>
+              • Historische & methodische Dimension
+            </Text>
+          </View>
+          <Text style={[styles.socraticPerspectiveText, { color: colors.textPrimary }]}>
+            {socraticSalon.context}
+          </Text>
+        </View>
+
+        {/* 2. Der Blinde Fleck */}
+        <View style={[styles.socraticPerspectiveCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <View style={styles.socraticPerspectiveHeader}>
+            <Text style={{ fontSize: 14, marginRight: 6 }}>⚡</Text>
+            <Text style={[styles.socraticPerspectiveTag, { color: '#F59E0B' }]}>
+              Der Blinde Fleck
+            </Text>
+            <Text style={[styles.socraticPerspectiveRole, { color: colors.textMuted }]}>
+              • Stahlmann-Gegenrede
+            </Text>
+          </View>
+          <Text style={[styles.socraticPerspectiveText, { color: colors.textPrimary }]}>
+            {socraticSalon.blindSpot}
+          </Text>
+        </View>
+
+        {/* 3. Impuls für Denken & Praxis */}
+        <View style={[styles.socraticPerspectiveCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <View style={styles.socraticPerspectiveHeader}>
+            <Text style={{ fontSize: 14, marginRight: 6 }}>💡</Text>
+            <Text style={[styles.socraticPerspectiveTag, { color: '#10B981' }]}>
+              Impuls für Denken & Praxis
+            </Text>
+            <Text style={[styles.socraticPerspectiveRole, { color: colors.textMuted }]}>
+              • Konkreter Transfer
+            </Text>
+          </View>
+          <Text style={[styles.socraticPerspectiveText, { color: colors.textPrimary }]}>
+            {socraticSalon.impulse}
+          </Text>
+        </View>
+
+        {/* Quick-Action: Save perspective to notes */}
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => {
+            setNoteText(`[Sokratischer Impuls] ${socraticSalon.impulse}`);
+            setSelectedTag('these');
+          }}
+          style={[styles.saveImpulseButton, { borderColor: colors.borderSubtle }]}
+          accessibilityRole="button"
+          accessibilityLabel="Impuls in eigene Notizen übernehmen"
+        >
+          <Ionicons name="document-text-outline" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+          <Text style={[styles.saveImpulseButtonText, { color: colors.accent }]}>
+            Impuls in eigene Notizen übernehmen
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   const renderDiscussionThread = () => {
     const comments = selectedArticle.comments || [];
@@ -1428,6 +1532,9 @@ export const ReaderScreen: React.FC = () => {
               {isFeatureEnabled(profile, 'socratic_sparring') && (
                 <DeepeningCard options={activeArticle.deepeningOptions} />
               )}
+
+              {/* Socratic Salon: 3 High-Depth Perspectives (WP 7) */}
+              {renderSocraticSalon()}
 
               {/* Dialectic Discussion Thread */}
               {renderDiscussionThread()}
@@ -2474,6 +2581,61 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     fontStyle: 'italic'
+  },
+  socraticSalonBox: {
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  socraticSalonHeader: {
+    marginBottom: spacing.md
+  },
+  socraticSalonTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: -0.2
+  },
+  socraticSalonSubtitle: {
+    fontSize: 12,
+    lineHeight: 16
+  },
+  socraticPerspectiveCard: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.sm
+  },
+  socraticPerspectiveHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  socraticPerspectiveTag: {
+    fontSize: 12.5,
+    fontWeight: '700'
+  },
+  socraticPerspectiveRole: {
+    fontSize: 11,
+    marginLeft: 6
+  },
+  socraticPerspectiveText: {
+    fontSize: 13.5,
+    lineHeight: 20
+  },
+  saveImpulseButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginTop: 6
+  },
+  saveImpulseButtonText: {
+    fontSize: 12,
+    fontWeight: '600'
   },
   discussionBox: {
     marginTop: spacing.xl,

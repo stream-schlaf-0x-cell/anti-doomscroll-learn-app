@@ -4,7 +4,9 @@ import { OpenWebHarvester } from './openWebHarvester';
 import {
   defaultBatchEditionEnricher,
   sanitizeCuratedFeedItem,
-  satisfiesDefaultCuratedStandard
+  satisfiesDefaultCuratedStandard,
+  clusterRelatedStories,
+  buildSocraticSalonPerspectives
 } from '../enrichment/batchEnricher';
 import { enforceCuratedStreamDiversity } from '../domain/ranking';
 import { AiCredentials, hasAiConfiguration, loadAiCredentials } from '../ai/atmenAiClient';
@@ -19,6 +21,34 @@ export type ManualPipelinePhase =
 
 export type ManualPipelineStage = ManualPipelinePhase;
 
+export interface VirtualNewsroomTelemetry {
+  stage1: {
+    sourcesChecked: number;
+    sourcesCount: number;
+    durationMs: number;
+    desks: string[];
+  };
+  stage2: {
+    rawTextsChecked: number;
+    storiesBundled: number;
+    stubsDiscarded: number;
+  };
+  stage3: {
+    mode: 'ai_synthesis' | 'local_extraction';
+    modelUsed?: string;
+    assignedRessorts: Record<string, number>;
+  };
+  stage4: {
+    perspectivesGenerated: number;
+    socraticPairsCount: number;
+  };
+  stage5: {
+    pinnedTopItems: { id: string; title: string; space?: string }[];
+  };
+  totalDurationMs: number;
+  completedAt: string;
+}
+
 export interface ManualPipelineTelemetry {
   candidateCount: number;
   curatedCount: number;
@@ -29,6 +59,7 @@ export interface ManualPipelineTelemetry {
   phasesVisited: ManualPipelinePhase[];
   durationMs: number;
   items: FeedItem[];
+  newsroomTelemetry?: VirtualNewsroomTelemetry;
 }
 
 export interface ManualPipelineOptions {
@@ -51,9 +82,14 @@ export interface ManualPipelineOptions {
  */
 export class LiveCivicPulseService {
   private static activePipelinePromise: Promise<ManualPipelineTelemetry> | null = null;
+  private static lastVirtualNewsroomTelemetry: VirtualNewsroomTelemetry | null = null;
 
   public static isPipelineRunning(): boolean {
     return this.activePipelinePromise !== null;
+  }
+
+  public static getLastNewsroomTelemetry(): VirtualNewsroomTelemetry | null {
+    return this.lastVirtualNewsroomTelemetry;
   }
 
   /**
@@ -393,12 +429,12 @@ export class LiveCivicPulseService {
   }
 
   /**
-   * Mutex-protected Manual Pipeline Runner (`🔄 Recherche jetzt starten`).
-   * Executes the 4 transparent stages:
-   * 1. `fetching_sources` ("Quellen abrufen")
-   * 2. `checking_relevance` ("Relevanz prüfen")
-   * 3. `ai_enrichment` ("KI-Aufbereitung")
-   * 4. `publishing` ("Veröffentlichen")
+   * Fast-Wave 5-Stage Virtual Newsroom Pipeline Runner (`🔄 Recherche jetzt starten`).
+   * Stufe 1: Korrespondenten-Abruf (Welt-Desk, Forschung, Community, Kultur in parallel < 3.5s)
+   * Stufe 2: Newsdesk & Dubletten-Bündelung (`clusterRelatedStories`)
+   * Stufe 3: KI-Ressort-Redaktion (Ressort-DNA, `pinnedManualRunAt = Date.now()`)
+   * Stufe 4: Sokratischer Salon (`buildSocraticSalonPerspectives`)
+   * Stufe 5: Chefredaktion (Oben angepinnt & Telemetrie)
    */
   public static async runManualResearchPipeline(
     options?: ManualPipelineOptions
@@ -411,30 +447,82 @@ export class LiveCivicPulseService {
       const startTime = Date.now();
       const phasesVisited: ManualPipelinePhase[] = [];
       const notify = (phase: ManualPipelinePhase, label: string) => {
-        phasesVisited.push(phase);
-        options?.onPhaseChange?.(phase, label);
-        options?.onStageChange?.(phase, label);
+        const lastPhase = phasesVisited[phasesVisited.length - 1];
+        if (lastPhase !== phase) {
+          phasesVisited.push(phase);
+          options?.onPhaseChange?.(phase, label);
+          options?.onStageChange?.(phase, label);
+        } else {
+          options?.onPhaseChange?.(phase, label);
+        }
       };
 
       try {
-        // Phase 1: Quellen abrufen
-        notify('fetching_sources', 'Quellen abrufen → Relevanz prüfen → KI-Aufbereitung → Veröffentlichen');
-        const rawCandidates = options?.candidateOverride
-          ? [...options.candidateOverride]
-          : await this.harvestRealityAndSerendipityPulse({ skipNetwork: options?.skipNetwork });
+        // Stufe 1: Korrespondenten-Abruf (Parallel fast-wave max 3500ms)
+        const stage1Start = Date.now();
+        notify('fetching_sources', 'Stufe 1/5: Korrespondenten-Abruf (Welt, Forschung, Community, Kultur)…');
 
-        const candidatesToProcess =
-          rawCandidates.length > 0 ? rawCandidates : [...this.getCuratedRealityAndSerendipityPool(), ...REAL_KNOWLEDGE_VAULT.slice(0, 6)];
-        const candidateCount = candidatesToProcess.length;
+        let rawCandidates: FeedItem[] = [];
+        let sourcesCheckedCount = 0;
+        const desks = ['Welt-Desk', 'Forschung', 'Community', 'Kultur'];
 
-        // Phase 2: Relevanz prüfen
-        notify('checking_relevance', 'Quellen abrufen ✓ → Relevanz prüfen → KI-Aufbereitung → Veröffentlichen');
-        const preFiltered = candidatesToProcess
+        if (options?.candidateOverride) {
+          rawCandidates = [...options.candidateOverride];
+          sourcesCheckedCount = rawCandidates.length;
+        } else if (options?.skipNetwork) {
+          rawCandidates = this.getCuratedRealityAndSerendipityPool();
+          sourcesCheckedCount = rawCandidates.length;
+        } else {
+          const timeoutPromise = <T>(p: Promise<T>, ms = 3500): Promise<T | null> => {
+            return Promise.race([
+              p,
+              new Promise<null>(resolve => setTimeout(() => resolve(null), ms))
+            ]).catch(() => null);
+          };
+
+          const [liveRes, openAlexRes, hnRes, artRes] = await Promise.allSettled([
+            timeoutPromise(ContinuousLiveNewsService.getLiveStream({ limit: 20, forceRefresh: true })),
+            timeoutPromise(OpenWebHarvester.harvestOpenAlexPapers(6)),
+            timeoutPromise(OpenWebHarvester.harvestTechFrontpage(6)),
+            timeoutPromise(OpenWebHarvester.harvestMuseumArtworks(4))
+          ]);
+
+          const deskItems: FeedItem[] = [];
+          if (liveRes.status === 'fulfilled' && Array.isArray(liveRes.value)) {
+            deskItems.push(...liveRes.value);
+            sourcesCheckedCount += liveRes.value.length;
+          }
+          if (openAlexRes.status === 'fulfilled' && Array.isArray(openAlexRes.value)) {
+            deskItems.push(...openAlexRes.value);
+            sourcesCheckedCount += openAlexRes.value.length;
+          }
+          if (hnRes.status === 'fulfilled' && Array.isArray(hnRes.value)) {
+            deskItems.push(...hnRes.value);
+            sourcesCheckedCount += hnRes.value.length;
+          }
+          if (artRes.status === 'fulfilled' && Array.isArray(artRes.value)) {
+            deskItems.push(...artRes.value);
+            sourcesCheckedCount += artRes.value.length;
+          }
+
+          rawCandidates = deskItems.length > 0
+            ? [...this.getCuratedRealityAndSerendipityPool().slice(0, 4), ...deskItems]
+            : [...this.getCuratedRealityAndSerendipityPool(), ...REAL_KNOWLEDGE_VAULT.slice(0, 6)];
+        }
+
+        const stage1Duration = Date.now() - stage1Start;
+
+        // Stufe 2: Newsdesk & Dubletten-Bündelung
+        notify('checking_relevance', 'Stufe 2/5: Newsdesk-Prüfung & Dubletten-Bündelung…');
+        const preFiltered = rawCandidates
           .map(sanitizeCuratedFeedItem)
           .filter(satisfiesDefaultCuratedStandard);
+        const stubsDiscarded = Math.max(0, rawCandidates.length - preFiltered.length);
+        const clustered = clusterRelatedStories(preFiltered);
+        const storiesBundled = Math.max(0, preFiltered.length - clustered.length);
 
-        // Phase 3: KI-Aufbereitung
-        notify('ai_enrichment', 'Quellen abrufen ✓ → Relevanz prüfen ✓ → KI-Aufbereitung → Veröffentlichen');
+        // Stufe 3: KI-Ressort-Redaktion & Pin-to-Top Stamp
+        notify('ai_enrichment', 'Stufe 3/5: KI-Ressort-Redaktion & DNA-Aufbereitung…');
         let creds = options?.credentials;
         if (!creds) {
           try {
@@ -446,38 +534,102 @@ export class LiveCivicPulseService {
 
         const hasAi = Boolean(creds && hasAiConfiguration(creds));
         const enrichedBatch = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(
-          preFiltered.slice(0, 12),
+          clustered.slice(0, 12),
           creds
         );
         const batchReport = defaultBatchEditionEnricher.getLastBatchReport();
         const usedAiMode = Boolean(hasAi && batchReport.usedAI);
 
+        // Stamp every newly enriched item with pinnedManualRunAt = Date.now() and isNewlyCurated = true
+        const nowRunTime = Date.now();
+        const ressortCounts: Record<string, number> = {};
+
+        const stampedCurated = enrichedBatch.map(item => {
+          const sanitized = sanitizeCuratedFeedItem(item);
+          const space = sanitized.space || 'c/dialektik';
+          ressortCounts[space] = (ressortCounts[space] || 0) + 1;
+          return {
+            ...sanitized,
+            pinnedManualRunAt: nowRunTime,
+            isNewlyCurated: true,
+            curatedAt: new Date(nowRunTime).toISOString()
+          };
+        });
+
         const finalCurated = enforceCuratedStreamDiversity(
-          enrichedBatch.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard)
+          stampedCurated.filter(satisfiesDefaultCuratedStandard)
         );
 
-        // Phase 4: Veröffentlichen
-        notify('publishing', 'Quellen abrufen ✓ → Relevanz prüfen ✓ → KI-Aufbereitung ✓ → Veröffentlichen');
-        if (finalCurated.length > 0) {
-          feedRepository.addItems(finalCurated);
+        // Stufe 4: Sokratischer Salon (Generate or pre-fill perspectives)
+        notify('ai_enrichment', 'Stufe 4/5: Sokratischer Salon & Denkanstöße generieren…');
+        const itemsWithSalon: FeedItem[] = [];
+        for (const it of finalCurated) {
+          if (!it.socraticSalon) {
+            try {
+              const salon = await buildSocraticSalonPerspectives(it, creds);
+              itemsWithSalon.push({ ...it, socraticSalon: salon });
+            } catch {
+              itemsWithSalon.push(it);
+            }
+          } else {
+            itemsWithSalon.push(it);
+          }
         }
 
-        const curatedCount = finalCurated.length;
-        const rejectedCount = Math.max(0, candidateCount - curatedCount);
+        // Stufe 5: Chefredaktion (Oben angepinnt & Veröffentlichen)
+        notify('publishing', 'Stufe 5/5: Chefredaktion · Beiträge an die Spitze setzen…');
+        if (itemsWithSalon.length > 0) {
+          feedRepository.addItems(itemsWithSalon);
+        }
+
+        const curatedCount = itemsWithSalon.length;
+        const rejectedCount = Math.max(0, rawCandidates.length - curatedCount);
         const mode: 'ai_synthesis' | 'local_extraction' = usedAiMode ? 'ai_synthesis' : 'local_extraction';
         const modeLabel = mode === 'ai_synthesis' ? 'KI-Synthese' : 'Lokal';
         const summaryLabel = `${curatedCount} neu kuratiert · ${rejectedCount} verworfen · Modus: ${modeLabel}`;
+        const totalDurationMs = Math.max(1, Date.now() - startTime);
+
+        const newsroomTelemetry: VirtualNewsroomTelemetry = {
+          stage1: {
+            sourcesChecked: sourcesCheckedCount || rawCandidates.length,
+            sourcesCount: desks.length,
+            durationMs: stage1Duration,
+            desks
+          },
+          stage2: {
+            rawTextsChecked: rawCandidates.length,
+            storiesBundled,
+            stubsDiscarded
+          },
+          stage3: {
+            mode,
+            modelUsed: usedAiMode ? (creds?.model || 'Paid LLM API') : 'Lokale Synthese',
+            assignedRessorts: ressortCounts
+          },
+          stage4: {
+            perspectivesGenerated: itemsWithSalon.filter(i => Boolean(i.socraticSalon)).length,
+            socraticPairsCount: itemsWithSalon.length
+          },
+          stage5: {
+            pinnedTopItems: itemsWithSalon.map(i => ({ id: i.id, title: i.title, space: i.space }))
+          },
+          totalDurationMs,
+          completedAt: new Date().toISOString()
+        };
+
+        LiveCivicPulseService.lastVirtualNewsroomTelemetry = newsroomTelemetry;
 
         return {
-          candidateCount,
+          candidateCount: rawCandidates.length,
           curatedCount,
           rejectedCount,
           discardedCount: rejectedCount,
           mode,
           summaryLabel,
           phasesVisited,
-          durationMs: Math.max(1, Date.now() - startTime),
-          items: finalCurated
+          durationMs: totalDurationMs,
+          items: itemsWithSalon,
+          newsroomTelemetry
         };
       } finally {
         this.activePipelinePromise = null;

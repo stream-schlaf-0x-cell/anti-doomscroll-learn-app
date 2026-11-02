@@ -5,14 +5,15 @@ import { INTERACTIONS_STORAGE_KEY, SAVED_ARTICLES_STORAGE_KEY } from './libraryR
 import {
   isSupportedFeedLanguage,
   satisfiesCuratedBodyContract,
-  sanitizeCuratedFeedItem
+  sanitizeCuratedFeedItem,
+  isPoliticalOrProtestNews
 } from '../enrichment/batchEnricher';
 import { isArdSource } from '../domain/ranking';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 import { FeedItem } from '../domain/types';
 
-export const CURRENT_DATA_MIGRATION_VERSION = '2026-10-31-v3.3-subreddit-purity-art-gallery';
+export const CURRENT_DATA_MIGRATION_VERSION = '2026-11-02-v3.5-virtual-newsroom';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
@@ -200,6 +201,16 @@ export async function runInPlaceDataMigration(
       publicationDateReliable: isUndatedVisual ? false : (sanitized.publicationDateReliable ?? true),
       firstSeenAt: sanitized.firstSeenAt || sanitized.publishedAt || new Date().toISOString()
     };
+
+    // Re-route any legacy protest or political articles out of c/serendipity
+    if (
+      normalizedItem.space === 'c/serendipity' &&
+      (isPoliticalOrProtestNews(normalizedItem.title, normalizedItem.feedText || normalizedItem.body) ||
+        (normalizedItem.title || '').includes('Jugendprotest'))
+    ) {
+      normalizedItem.space = 'c/dialektik';
+      normalizedItem.primaryTopic = 'philosophy_ethics';
+    }
 
     cleanedMap.set(id, normalizedItem);
     preservedCount++;

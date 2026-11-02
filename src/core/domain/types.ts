@@ -286,6 +286,25 @@ export const EditorialAbstractSchema = z.object({
 });
 export type EditorialAbstract = z.infer<typeof EditorialAbstractSchema>;
 
+// Stage 2: Story Clustering & Corroborating Sources
+export const CorroboratingSourceSchema = z.object({
+  title: z.string(),
+  publisher: z.string(),
+  url: z.string().optional(),
+  publishedAt: z.string().optional()
+});
+export type CorroboratingSource = z.infer<typeof CorroboratingSourceSchema>;
+
+// Stage 4: Sokratischer Salon (3 Perspektiven zum Beitrag)
+export const SocraticSalonPerspectivesSchema = z.object({
+  context: z.string(), // 🔍 Kontext & Einordnung (Der Hintergrund)
+  blindSpot: z.string(), // ⚡ Der Blinde Fleck (Stahlmann-Gegenrede)
+  impulse: z.string(), // 💡 Impuls für Denken & Praxis
+  generatedAt: z.string().optional(),
+  archetype: z.string().optional()
+});
+export type SocraticSalonPerspectives = z.infer<typeof SocraticSalonPerspectivesSchema>;
+
 // Querverbindungen & Einordnung im lokalen Wissensnetzwerk
 export const RelatedCrossReferenceSchema = z.object({
   id: z.string(),
@@ -458,7 +477,14 @@ export const FeedItemSchema = z.object({
   publicationDateReliable: z.boolean().optional(),
   firstSeenAt: z.string().optional(),
   historicalYearOrEra: z.string().optional(),
-  enrichmentTier: z.enum(['ai', 'local', 'none']).optional()
+  enrichmentTier: z.enum(['ai', 'local', 'none']).optional(),
+
+  // Virtual Newsroom & P0 Pipeline Upgrades (Work Packages 5-8)
+  pinnedManualRunAt: z.number().optional(),
+  isStoryDossier: z.boolean().optional(),
+  corroboratingSources: z.array(CorroboratingSourceSchema).optional(),
+  recommendedBecauseOfTitle: z.string().optional(),
+  socraticSalon: SocraticSalonPerspectivesSchema.optional()
 });
 export const ArtMetaSchema = z.object({
   artist: z.string(),

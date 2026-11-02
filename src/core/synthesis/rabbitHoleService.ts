@@ -13,6 +13,9 @@
 import { FeedItem, TopicTag } from '../domain/types';
 import { feedRepository } from '../data/feedRepository';
 import { OnTheFlyStreamService } from './onTheFlyStreamService';
+import { extractConceptKeywords } from '../domain/ranking';
+import { OpenWebHarvester } from '../ingestion/openWebHarvester';
+import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 
 export interface RabbitHoleEntry {
   item: FeedItem;
@@ -165,5 +168,50 @@ export class RabbitHoleService {
     }
 
     return results;
+  }
+}
+
+/**
+ * Stage 5: Autonomous Upvote/Bookmark Rabbit-Hole Expansion (Directive WP 8)
+ * When an article is upvoted or bookmarked, autonomously harvest deeper rabbit-hole articles
+ * related to the item's concepts, tagged with recommendedBecauseOfTitle: item.title
+ */
+export async function harvestRabbitHoleForItem(item: FeedItem): Promise<FeedItem[]> {
+  try {
+    const keywords = extractConceptKeywords(item);
+    if (!keywords || keywords.length === 0) return [];
+    const query = keywords.slice(0, 2).join(' ');
+
+    // 1. Query OpenAlex or Wikipedia with 3500ms timeout
+    const scholarlyPromise = OpenWebHarvester.harvestScholarlyWorksForQuery(query, 3);
+    const timeoutPromise = new Promise<FeedItem[]>(resolve => setTimeout(() => resolve([]), 3500));
+
+    let candidates = await Promise.race([scholarlyPromise, timeoutPromise]);
+
+    // 2. Fallback to REAL_KNOWLEDGE_VAULT matching keywords or topic
+    if (!candidates || candidates.length === 0) {
+      const lowerKeywords = keywords.map(k => k.toLowerCase());
+      candidates = REAL_KNOWLEDGE_VAULT.filter(v => {
+        if (v.id === item.id) return false;
+        const text = `${v.title} ${v.subtitle || ''} ${v.keyInsight || ''} ${v.feedText || ''}`.toLowerCase();
+        return lowerKeywords.some(kw => text.includes(kw)) || v.primaryTopic === item.primaryTopic;
+      }).slice(0, 3);
+    }
+
+    if (!candidates || candidates.length === 0) return [];
+
+    // 3. Tag with recommendedBecauseOfTitle
+    const taggedItems: FeedItem[] = candidates.slice(0, 3).map(cand => ({
+      ...cand,
+      id: cand.id.startsWith('rabbit-') ? cand.id : `rabbit-${item.id.slice(0, 8)}-${cand.id}`,
+      recommendedBecauseOfTitle: item.title,
+      sourceReferences: cand.sourceReferences || item.sourceReferences
+    }));
+
+    await feedRepository.addItems(taggedItems);
+    return taggedItems;
+  } catch (err) {
+    console.warn('[harvestRabbitHoleForItem] Rabbit-hole research failed non-fatally:', err);
+    return [];
   }
 }

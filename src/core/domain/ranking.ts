@@ -6,6 +6,7 @@ import {
   PersonalGoal,
   DayEditionType
 } from './types';
+import { SeenImpressionRecord } from '../data/seenImpressionsService';
 
 export interface ScoreBreakdown {
   topicMatch: number;
@@ -702,9 +703,30 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
   return result;
 }
 
+/**
+ * Strict evaluation if an item formats to "gestern" or older relative time.
+ * Used to ensure ⚡ Heute never outputs "gestern" or "vor X Tagen".
+ */
+export function isFormattingToGesternOrOlder(isoString?: string, now: Date = new Date()): boolean {
+  if (!isoString) return false;
+  const date = new Date(isoString);
+  if (isNaN(date.getTime())) return false;
+  const diffMs = now.getTime() - date.getTime();
+  if (diffMs < 0) return false;
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  if (diffHours >= 18) return true;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays >= 1) return true;
+  if (date.getDate() !== now.getDate() && diffHours >= 16) return true;
+  return false;
+}
+
 export function rankBloomScrollFeed(
   items: ScoredFeedItem[],
-  options?: { seenItemIds?: ReadonlySet<string> }
+  options?: {
+    seenItemIds?: ReadonlySet<string>;
+    seenRecords?: ReadonlyMap<string, SeenImpressionRecord>;
+  }
 ): ScoredFeedItem[] {
   if (items.length <= 2) return [...items];
 
@@ -824,9 +846,38 @@ export function rankBloomScrollFeed(
         utility += 0.05;
       }
 
-      // Seen-Impression Rotation: Cards already scrolled past rotate down so fresh discoveries surface
+      // Hard 72-Hour Seen Cooldown & Seen-Impression Rotation
+      const seenRecord = options?.seenRecords?.get(cand.id);
+      if (seenRecord) {
+        const firstSeenMs = new Date(seenRecord.firstSeenAt).getTime();
+        const ageSinceFirstSeenMs = Date.now() - firstSeenMs;
+        // Seen in previous session or > 20 min ago receives hard -3.0 penalty for 72h
+        if (ageSinceFirstSeenMs > 20 * 60 * 1000 && ageSinceFirstSeenMs <= 72 * 3600 * 1000) {
+          utility -= 3.0;
+        } else if (ageSinceFirstSeenMs > 72 * 3600 * 1000) {
+          utility -= 1.0;
+        }
+      }
       if (options?.seenItemIds?.has(cand.id)) {
         utility -= 3.5;
+      }
+
+      // Exponential freshness decay for breaking / daily news items older than 36 hours
+      const isBreakingOrDailyNews =
+        cand.format === 'sourced_update' ||
+        cand.isDailyEdition ||
+        cand.sourceTrustLevel === 'public_broadcaster' ||
+        cand.sourceDomain === 'tagesschau.de';
+
+      if (isBreakingOrDailyNews && cand.publishedAt) {
+        const pubTime = new Date(cand.publishedAt).getTime();
+        if (!isNaN(pubTime) && pubTime > 0) {
+          const ageHours = (Date.now() - pubTime) / (3600 * 1000);
+          if (ageHours > 36) {
+            const decay = Math.min(6.0, ((ageHours - 36) / 24) * 2.0);
+            utility -= decay;
+          }
+        }
       }
 
       // 2. Topic Transition & Anti-Dominance
@@ -1011,6 +1062,7 @@ export interface SortFeedOptions {
   interleave?: boolean;
   ignorePins?: boolean;
   seenItemIds?: ReadonlySet<string>;
+  seenRecords?: ReadonlyMap<string, SeenImpressionRecord>;
 }
 
 /** The final presentation boundary: pin order wins over every score and diversity rule unless ignorePins is true. */
@@ -1025,12 +1077,13 @@ function demoteItemsLeadingOtherHorizons(
   sorted: ScoredFeedItem[],
   pool: ScoredFeedItem[],
   otherModes: FeedSortMode[],
-  seenItemIds?: ReadonlySet<string>
+  seenItemIds?: ReadonlySet<string>,
+  seenRecords?: ReadonlyMap<string, SeenImpressionRecord>
 ): ScoredFeedItem[] {
   if (pool.length < DISJOINT_HORIZON_MIN_POOL || otherModes.length === 0) return sorted;
   const leaderIds = new Set<string>();
   for (const other of otherModes) {
-    const otherTop = sortFeedForDisplay(pool, other, { ignorePins: true, interleave: true, seenItemIds })
+    const otherTop = sortFeedForDisplay(pool, other, { ignorePins: true, interleave: true, seenItemIds, seenRecords })
       .slice(0, DISJOINT_HORIZON_TOP_N);
     for (const it of otherTop) leaderIds.add(it.id);
   }
@@ -1056,6 +1109,22 @@ export function sortFeedForDisplay(
     return [item];
   });
   const remaining = [...unique.values()];
+
+  // Pin-to-Top Guarantee: items with recent pinnedManualRunAt (within 15 minutes) sort to index 0, 1, 2...
+  const nowMs = Date.now();
+  const FIFTEEN_MIN_MS = 15 * 60 * 1000;
+  const manualPinned: ScoredFeedItem[] = [];
+  if (!options.ignorePins) {
+    for (const item of remaining) {
+      if (typeof item.pinnedManualRunAt === 'number' && (nowMs - item.pinnedManualRunAt) <= FIFTEEN_MIN_MS) {
+        manualPinned.push(item);
+        unique.delete(item.id);
+      }
+    }
+    manualPinned.sort((a, b) => (b.pinnedManualRunAt || 0) - (a.pinnedManualRunAt || 0));
+  }
+  const effectiveTopPins = [...manualPinned, ...pinned];
+
   const isGem = (item: ScoredFeedItem) =>
     Boolean(item.isEvergreenGem) ||
     ['art_showcase', 'youtube_gem', 'book_masterpiece', 'meme', 'opportunity_radar', 'long_invitation', 'surprising_connection'].includes(item.format) ||
@@ -1063,23 +1132,28 @@ export function sortFeedForDisplay(
 
   // 1. "🔥 Für dich" (Default Smart Mix): Bloom-Ranking + Seen-Rotation + Serendipity Slot + Strict Diversity Caps
   if (mode === 'for_you' || (mode === 'hot' && options.interleave)) {
-    const ranked = rankBloomScrollFeed(remaining, { seenItemIds: options.seenItemIds });
+    const ranked = rankBloomScrollFeed(remaining, {
+      seenItemIds: options.seenItemIds,
+      seenRecords: options.seenRecords
+    });
     const withSerendipity = interleaveSerendipitySlot(ranked);
-    return [...pinned, ...withSerendipity];
+    return [...effectiveTopPins, ...withSerendipity];
   }
 
-  // 2a. "⚡ Heute" (Strict 48-Hour Contract): ONLY items <= 48h old with reliable publication date! Never falls back to Oct 18!
+  // 2a. "⚡ Heute" (True Today Contract: strictly < 18 hours old and from current calendar day or within 16h overnight)
   if (mode === 'today') {
-    const nowMs = Date.now();
-    const maxAgeMs = 48 * 3600 * 1000;
+    const now = new Date();
+    const eighteenHoursMs = 18 * 3600 * 1000;
     const futureToleranceMs = 24 * 3600 * 1000;
 
     const strictlyToday = remaining.filter(item => {
-      if (item.publicationDateReliable !== true) return false;
+      if (item.publicationDateReliable === false) return false;
       const pubTime = new Date(item.publishedAt).getTime();
       if (isNaN(pubTime) || pubTime <= 0) return false;
       const ageMs = nowMs - pubTime;
-      return ageMs >= -futureToleranceMs && ageMs <= maxAgeMs;
+      if (ageMs < -futureToleranceMs || ageMs > eighteenHoursMs) return false;
+      if (isFormattingToGesternOrOlder(item.publishedAt, now)) return false;
+      return true;
     });
 
     const sorted = [...strictlyToday].sort((a, b) => {
@@ -1094,7 +1168,7 @@ export function sortFeedForDisplay(
       return b.id.localeCompare(a.id);
     });
 
-    return [...pinned, ...enforceCuratedStreamDiversity(sorted)];
+    return [...effectiveTopPins, ...enforceCuratedStreamDiversity(sorted)];
   }
 
   // 2b. Legacy 'new' sort mode (preserves full pool ordering for backward-compatible unit tests)
@@ -1123,7 +1197,7 @@ export function sortFeedForDisplay(
       if (seenB !== seenA) return seenB - seenA;
       return b.id.localeCompare(a.id);
     });
-    return [...pinned, ...enforceArdsSpacing(sorted, 7)];
+    return [...effectiveTopPins, ...enforceArdsSpacing(sorted, 7)];
   }
 
   // 3. "🧭 Diskurs" (1-14d Deep Debates & Option A: The Bigger Picture)
@@ -1150,8 +1224,8 @@ export function sortFeedForDisplay(
       if (scoreB !== scoreA) return scoreB - scoreA;
       return b.id.localeCompare(a.id);
     });
-    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today'], options.seenItemIds);
-    return [...pinned, ...enforceCuratedStreamDiversity(disjoint)];
+    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today'], options.seenItemIds, options.seenRecords);
+    return [...effectiveTopPins, ...enforceCuratedStreamDiversity(disjoint)];
   }
 
   // 4. "🏆 Top" (30-Day Review of highest impact items)
@@ -1175,8 +1249,8 @@ export function sortFeedForDisplay(
       if (timeB !== timeA) return timeB - timeA;
       return b.id.localeCompare(a.id);
     });
-    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today', 'discourse'], options.seenItemIds);
-    return [...pinned, ...enforceCuratedStreamDiversity(disjoint)];
+    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today', 'discourse'], options.seenItemIds, options.seenRecords);
+    return [...effectiveTopPins, ...enforceCuratedStreamDiversity(disjoint)];
   }
 
   // 5. "💎 Zeitlos" (Timeless essays, art, literature, music, evergreen concepts)
@@ -1192,8 +1266,8 @@ export function sortFeedForDisplay(
       if (scoreB !== scoreA) return scoreB - scoreA;
       return b.id.localeCompare(a.id);
     });
-    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today', 'discourse'], options.seenItemIds);
-    return [...pinned, ...disjoint];
+    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today', 'discourse'], options.seenItemIds, options.seenRecords);
+    return [...effectiveTopPins, ...disjoint];
   }
 
   // Fallback: Default hot/score order
@@ -1201,7 +1275,7 @@ export function sortFeedForDisplay(
     if (b.score !== a.score) return b.score - a.score;
     return b.id.localeCompare(a.id);
   });
-  return [...pinned, ...sorted];
+  return [...effectiveTopPins, ...sorted];
 }
 
 /**

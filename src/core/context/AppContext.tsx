@@ -43,6 +43,7 @@ import { BoundedIdSet } from '../feed/boundedIdSet';
 import { defaultFeedOperationManager } from '../feed/FeedOperationManager';
 import { runInPlaceDataMigration } from '../data/migrationService';
 import { satisfiesDefaultCuratedStandard, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
+import { harvestRabbitHoleForItem } from '../synthesis/rabbitHoleService';
 
 export function extractSalientKeywords(titleOrItem: string | Pick<FeedItem, 'title' | 'subtitle' | 'keyInsight' | 'feedText'>): string[] {
   return extractConceptKeywords(titleOrItem);
@@ -124,6 +125,8 @@ export function revertDismissFeedbackFromProfile(profile: UserProfile, item: Fee
   };
 }
 
+export { harvestRabbitHoleForItem } from '../synthesis/rabbitHoleService';
+
 export type StartupState =
   | { status: 'loading' }
   | { status: 'ready' }
@@ -141,6 +144,7 @@ export interface OnboardingExtraOptions {
 }
 
 interface AppContextValue {
+  isHydrated: boolean;
   profile: UserProfile;
   interactions: Record<string, ReadingInteraction>;
   dailyEdition: ScoredFeedItem[];
@@ -243,6 +247,7 @@ const AppContext = createContext<AppContextValue | null>(null);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const systemScheme = useColorScheme();
+  const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_USER_PROFILE);
   const [interactions, setInteractions] = useState<Record<string, ReadingInteraction>>({});
   const [dailyEdition, setDailyEdition] = useState<ScoredFeedItem[]>([]);
@@ -273,6 +278,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [snapshotSyncInfo, setSnapshotSyncInfo] = useState<string | null>(null);
   const [spaces, setSpaces] = useState<Subchannel[]>([]);
   const [dismissedItemIds, setDismissedItemIds] = useState<string[]>([]);
+
+  // Atomic Hydration (WP 1): Ensure UI unlocks within 180ms max fallback if storage is sluggish
+  useEffect(() => {
+    const fallbackTimer = setTimeout(() => {
+      setIsHydrated(true);
+    }, 180);
+    return () => clearTimeout(fallbackTimer);
+  }, []);
 
   useEffect(() => {
     void appStorage.getItem(DISMISSED_ITEMS_STORAGE_KEY).then(raw => {
@@ -672,6 +685,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // 1. Instant reveal: Calculate local feed in < 5ms and unlock the UI immediately!
       await scheduleFeedRecompute(loadedProfile, loadedInteractions, initialEdition);
       setStartupState({ status: 'ready' });
+      setIsHydrated(true);
 
       // 2. Non-blocking background sync from public snapshot + live CORS-safe harvesters
       void (async () => {
@@ -720,6 +734,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         message: err?.message || 'Die Tagesausgabe konnte nicht initialisiert werden. Bitte tippe auf Wiederholen.',
         canReset: true
       });
+      setIsHydrated(true);
     }
   }, [scheduleFeedRecompute]);
 
@@ -963,6 +978,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Automatically sync to Raindrop.io in background if token is configured
           void RaindropService.syncArticleIfConnected(articleToSave);
           void BackupService.saveAutoBackup();
+          // Stage 5 (WP 8): Autonomous rabbit-hole expansion on save
+          void harvestRabbitHoleForItem(articleToSave).then(() => {
+            void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
+          }).catch(() => {});
         } else {
           const updated = await libraryRepository.saveItem(id);
           setInteractions(prev => {
@@ -976,7 +995,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {
       setErrorMessage('Lesezeichen konnte nicht gespeichert werden.');
     }
-  }, [dailyEdition, discoveryItems, openWebItems, selectedArticle]);
+  }, [dailyEdition, discoveryItems, openWebItems, selectedArticle, scheduleFeedRecompute]);
 
   // Throttled reading progress write (bounds write rate to max 1 write / 800ms while scrolling)
   const updateReadingProgress = useCallback(async (id: string, percent: number) => {
@@ -1147,6 +1166,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }));
           latestProfileRef.current = updatedProfile;
           setProfile(updatedProfile);
+        }
+
+        if (isUp) {
+          // Stage 5 (WP 8): Autonomous rabbit-hole expansion on upvote
+          void harvestRabbitHoleForItem(item).then(() => {
+            void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
+          }).catch(() => {});
         }
       }
 
@@ -1538,6 +1564,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return (
     <AppContext.Provider
       value={{
+        isHydrated,
         profile,
         interactions,
         dailyEdition,

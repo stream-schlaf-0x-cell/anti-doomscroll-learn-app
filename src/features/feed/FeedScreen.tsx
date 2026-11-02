@@ -60,6 +60,7 @@ import { FeedOperationResult, defaultFeedOperationManager } from '../../core/fee
 import { holdFeedPresentation, prependRevealedItems } from '../../core/feed/feedPresentation';
 import { NewsEvolutionModal } from '../../ui/components/NewsEvolutionModal';
 import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
+import { NewsroomPipelineModal } from '../../ui/components/NewsroomPipelineModal';
 
 function useReadingStableFeed(items: ScoredFeedItem[], reading: boolean, scope: string): ScoredFeedItem[] {
   const latest = useMemo(() => ({ items, scope }), [items, scope]);
@@ -116,7 +117,8 @@ export const FeedScreen: React.FC = () => {
     openArticle,
     toggleSaveItem,
     spaces,
-    updateSpace
+    updateSpace,
+    isHydrated
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -132,11 +134,25 @@ export const FeedScreen: React.FC = () => {
   const scrollViewRef = React.useRef<ScrollView>(null);
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => defaultFeedOperationManager.getPinnedItemIds());
 
+  // Viewport Top-Lock & Background Arrivals (WP 1 & WP 5)
+  const lockedTopItemIdsRef = React.useRef<string[] | null>(null);
+  const previousScopeRef = React.useRef<string>('');
+  const [pendingStreamArrivals, setPendingStreamArrivals] = useState<ScoredFeedItem[]>([]);
+  const [showPipelineModal, setShowPipelineModal] = useState<boolean>(false);
+
   const handleSortChange = useCallback((mode: FeedSortMode) => {
     defaultFeedOperationManager.clearAutomaticPins();
     setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
+    lockedTopItemIdsRef.current = null;
+    setPendingStreamArrivals([]);
     setSortMode(mode);
     setActiveCardIndex(0);
+    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+  }, []);
+
+  const handleRevealPendingArrivals = useCallback(() => {
+    lockedTopItemIdsRef.current = null;
+    setPendingStreamArrivals([]);
     scrollViewRef.current?.scrollTo({ y: 0, animated: true });
   }, []);
 
@@ -364,6 +380,8 @@ export const FeedScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
+    lockedTopItemIdsRef.current = null;
+    setPendingStreamArrivals([]);
     await refreshLiveFeed();
     await loadSubchannels();
     const updatedSeen = await seenImpressionsService.getSeenIds();
@@ -532,10 +550,48 @@ export const FeedScreen: React.FC = () => {
   }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, matchesSelectedSpace, dismissedSet, profile, interactions, selectedFilter, sortMode, pinnedIds, seenIds]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
+  // Viewport Top-Lock (WP 1): Lock the visible top 12 cards for active session/scope
+  // Incoming background items are kept in pendingStreamArrivals instead of jumping the screen!
+  const lockedInfiniteBase = useMemo(() => {
+    if (previousScopeRef.current !== presentationScope) {
+      previousScopeRef.current = presentationScope;
+      lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
+      setPendingStreamArrivals([]);
+      return infiniteInterleavedBase;
+    }
+
+    if (!lockedTopItemIdsRef.current || lockedTopItemIdsRef.current.length === 0) {
+      lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
+      return infiniteInterleavedBase;
+    }
+
+    const lockedIds = lockedTopItemIdsRef.current;
+    const lockedSet = new Set(lockedIds);
+    const itemMap = new Map(infiniteInterleavedBase.map(i => [i.id, i]));
+
+    // Identify new items arriving in the top 12 of infiniteInterleavedBase that were not in lockedSet
+    const incomingTop12New = infiniteInterleavedBase.slice(0, 12).filter(i => !lockedSet.has(i.id));
+    if (incomingTop12New.length > 0) {
+      setPendingStreamArrivals(prev => {
+        const existingIds = new Set(prev.map(p => p.id));
+        const added = incomingTop12New.filter(n => !existingIds.has(n.id));
+        return added.length > 0 ? [...prev, ...added] : prev;
+      });
+    }
+
+    const lockedCards: ScoredFeedItem[] = [];
+    for (const id of lockedIds) {
+      const item = itemMap.get(id);
+      if (item) lockedCards.push(item);
+    }
+    const remainingCards = infiniteInterleavedBase.filter(i => !lockedSet.has(i.id));
+    return [...lockedCards, ...remainingCards];
+  }, [infiniteInterleavedBase, presentationScope]);
+
   // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
   const evergreenFallbackItems = useMemo(() => {
     if (sortMode === 'today') return []; // Never append old evergreen items under ⚡ Heute!
-    const freshIds = new Set(infiniteInterleavedBase.map(i => i.id));
+    const freshIds = new Set(lockedInfiniteBase.map(i => i.id));
     const rawClassics = ContinuousLiveNewsService.getEvergreenClassics();
     const scored = rawClassics
       .filter(item => !freshIds.has(item.id) && !dismissedSet.has(item.id))
@@ -544,7 +600,7 @@ export const FeedScreen: React.FC = () => {
       .map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions))
       .filter(matchesSelectedSpace);
     return filterByQuery(scored);
-  }, [sortMode, infiniteInterleavedBase, dismissedSet, profile, interactions, matchesSelectedSpace, filterByQuery]);
+  }, [sortMode, lockedInfiniteBase, dismissedSet, profile, interactions, matchesSelectedSpace, filterByQuery]);
 
   const scoredRevealedItems = useMemo(() => {
     if (revealedNewItems.length === 0) return [];
@@ -557,14 +613,14 @@ export const FeedScreen: React.FC = () => {
   }, [revealedNewItems, dismissedSet, matchesSelectedSpace, filterByQuery, profile, interactions]);
 
   const renderedInfiniteFreshItems = useMemo(() => {
-    return infiniteInterleavedBase.slice(0, Math.min(visibleInfiniteCount, infiniteInterleavedBase.length));
-  }, [infiniteInterleavedBase, visibleInfiniteCount]);
+    return lockedInfiniteBase.slice(0, Math.min(visibleInfiniteCount, lockedInfiniteBase.length));
+  }, [lockedInfiniteBase, visibleInfiniteCount]);
 
   const renderedInfiniteEvergreenItems = useMemo(() => {
-    if (visibleInfiniteCount <= infiniteInterleavedBase.length) return [];
-    const needed = visibleInfiniteCount - infiniteInterleavedBase.length;
+    if (visibleInfiniteCount <= lockedInfiniteBase.length) return [];
+    const needed = visibleInfiniteCount - lockedInfiniteBase.length;
     return evergreenFallbackItems.slice(0, needed);
-  }, [infiniteInterleavedBase.length, evergreenFallbackItems, visibleInfiniteCount]);
+  }, [lockedInfiniteBase.length, evergreenFallbackItems, visibleInfiniteCount]);
 
   const renderedInfiniteItems = useMemo(() => {
     const base = [...renderedInfiniteFreshItems, ...renderedInfiniteEvergreenItems];
@@ -685,8 +741,11 @@ export const FeedScreen: React.FC = () => {
       });
       if (result.items.length > 0) {
         feedRepository.addItems(result.items);
+        lockedTopItemIdsRef.current = null;
+        setPendingStreamArrivals([]);
         await recomputeFeed();
         await refreshFeed();
+        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
       }
       const modeText = result.mode === 'ai' ? 'KI-Synthese' : 'Lokal';
       setSimToast(`${result.curatedCount} neu kuratiert · ${result.discardedCount} verworfen · Modus: ${modeText}`);
@@ -1306,8 +1365,36 @@ export const FeedScreen: React.FC = () => {
     </View>
   );
 
+  if (!isHydrated) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="small" color={colors.accent} />
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* Floating Arrivals Pill (WP 1): Shows when new background items arrive without jumping the stream */}
+      {pendingStreamArrivals.length > 0 && (
+        <View style={styles.floatingArrivalsContainer} pointerEvents="box-none">
+          <TouchableOpacity
+            activeOpacity={0.88}
+            onPress={handleRevealPendingArrivals}
+            style={[
+              styles.floatingArrivalsPill,
+              { backgroundColor: colors.accent, shadowColor: colors.accent }
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`${pendingStreamArrivals.length} neue Beiträge aus der Redaktion anzeigen`}
+          >
+            <Text style={[styles.floatingArrivalsText, { color: '#0E1424' }]}>
+              ↑ {pendingStreamArrivals.length} {pendingStreamArrivals.length === 1 ? 'neuer Beitrag' : 'neue Beiträge'} aus der Redaktion anzeigen
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Top Header: Reddit Desktop Header vs Mobile Header */}
       {isDesktop ? (
         <DesktopRedditHeader
@@ -1633,6 +1720,28 @@ export const FeedScreen: React.FC = () => {
                         {isRunningManualPipeline
                           ? `Pipeline: ${manualPipelineStageLabel || 'Läuft…'}`
                           : 'Recherche jetzt starten'}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => setShowPipelineModal(true)}
+                      style={[
+                        styles.sortTab,
+                        {
+                          borderColor: colors.borderSubtle,
+                          backgroundColor: colors.surfaceSecondary,
+                          paddingVertical: 5,
+                          paddingHorizontal: 8,
+                          marginLeft: 6
+                        }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Pipeline-Einblick"
+                    >
+                      <Text style={{ fontSize: 12, marginRight: 3 }}>ℹ️</Text>
+                      <Text style={[styles.sortTabText, { color: colors.textSecondary, fontSize: 11.5 }]}>
+                        Pipeline-Einblick
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -2336,6 +2445,13 @@ export const FeedScreen: React.FC = () => {
         isDark={isDark}
       />
 
+      {/* 5-Stage Virtual Newsroom Pipeline Inspector Modal */}
+      <NewsroomPipelineModal
+        visible={showPipelineModal}
+        onClose={() => setShowPipelineModal(false)}
+        onSelectArticle={openArticle}
+      />
+
       {/* Channel Edit & Typo-Correction Modal */}
       {editingChannel && (
         <Modal
@@ -2442,6 +2558,31 @@ export const FeedScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1
+  },
+  floatingArrivalsContainer: {
+    position: 'absolute',
+    top: 54,
+    left: 0,
+    right: 0,
+    zIndex: 999,
+    alignItems: 'center',
+    pointerEvents: 'box-none'
+  },
+  floatingArrivalsPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 20,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6
+  },
+  floatingArrivalsText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    letterSpacing: 0.2
   },
   operationStatusArea: {
     width: '100%',

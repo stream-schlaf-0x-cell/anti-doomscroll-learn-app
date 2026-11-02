@@ -13,10 +13,11 @@ import { feedRepository } from '../data/feedRepository';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 
 export type ChannelArchetype =
-  | 'visual_gallery'
+  | 'contemplation'
+  | 'discourse_essay'
   | 'research_pedagogy'
-  | 'tech_craft'
-  | 'discourse_essay';
+  | 'visual_gallery'
+  | 'tech_craft';
 
 export interface SubchannelInput {
   id?: string;
@@ -90,6 +91,9 @@ export function detectChannelArchetype(
   const hay = `${slug} ${title.toLowerCase()} ${description.toLowerCase()}`.trim();
 
   // 1. Explicit primaryTopic mapping
+  if (primaryTopic === 'contemplation_mind') {
+    return 'contemplation';
+  }
   if (primaryTopic === 'art_aesthetics' || primaryTopic === 'memes_satire') {
     return 'visual_gallery';
   }
@@ -101,11 +105,19 @@ export function detectChannelArchetype(
   }
   if (
     primaryTopic === 'philosophy_ethics' ||
-    primaryTopic === 'contemplation_mind' ||
     primaryTopic === 'book_mastery' ||
     primaryTopic === 'opportunities_growth'
   ) {
     return 'discourse_essay';
+  }
+
+  // 1b. Contemplation & Mental Clarity
+  if (
+    /\b(buddhismus|buddhis|kontemplation|kontemplat|meditation|achtsamkeit|mindfulness|stille|zen|vipassana|qi gong|dao|tao)\b/i.test(
+      hay
+    )
+  ) {
+    return 'contemplation';
   }
 
   // 2. Tech, AI, Craft & Sound Engineering Archetype

@@ -47,7 +47,7 @@ describe('Subreddit Purity, Visual Art Gallery & Formatting Sanitizer Audit', ()
     // Discourse & Philosophy
     assert.equal(detectChannelArchetype('c/dialektik'), 'discourse_essay');
     assert.equal(detectChannelArchetype('c/books'), 'discourse_essay');
-    assert.equal(detectChannelArchetype('c/kontemplation'), 'discourse_essay');
+    assert.equal(detectChannelArchetype('c/kontemplation'), 'contemplation');
   });
 
   it('2. Legacy typo c/visivle_learning automatically resolves to c/visible_learning', () => {

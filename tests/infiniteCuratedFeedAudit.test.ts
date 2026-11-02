@@ -94,13 +94,13 @@ describe('Phase 5: Always-Curated Infinite Bloomscroll & Full Feed Audit Suite',
   it('Test 2 (Strict "Heute" 48-Hour Contract): sortFeedForDisplay(..., "today") returns 0 articles from Oct 18 and strictly enforces age <= 48h', () => {
     const nowMs = Date.now();
     const sixHoursAgo = new Date(nowMs - 6 * 3600 * 1000).toISOString();
-    const twentyHoursAgo = new Date(nowMs - 20 * 3600 * 1000).toISOString();
+    const tenHoursAgo = new Date(nowMs - 10 * 3600 * 1000).toISOString();
     const oct18Stale = '2026-10-18T14:30:00.000Z';
     const fiveDaysAgo = new Date(nowMs - 5 * 24 * 3600 * 1000).toISOString();
 
     const pool: ScoredFeedItem[] = [
       createCuratedMockItem('fresh-1', { publishedAt: sixHoursAgo, publicationDateReliable: true }),
-      createCuratedMockItem('fresh-2', { publishedAt: twentyHoursAgo, publicationDateReliable: true }),
+      createCuratedMockItem('fresh-2', { publishedAt: tenHoursAgo, publicationDateReliable: true }),
       createCuratedMockItem('stale-oct18-1', { publishedAt: oct18Stale, publicationDateReliable: true }),
       createCuratedMockItem('stale-oct18-2', { publishedAt: oct18Stale, publicationDateReliable: true }),
       createCuratedMockItem('stale-5d', { publishedAt: fiveDaysAgo, publicationDateReliable: true }),

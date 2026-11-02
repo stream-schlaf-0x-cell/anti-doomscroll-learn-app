@@ -46,17 +46,21 @@ interface FeedCardProps {
 function formatRelativeTime(isoString?: string): string {
   if (!isoString) return 'Heute';
   try {
-    const diffMs = Date.now() - new Date(isoString).getTime();
+    const pubDate = new Date(isoString);
+    const now = new Date();
+    const diffMs = now.getTime() - pubDate.getTime();
     if (diffMs < 0) return 'Gerade eben';
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
     if (diffMinutes < 5) return 'Gerade eben';
     if (diffMinutes < 60) return `vor ${diffMinutes} Min.`;
     const diffHours = Math.floor(diffMinutes / 60);
-    if (diffHours < 24) return `vor ${diffHours} Std.`;
+    // Overnight recent (< 16h) outputs "vor X Std."
+    if (diffHours < 16) return `vor ${diffHours} Std.`;
+    const isYesterday = pubDate.getDate() === now.getDate() - 1 || diffHours < 36;
+    if (isYesterday) return 'gestern';
     const diffDays = Math.floor(diffHours / 24);
-    if (diffDays === 1) return 'gestern';
     if (diffDays < 7) return `vor ${diffDays} Tagen`;
-    return new Date(isoString).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+    return pubDate.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
   } catch {
     return 'Heute';
   }
@@ -406,6 +410,34 @@ export const FeedCard: React.FC<FeedCardProps> = ({
           </View>
         )}
       </View>
+
+      {/* Virtual Newsroom / Editorial Origin Badges */}
+      {typeof item.pinnedManualRunAt === 'number' && (Date.now() - item.pinnedManualRunAt) <= 15 * 60 * 1000 && (
+        <View style={[styles.editorialBadgeRow, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}>
+          <Ionicons name="sparkles" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+          <Text style={[styles.editorialBadgeText, { color: colors.accent, fontWeight: '700' }]}>
+            ✨ Frisch aus der Redaktion
+          </Text>
+        </View>
+      )}
+
+      {Boolean(item.recommendedBecauseOfTitle) && (
+        <View style={[styles.editorialBadgeRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <Ionicons name="link-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+          <Text style={[styles.editorialBadgeText, { color: colors.textSecondary }]} numberOfLines={1}>
+            🔗 Vertiefung zu deinem Upvote: „{item.recommendedBecauseOfTitle}“
+          </Text>
+        </View>
+      )}
+
+      {Boolean(item.isStoryDossier && item.corroboratingSources && item.corroboratingSources.length > 0) && (
+        <View style={[styles.editorialBadgeRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <Ionicons name="newspaper-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+          <Text style={[styles.editorialBadgeText, { color: colors.textSecondary }]} numberOfLines={1}>
+            📰 Themen-Dossier · Auch beleuchtet von: {item.corroboratingSources!.map(s => s.publisher).join(', ')}
+          </Text>
+        </View>
+      )}
 
       {/* 2. HEADLINE & NON-REDUNDANT SUBTITLE */}
       <TouchableOpacity activeOpacity={0.85} onPress={handleCardPress}>
@@ -1034,6 +1066,20 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '700',
     flex: 1
+  },
+  editorialBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    marginBottom: 8
+  },
+  editorialBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '600'
   },
   feedText: {
     fontSize: 14.5,

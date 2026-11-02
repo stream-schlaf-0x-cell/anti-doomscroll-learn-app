@@ -336,10 +336,20 @@ const MainNavigator: React.FC = () => {
         <View
           style={[
             styles.tabBar,
+            Platform.OS === 'web' && {
+              position: 'fixed' as any,
+              bottom: 0,
+              left: 0,
+              right: 0,
+              zIndex: 1000
+            },
             {
-              backgroundColor: colors.surface,
+              backgroundColor: '#0E1424',
               borderTopColor: colors.borderSubtle,
-              paddingBottom: Math.max(insets.bottom, 14)
+              borderBottomWidth: 0,
+              marginBottom: 0,
+              paddingBottom: Math.max(insets.bottom, 14),
+              ...(Platform.OS === 'web' ? { paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)' as any } : {})
             }
           ]}
         >
@@ -624,6 +634,8 @@ const styles = StyleSheet.create({
   },
   tabBar: {
     borderTopWidth: 0.5,
+    borderBottomWidth: 0,
+    marginBottom: 0,
     paddingTop: 8,
     elevation: 8,
     shadowColor: '#000',

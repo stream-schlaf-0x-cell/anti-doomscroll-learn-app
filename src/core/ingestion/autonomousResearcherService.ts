@@ -416,7 +416,7 @@ export class AutonomousResearcherService {
           contentHash: `openalex-${workId}`,
           canonicalUrl: doiUrl.startsWith('http') ? doiUrl : 'https://openalex.org',
           hasAuthenticImage: false,
-          space: 'c/serendipity',
+          space: 'c/dialektik',
           flair: '🔬 Fachpublikation',
           keyInsight,
           perspectiveDetails: {

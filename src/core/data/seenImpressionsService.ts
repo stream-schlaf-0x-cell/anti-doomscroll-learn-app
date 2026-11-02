@@ -2,20 +2,23 @@ import { AtemStorage, appStorage } from './storage';
 
 export interface SeenImpressionRecord {
   itemId: string;
-  seenAt: string; // ISO timestamp
-  impressionCount: number;
+  firstSeenAt: string; // ISO timestamp
+  lastSeenAt: string;  // ISO timestamp
+  count: number;
 }
 
 /**
- * SeenImpressionsService
+ * SeenImpressionsService (Upgraded to v2 with 72h Cooldown & Session Memory)
  * 
- * Tracks cards the user has scrolled past so that on refresh, the "🔥 Für dich"
- * feed rotates them down and surfaces fresh, unseen discoveries at the top.
- * Storage key: @atem:seen_impressions:v1
+ * Tracks cards the user has viewed or scrolled past so that:
+ * 1. Fresh discoveries surface at the top of "🔥 Für dich".
+ * 2. Seen cards receive a hard -3.0 score penalty for 72 hours, preventing 3-day repetition.
+ * Storage key: @atem:seen_impressions:v2
  */
 export class SeenImpressionsService {
-  public static readonly STORAGE_KEY = '@atem:seen_impressions:v1';
-  public static readonly MAX_RECORDS = 800;
+  public static readonly STORAGE_KEY = '@atem:seen_impressions:v2';
+  public static readonly LEGACY_STORAGE_KEY = '@atem:seen_impressions:v1';
+  public static readonly MAX_RECORDS = 1000;
 
   constructor(private storage: AtemStorage = appStorage) {}
 
@@ -30,19 +33,7 @@ export class SeenImpressionsService {
     const nowIso = new Date().toISOString();
 
     await this.storage.runTransaction(SeenImpressionsService.STORAGE_KEY, async (tx) => {
-      const raw = await tx.get();
-      let records: SeenImpressionRecord[] = [];
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            records = parsed;
-          }
-        } catch {
-          records = [];
-        }
-      }
-
+      let records = await this.readInternalRecords(tx);
       const map = new Map<string, SeenImpressionRecord>();
       for (const rec of records) {
         map.set(rec.itemId, rec);
@@ -51,22 +42,23 @@ export class SeenImpressionsService {
       for (const id of cleanIds) {
         const existing = map.get(id);
         if (existing) {
-          existing.seenAt = nowIso;
-          existing.impressionCount = (existing.impressionCount || 1) + 1;
+          existing.lastSeenAt = nowIso;
+          existing.count = (existing.count || 1) + 1;
         } else {
           const newRec: SeenImpressionRecord = {
             itemId: id,
-            seenAt: nowIso,
-            impressionCount: 1
+            firstSeenAt: nowIso,
+            lastSeenAt: nowIso,
+            count: 1
           };
           map.set(id, newRec);
           records.push(newRec);
         }
       }
 
-      // Cap at MAX_RECORDS, pruning oldest seenAt
+      // Cap at MAX_RECORDS, pruning oldest lastSeenAt
       if (records.length > SeenImpressionsService.MAX_RECORDS) {
-        records.sort((a, b) => new Date(a.seenAt).getTime() - new Date(b.seenAt).getTime());
+        records.sort((a, b) => new Date(a.lastSeenAt).getTime() - new Date(b.lastSeenAt).getTime());
         records = records.slice(records.length - SeenImpressionsService.MAX_RECORDS);
       }
 
@@ -74,21 +66,63 @@ export class SeenImpressionsService {
     });
   }
 
+  private async readInternalRecords(tx?: { get: () => Promise<string | null> }): Promise<SeenImpressionRecord[]> {
+    let raw = tx ? await tx.get() : await this.storage.getItem(SeenImpressionsService.STORAGE_KEY);
+    if (!raw) {
+      // Check legacy v1 key and migrate
+      try {
+        const legacyRaw = await this.storage.getItem(SeenImpressionsService.LEGACY_STORAGE_KEY);
+        if (legacyRaw) {
+          const parsed = JSON.parse(legacyRaw);
+          if (Array.isArray(parsed)) {
+            return parsed.map((item: any) => ({
+              itemId: String(item.itemId || item.id || ''),
+              firstSeenAt: String(item.firstSeenAt || item.seenAt || new Date().toISOString()),
+              lastSeenAt: String(item.lastSeenAt || item.seenAt || new Date().toISOString()),
+              count: Number(item.count || item.impressionCount || 1)
+            })).filter(r => Boolean(r.itemId));
+          }
+        }
+      } catch {
+        // Fallback
+      }
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item: any) => ({
+          itemId: String(item.itemId || item.id || ''),
+          firstSeenAt: String(item.firstSeenAt || item.seenAt || new Date().toISOString()),
+          lastSeenAt: String(item.lastSeenAt || item.seenAt || new Date().toISOString()),
+          count: Number(item.count || item.impressionCount || 1)
+        })).filter(r => Boolean(r.itemId));
+      }
+    } catch {
+      return [];
+    }
+    return [];
+  }
+
+  /**
+   * Returns a Map of item IDs to their SeenImpressionRecord.
+   */
+  public async getSeenRecordMap(): Promise<Map<string, SeenImpressionRecord>> {
+    const records = await this.readInternalRecords();
+    const map = new Map<string, SeenImpressionRecord>();
+    for (const r of records) {
+      map.set(r.itemId, r);
+    }
+    return map;
+  }
+
   /**
    * Returns a Set of all item IDs that have been seen.
    */
   public async getSeenIds(): Promise<Set<string>> {
-    const raw = await this.storage.getItem(SeenImpressionsService.STORAGE_KEY);
-    if (!raw) return new Set();
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return new Set(parsed.map((r: SeenImpressionRecord) => r.itemId).filter(Boolean));
-      }
-    } catch {
-      // Fallback
-    }
-    return new Set();
+    const records = await this.readInternalRecords();
+    return new Set(records.map(r => r.itemId).filter(Boolean));
   }
 
   /**
@@ -96,6 +130,7 @@ export class SeenImpressionsService {
    */
   public async clearSeen(): Promise<void> {
     await this.storage.removeItem(SeenImpressionsService.STORAGE_KEY);
+    await this.storage.removeItem(SeenImpressionsService.LEGACY_STORAGE_KEY).catch(() => {});
   }
 }
 
