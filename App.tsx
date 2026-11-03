@@ -102,7 +102,7 @@ const MainNavigator: React.FC = () => {
       style={[
         styles.mainSafeArea,
         {
-          backgroundColor: colors.background,
+          backgroundColor: isDark ? '#0E1424' : colors.surface,
           paddingBottom: 0
         }
       ]}
@@ -274,7 +274,7 @@ const MainNavigator: React.FC = () => {
       )}
 
       {/* Screen Body: Always mounted to preserve feed scroll position and topic filters! */}
-      <View style={styles.screenContainer}>
+      <View style={[styles.screenContainer, { backgroundColor: colors.background }]}>
         <View
           style={[
             styles.tabPane,
@@ -344,12 +344,14 @@ const MainNavigator: React.FC = () => {
               zIndex: 1000
             },
             {
-              backgroundColor: '#0E1424',
+              backgroundColor: isDark ? '#0E1424' : colors.surface,
               borderTopColor: colors.borderSubtle,
               borderBottomWidth: 0,
               marginBottom: 0,
               paddingBottom: Math.max(insets.bottom, 14),
-              ...(Platform.OS === 'web' ? { paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)' as any } : {})
+              ...(Platform.OS === 'web'
+                ? { paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 14px)' as any }
+                : {})
             }
           ]}
         >
@@ -551,7 +553,8 @@ const styles = StyleSheet.create({
     marginRight: 8
   },
   screenContainer: {
-    flex: 1
+    flex: 1,
+    backgroundColor: '#0A0E1A'
   },
   tabPane: {
     flex: 1
@@ -637,11 +640,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
     marginBottom: 0,
     paddingTop: 8,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
     height: 'auto',
     width: '100%'
   },

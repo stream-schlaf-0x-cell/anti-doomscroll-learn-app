@@ -44,6 +44,7 @@ import { defaultFeedOperationManager } from '../feed/FeedOperationManager';
 import { runInPlaceDataMigration } from '../data/migrationService';
 import { satisfiesDefaultCuratedStandard, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
 import { harvestRabbitHoleForItem } from '../synthesis/rabbitHoleService';
+import { seenImpressionsService } from '../data/seenImpressionsService';
 
 export function extractSalientKeywords(titleOrItem: string | Pick<FeedItem, 'title' | 'subtitle' | 'keyInsight' | 'feedText'>): string[] {
   return extractConceptKeywords(titleOrItem);
@@ -701,8 +702,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try {
           const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
           const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
-          if (curatedLive.length > 0 && (feedRepository as any).addItems) {
-            (feedRepository as any).addItems(curatedLive);
+          const seenIds = await seenImpressionsService.getSeenIds();
+          const safeLive = curatedLive.map(item => {
+            if (item.isStaticFallback || seenIds.has(item.id)) {
+              const { pinnedManualRunAt, ...rest } = item;
+              return rest;
+            }
+            return item;
+          });
+          if (safeLive.length > 0 && (feedRepository as any).addItems) {
+            (feedRepository as any).addItems(safeLive);
           }
         } catch {
           // Non-blocking fallback
@@ -780,8 +789,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
         const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
-        if (curatedLive.length > 0 && (feedRepository as any).addItems) {
-          (feedRepository as any).addItems(curatedLive);
+        const seenIds = await seenImpressionsService.getSeenIds();
+        const safeLive = curatedLive.map(item => {
+          if (item.isStaticFallback || seenIds.has(item.id)) {
+            const { pinnedManualRunAt, ...rest } = item;
+            return rest;
+          }
+          return item;
+        });
+        if (safeLive.length > 0 && (feedRepository as any).addItems) {
+          (feedRepository as any).addItems(safeLive);
         }
       } catch {
         // Fallback
@@ -810,8 +827,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
       const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
-      if (curatedLive.length > 0 && (feedRepository as any).addItems) {
-        (feedRepository as any).addItems(curatedLive);
+      const seenIds = await seenImpressionsService.getSeenIds();
+      const safeLive = curatedLive.map(item => {
+        if (item.isStaticFallback || seenIds.has(item.id)) {
+          const { pinnedManualRunAt, ...rest } = item;
+          return rest;
+        }
+        return item;
+      });
+      if (safeLive.length > 0 && (feedRepository as any).addItems) {
+        (feedRepository as any).addItems(safeLive);
       }
     } catch (err) {
       console.warn('Live News Fetch fallback:', err);

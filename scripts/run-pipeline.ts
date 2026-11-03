@@ -112,6 +112,7 @@ async function runIngestionPipeline() {
     const enriched = await enricher.enrichBatch(itemsToEnrich);
     const combinedCurated = [...enriched, ...tailItems]
       .map(sanitizeCuratedFeedItem)
+      .filter(item => !String(item.publishedAt).startsWith('2026-10-18') && item.id !== 'live-schwitzgebel-splintered-mind-1238336654')
       .filter(satisfiesDefaultCuratedStandard);
     const finalItems = enforceCuratedStreamDiversity(combinedCurated);
 

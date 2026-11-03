@@ -484,7 +484,8 @@ export const FeedItemSchema = z.object({
   isStoryDossier: z.boolean().optional(),
   corroboratingSources: z.array(CorroboratingSourceSchema).optional(),
   recommendedBecauseOfTitle: z.string().optional(),
-  socraticSalon: SocraticSalonPerspectivesSchema.optional()
+  socraticSalon: SocraticSalonPerspectivesSchema.optional(),
+  isStaticFallback: z.boolean().optional()
 });
 export const ArtMetaSchema = z.object({
   artist: z.string(),

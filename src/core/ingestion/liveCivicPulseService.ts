@@ -12,6 +12,10 @@ import { enforceCuratedStreamDiversity } from '../domain/ranking';
 import { AiCredentials, hasAiConfiguration, loadAiCredentials } from '../ai/atmenAiClient';
 import { feedRepository } from '../data/feedRepository';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
+import { seenImpressionsService } from '../data/seenImpressionsService';
+
+const STATIC_FALLBACK_TIMESTAMP = '2026-10-25T09:00:00.000Z';
+const STATIC_FALLBACK_DATE = '2026-10-25';
 
 export type ManualPipelinePhase =
   | 'fetching_sources'
@@ -97,12 +101,10 @@ export class LiveCivicPulseService {
    * macro civic reality with lived human perspectives, educational practice, and intellectual surprises.
    */
   public static getCuratedRealityAndSerendipityPool(): FeedItem[] {
-    const now = new Date().toISOString();
-    const today = now.slice(0, 10);
-
     const pulseItems: FeedItem[] = [
       {
-        id: 'civic-pulse-saxony-education-digital-sovereignty',
+        id: 'civic-fallback-sachsen-ki-1',
+        isStaticFallback: true,
         type: 'deep_dive',
         format: 'long_invitation',
         title: 'Digitale Souveränität im Klassenzimmer: Warum sächsische Schulen und Universitäten auf offene KI-Architekturen blicken',
@@ -120,20 +122,20 @@ export class LiveCivicPulseService {
             publisher: 'Deutsches Schulportal',
             originalUrl: 'https://deutsches-schulportal.de/unterricht/digitale-souveraenitaet-und-ki-im-unterricht/',
             title: 'Digitale Souveränität und Urteilskraft im Unterricht',
-            publicationTimestamp: now,
-            retrievalTimestamp: now,
+            publicationTimestamp: STATIC_FALLBACK_TIMESTAMP,
+            retrievalTimestamp: STATIC_FALLBACK_TIMESTAMP,
             author: 'Redaktion Bildung & Praxis',
             isVerified: true
           }
         ],
-        publishedAt: now,
+        publishedAt: STATIC_FALLBACK_TIMESTAMP,
         publicationDateReliable: true,
-        generatedAt: now,
+        generatedAt: STATIC_FALLBACK_TIMESTAMP,
         estimatedReadingMinutes: 5,
         relevanceExplanation: 'Verbindet sächsische Bildungspraxis (Dresden/Leipzig) mit KI-Ethik und Didaktik.',
         contentStatus: 'editorial_briefing',
         isDailyEdition: false,
-        editionDate: today,
+        editionDate: STATIC_FALLBACK_DATE,
         isTeachingRelated: true,
         isChallengingPerspective: true,
         isDemonstration: false,
@@ -164,6 +166,7 @@ export class LiveCivicPulseService {
       },
       {
         id: 'serendipity-paradox-of-effortless-friction',
+        isStaticFallback: true,
         type: 'perspective',
         format: 'perspective_disagreement',
         title: 'Das Paradox der Reibungslosigkeit: Warum unser Geist kognitive Widerstände braucht, um Sinn zu erfahren',
@@ -181,20 +184,20 @@ export class LiveCivicPulseService {
             publisher: 'Aeon & Psyche Essays',
             originalUrl: 'https://aeon.co/essays/why-cognitive-friction-is-essential-for-human-meaning',
             title: 'Why Cognitive Friction is Essential for Meaning',
-            publicationTimestamp: now,
-            retrievalTimestamp: now,
+            publicationTimestamp: STATIC_FALLBACK_TIMESTAMP,
+            retrievalTimestamp: STATIC_FALLBACK_TIMESTAMP,
             author: 'Aeon Editorial',
             isVerified: true
           }
         ],
-        publishedAt: now,
+        publishedAt: STATIC_FALLBACK_TIMESTAMP,
         publicationDateReliable: true,
-        generatedAt: now,
+        generatedAt: STATIC_FALLBACK_TIMESTAMP,
         estimatedReadingMinutes: 4,
         relevanceExplanation: 'Serendipity-Impuls: Verbindet Kognitionspsychologie, Philosophie und elektronische Klangkunst.',
         contentStatus: 'philosophical_perspective',
         isDailyEdition: false,
-        editionDate: today,
+        editionDate: STATIC_FALLBACK_DATE,
         isTeachingRelated: false,
         isChallengingPerspective: true,
         isDemonstration: false,
@@ -225,6 +228,7 @@ export class LiveCivicPulseService {
       },
       {
         id: 'civic-pulse-europe-digital-commons-sovereignty',
+        isStaticFallback: true,
         type: 'deep_dive',
         format: 'sourced_update',
         title: 'Europäische Digitale Allmende: Warum offene Protokolle und öffentlich-rechtliche Wissensräume zur Demokratiefrage werden',
@@ -242,20 +246,20 @@ export class LiveCivicPulseService {
             publisher: 'Verfassungsblog',
             originalUrl: 'https://verfassungsblog.de/category/debates/',
             title: 'Digitale Allmende und europäische Öffentlichkeit',
-            publicationTimestamp: now,
-            retrievalTimestamp: now,
+            publicationTimestamp: STATIC_FALLBACK_TIMESTAMP,
+            retrievalTimestamp: STATIC_FALLBACK_TIMESTAMP,
             author: 'Verfassungsblog Redaktion',
             isVerified: true
           }
         ],
-        publishedAt: now,
+        publishedAt: STATIC_FALLBACK_TIMESTAMP,
         publicationDateReliable: true,
-        generatedAt: now,
+        generatedAt: STATIC_FALLBACK_TIMESTAMP,
         estimatedReadingMinutes: 5,
         relevanceExplanation: 'Makro-Perspektive auf europäische Digitalpolitik und demokratische Öffentlichkeit.',
         contentStatus: 'editorial_briefing',
         isDailyEdition: false,
-        editionDate: today,
+        editionDate: STATIC_FALLBACK_DATE,
         isTeachingRelated: false,
         isChallengingPerspective: true,
         isDemonstration: false,
@@ -286,6 +290,7 @@ export class LiveCivicPulseService {
       },
       {
         id: 'lived-reality-modular-synthesis-tactile-thinking',
+        isStaticFallback: true,
         type: 'perspective',
         format: 'long_invitation',
         title: 'Taktiles Denken am Modular-Synthesizer: Was das Patchen analoger Schaltkreise über menschliche Kreativität lehrt',
@@ -303,20 +308,20 @@ export class LiveCivicPulseService {
             publisher: 'Sound On Sound · Synthesis Practice',
             originalUrl: 'https://www.soundonsound.com/synthesizers',
             title: 'Tactile Thinking and Modular Synthesis',
-            publicationTimestamp: now,
-            retrievalTimestamp: now,
+            publicationTimestamp: STATIC_FALLBACK_TIMESTAMP,
+            retrievalTimestamp: STATIC_FALLBACK_TIMESTAMP,
             author: 'Sound On Sound',
             isVerified: true
           }
         ],
-        publishedAt: now,
+        publishedAt: STATIC_FALLBACK_TIMESTAMP,
         publicationDateReliable: true,
-        generatedAt: now,
+        generatedAt: STATIC_FALLBACK_TIMESTAMP,
         estimatedReadingMinutes: 4,
         relevanceExplanation: 'Gelebte Praxis elektronischer Klangsynthese und kreativer Entschleunigung.',
         contentStatus: 'editorial_briefing',
         isDailyEdition: false,
-        editionDate: today,
+        editionDate: STATIC_FALLBACK_DATE,
         isTeachingRelated: false,
         isChallengingPerspective: false,
         isDemonstration: false,
@@ -341,6 +346,7 @@ export class LiveCivicPulseService {
       },
       {
         id: 'serendipity-japanese-ma-negative-space-architecture',
+        isStaticFallback: true,
         type: 'perspective',
         format: 'surprising_connection',
         title: 'Die Ästhetik des Zwischenraums (Ma 間): Wie japanische Architektur und moderne Typografie Stille sichtbar machen',
@@ -358,20 +364,20 @@ export class LiveCivicPulseService {
             publisher: 'Public Domain Review · Aesthetics',
             originalUrl: 'https://publicdomainreview.org/collections/',
             title: 'Ma: The Aesthetics of Negative Space',
-            publicationTimestamp: now,
-            retrievalTimestamp: now,
+            publicationTimestamp: STATIC_FALLBACK_TIMESTAMP,
+            retrievalTimestamp: STATIC_FALLBACK_TIMESTAMP,
             author: 'Editorial Archive',
             isVerified: true
           }
         ],
-        publishedAt: now,
+        publishedAt: STATIC_FALLBACK_TIMESTAMP,
         publicationDateReliable: true,
-        generatedAt: now,
+        generatedAt: STATIC_FALLBACK_TIMESTAMP,
         estimatedReadingMinutes: 4,
         relevanceExplanation: 'Serendipity-Fundstück außerhalb des Tagesgeschäfts: Verbindet Ästhetik, Kontemplation und Typografie.',
         contentStatus: 'philosophical_perspective',
         isDailyEdition: false,
-        editionDate: today,
+        editionDate: STATIC_FALLBACK_DATE,
         isTeachingRelated: false,
         isChallengingPerspective: false,
         isDemonstration: false,
@@ -505,9 +511,19 @@ export class LiveCivicPulseService {
             sourcesCheckedCount += artRes.value.length;
           }
 
-          rawCandidates = deskItems.length > 0
-            ? [...this.getCuratedRealityAndSerendipityPool().slice(0, 4), ...deskItems]
-            : [...this.getCuratedRealityAndSerendipityPool(), ...REAL_KNOWLEDGE_VAULT.slice(0, 6)];
+          const seenIds = await seenImpressionsService.getSeenIds();
+          if (deskItems.length > 0) {
+            rawCandidates = deskItems;
+          } else {
+            // Live network yielded 0 real items: only include fallback items if not already seen in seenImpressionsService
+            const unseenFallbacks = this.getCuratedRealityAndSerendipityPool().filter(
+              item => !seenIds.has(item.id)
+            );
+            const unseenVault = REAL_KNOWLEDGE_VAULT.slice(0, 6).filter(
+              item => !seenIds.has(item.id)
+            );
+            rawCandidates = [...unseenFallbacks, ...unseenVault];
+          }
         }
 
         const stage1Duration = Date.now() - stage1Start;
@@ -540,18 +556,26 @@ export class LiveCivicPulseService {
         const batchReport = defaultBatchEditionEnricher.getLastBatchReport();
         const usedAiMode = Boolean(hasAi && batchReport.usedAI);
 
-        // Stamp every newly enriched item with pinnedManualRunAt = Date.now() and isNewlyCurated = true
+        // Stamp newly enriched items with pinnedManualRunAt = Date.now() and isNewlyCurated = true
+        // Only stamp items that were genuinely newly discovered (not already in existingIds, not in seenImpressionsService, and never on static fallback items)
         const nowRunTime = Date.now();
         const ressortCounts: Record<string, number> = {};
+        const seenIds = await seenImpressionsService.getSeenIds();
+        const existingIds = options?.existingIds ?? new Set<string>();
 
         const stampedCurated = enrichedBatch.map(item => {
           const sanitized = sanitizeCuratedFeedItem(item);
           const space = sanitized.space || 'c/dialektik';
           ressortCounts[space] = (ressortCounts[space] || 0) + 1;
+
+          const isGenuinelyNew =
+            !item.isStaticFallback &&
+            !existingIds.has(item.id) &&
+            !seenIds.has(item.id);
+
           return {
             ...sanitized,
-            pinnedManualRunAt: nowRunTime,
-            isNewlyCurated: true,
+            ...(isGenuinelyNew ? { pinnedManualRunAt: nowRunTime, isNewlyCurated: true } : {}),
             curatedAt: new Date(nowRunTime).toISOString()
           };
         });

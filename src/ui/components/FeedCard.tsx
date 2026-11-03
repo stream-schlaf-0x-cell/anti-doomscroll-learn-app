@@ -201,11 +201,12 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const spaceName = item.space || spaceMeta?.space || `c/${item.primaryTopic}`;
   const spaceColor = spaceMeta?.color || colors.accent;
 
-  const publisherName =
+  const rawPublisherName =
     item.sourceBroadcasterName ||
     item.sourceReferences[0]?.publisher ||
     item.sourceReferences[0]?.author ||
     'Fachquelle';
+  const publisherName = rawPublisherName.replace(/^www\./i, '');
   const timeAgo = formatHonestTimeLabel(item);
   const provenanceLabel = formatVerifiedProvenanceLabel(item);
 
@@ -258,6 +259,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     : showAuthenticImage
     ? (usedFallbackUrl ? rawItemUri : (upgradedItemUri || rawItemUri))
     : '';
+
+  const hasValidImage = Boolean(activeVisualUri) && !imageError && !imageRejected;
 
   const handleImageError = () => {
     const rawUri = isArtCard ? rawArtUri : rawItemUri;
@@ -431,10 +434,25 @@ export const FeedCard: React.FC<FeedCardProps> = ({
       )}
 
       {Boolean(item.isStoryDossier && item.corroboratingSources && item.corroboratingSources.length > 0) && (
-        <View style={[styles.editorialBadgeRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-          <Ionicons name="newspaper-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
-          <Text style={[styles.editorialBadgeText, { color: colors.textSecondary }]} numberOfLines={1}>
-            📰 Themen-Dossier · Auch beleuchtet von: {item.corroboratingSources!.map(s => s.publisher).join(', ')}
+        <View
+          style={[
+            styles.editorialBadgeRow,
+            {
+              backgroundColor: colors.surfaceSecondary,
+              borderColor: colors.borderSubtle,
+              maxWidth: '100%',
+              flexShrink: 1,
+              overflow: 'hidden'
+            }
+          ]}
+        >
+          <Ionicons name="newspaper-outline" size={12} color={colors.accent} style={{ marginRight: 4, flexShrink: 0 }} />
+          <Text
+            style={[styles.editorialBadgeText, { color: colors.textSecondary, flexShrink: 1 }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            Themen-Dossier · Auch beleuchtet von: {item.corroboratingSources!.map(s => s.publisher).join(', ')}
           </Text>
         </View>
       )}
@@ -451,7 +469,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
           {item.title}
         </Text>
 
-        {!isSubtitleRedundant && item.subtitle && (
+        {!isSubtitleRedundant && item.subtitle && (hasValidImage || !shouldShowBodyText) && (
           <Text style={[styles.subtitle, { color: colors.textSecondary }]} numberOfLines={2}>
             {item.subtitle}
           </Text>
@@ -555,7 +573,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
               isQuick20sCard && styles.quick20sFeedText,
               { color: colors.textPrimary }
             ]}
-            numberOfLines={isQuick20sCard ? undefined : isHero ? 5 : 4}
+            numberOfLines={isQuick20sCard ? undefined : !hasValidImage ? 6 : isHero ? 5 : 4}
           >
             {displayFeedText}
           </Text>
@@ -658,7 +676,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             accessibilityLabel="Originalquelle im Browser öffnen"
           >
             <Text style={[styles.actionChipText, { color: colors.textSecondary }]} numberOfLines={1}>
-              {item.sourceDomain || 'Quelle'} ↗
+              {(item.sourceDomain ? item.sourceDomain.replace(/^www\./i, '') : 'Quelle')} ↗
             </Text>
           </TouchableOpacity>
         ) : (
@@ -848,7 +866,8 @@ const styles = StyleSheet.create({
   publisherText: {
     fontSize: 12,
     fontWeight: '700',
-    flexShrink: 1
+    flexShrink: 1,
+    maxWidth: 165
   },
   timeText: {
     fontSize: 11,
@@ -1321,7 +1340,9 @@ const styles = StyleSheet.create({
   },
   actionChipText: {
     fontSize: 11.5,
-    fontWeight: '600'
+    fontWeight: '600',
+    maxWidth: 165,
+    flexShrink: 1
   },
   completedBadge: {
     marginLeft: 2

@@ -740,7 +740,15 @@ export const FeedScreen: React.FC = () => {
         }
       });
       if (result.items.length > 0) {
-        feedRepository.addItems(result.items);
+        const seenIds = await seenImpressionsService.getSeenIds();
+        const safeItems = result.items.map(item => {
+          if (item.isStaticFallback || seenIds.has(item.id) || existingIds.has(item.id)) {
+            const { pinnedManualRunAt, ...rest } = item;
+            return rest;
+          }
+          return item;
+        });
+        feedRepository.addItems(safeItems);
         lockedTopItemIdsRef.current = null;
         setPendingStreamArrivals([]);
         await recomputeFeed();
@@ -1620,80 +1628,87 @@ export const FeedScreen: React.FC = () => {
 
                 {/* 5 Distinct Sort Horizons + Manual Pipeline Control */}
                 <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('for_you')}
-                    style={[
-                      styles.sortTab,
-                      (sortMode === 'for_you' || sortMode === 'hot') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: sortMode === 'for_you' || sortMode === 'hot' }}
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.horizonScrollRow}
+                    style={{ width: '100%' }}
                   >
-                    <Text style={styles.sortEmoji}>🔥</Text>
-                    <Text style={[styles.sortTabText, { color: (sortMode === 'for_you' || sortMode === 'hot') ? colors.accent : colors.textSecondary }]}>
-                      Für dich
-                    </Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleSortChange('for_you')}
+                      style={[
+                        styles.sortTab,
+                        (sortMode === 'for_you' || sortMode === 'hot') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      ]}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: sortMode === 'for_you' || sortMode === 'hot' }}
+                    >
+                      <Text style={styles.sortEmoji}>🔥</Text>
+                      <Text style={[styles.sortTabText, { color: (sortMode === 'for_you' || sortMode === 'hot') ? colors.accent : colors.textSecondary }]}>
+                        Für dich
+                      </Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('today')}
-                    style={[
-                      styles.sortTab,
-                      (sortMode === 'today' || sortMode === 'new') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: sortMode === 'today' || sortMode === 'new' }}
-                  >
-                    <Text style={styles.sortEmoji}>⚡</Text>
-                    <Text style={[styles.sortTabText, { color: (sortMode === 'today' || sortMode === 'new') ? colors.accent : colors.textSecondary }]}>
-                      Heute
-                    </Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleSortChange('today')}
+                      style={[
+                        styles.sortTab,
+                        (sortMode === 'today' || sortMode === 'new') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      ]}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: sortMode === 'today' || sortMode === 'new' }}
+                    >
+                      <Text style={styles.sortEmoji}>⚡</Text>
+                      <Text style={[styles.sortTabText, { color: (sortMode === 'today' || sortMode === 'new') ? colors.accent : colors.textSecondary }]}>
+                        Heute
+                      </Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('discourse')}
-                    style={[
-                      styles.sortTab,
-                      sortMode === 'discourse' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: sortMode === 'discourse' }}
-                  >
-                    <Text style={styles.sortEmoji}>🧭</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'discourse' ? colors.accent : colors.textSecondary }]}>
-                      Diskurs
-                    </Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleSortChange('discourse')}
+                      style={[
+                        styles.sortTab,
+                        sortMode === 'discourse' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      ]}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: sortMode === 'discourse' }}
+                    >
+                      <Text style={styles.sortEmoji}>🧭</Text>
+                      <Text style={[styles.sortTabText, { color: sortMode === 'discourse' ? colors.accent : colors.textSecondary }]}>
+                        Diskurs
+                      </Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('top')}
-                    style={[
-                      styles.sortTab,
-                      sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: sortMode === 'top' }}
-                  >
-                    <Text style={styles.sortEmoji}>🏆</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
-                      Top
-                    </Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleSortChange('top')}
+                      style={[
+                        styles.sortTab,
+                        sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      ]}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: sortMode === 'top' }}
+                    >
+                      <Text style={styles.sortEmoji}>🏆</Text>
+                      <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
+                        Top
+                      </Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('timeless')}
-                    style={[
-                      styles.sortTab,
-                      (sortMode === 'timeless' || sortMode === 'gems') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: sortMode === 'timeless' || sortMode === 'gems' }}
-                  >
-                    <Text style={styles.sortEmoji}>💎</Text>
-                    <Text style={[styles.sortTabText, { color: (sortMode === 'timeless' || sortMode === 'gems') ? colors.accent : colors.textSecondary }]}>
-                      Zeitlos
-                    </Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleSortChange('timeless')}
+                      style={[
+                        styles.sortTab,
+                        (sortMode === 'timeless' || sortMode === 'gems') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                      ]}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: sortMode === 'timeless' || sortMode === 'gems' }}
+                    >
+                      <Text style={styles.sortEmoji}>💎</Text>
+                      <Text style={[styles.sortTabText, { color: (sortMode === 'timeless' || sortMode === 'gems') ? colors.accent : colors.textSecondary }]}>
+                        Zeitlos
+                      </Text>
+                    </TouchableOpacity>
+                  </ScrollView>
 
                   <View style={styles.sortRightInfo}>
                     <TouchableOpacity
@@ -1702,10 +1717,12 @@ export const FeedScreen: React.FC = () => {
                       style={[
                         styles.sortTab,
                         {
+                          flex: 1,
                           backgroundColor: isRunningManualPipeline ? colors.accentSubtle : colors.surfaceSecondary,
                           borderColor: isRunningManualPipeline ? colors.accent : colors.borderSubtle,
-                          paddingVertical: 5,
-                          paddingHorizontal: 10
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          justifyContent: 'center'
                         }
                       ]}
                       accessibilityRole="button"
@@ -1716,7 +1733,7 @@ export const FeedScreen: React.FC = () => {
                       ) : (
                         <Text style={{ fontSize: 12, marginRight: 4 }}>🔄</Text>
                       )}
-                      <Text style={[styles.sortTabText, { color: isRunningManualPipeline ? colors.accent : colors.textPrimary, fontSize: 11.5 }]}>
+                      <Text style={[styles.sortTabText, { color: isRunningManualPipeline ? colors.accent : colors.textPrimary, fontSize: 11.5 }]} numberOfLines={1}>
                         {isRunningManualPipeline
                           ? `Pipeline: ${manualPipelineStageLabel || 'Läuft…'}`
                           : 'Recherche jetzt starten'}
@@ -1731,7 +1748,7 @@ export const FeedScreen: React.FC = () => {
                         {
                           borderColor: colors.borderSubtle,
                           backgroundColor: colors.surfaceSecondary,
-                          paddingVertical: 5,
+                          paddingVertical: 6,
                           paddingHorizontal: 8,
                           marginLeft: 6
                         }
@@ -2909,14 +2926,17 @@ const styles = StyleSheet.create({
     maxWidth: 420
   },
   sortBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 6,
+    padding: 8,
     borderRadius: radius.md,
     borderWidth: 1,
     marginBottom: spacing.md,
+    gap: 8
+  },
+  horizonScrollRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 6,
-    flexWrap: 'wrap'
+    paddingRight: 6
   },
   sortTab: {
     flexDirection: 'row',
@@ -2936,10 +2956,9 @@ const styles = StyleSheet.create({
     fontWeight: '700'
   },
   sortRightInfo: {
-    marginLeft: 'auto',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingRight: 6
+    width: '100%'
   },
   sortInfoText: {
     fontSize: 11,
