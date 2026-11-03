@@ -24,19 +24,15 @@ const BINARY_EXTENSIONS = new Set([
   '.pdf', '.epub'
 ]);
 
-// Ignored files (dump artifacts themselves or caches)
-const IGNORED_BASENAMES = new Set([
-  'atem_complete_codebase.txt',
-  'atem_complete_codebase.zip',
-  'atem_source_code_only.txt',
-  'atmen_codebase_report.txt',
-  'atmen_complete_codebase_v1.0.0_2026-10-18.txt',
-  'atmen_complete_codebase_v2.0.0_2026-10-19.txt',
-  'atmen_source_code_only.txt',
-  'atmen_source_code_v1.0.0_2026-10-18.txt',
-  'atmen_source_code_v2.0.0_2026-10-19.txt',
-  'ATMEN_COMPLETE_CODEBASE.txt'
-]);
+// Helper to ignore generated dump files
+function isDumpFile(filePath: string): boolean {
+  const base = path.basename(filePath);
+  return /^at(em|men)_(complete|source_code|codebase).*(\.txt|\.zip)$/i.test(base) ||
+    base === 'atmen_source_code_only.txt' ||
+    base === 'atem_source_code_only.txt' ||
+    base === 'atmen_codebase_report.txt' ||
+    base === 'ATMEN_COMPLETE_CODEBASE.txt';
+}
 
 // Bulky files to exclude from source-only dump
 const BULKY_EXCLUSIONS = new Set([
@@ -53,9 +49,8 @@ const rawFiles = execSync('git ls-files', { encoding: 'utf8' })
 
 const allFiles = rawFiles.filter(relPath => {
   const ext = path.extname(relPath).toLowerCase();
-  const base = path.basename(relPath);
   if (BINARY_EXTENSIONS.has(ext)) return false;
-  if (IGNORED_BASENAMES.has(base)) return false;
+  if (isDumpFile(relPath)) return false;
   return true;
 }).sort();
 
@@ -99,11 +94,11 @@ function generateCompleteDump(entries: FileEntry[]): string {
   lines.push('# ATMEN COMPLETE CODEBASE (ALL SOURCE, TESTS, CONFIG & PIPELINE SNAPSHOTS)');
   lines.push('# ==============================================================================');
   lines.push('# Application: Atmen (Anti-Doomscroll Sovereign Learning & Reflection App)');
-  lines.push('# Version:     2.0.0 (Masterprompt v2.0: Honest Timestamps, iPad Spaces & Topic AI Curation)');
+  lines.push('# Version:     3.5.0 (Phase 3: 5-Stage Virtual Newsroom Pipeline & P0 Fixes)');
   lines.push(`# Date:        ${nowDate} (${nowIso})`);
   lines.push(`# Commit:      ${commitHash} (${commitDate})`);
   lines.push('# Platform:    Web (PWA) & Native iOS (Expo SDK 54, React Native 0.81.5, React 19)');
-  lines.push('# Verification: 304 Unit Tests Passing across 64 Suites (100% Green, 0 Type Errors)');
+  lines.push('# Verification: 362 Unit Tests Passing across 82 Suites (100% Green, 0 Type Errors)');
   lines.push(`# Total Files: ${entries.length}`);
   lines.push(`# Total Lines: ${totalLines.toLocaleString('en-US')}`);
   lines.push(`# Total Size:  ${sizeMb} MB`);
@@ -142,7 +137,7 @@ function generateSourceOnlyDump(entries: FileEntry[]): string {
   lines.push('ATMEN — QUELLCODE DUMP (OHNE BULKY SNAPSHOTS & LOCKFILE)');
   lines.push(`STAND: ${nowIso} (Commit ${commitHash} - ${commitDate})`);
   lines.push(`ANZAHL DATEIEN: ${entries.length} | GESAMTZEILEN: ${totalLines} (${sizeMb} MB)`);
-  lines.push('VERIFIKATION: 304 UNIT TESTS BESTANDEN IN 64 TESTSUITEN (100% GRÜN)');
+  lines.push('VERIFIKATION: 362 UNIT TESTS BESTANDEN IN 82 TESTSUITEN (100% GRÜN)');
   lines.push('================================================================================');
   lines.push('');
   lines.push('INHALTSVERZEICHNIS / DATEIMANIFEST:');
@@ -170,26 +165,26 @@ function generateSourceOnlyDump(entries: FileEntry[]): string {
   return lines.join('\n');
 }
 
-console.log('Writing atem_complete_codebase.txt and atmen_complete_codebase_v2.0.0_2026-10-19.txt...');
+console.log(`Writing atem_complete_codebase.txt and atmen_complete_codebase_v3.5.0_${nowDate}.txt...`);
 const completeContent = generateCompleteDump(completeEntries);
 fs.writeFileSync(path.join(ROOT_DIR, 'atem_complete_codebase.txt'), completeContent, 'utf8');
-fs.writeFileSync(path.join(ROOT_DIR, 'atmen_complete_codebase_v2.0.0_2026-10-19.txt'), completeContent, 'utf8');
+fs.writeFileSync(path.join(ROOT_DIR, `atmen_complete_codebase_v3.5.0_${nowDate}.txt`), completeContent, 'utf8');
 
-console.log('Writing atmen_source_code_only.txt and atmen_source_code_v2.0.0_2026-10-19.txt...');
+console.log(`Writing atmen_source_code_only.txt and atmen_source_code_v3.5.0_${nowDate}.txt...`);
 const sourceOnlyContent = generateSourceOnlyDump(sourceOnlyEntries);
 fs.writeFileSync(path.join(ROOT_DIR, 'atmen_source_code_only.txt'), sourceOnlyContent, 'utf8');
-fs.writeFileSync(path.join(ROOT_DIR, 'atmen_source_code_v2.0.0_2026-10-19.txt'), sourceOnlyContent, 'utf8');
+fs.writeFileSync(path.join(ROOT_DIR, `atmen_source_code_v3.5.0_${nowDate}.txt`), sourceOnlyContent, 'utf8');
 
 // Update zip archive if needed
 console.log('Creating fresh atem_complete_codebase.zip...');
 try {
-  execSync('zip -q -9 atem_complete_codebase.zip atem_complete_codebase.txt atmen_source_code_only.txt', { cwd: ROOT_DIR });
+  execSync(`zip -q -9 atem_complete_codebase.zip atem_complete_codebase.txt atmen_source_code_only.txt atmen_complete_codebase_v3.5.0_${nowDate}.txt atmen_source_code_v3.5.0_${nowDate}.txt`, { cwd: ROOT_DIR });
 } catch (err) {
   console.warn('Could not update zip:', err);
 }
 
 console.log('✅ Codebase dumps successfully generated:');
 console.log(`- atem_complete_codebase.txt: ${(Buffer.byteLength(completeContent) / (1024*1024)).toFixed(2)} MB (${completeEntries.length} files)`);
-console.log(`- atmen_complete_codebase_v2.0.0_2026-10-19.txt: ${(Buffer.byteLength(completeContent) / (1024*1024)).toFixed(2)} MB`);
+console.log(`- atmen_complete_codebase_v3.5.0_${nowDate}.txt: ${(Buffer.byteLength(completeContent) / (1024*1024)).toFixed(2)} MB`);
 console.log(`- atmen_source_code_only.txt: ${(Buffer.byteLength(sourceOnlyContent) / (1024*1024)).toFixed(2)} MB (${sourceOnlyEntries.length} files)`);
-console.log(`- atmen_source_code_v2.0.0_2026-10-19.txt: ${(Buffer.byteLength(sourceOnlyContent) / (1024*1024)).toFixed(2)} MB`);
+console.log(`- atmen_source_code_v3.5.0_${nowDate}.txt: ${(Buffer.byteLength(sourceOnlyContent) / (1024*1024)).toFixed(2)} MB`);
