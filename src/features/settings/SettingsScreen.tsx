@@ -10,7 +10,8 @@ import {
   ActivityIndicator,
   Switch,
   TextInput,
-  Platform
+  Platform,
+  Image
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, TOPIC_METADATA, ReadingPreferenceDuration } from '../../core/domain/types';
@@ -20,6 +21,7 @@ import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '..
 import { NewsHubModal } from '../../ui/components/NewsHubModal';
 import { GeminiModelSelector } from '../../ui/components/GeminiModelSelector';
 import { FEATURE_MODULES, isFeatureEnabled } from '../../core/modules/featureRegistry';
+import { findOrCreateSyncGist } from '../../core/sync/cloudSyncService';
 import {
   AiCredentials,
   DEFAULT_AI_CREDENTIALS,
@@ -58,10 +60,25 @@ export const SettingsScreen: React.FC = () => {
     remoteSnapshotUrl,
     setRemoteSnapshotUrl,
     refreshLiveFeed,
-    snapshotSyncInfo
+    snapshotSyncInfo,
+    cloudSyncConfig,
+    isSyncing,
+    syncStatusMessage,
+    triggerCloudSync,
+    updateCloudSyncConfig,
+    applyPairingCode,
+    getPairingBundle
   } = useApp();
 
   const [resetMemoryNotice, setResetMemoryNotice] = useState<string | null>(null);
+  const [githubTokenInput, setGithubTokenInput] = useState<string>('');
+  const [passphraseInput, setPassphraseInput] = useState<string>('');
+  const [pairingCodeInput, setPairingCodeInput] = useState<string>('');
+  const [pairingBundle, setPairingBundle] = useState<{ pairingCode: string; pairingUrl: string; qrDataUrl: string } | null>(null);
+  const [isActivatingSync, setIsActivatingSync] = useState<boolean>(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [syncNoticeType, setSyncNoticeType] = useState<'success' | 'error'>('success');
+  const [syncMode, setSyncMode] = useState<'primary' | 'secondary'>('primary');
 
   const interactionList = Object.values(interactions || {});
   const upvoteCount = interactionList.filter(i => (i.voteScore || 0) > 0).length;
@@ -240,6 +257,112 @@ export const SettingsScreen: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (cloudSyncConfig.githubToken) {
+      setGithubTokenInput(cloudSyncConfig.githubToken);
+    }
+    if (cloudSyncConfig.encryptionPassphrase) {
+      setPassphraseInput(cloudSyncConfig.encryptionPassphrase);
+    }
+    void getPairingBundle().then(setPairingBundle).catch(() => {});
+  }, [cloudSyncConfig, getPairingBundle]);
+
+  const handleActivateLiveSync = async () => {
+    if (!githubTokenInput.trim()) {
+      setSyncNotice('Bitte gib ein persönliches GitHub Access Token (mit gist Scope) ein.');
+      setSyncNoticeType('error');
+      return;
+    }
+    setIsActivatingSync(true);
+    setSyncNotice(null);
+    try {
+      const { gistId, isNew } = await findOrCreateSyncGist(githubTokenInput.trim());
+      await updateCloudSyncConfig({
+        enabled: true,
+        githubToken: githubTokenInput.trim(),
+        gistId,
+        encryptionPassphrase: passphraseInput.trim() || 'atmen-single-instance-default-key'
+      });
+      await triggerCloudSync(true);
+      const bundle = await getPairingBundle();
+      setPairingBundle(bundle);
+      setSyncNotice(isNew ? '✅ Neuer Secret-Gist erfolgreich erstellt und Live-Sync aktiviert!' : '✅ Bestehenden Sync-Gist gefunden und erfolgreich verbunden!');
+      setSyncNoticeType('success');
+    } catch (err: any) {
+      setSyncNotice(`Fehler bei Gist-Verbindung: ${err?.message || err}`);
+      setSyncNoticeType('error');
+    } finally {
+      setIsActivatingSync(false);
+    }
+  };
+
+  const handleApplyPairingCode = async () => {
+    if (!pairingCodeInput.trim()) {
+      setSyncNotice('Bitte gib einen Koppel-Code ein.');
+      setSyncNoticeType('error');
+      return;
+    }
+    setIsActivatingSync(true);
+    setSyncNotice(null);
+    try {
+      const ok = await applyPairingCode(pairingCodeInput.trim());
+      if (ok) {
+        setSyncNotice('✅ Gerät erfolgreich gekoppelt und synchronisiert!');
+        setSyncNoticeType('success');
+        setPairingCodeInput('');
+      } else {
+        setSyncNotice('Koppel-Code konnte nicht angewendet werden.');
+        setSyncNoticeType('error');
+      }
+    } catch (err: any) {
+      setSyncNotice(`Kopplung fehlgeschlagen: ${err?.message || err}`);
+      setSyncNoticeType('error');
+    } finally {
+      setIsActivatingSync(false);
+    }
+  };
+
+  const handlePasteFromClipboardAndConnect = async () => {
+    try {
+      let code = '';
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.readText) {
+        code = await navigator.clipboard.readText();
+      }
+      if (!code.trim()) {
+        setSyncNotice('Kein Koppel-Code in der Zwischenablage gefunden. Bitte Code manuell einfügen.');
+        setSyncNoticeType('error');
+        return;
+      }
+      setPairingCodeInput(code.trim());
+      setIsActivatingSync(true);
+      setSyncNotice(null);
+      const ok = await applyPairingCode(code.trim());
+      if (ok) {
+        setSyncNotice('✅ Gerät erfolgreich gekoppelt und synchronisiert!');
+        setSyncNoticeType('success');
+        setPairingCodeInput('');
+      } else {
+        setSyncNotice('Koppel-Code konnte nicht angewendet werden.');
+        setSyncNoticeType('error');
+      }
+    } catch (err: any) {
+      setSyncNotice(`Zwischenablage konnte nicht gelesen werden: ${err?.message || err}`);
+      setSyncNoticeType('error');
+    } finally {
+      setIsActivatingSync(false);
+    }
+  };
+
+  const handleCopyPairingCode = async () => {
+    if (!pairingBundle?.pairingCode) return;
+    const ok = await copyToClipboard(pairingBundle.pairingCode);
+    if (ok) {
+      setSyncNotice('📋 Koppel-Code in die Zwischenablage kopiert!');
+      setSyncNoticeType('success');
+      setTimeout(() => setSyncNotice(null), 4000);
+    }
+  };
+
   const handleTestAiConnection = async () => {
     setIsTestingAi(true);
     setAiTestResult(null);
@@ -398,6 +521,258 @@ export const SettingsScreen: React.FC = () => {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Section: Live-Sync & Geräte koppeln (Eine Instanz) */}
+        <View style={styles.section}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="cloud-done" size={20} color="#10B981" />
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                ⚡ Live-Sync & Geräte koppeln (Eine Instanz)
+              </Text>
+            </View>
+            <View style={[
+              styles.syncStatusBadge,
+              {
+                backgroundColor: cloudSyncConfig.enabled ? 'rgba(16, 185, 129, 0.16)' : colors.surfaceSecondary,
+                borderColor: cloudSyncConfig.enabled ? '#10B981' : colors.borderSubtle
+              }
+            ]}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary }}>
+                {isSyncing ? '🔄 Synchronisiere…' : cloudSyncConfig.enabled ? '🟢 Live-Sync aktiv' : '⚪ Nicht gekoppelt'}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Verbindet Mac, iPhone und iPad zu einer einzigen synchronen ATMEN-Instanz. Lesezeichen, Lesefortschritt, API-Keys, Channels & gesehene Artikel werden verschlüsselt abgeglichen.
+          </Text>
+
+          {syncStatusMessage && (
+            <View style={[styles.syncNoticeCard, { backgroundColor: 'rgba(16, 185, 129, 0.14)', borderColor: '#10B981' }]}>
+              <Ionicons name="checkmark-circle" size={16} color="#10B981" />
+              <Text style={{ color: '#10B981', fontSize: 12.5, fontWeight: '600', flex: 1, marginLeft: 6 }}>
+                {syncStatusMessage}
+              </Text>
+            </View>
+          )}
+
+          {syncNotice && (
+            <View style={[
+              styles.syncNoticeCard,
+              {
+                backgroundColor: syncNoticeType === 'success' ? 'rgba(16, 185, 129, 0.14)' : 'rgba(239, 68, 68, 0.14)',
+                borderColor: syncNoticeType === 'success' ? '#10B981' : '#EF4444'
+              }
+            ]}>
+              <Ionicons
+                name={syncNoticeType === 'success' ? 'checkmark-circle' : 'alert-circle'}
+                size={16}
+                color={syncNoticeType === 'success' ? '#10B981' : '#EF4444'}
+              />
+              <Text style={{
+                color: syncNoticeType === 'success' ? '#10B981' : '#EF4444',
+                fontSize: 12.5,
+                fontWeight: '600',
+                flex: 1,
+                marginLeft: 6
+              }}>
+                {syncNotice}
+              </Text>
+            </View>
+          )}
+
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
+            {/* Telemetry info when enabled */}
+            {cloudSyncConfig.enabled && (
+              <View style={[styles.syncTelemetryRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
+                    ☁️ Gist-ID: {cloudSyncConfig.gistId}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
+                    Zuletzt synchronisiert: {cloudSyncConfig.lastSyncAt ? new Date(cloudSyncConfig.lastSyncAt).toLocaleTimeString() : 'noch nicht'} · {readCount} Artikel, {customChannelsCount} Channels synchron
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => triggerCloudSync(true)}
+                  disabled={isSyncing}
+                  style={[styles.smallActionBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Jetzt synchronisieren"
+                >
+                  <Ionicons name="refresh" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 11.5, fontWeight: '700', color: colors.accent }}>
+                    {isSyncing ? 'Sync…' : 'Jetzt synchronisieren'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Mode Selector: Primärgerät (Mac) vs Zweitgerät (iPad/iPhone) */}
+            <View style={styles.syncModeSelector}>
+              <TouchableOpacity
+                onPress={() => setSyncMode('primary')}
+                style={[
+                  styles.syncModeTab,
+                  syncMode === 'primary' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                ]}
+              >
+                <Text style={[styles.syncModeTabText, { color: syncMode === 'primary' ? colors.accent : colors.textSecondary }]}>
+                  🖥️ Primärgerät (Mac / 1-Klick Setup)
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setSyncMode('secondary')}
+                style={[
+                  styles.syncModeTab,
+                  syncMode === 'secondary' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                ]}
+              >
+                <Text style={[styles.syncModeTabText, { color: syncMode === 'secondary' ? colors.accent : colors.textSecondary }]}>
+                  📲 iPad & iPhone koppeln
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {syncMode === 'primary' ? (
+              <View style={{ marginTop: 12 }}>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                  GitHub Access Token (PAT mit gist-Berechtigung):
+                </Text>
+                <TextInput
+                  value={githubTokenInput}
+                  onChangeText={setGithubTokenInput}
+                  placeholder="ghp_... oder github_pat_..."
+                  placeholderTextColor={colors.textMuted}
+                  secureTextEntry
+                  style={[styles.textInput, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+
+                <Text style={[styles.inputLabel, { color: colors.textSecondary, marginTop: 10 }]}>
+                  Verschlüsselungs-Passphrase (Client-Side Encryption):
+                </Text>
+                <TextInput
+                  value={passphraseInput}
+                  onChangeText={setPassphraseInput}
+                  placeholder="Passphrase für Ende-zu-Ende-Verschlüsselung (optional)"
+                  placeholderTextColor={colors.textMuted}
+                  secureTextEntry
+                  style={[styles.textInput, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+
+                <TouchableOpacity
+                  onPress={handleActivateLiveSync}
+                  disabled={isActivatingSync}
+                  style={[styles.primaryActionBtn, { backgroundColor: colors.accent, marginTop: 14 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Live-Sync aktivieren"
+                >
+                  {isActivatingSync ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
+                  ) : (
+                    <Ionicons name="sync" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  )}
+                  <Text style={styles.primaryActionBtnText}>
+                    {isActivatingSync ? 'Verbinde Gist…' : cloudSyncConfig.enabled ? 'Live-Sync neu verbinden' : '🔄 Live-Sync aktivieren'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Instant Pairing Code & QR for secondary devices */}
+                {pairingBundle && (
+                  <View style={[styles.pairingCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: 16 }]}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 }}>
+                      📲 Zweitgerät (iPad / iPhone) koppeln:
+                    </Text>
+                    <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 10 }}>
+                      Scanne diesen QR-Code mit der iPhone-Kamera oder kopiere den Koppel-Code, um das iPad in 1 Sekunde synchron zu verbinden.
+                    </Text>
+
+                    {pairingBundle.qrDataUrl ? (
+                      <View style={{ alignItems: 'center', marginVertical: 8 }}>
+                        <Image
+                          source={{ uri: pairingBundle.qrDataUrl }}
+                          style={{ width: 180, height: 180, borderRadius: 8, backgroundColor: '#FFFFFF' }}
+                          resizeMode="contain"
+                        />
+                      </View>
+                    ) : null}
+
+                    <TouchableOpacity
+                      onPress={handleCopyPairingCode}
+                      style={[styles.smallActionBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent, alignSelf: 'center', marginTop: 8 }]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Koppel-Code kopieren"
+                    >
+                      <Ionicons name="copy-outline" size={14} color={colors.accent} style={{ marginRight: 5 }} />
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: colors.accent }}>
+                        📋 Koppel-Code kopieren
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginBottom: 12, lineHeight: 18 }}>
+                  Füge hier den Koppel-Code ein, den du auf deinem Mac generiert hast, um dieses iPad oder iPhone dauerhaft mit derselben synchronen ATMEN-Instanz zu verknüpfen.
+                </Text>
+
+                <TouchableOpacity
+                  onPress={handlePasteFromClipboardAndConnect}
+                  disabled={isActivatingSync}
+                  style={[styles.primaryActionBtn, { backgroundColor: '#10B981', marginBottom: 12 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Koppel-Code aus Zwischenablage einfügen und verbinden"
+                >
+                  <Ionicons name="clipboard-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.primaryActionBtnText}>
+                    📲 Koppel-Code aus Zwischenablage einfügen & verbinden
+                  </Text>
+                </TouchableOpacity>
+
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                  Oder Koppel-Code manuell einfügen:
+                </Text>
+                <TextInput
+                  value={pairingCodeInput}
+                  onChangeText={setPairingCodeInput}
+                  placeholder="atmen-pair-v1:..."
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  numberOfLines={3}
+                  style={[styles.textInput, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, color: colors.textPrimary, height: 75, textAlignVertical: 'top' }]}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+
+                <TouchableOpacity
+                  onPress={handleApplyPairingCode}
+                  disabled={isActivatingSync || !pairingCodeInput.trim()}
+                  style={[
+                    styles.primaryActionBtn,
+                    {
+                      backgroundColor: pairingCodeInput.trim() ? colors.accent : colors.surfaceSecondary,
+                      marginTop: 10
+                    }
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Verbinden"
+                >
+                  <Ionicons name="link" size={15} color={pairingCodeInput.trim() ? '#FFFFFF' : colors.textMuted} style={{ marginRight: 6 }} />
+                  <Text style={[styles.primaryActionBtnText, !pairingCodeInput.trim() && { color: colors.textMuted }]}>
+                    Koppeln & Synchronisieren
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+
         {/* Section: Algorithmus-Spiegel (Live-Profil) */}
         <View style={styles.section}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -2254,5 +2629,81 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: radius.md,
     borderWidth: 1
+  },
+  syncStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 0.5
+  },
+  syncNoticeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: 10
+  },
+  syncTelemetryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 10,
+    borderRadius: radius.md,
+    borderWidth: 0.5,
+    marginBottom: 12,
+    gap: 10
+  },
+  smallActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  syncModeSelector: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 6
+  },
+  syncModeTab: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  syncModeTabText: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  pairingCard: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  textInput: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    fontSize: 13,
+    marginBottom: 6
+  },
+  primaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: radius.md
+  },
+  primaryActionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700'
   }
 });

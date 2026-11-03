@@ -1202,6 +1202,6 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
     research_automation: true,
     investigation: true
   },
-  isOnboarded: false,
+  isOnboarded: true,
   lastActiveDate: '2026-10-14'
 };

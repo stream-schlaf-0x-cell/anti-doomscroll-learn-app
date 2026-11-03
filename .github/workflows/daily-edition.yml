@@ -1,9 +1,6 @@
 name: Daily Atmen Edition Ingestion Pipeline
 
 on:
-  schedule:
-    # 04:30 UTC -> 06:30 CEST / 05:30 CET every morning
-    - cron: '30 4 * * *'
   workflow_dispatch:
 
 permissions:

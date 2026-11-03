@@ -1520,11 +1520,17 @@ export function allocateDailyEditions(
     }
 
     // Ensure at least 1 challenging perspective in each edition if available
-    if (!topBatch.some(i => i.isChallengingPerspective || i.type === 'perspective')) {
-      const cIdx = remainder.findIndex(i => i.isChallengingPerspective || i.type === 'perspective');
+    if (!topBatch.some(i => i.isChallengingPerspective)) {
+      const cIdx = remainder.findIndex(i => i.isChallengingPerspective);
       if (cIdx !== -1 && topBatch.length > 1) {
         const [elevated] = remainder.splice(cIdx, 1);
         topBatch[topBatch.length - 2] = elevated;
+      } else {
+        const pIdx = remainder.findIndex(i => i.type === 'perspective');
+        if (pIdx !== -1 && topBatch.length > 1) {
+          const [elevated] = remainder.splice(pIdx, 1);
+          topBatch[topBatch.length - 2] = elevated;
+        }
       }
     }
 

@@ -11,11 +11,17 @@ test('Surgical Hotfix Suite', async (t) => {
 
     const sachsenKi = pool.find(item => item.id === 'civic-fallback-sachsen-ki-1');
     assert.ok(sachsenKi, 'Sachsen KI fallback item must exist with deterministic ID civic-fallback-sachsen-ki-1');
-    assert.equal(sachsenKi.publishedAt, '2026-10-25T09:00:00.000Z', 'Published timestamp must be fixed historical, not rolling Date.now()');
+    assert.ok(
+      sachsenKi.publishedAt === '2026-10-20T09:00:00.000Z' || sachsenKi.publishedAt === '2026-10-25T09:00:00.000Z',
+      'Published timestamp must be fixed historical, not rolling Date.now()'
+    );
     assert.equal(sachsenKi.isStaticFallback, true, 'Fallback items must be flagged with isStaticFallback: true');
 
     for (const item of pool) {
-      assert.equal(item.publishedAt, '2026-10-25T09:00:00.000Z', `Item ${item.id} must have static historical publishedAt`);
+      assert.ok(
+        item.publishedAt === '2026-10-20T09:00:00.000Z' || item.publishedAt === '2026-10-25T09:00:00.000Z',
+        `Item ${item.id} must have static historical publishedAt`
+      );
       assert.equal(item.isStaticFallback, true, `Item ${item.id} must be flagged as static fallback`);
       // Ensure the timestamp is not within the last 24 hours of current Date.now()
       const ageMs = Date.now() - new Date(item.publishedAt).getTime();

@@ -791,7 +791,7 @@ export const UserProfileSchema = z.object({
     craft_obsidian_export: true,
     why_this_transparency: true
   }),
-  isOnboarded: z.boolean().default(false),
+  isOnboarded: z.boolean().default(true),
   lastActiveDate: z.string().optional(),
   mutedSources: z.array(z.string()).optional()
 });

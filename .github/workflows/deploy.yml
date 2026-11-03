@@ -47,6 +47,10 @@ jobs:
         run: npm run lint
 
       - name: Run Multi-Daily Feed Ingestion & Snapshot Pipeline
+        if: github.event_name == 'schedule' || hashFiles('public/feed-snapshot.json') == ''
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: npx tsx scripts/run-pipeline.ts
 
       - name: Export Expo Web Bundle for GitHub Pages

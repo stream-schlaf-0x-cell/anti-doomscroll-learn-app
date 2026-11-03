@@ -2,6 +2,8 @@ import { AtemStorage, appStorage } from './storage';
 import { IFeedRepository, feedRepository } from './feedRepository';
 import { defaultPersistentArticleStore } from '../feed/PersistentArticleStore';
 import { INTERACTIONS_STORAGE_KEY, SAVED_ARTICLES_STORAGE_KEY } from './libraryRepository';
+import { USER_PROFILE_STORAGE_KEY } from './userProfileRepository';
+import { seenImpressionsService } from './seenImpressionsService';
 import {
   isSupportedFeedLanguage,
   satisfiesCuratedBodyContract,
@@ -13,7 +15,7 @@ import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 import { FeedItem } from '../domain/types';
 
-export const CURRENT_DATA_MIGRATION_VERSION = '2026-11-02-v3.5-virtual-newsroom';
+export const CURRENT_DATA_MIGRATION_VERSION = '2026-11-03-v4.0-single-instance-sync';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
@@ -59,6 +61,29 @@ export async function runInPlaceDataMigration(
       preservedItemsCount: 0,
       totalItemsCount: repo.getAllItems ? repo.getAllItems().length : 0
     };
+  }
+
+  // 0. Ensure existing profile has isOnboarded: true and suppress zombie card impressions
+  try {
+    const rawProfile = await storage.getItem(USER_PROFILE_STORAGE_KEY);
+    if (rawProfile) {
+      const parsedProfile = JSON.parse(rawProfile);
+      if (parsedProfile && typeof parsedProfile === 'object' && parsedProfile.isOnboarded !== true) {
+        parsedProfile.isOnboarded = true;
+        await storage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(parsedProfile));
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  try {
+    await seenImpressionsService.recordSeen([
+      'civic-fallback-sachsen-ki-1',
+      'civic-pulse-saxony-edu-v1'
+    ]);
+  } catch {
+    // Non-fatal
   }
 
   // 1. Gather protected user item IDs from library interactions & saved articles

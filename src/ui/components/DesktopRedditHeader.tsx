@@ -64,7 +64,9 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
     shuffleFeed,
     simulateDailyGeneration,
     activeDateSeed,
-    spaces
+    spaces,
+    cloudSyncConfig,
+    isSyncing
   } = useApp();
 
   // Modals state
@@ -344,8 +346,39 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
             </View>
           </View>
 
-          {/* Right: 🧘 Atmen breathing portal trigger + Settings/Theme */}
+          {/* Right: ☁️ Live Cloud Sync + 🧘 Atmen breathing portal trigger + Settings/Theme */}
           <View style={styles.rightSection}>
+            <TouchableOpacity
+              onPress={() => setActiveTab('settings')}
+              style={[
+                styles.breathingPill,
+                {
+                  backgroundColor: cloudSyncConfig.enabled
+                    ? (isDark ? 'rgba(16, 185, 129, 0.14)' : '#ECFDF5')
+                    : colors.surfaceSecondary,
+                  borderColor: cloudSyncConfig.enabled ? '#10B981' : colors.borderSubtle
+                }
+              ]}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={cloudSyncConfig.enabled ? 'Live-Sync verbunden' : 'Geräte koppeln'}
+            >
+              <Ionicons
+                name={cloudSyncConfig.enabled ? 'cloud-done-outline' : 'cloud-outline'}
+                size={14}
+                color={cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary}
+                style={{ marginRight: 5 }}
+              />
+              <Text
+                style={[
+                  styles.breathingPillText,
+                  { color: cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary, fontWeight: '700' }
+                ]}
+              >
+                {isSyncing ? 'Sync…' : cloudSyncConfig.enabled ? 'Synchronisiert' : 'Geräte koppeln'}
+              </Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               onPress={() => setShowBreathingPortal(true)}
               style={[styles.breathingPill, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: '#10B981' }]}

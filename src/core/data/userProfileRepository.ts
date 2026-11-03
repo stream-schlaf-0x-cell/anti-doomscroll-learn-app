@@ -23,10 +23,10 @@ export class LocalUserProfileRepository implements IUserProfileRepository {
   async getProfile(): Promise<UserProfile> {
     const raw = await this.storage.getItem(USER_PROFILE_STORAGE_KEY);
     if (!raw) {
-      // Fresh install: return default profile with onboarding incomplete
+      // Fresh install: return default profile with onboarding completed (direct stream access)
       return {
         ...DEFAULT_USER_PROFILE,
-        isOnboarded: false
+        isOnboarded: true
       };
     }
 
@@ -73,7 +73,7 @@ export class LocalUserProfileRepository implements IUserProfileRepository {
       if (!raw) {
         current = {
           ...DEFAULT_USER_PROFILE,
-          isOnboarded: false
+          isOnboarded: true
         };
       } else {
         let parsed: unknown;
@@ -122,14 +122,14 @@ export class LocalUserProfileRepository implements IUserProfileRepository {
   }
 
   /**
-   * Resets profile: removes persisted profile and returns fresh default with isOnboarded: false.
+   * Resets profile: removes persisted profile and returns fresh default with isOnboarded: true.
    */
   async resetProfile(): Promise<UserProfile> {
     return this.storage.runTransaction(USER_PROFILE_STORAGE_KEY, async (tx) => {
       await tx.remove();
       return {
         ...DEFAULT_USER_PROFILE,
-        isOnboarded: false
+        isOnboarded: true
       };
     });
   }
@@ -147,7 +147,7 @@ export class LocalUserProfileRepository implements IUserProfileRepository {
       await tx.remove();
       return {
         ...DEFAULT_USER_PROFILE,
-        isOnboarded: false
+        isOnboarded: true
       };
     });
   }

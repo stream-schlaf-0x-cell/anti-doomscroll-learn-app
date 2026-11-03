@@ -38,6 +38,11 @@ import { BackupService } from '../data/backupService';
 import { RaindropService } from '../raindrop/raindropService';
 import { FeatureModuleId } from '../modules/featureRegistry';
 import { refreshLocalEdition } from './localFeedRefresh';
+import {
+  cloudSyncService,
+  CloudSyncConfig,
+  DEFAULT_CLOUD_SYNC_CONFIG
+} from '../sync/cloudSyncService';
 import { defaultGraphRepository } from '../graph/graphRepository';
 import { BoundedIdSet } from '../feed/boundedIdSet';
 import { defaultFeedOperationManager } from '../feed/FeedOperationManager';
@@ -240,6 +245,14 @@ interface AppContextValue {
   dismissedItemIds: string[];
   dismissItem: (id: string, itemOverride?: FeedItem) => Promise<{ item: FeedItem | null; domain: string; keywords: string[] }>;
   undoDismissItem: (id: string, itemOverride?: FeedItem) => Promise<void>;
+  cloudSyncConfig: CloudSyncConfig;
+  isSyncing: boolean;
+  syncStatusMessage: string | null;
+  triggerCloudSync: (forcePush?: boolean) => Promise<boolean>;
+  updateCloudSyncConfig: (patch: Partial<CloudSyncConfig>) => Promise<void>;
+  applyPairingCode: (code: string) => Promise<boolean>;
+  getPairingBundle: () => Promise<{ pairingCode: string; pairingUrl: string; qrDataUrl: string }>;
+  scheduleCloudSyncPush: () => void;
 }
 
 const DISMISSED_ITEMS_STORAGE_KEY = '@atem:dismissed_items:v1';
@@ -279,6 +292,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [snapshotSyncInfo, setSnapshotSyncInfo] = useState<string | null>(null);
   const [spaces, setSpaces] = useState<Subchannel[]>([]);
   const [dismissedItemIds, setDismissedItemIds] = useState<string[]>([]);
+  const [cloudSyncConfig, setCloudSyncConfig] = useState<CloudSyncConfig>(DEFAULT_CLOUD_SYNC_CONFIG);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
+  const syncDebounceTimer = useRef<NodeJS.Timeout | null>(null);
+  const scheduleCloudSyncPushRef = useRef<() => void>(() => {});
+  const triggerCloudSyncRef = useRef<(forcePush?: boolean) => Promise<boolean>>(async () => false);
 
   // Atomic Hydration (WP 1): Ensure UI unlocks within 180ms max fallback if storage is sluggish
   useEffect(() => {
@@ -320,6 +339,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createSpace = useCallback(async (data: Parameters<typeof defaultSpaceRepository.createSubchannel>[0]) => {
     const newChan = await defaultSpaceRepository.createSubchannel(data);
     selectSpace(newChan.handle);
+    scheduleCloudSyncPushRef.current();
     return newChan;
   }, [selectSpace]);
 
@@ -328,6 +348,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (updated && selectedFilter.toLowerCase() === normalizeSpaceHandle(oldHandle).toLowerCase()) {
       selectSpace(updated.handle);
     }
+    scheduleCloudSyncPushRef.current();
     return updated;
   }, [selectSpace, selectedFilter]);
 
@@ -340,18 +361,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (selectedFilter.toLowerCase() === normalizeSpaceHandle(targetHandle).toLowerCase()) {
         setSelectedFilter('all');
       }
+      scheduleCloudSyncPushRef.current();
     }
     return ok;
   }, [selectedFilter]);
 
   const togglePinSpace = useCallback(async (id: string) => {
     const updated = await defaultSpaceRepository.togglePin(id);
+    scheduleCloudSyncPushRef.current();
     return updated;
   }, []);
 
   const setSpaceFeedPriority = useCallback(async (id: string, priority: SubchannelFeedPriority) => {
     const updated = await defaultSpaceRepository.setFeedPriority(id, priority);
     setSpaces(updated);
+    scheduleCloudSyncPushRef.current();
   }, []);
 
   const selectedEditionTypeRef = useRef<DayEditionType>(selectedEditionType);
@@ -588,16 +612,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Flush progress when app moves to background
+  // Flush progress when app moves to background; pull sync when returning to active
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'inactive') {
         flushReadingProgress();
+      } else if (nextState === 'active') {
+        void (async () => {
+          try {
+            const cfg = await cloudSyncService.getConfig();
+            if (cfg.enabled && cfg.autoSync) {
+              await triggerCloudSyncRef.current();
+            }
+          } catch {
+            // Non-fatal
+          }
+        })();
       }
     };
     const sub = AppState.addEventListener('change', handleAppStateChange);
     return () => sub.remove();
   }, [flushReadingProgress]);
+
+  // Web visibilitychange listener for instant multi-tab sync
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const handleVisChange = () => {
+        if (document.visibilityState === 'visible') {
+          void (async () => {
+            try {
+              const cfg = await cloudSyncService.getConfig();
+              if (cfg.enabled && cfg.autoSync) {
+                await triggerCloudSyncRef.current();
+              }
+            } catch {
+              // Non-fatal
+            }
+          })();
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisChange);
+      return () => document.removeEventListener('visibilitychange', handleVisChange);
+    }
+  }, []);
 
   // Load initial data on startup with explicit typed error recovery
   const loadInitialData = useCallback(async () => {
@@ -981,6 +1038,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
         setSavedArticles(prev => prev.filter(a => a.id !== id));
         void BackupService.saveAutoBackup();
+        scheduleCloudSyncPushRef.current();
       } else {
         let articleToSave: FeedItem | null =
           dailyEdition.find(i => i.id === id) ??
@@ -1003,6 +1061,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Automatically sync to Raindrop.io in background if token is configured
           void RaindropService.syncArticleIfConnected(articleToSave);
           void BackupService.saveAutoBackup();
+        scheduleCloudSyncPushRef.current();
           // Stage 5 (WP 8): Autonomous rabbit-hole expansion on save
           void harvestRabbitHoleForItem(articleToSave).then(() => {
             void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
@@ -1015,6 +1074,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return next;
           });
           void BackupService.saveAutoBackup();
+        scheduleCloudSyncPushRef.current();
         }
       }
     } catch {
@@ -1157,6 +1217,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {
         // Non-fatal mirror
       }
+
+      scheduleCloudSyncPushRef.current();
     } catch {
       setErrorMessage('Notiz konnte nicht gespeichert werden.');
     }
@@ -1202,6 +1264,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
+      scheduleCloudSyncPushRef.current();
     } catch {
       setErrorMessage('Bewertung konnte nicht gespeichert werden.');
     }
@@ -1239,10 +1302,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         latestProfileRef.current = committed;
         setProfile(committed);
         await scheduleFeedRecompute(committed, nextInteractions);
+        scheduleCloudSyncPushRef.current();
         return { item, domain: domainOut, keywords: keywordsOut };
       }
 
       await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
+      scheduleCloudSyncPushRef.current();
       return { item: null, domain: '', keywords: [] };
     } catch {
       return { item: itemOverride ?? null, domain: '', keywords: [] };
@@ -1279,6 +1344,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else {
         await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
       }
+      scheduleCloudSyncPushRef.current();
     } catch {}
   }, [dailyEdition, discoveryItems, openWebItems, scheduleFeedRecompute]);
 
@@ -1586,6 +1652,126 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setErrorMessage(null);
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // Cloud Sync Service Integration (Phase 4 Live Single-Instance Sync)
+  // ---------------------------------------------------------------------------
+
+  const triggerCloudSync = useCallback(async (forcePush?: boolean): Promise<boolean> => {
+    setIsSyncing(true);
+    try {
+      const res = await cloudSyncService.sync({ forcePush });
+      const cfg = await cloudSyncService.getConfig();
+      setCloudSyncConfig(cfg);
+      if (res.success && res.mergedSnapshot) {
+        if (res.mergedSnapshot.profile) {
+          latestProfileRef.current = res.mergedSnapshot.profile;
+          setProfile(res.mergedSnapshot.profile);
+        }
+        if (res.mergedSnapshot.interactions) {
+          latestInteractionsRef.current = res.mergedSnapshot.interactions;
+          setInteractions(res.mergedSnapshot.interactions);
+        }
+        if (res.mergedSnapshot.savedArticles) {
+          setSavedArticles(res.mergedSnapshot.savedArticles);
+        }
+        if (res.mergedSnapshot.dismissedItemIds) {
+          setDismissedItemIds(res.mergedSnapshot.dismissedItemIds);
+        }
+        if (res.mergedSnapshot.spaces) {
+          setSpaces(res.mergedSnapshot.spaces);
+        }
+      }
+      setIsSyncing(false);
+      return res.success;
+    } catch {
+      setIsSyncing(false);
+      return false;
+    }
+  }, []);
+  triggerCloudSyncRef.current = triggerCloudSync;
+
+  const scheduleCloudSyncPush = useCallback(() => {
+    if (syncDebounceTimer.current) {
+      clearTimeout(syncDebounceTimer.current);
+    }
+    syncDebounceTimer.current = setTimeout(() => {
+      void (async () => {
+        try {
+          const cfg = await cloudSyncService.getConfig();
+          if (cfg.enabled && cfg.autoSync) {
+            await triggerCloudSync(true);
+          }
+        } catch {
+          // Non-fatal
+        }
+      })();
+    }, 1500);
+  }, [triggerCloudSync]);
+  scheduleCloudSyncPushRef.current = scheduleCloudSyncPush;
+
+  const updateCloudSyncConfig = useCallback(async (patch: Partial<CloudSyncConfig>) => {
+    const updated = await cloudSyncService.saveConfig(patch);
+    setCloudSyncConfig(updated);
+    if (updated.enabled) {
+      void triggerCloudSync();
+    }
+  }, [triggerCloudSync]);
+
+  const applyPairingCode = useCallback(async (code: string): Promise<boolean> => {
+    try {
+      const ok = await cloudSyncService.applyPairingCode(code);
+      const cfg = await cloudSyncService.getConfig();
+      setCloudSyncConfig(cfg);
+      if (ok) {
+        setSyncStatusMessage('✅ Gerät erfolgreich gekoppelt & synchronisiert!');
+        setTimeout(() => setSyncStatusMessage(null), 5000);
+        void triggerCloudSync();
+      }
+      return ok;
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Koppel-Code ungültig.');
+      return false;
+    }
+  }, [triggerCloudSync]);
+
+  const getPairingBundle = useCallback(async () => {
+    return cloudSyncService.getPairingBundle();
+  }, []);
+
+  // Initialize Cloud Sync & Handle URL Pairing Auto-Ingest (?pair=...)
+  useEffect(() => {
+    void (async () => {
+      try {
+        const cfg = await cloudSyncService.getConfig();
+        setCloudSyncConfig(cfg);
+
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.search) {
+          const params = new URLSearchParams(window.location.search);
+          const pairCode = params.get('pair');
+          if (pairCode) {
+            const ok = await cloudSyncService.applyPairingCode(pairCode);
+            const freshCfg = await cloudSyncService.getConfig();
+            setCloudSyncConfig(freshCfg);
+            const cleanUrl = window.location.pathname + window.location.hash;
+            window.history.replaceState({}, document.title, cleanUrl);
+            setSyncStatusMessage('✅ Gerät erfolgreich gekoppelt & synchronisiert!');
+            setTimeout(() => setSyncStatusMessage(null), 5000);
+            if (ok) {
+              await triggerCloudSync();
+            }
+            return;
+          }
+        }
+
+        if (cfg.enabled && cfg.autoSync) {
+          await triggerCloudSync();
+        }
+      } catch (err: any) {
+        console.warn('[Sync] Init failed:', err);
+      }
+    })();
+  }, [triggerCloudSync]);
+
   return (
     <AppContext.Provider
       value={{
@@ -1675,7 +1861,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         clearFeedbackMemory,
         dismissedItemIds,
         dismissItem,
-        undoDismissItem
+        undoDismissItem,
+        cloudSyncConfig,
+        isSyncing,
+        syncStatusMessage,
+        triggerCloudSync,
+        updateCloudSyncConfig,
+        applyPairingCode,
+        getPairingBundle,
+        scheduleCloudSyncPush
       }}
     >
       {children}

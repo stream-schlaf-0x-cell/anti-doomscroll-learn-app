@@ -14,8 +14,8 @@ import { feedRepository } from '../data/feedRepository';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 import { seenImpressionsService } from '../data/seenImpressionsService';
 
-const STATIC_FALLBACK_TIMESTAMP = '2026-10-25T09:00:00.000Z';
-const STATIC_FALLBACK_DATE = '2026-10-25';
+const STATIC_FALLBACK_TIMESTAMP = '2026-10-20T09:00:00.000Z';
+const STATIC_FALLBACK_DATE = '2026-10-20';
 
 export type ManualPipelinePhase =
   | 'fetching_sources'
@@ -412,7 +412,10 @@ export class LiveCivicPulseService {
   public static async harvestRealityAndSerendipityPulse(options?: {
     skipNetwork?: boolean;
   }): Promise<FeedItem[]> {
-    const basePool = this.getCuratedRealityAndSerendipityPool();
+    const seenIds = await seenImpressionsService.getSeenIds();
+    const basePool = this.getCuratedRealityAndSerendipityPool().filter(
+      item => !seenIds.has(item.id)
+    );
     if (options?.skipNetwork) {
       return basePool;
     }

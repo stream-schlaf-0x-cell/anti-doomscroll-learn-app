@@ -223,9 +223,9 @@ describe('Storage Mutex & Persistence Architecture', () => {
     const storage = new AtemStorage(driver);
     const repo = new LocalUserProfileRepository(storage);
 
-    // Missing data returns default un-onboarded profile
+    // Missing data returns default onboarded profile (founder mode direct stream access)
     const freshProfile = await repo.getProfile();
-    assert.strictEqual(freshProfile.isOnboarded, false);
+    assert.strictEqual(freshProfile.isOnboarded, true);
 
     // Corrupt JSON string
     await driver.setItem(USER_PROFILE_STORAGE_KEY, '{ invalid json syntax !!! ');
@@ -242,7 +242,7 @@ describe('Storage Mutex & Persistence Architecture', () => {
 
     // Quarantine and reset restores clean state and preserves corrupted bytes
     const cleanProfile = await repo.quarantineAndReset();
-    assert.strictEqual(cleanProfile.isOnboarded, false);
+    assert.strictEqual(cleanProfile.isOnboarded, true);
 
     const keys = await driver.getAllKeys();
     const quarantineKey = keys.find(k => k.startsWith('@atem:quarantine:user_profile:'));

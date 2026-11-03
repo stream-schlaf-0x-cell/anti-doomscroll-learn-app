@@ -21,7 +21,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const { width } = useWindowDimensions();
   const isCompactMobile = width < 768;
-  const { colors, isDark, setThemePreference, goHome } = useApp();
+  const { colors, isDark, setThemePreference, goHome, setActiveTab, cloudSyncConfig, isSyncing } = useApp();
   const [showMaster, setShowMaster] = useState<boolean>(false);
   const [showMobile, setShowMobile] = useState<boolean>(false);
   const [showBreathing, setShowBreathing] = useState<boolean>(false);
@@ -55,6 +55,38 @@ export const Header: React.FC<HeaderProps> = ({
           </View>
 
           <View style={styles.rightActionsRow}>
+            {/* Live Cloud Sync Indicator & Quick Connect */}
+            <TouchableOpacity
+              onPress={() => setActiveTab('settings')}
+              style={[
+                styles.syncPill,
+                {
+                  backgroundColor: cloudSyncConfig.enabled
+                    ? (isDark ? 'rgba(16, 185, 129, 0.16)' : '#ECFDF5')
+                    : colors.surfaceSecondary,
+                  borderColor: cloudSyncConfig.enabled ? '#10B981' : colors.borderSubtle
+                }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={cloudSyncConfig.enabled ? 'Live-Sync verbunden' : 'Geräte koppeln'}
+            >
+              <Ionicons
+                name={cloudSyncConfig.enabled ? 'cloud-done-outline' : 'cloud-outline'}
+                size={14}
+                color={cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary}
+              />
+              {!isCompactMobile && (
+                <Text
+                  style={[
+                    styles.syncPillText,
+                    { color: cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary }
+                  ]}
+                >
+                  {isSyncing ? 'Sync…' : cloudSyncConfig.enabled ? 'Synchronisiert' : 'Koppeln'}
+                </Text>
+              )}
+            </TouchableOpacity>
+
             <TouchableOpacity
               onPress={() => setShowMaster(true)}
               style={[styles.themeToggle, { backgroundColor: '#F59E0B' + '22' }]}
@@ -140,6 +172,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     flexShrink: 0
+  },
+  syncPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 17,
+    borderWidth: 0.5
+  },
+  syncPillText: {
+    fontSize: 11,
+    fontWeight: '700'
   },
   themeToggle: {
     width: 34,

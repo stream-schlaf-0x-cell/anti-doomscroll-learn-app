@@ -118,7 +118,8 @@ export const FeedScreen: React.FC = () => {
     toggleSaveItem,
     spaces,
     updateSpace,
-    isHydrated
+    isHydrated,
+    scheduleCloudSyncPush
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -852,8 +853,9 @@ export const FeedScreen: React.FC = () => {
     if (newlyVisibleIds.length > 0) {
       void recordCardAppearances(newlyVisibleIds);
       void seenImpressionsService.recordSeen(newlyVisibleIds);
+      scheduleCloudSyncPush();
     }
-  }, [activeFeedOption, currentFeedItems, recordCardAppearances]);
+  }, [activeFeedOption, currentFeedItems, recordCardAppearances, scheduleCloudSyncPush]);
 
   const handleCardLayout = useCallback((itemId: string, y: number, height: number) => {
     cardLayoutsRef.current[itemId] = { y, height };

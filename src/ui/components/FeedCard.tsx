@@ -442,7 +442,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
               borderColor: colors.borderSubtle,
               maxWidth: '100%',
               flexShrink: 1,
-              overflow: 'hidden'
+              overflow: 'hidden',
+              alignSelf: 'flex-start'
             }
           ]}
         >
@@ -867,7 +868,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     flexShrink: 1,
-    maxWidth: 165
+    maxWidth: 175
   },
   timeText: {
     fontSize: 11,
@@ -1312,7 +1313,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     borderWidth: 0.5,
     flexShrink: 1,
-    maxWidth: 165
+    maxWidth: 175
   },
   footerRightGroup: {
     flexDirection: 'row',
@@ -1341,7 +1342,7 @@ const styles = StyleSheet.create({
   actionChipText: {
     fontSize: 11.5,
     fontWeight: '600',
-    maxWidth: 165,
+    maxWidth: 175,
     flexShrink: 1
   },
   completedBadge: {
