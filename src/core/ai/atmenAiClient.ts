@@ -284,6 +284,7 @@ export interface AiCallOptions {
   itemId?: string;
   /** May shorten the 15-second transport deadline, but cannot extend it. */
   timeoutMs?: number;
+  bypassBudgetCeiling?: boolean;
 }
 
 /**
@@ -348,15 +349,32 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
   }
   const ledger = options.ledger ?? defaultUsageLedger;
   const estimatedInputTokens = Math.ceil((prompt.length + (options.systemInstruction?.length ?? 0)) / 3.5);
-  const reservationId = await ledger.reserveSpend(calculateCostEur(estimatedInputTokens, maxTokens));
-  if (!reservationId) throw new AiBudgetExceededError(`Monatliches KI-Budget-Limit (${MONTHLY_BUDGET_CEILING_EUR.toFixed(2)} €) erreicht oder gesperrt.`);
+  const isPersonalByok = Boolean(apiKey && (credentials.persistApiKey === true || options.bypassBudgetCeiling === true));
+  let reservationId = await ledger.reserveSpend(calculateCostEur(estimatedInputTokens, maxTokens));
+  if (!reservationId) {
+    // When the user has explicitly provided their own personal API key (BYOK), do not block requests.
+    // They are paying for their own quota directly; usage tracking continues in the ledger.
+    if (!isPersonalByok) {
+      throw new AiBudgetExceededError(`Monatliches KI-Budget-Limit (${MONTHLY_BUDGET_CEILING_EUR.toFixed(2)} €) erreicht oder gesperrt.`);
+    }
+    reservationId = `byok_${Date.now()}`;
+  }
 
   try {
     let result: ParsedAiResult | null = null;
     let effectiveModel = model;
     let proxySucceeded = false;
 
-    if (proxyUrl) {
+    // Detect static web hosts (e.g. GitHub Pages) where no server-side /api/ai proxy exists
+    const isStaticHost = typeof window !== 'undefined' && Boolean(
+      window.location?.hostname?.includes('github.io') ||
+      window.location?.hostname?.endsWith('.pages.dev') ||
+      window.location?.hostname?.endsWith('.vercel.app')
+    );
+    const isInternalOrStaticProxy = !proxyUrl || proxyUrl.startsWith('/') || (proxyUrl.includes('/api/ai') && isStaticHost);
+    const shouldAttemptProxy = Boolean(proxyUrl && (!isStaticHost || !isInternalOrStaticProxy));
+
+    if (shouldAttemptProxy && proxyUrl) {
       try {
         const json = await fetchAiJson(`${proxyUrl}/curate`, {
           method: 'POST',

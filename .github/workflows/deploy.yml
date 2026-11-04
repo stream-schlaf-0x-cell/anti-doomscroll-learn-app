@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -52,6 +52,19 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: npx tsx scripts/run-pipeline.ts
+
+      - name: Commit Fresh Snapshot to Main (Scheduled Runs)
+        if: github.event_name == 'schedule'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/feed-snapshot.json src/core/data/pipeline-output.json src/core/data/source-health.json
+          if git diff --staged --quiet; then
+            echo "No changes in snapshot."
+          else
+            git commit -m "chore(snapshot): refresh public feed snapshot [skip ci]"
+            git push origin main
+          fi
 
       - name: Export Expo Web Bundle for GitHub Pages
         run: |

@@ -26,12 +26,31 @@ export class SnapshotLoader {
   }
 
   private async executeFetch(remoteUrl?: string, timeoutMs = 8000): Promise<SnapshotHydrationResult> {
+    const cacheBuster = `?t=${Math.floor(Date.now() / 300000)}`;
     const urlsToTry: string[] = [];
-    if (remoteUrl?.trim()) urlsToTry.push(remoteUrl.trim());
+
+    const appendWithBuster = (url: string) => {
+      const trimmed = url.trim();
+      if (!trimmed) return;
+      urlsToTry.push(trimmed.includes('?') ? trimmed : `${trimmed}${cacheBuster}`);
+      // Also try without query string if server/proxy rejects query parameters
+      if (!trimmed.includes('?')) urlsToTry.push(trimmed);
+    };
+
+    if (remoteUrl?.trim()) appendWithBuster(remoteUrl);
+
     if (typeof window !== 'undefined' && window.location) {
-      const base = window.location.pathname.replace(/\/[^/]*$/, '/');
-      urlsToTry.push(`${base}feed-snapshot.json`, './feed-snapshot.json', '/feed-snapshot.json');
-    } else urlsToTry.push('./feed-snapshot.json');
+      const pathname = window.location.pathname || '';
+      const dirBase = pathname.endsWith('/') ? pathname : `${pathname.replace(/\/[^/]*$/, '')}/`;
+      appendWithBuster('./feed-snapshot.json');
+      appendWithBuster(`${dirBase}feed-snapshot.json`);
+      appendWithBuster('/anti-doomscroll-learn-app/feed-snapshot.json');
+      appendWithBuster('/feed-snapshot.json');
+    } else {
+      appendWithBuster('./feed-snapshot.json');
+      appendWithBuster('/anti-doomscroll-learn-app/feed-snapshot.json');
+      appendWithBuster('/feed-snapshot.json');
+    }
 
     for (const targetUrl of new Set(urlsToTry)) {
       const controller = new AbortController();

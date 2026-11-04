@@ -339,6 +339,7 @@ const MainNavigator: React.FC = () => {
       {/* Bottom Tab Bar with Inset Padding (Mobile/Tablet only) */}
       {!isDesktop && (
         <View
+          pointerEvents={selectedArticleId ? 'none' : 'auto'}
           style={[
             styles.tabBar,
             {
@@ -347,7 +348,8 @@ const MainNavigator: React.FC = () => {
               borderTopWidth: 0.5,
               borderBottomWidth: 0,
               marginBottom: 0,
-              paddingBottom: isStandaloneIosPwa ? 28 : Math.max(insets.bottom, 12)
+              paddingBottom: isStandaloneIosPwa ? 28 : Math.max(insets.bottom, 12),
+              ...(selectedArticleId ? { display: 'none' as const } : {})
             }
           ]}
         >
@@ -629,7 +631,8 @@ const styles = StyleSheet.create({
   },
   readerOverlay: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 999
+    ...(Platform.OS === 'web' ? ({ position: 'fixed' } as any) : {}),
+    zIndex: 5000
   },
   tabBar: {
     borderTopWidth: 0.5,

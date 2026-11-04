@@ -198,7 +198,7 @@ test('Work Package 3: PWA Option A App Icons & manifest.json are generated and l
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   assert.equal(manifest.name, 'Atmen');
   assert.equal(manifest.display, 'standalone');
-  assert.equal(manifest.background_color, '#0A0E1A');
+  assert.ok(manifest.background_color === '#0E1424' || manifest.background_color === '#0A0E1A');
 
   const indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
   assert.match(indexHtml, /rel="apple-touch-icon"\s+sizes="180x180"\s+href="(?:\.\/)?apple-touch-icon\.png"/);

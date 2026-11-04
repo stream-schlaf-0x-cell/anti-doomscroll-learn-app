@@ -1,6 +1,6 @@
 import { RawFeedSource, RawFeedEntry } from './types';
 import { parseFeedXml } from './rssParser';
-import { getSourceKind } from './sourceHealth';
+import { getSourceKind, isNonRssHomepageUrl } from './sourceHealth';
 
 export interface FeedFetchResult {
   source: RawFeedSource;
@@ -53,8 +53,8 @@ export async function fetchSingleFeed(
 ): Promise<FeedFetchResult> {
   const start = Date.now();
   const fetchedAt = new Date().toISOString();
-  if (getSourceKind(source) === 'reference') {
-    return { source, entries: [], success: false, error: 'Referenzseite – kein RSS-/Atom-Endpunkt', durationMs: 0, fetchedAt };
+  if (getSourceKind(source) === 'reference' || isNonRssHomepageUrl(source.url)) {
+    return { source, entries: [], success: false, error: 'Referenzseite oder Homepage – kein RSS-/Atom-Endpunkt', durationMs: 0, fetchedAt };
   }
 
   try {
