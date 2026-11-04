@@ -21,8 +21,8 @@ import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '..
 import { NewsHubModal } from '../../ui/components/NewsHubModal';
 import { GeminiModelSelector } from '../../ui/components/GeminiModelSelector';
 import { FEATURE_MODULES, isFeatureEnabled } from '../../core/modules/featureRegistry';
-import { findOrCreateSyncGist } from '../../core/sync/cloudSyncService';
 import {
+  onAiCredentialsChange,
   AiCredentials,
   DEFAULT_AI_CREDENTIALS,
   DEFAULT_GEMINI_MODEL,
@@ -36,6 +36,15 @@ import {
 import { defaultUsageLedger, MONTHLY_BUDGET_CEILING_EUR } from '../../core/enrichment/ledger';
 import { EnrichmentLedgerSummary } from '../../core/enrichment/types';
 import { BackupService } from '../../core/data/backupService';
+
+type SettingsSubTab = 'ai_sync' | 'appearance' | 'focus' | 'data';
+
+const SUB_TABS: { id: SettingsSubTab; label: string }[] = [
+  { id: 'ai_sync', label: '🔑 KI & Sync' },
+  { id: 'appearance', label: '🎨 Ansicht' },
+  { id: 'focus', label: '🧭 Fokus' },
+  { id: 'data', label: '📦 Daten' }
+];
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -65,11 +74,12 @@ export const SettingsScreen: React.FC = () => {
     isSyncing,
     syncStatusMessage,
     triggerCloudSync,
-    updateCloudSyncConfig,
+    activateCloudSync,
     applyPairingCode,
     getPairingBundle
   } = useApp();
 
+  const [activeSubTab, setActiveSubTab] = useState<SettingsSubTab>('ai_sync');
   const [resetMemoryNotice, setResetMemoryNotice] = useState<string | null>(null);
   const [githubTokenInput, setGithubTokenInput] = useState<string>('');
   const [passphraseInput, setPassphraseInput] = useState<string>('');
@@ -154,6 +164,10 @@ export const SettingsScreen: React.FC = () => {
       const summary = await defaultUsageLedger.getSummary();
       setLedgerSummary(summary);
     })();
+    return onAiCredentialsChange(creds => {
+      setAiCreds(creds);
+      setProxyUrlInput(creds.proxyUrl ?? '');
+    });
   }, []);
 
   useEffect(() => {
@@ -276,18 +290,18 @@ export const SettingsScreen: React.FC = () => {
     setIsActivatingSync(true);
     setSyncNotice(null);
     try {
-      const { gistId, isNew } = await findOrCreateSyncGist(githubTokenInput.trim());
-      await updateCloudSyncConfig({
-        enabled: true,
-        githubToken: githubTokenInput.trim(),
-        gistId,
-        encryptionPassphrase: passphraseInput.trim() || 'atmen-single-instance-default-key'
-      });
-      await triggerCloudSync(true);
-      const bundle = await getPairingBundle();
-      setPairingBundle(bundle);
-      setSyncNotice(isNew ? '✅ Neuer Secret-Gist erfolgreich erstellt und Live-Sync aktiviert!' : '✅ Bestehenden Sync-Gist gefunden und erfolgreich verbunden!');
-      setSyncNoticeType('success');
+      const res = await activateCloudSync(githubTokenInput.trim(), passphraseInput.trim());
+      if (res.success) {
+        setSyncNotice('✅ Live-Sync erfolgreich verbunden & Remote-Schlüssel synchronisiert!');
+        setSyncNoticeType('success');
+        const bundle = await getPairingBundle();
+        setPairingBundle(bundle);
+        const creds = await loadAiCredentials();
+        setAiCreds(creds);
+      } else {
+        setSyncNotice(`Fehler bei Gist-Verbindung: ${res.error}`);
+        setSyncNoticeType('error');
+      }
     } catch (err: any) {
       setSyncNotice(`Fehler bei Gist-Verbindung: ${err?.message || err}`);
       setSyncNoticeType('error');
@@ -520,833 +534,71 @@ export const SettingsScreen: React.FC = () => {
         </View>
       </View>
 
+      {/* Sub-Tab Navigation Bar */}
+      <View style={[styles.subTabBarContainer, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.subTabBarInner}
+        >
+          {SUB_TABS.map(tab => {
+            const isActive = activeSubTab === tab.id;
+            return (
+              <TouchableOpacity
+                key={tab.id}
+                onPress={() => setActiveSubTab(tab.id)}
+                style={[
+                  styles.subTabButton,
+                  {
+                    backgroundColor: isActive ? colors.accentSubtle : colors.surfaceSecondary,
+                    borderColor: isActive ? colors.accent : colors.borderSubtle
+                  }
+                ]}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: isActive }}
+                accessibilityLabel={tab.label}
+              >
+                <Text
+                  style={[
+                    styles.subTabText,
+                    {
+                      color: isActive ? colors.accent : colors.textSecondary,
+                      fontWeight: isActive ? '700' : '600'
+                    }
+                  ]}
+                >
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Section: Live-Sync & Geräte koppeln (Eine Instanz) */}
+        {activeSubTab === 'ai_sync' && (
+          <>
+        {/* Section: AI Brain & Model Selector (BYOK Gemini / OpenRouter) */}
         <View style={styles.section}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name="cloud-done" size={20} color="#10B981" />
+              <Ionicons name="sparkles" size={20} color={colors.accent} />
               <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
-                ⚡ Live-Sync & Geräte koppeln (Eine Instanz)
+                KI-Gehirn & Modell-Auswahl (Gemini / OpenRouter)
               </Text>
             </View>
             <View style={[
               styles.syncStatusBadge,
               {
-                backgroundColor: cloudSyncConfig.enabled ? 'rgba(16, 185, 129, 0.16)' : colors.surfaceSecondary,
-                borderColor: cloudSyncConfig.enabled ? '#10B981' : colors.borderSubtle
+                backgroundColor: hasAiConfiguration(aiCreds) ? 'rgba(16, 185, 129, 0.16)' : 'rgba(245, 158, 11, 0.16)',
+                borderColor: hasAiConfiguration(aiCreds) ? '#10B981' : '#F59E0B'
               }
             ]}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary }}>
-                {isSyncing ? '🔄 Synchronisiere…' : cloudSyncConfig.enabled ? '🟢 Live-Sync aktiv' : '⚪ Nicht gekoppelt'}
+              <Text style={{ fontSize: 11, fontWeight: '700', color: hasAiConfiguration(aiCreds) ? '#10B981' : '#F59E0B' }}>
+                {hasAiConfiguration(aiCreds) ? '✅ API-Key aktiv' : '⚠️ Kein Key hinterlegt'}
               </Text>
             </View>
           </View>
-
-          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Verbindet Mac, iPhone und iPad zu einer einzigen synchronen ATMEN-Instanz. Lesezeichen, Lesefortschritt, API-Keys, Channels & gesehene Artikel werden verschlüsselt abgeglichen.
-          </Text>
-
-          {syncStatusMessage && (
-            <View style={[styles.syncNoticeCard, { backgroundColor: 'rgba(16, 185, 129, 0.14)', borderColor: '#10B981' }]}>
-              <Ionicons name="checkmark-circle" size={16} color="#10B981" />
-              <Text style={{ color: '#10B981', fontSize: 12.5, fontWeight: '600', flex: 1, marginLeft: 6 }}>
-                {syncStatusMessage}
-              </Text>
-            </View>
-          )}
-
-          {syncNotice && (
-            <View style={[
-              styles.syncNoticeCard,
-              {
-                backgroundColor: syncNoticeType === 'success' ? 'rgba(16, 185, 129, 0.14)' : 'rgba(239, 68, 68, 0.14)',
-                borderColor: syncNoticeType === 'success' ? '#10B981' : '#EF4444'
-              }
-            ]}>
-              <Ionicons
-                name={syncNoticeType === 'success' ? 'checkmark-circle' : 'alert-circle'}
-                size={16}
-                color={syncNoticeType === 'success' ? '#10B981' : '#EF4444'}
-              />
-              <Text style={{
-                color: syncNoticeType === 'success' ? '#10B981' : '#EF4444',
-                fontSize: 12.5,
-                fontWeight: '600',
-                flex: 1,
-                marginLeft: 6
-              }}>
-                {syncNotice}
-              </Text>
-            </View>
-          )}
-
-          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
-            {/* Telemetry info when enabled */}
-            {cloudSyncConfig.enabled && (
-              <View style={[styles.syncTelemetryRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
-                    ☁️ Gist-ID: {cloudSyncConfig.gistId}
-                  </Text>
-                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
-                    Zuletzt synchronisiert: {cloudSyncConfig.lastSyncAt ? new Date(cloudSyncConfig.lastSyncAt).toLocaleTimeString() : 'noch nicht'} · {readCount} Artikel, {customChannelsCount} Channels synchron
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => triggerCloudSync(true)}
-                  disabled={isSyncing}
-                  style={[styles.smallActionBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Jetzt synchronisieren"
-                >
-                  <Ionicons name="refresh" size={13} color={colors.accent} style={{ marginRight: 4 }} />
-                  <Text style={{ fontSize: 11.5, fontWeight: '700', color: colors.accent }}>
-                    {isSyncing ? 'Sync…' : 'Jetzt synchronisieren'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Mode Selector: Primärgerät (Mac) vs Zweitgerät (iPad/iPhone) */}
-            <View style={styles.syncModeSelector}>
-              <TouchableOpacity
-                onPress={() => setSyncMode('primary')}
-                style={[
-                  styles.syncModeTab,
-                  syncMode === 'primary' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                ]}
-              >
-                <Text style={[styles.syncModeTabText, { color: syncMode === 'primary' ? colors.accent : colors.textSecondary }]}>
-                  🖥️ Primärgerät (Mac / 1-Klick Setup)
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setSyncMode('secondary')}
-                style={[
-                  styles.syncModeTab,
-                  syncMode === 'secondary' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                ]}
-              >
-                <Text style={[styles.syncModeTabText, { color: syncMode === 'secondary' ? colors.accent : colors.textSecondary }]}>
-                  📲 iPad & iPhone koppeln
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {syncMode === 'primary' ? (
-              <View style={{ marginTop: 12 }}>
-                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
-                  GitHub Access Token (PAT mit gist-Berechtigung):
-                </Text>
-                <TextInput
-                  value={githubTokenInput}
-                  onChangeText={setGithubTokenInput}
-                  placeholder="ghp_... oder github_pat_..."
-                  placeholderTextColor={colors.textMuted}
-                  secureTextEntry
-                  style={[styles.textInput, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-
-                <Text style={[styles.inputLabel, { color: colors.textSecondary, marginTop: 10 }]}>
-                  Verschlüsselungs-Passphrase (Client-Side Encryption):
-                </Text>
-                <TextInput
-                  value={passphraseInput}
-                  onChangeText={setPassphraseInput}
-                  placeholder="Passphrase für Ende-zu-Ende-Verschlüsselung (optional)"
-                  placeholderTextColor={colors.textMuted}
-                  secureTextEntry
-                  style={[styles.textInput, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-
-                <TouchableOpacity
-                  onPress={handleActivateLiveSync}
-                  disabled={isActivatingSync}
-                  style={[styles.primaryActionBtn, { backgroundColor: colors.accent, marginTop: 14 }]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Live-Sync aktivieren"
-                >
-                  {isActivatingSync ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
-                  ) : (
-                    <Ionicons name="sync" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
-                  )}
-                  <Text style={styles.primaryActionBtnText}>
-                    {isActivatingSync ? 'Verbinde Gist…' : cloudSyncConfig.enabled ? 'Live-Sync neu verbinden' : '🔄 Live-Sync aktivieren'}
-                  </Text>
-                </TouchableOpacity>
-
-                {/* Instant Pairing Code & QR for secondary devices */}
-                {pairingBundle && (
-                  <View style={[styles.pairingCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: 16 }]}>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 }}>
-                      📲 Zweitgerät (iPad / iPhone) koppeln:
-                    </Text>
-                    <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 10 }}>
-                      Scanne diesen QR-Code mit der iPhone-Kamera oder kopiere den Koppel-Code, um das iPad in 1 Sekunde synchron zu verbinden.
-                    </Text>
-
-                    {pairingBundle.qrDataUrl ? (
-                      <View style={{ alignItems: 'center', marginVertical: 8 }}>
-                        <Image
-                          source={{ uri: pairingBundle.qrDataUrl }}
-                          style={{ width: 180, height: 180, borderRadius: 8, backgroundColor: '#FFFFFF' }}
-                          resizeMode="contain"
-                        />
-                      </View>
-                    ) : null}
-
-                    <TouchableOpacity
-                      onPress={handleCopyPairingCode}
-                      style={[styles.smallActionBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent, alignSelf: 'center', marginTop: 8 }]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Koppel-Code kopieren"
-                    >
-                      <Ionicons name="copy-outline" size={14} color={colors.accent} style={{ marginRight: 5 }} />
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: colors.accent }}>
-                        📋 Koppel-Code kopieren
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            ) : (
-              <View style={{ marginTop: 12 }}>
-                <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginBottom: 12, lineHeight: 18 }}>
-                  Füge hier den Koppel-Code ein, den du auf deinem Mac generiert hast, um dieses iPad oder iPhone dauerhaft mit derselben synchronen ATMEN-Instanz zu verknüpfen.
-                </Text>
-
-                <TouchableOpacity
-                  onPress={handlePasteFromClipboardAndConnect}
-                  disabled={isActivatingSync}
-                  style={[styles.primaryActionBtn, { backgroundColor: '#10B981', marginBottom: 12 }]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Koppel-Code aus Zwischenablage einfügen und verbinden"
-                >
-                  <Ionicons name="clipboard-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                  <Text style={styles.primaryActionBtnText}>
-                    📲 Koppel-Code aus Zwischenablage einfügen & verbinden
-                  </Text>
-                </TouchableOpacity>
-
-                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
-                  Oder Koppel-Code manuell einfügen:
-                </Text>
-                <TextInput
-                  value={pairingCodeInput}
-                  onChangeText={setPairingCodeInput}
-                  placeholder="atmen-pair-v1:..."
-                  placeholderTextColor={colors.textMuted}
-                  multiline
-                  numberOfLines={3}
-                  style={[styles.textInput, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, color: colors.textPrimary, height: 75, textAlignVertical: 'top' }]}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-
-                <TouchableOpacity
-                  onPress={handleApplyPairingCode}
-                  disabled={isActivatingSync || !pairingCodeInput.trim()}
-                  style={[
-                    styles.primaryActionBtn,
-                    {
-                      backgroundColor: pairingCodeInput.trim() ? colors.accent : colors.surfaceSecondary,
-                      marginTop: 10
-                    }
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Verbinden"
-                >
-                  <Ionicons name="link" size={15} color={pairingCodeInput.trim() ? '#FFFFFF' : colors.textMuted} style={{ marginRight: 6 }} />
-                  <Text style={[styles.primaryActionBtnText, !pairingCodeInput.trim() && { color: colors.textMuted }]}>
-                    Koppeln & Synchronisieren
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Section: Algorithmus-Spiegel (Live-Profil) */}
-        <View style={styles.section}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name="sparkles" size={18} color={colors.accent} />
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
-                Dein Algorithmus-Spiegel (Live-Profil)
-              </Text>
-            </View>
-          </View>
-          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Transparente Einsicht in alle gelernten Signale deiner Interaktionen. 100% lokal, ohne geheime Tracker.
-          </Text>
-
-          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
-            {/* Live Interaction Counters */}
-            <View style={styles.mirrorStatsGrid}>
-              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.mirrorStatNumber, { color: colors.accent }]}>{readCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>📖 Gelesen</Text>
-              </View>
-              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.mirrorStatNumber, { color: '#10B981' }]}>{upvoteCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>▲ Upvotes</Text>
-              </View>
-              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.mirrorStatNumber, { color: '#EF4444' }]}>{downvoteCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>▼ Downvotes</Text>
-              </View>
-              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.mirrorStatNumber, { color: '#38BDF8' }]}>{savedCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>★ Gespeichert</Text>
-              </View>
-              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.mirrorStatNumber, { color: '#F59E0B' }]}>{notesCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>✍️ Notizen</Text>
-              </View>
-              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
-                <Text style={[styles.mirrorStatNumber, { color: '#8B5CF6' }]}>{customChannelsCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>🪐 Spaces</Text>
-              </View>
-            </View>
-
-            {/* Feed-Mischverhältnis Bar & Presets */}
-            <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>
-                  Feed-Mischverhältnis (Fokus / Reibung / Entdeckung)
-                </Text>
-                <Text style={{ fontSize: 11, fontWeight: '600', color: colors.textMuted }}>
-                  {focusPct}% / {socraticPct}% / {serendipityPct}%
-                </Text>
-              </View>
-
-              {/* Multi-color ratio bar */}
-              <View style={styles.ratioBarTrack}>
-                <View style={[styles.ratioBarSegment, { width: `${focusPct}%`, backgroundColor: '#10B981' }]} />
-                <View style={[styles.ratioBarSegment, { width: `${socraticPct}%`, backgroundColor: '#F59E0B' }]} />
-                <View style={[styles.ratioBarSegment, { width: `${serendipityPct}%`, backgroundColor: '#8B5CF6' }]} />
-              </View>
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, marginBottom: 10 }}>
-                <Text style={{ fontSize: 10, color: '#10B981', fontWeight: '600' }}>● Fokus ({focusPct}%)</Text>
-                <Text style={{ fontSize: 10, color: '#F59E0B', fontWeight: '600' }}>● Sokratisch ({socraticPct}%)</Text>
-                <Text style={{ fontSize: 10, color: '#8B5CF6', fontWeight: '600' }}>● Entdecker ({serendipityPct}%)</Text>
-              </View>
-
-              {/* Preset buttons */}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                <TouchableOpacity
-                  onPress={() => updateFeedMixRatio(0.60, 0.20, 0.20)}
-                  style={[
-                    styles.presetPill,
-                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
-                    focusPct === 60 && socraticPct === 20 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
-                  ]}
-                >
-                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>⚖️ Ausgewogen (60/20/20)</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => updateFeedMixRatio(0.80, 0.10, 0.10)}
-                  style={[
-                    styles.presetPill,
-                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
-                    focusPct === 80 && socraticPct === 10 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
-                  ]}
-                >
-                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>🎯 Tiefer Fokus (80/10/10)</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => updateFeedMixRatio(0.40, 0.40, 0.20)}
-                  style={[
-                    styles.presetPill,
-                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
-                    focusPct === 40 && socraticPct === 40 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
-                  ]}
-                >
-                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>⚡ Sokratische Reibung (40/40/20)</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => updateFeedMixRatio(0.40, 0.20, 0.40)}
-                  style={[
-                    styles.presetPill,
-                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
-                    focusPct === 40 && socraticPct === 20 && serendipityPct === 40 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
-                  ]}
-                >
-                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>🧭 Entdecker (40/20/40)</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* ▲ Boosted Signals Section */}
-            <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                <Ionicons name="arrow-up-circle" size={16} color="#10B981" />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>
-                  ▲ Verstärkte Signale ({boostedItems.length})
-                </Text>
-              </View>
-              {boostedItems.length === 0 ? (
-                <Text style={{ fontSize: 11, color: colors.textMuted, fontStyle: 'italic', marginVertical: 4 }}>
-                  Noch keine aktiven Verstärkungen. Mit ▲ aufgewertete Beiträge verankern Themen, Autoren & Quellen hier.
-                </Text>
-              ) : (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-                  {boostedItems.map((item, idx) => (
-                    <View
-                      key={`${item.category}-${item.key}-${idx}`}
-                      style={[styles.signalPill, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.3)' }]}
-                    >
-                      <Text style={[styles.signalPillText, { color: '#059669' }]}>
-                        ▲ {item.label} (+{item.count})
-                      </Text>
-                      <TouchableOpacity
-                        onPress={() => removeFeedbackBoost(item.category, item.key)}
-                        style={styles.signalRemoveBtn}
-                        accessibilityLabel={`${item.label} Verstärkung aufheben`}
-                      >
-                        <Ionicons name="close" size={12} color="#059669" />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-
-            {/* ▼ Penalized Signals Section */}
-            <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                <Ionicons name="arrow-down-circle" size={16} color="#EF4444" />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>
-                  ▼ Gedämpfte Signale ({penalizedItems.length})
-                </Text>
-              </View>
-              {penalizedItems.length === 0 ? (
-                <Text style={{ fontSize: 11, color: colors.textMuted, fontStyle: 'italic', marginVertical: 4 }}>
-                  Keine Dämpfungen aktiv. Mit ▼ abgewertete Beiträge dämpfen Relevanz deterministisch.
-                </Text>
-              ) : (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-                  {penalizedItems.map((item, idx) => (
-                    <View
-                      key={`${item.category}-${item.key}-${idx}`}
-                      style={[styles.signalPill, { backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)' }]}
-                    >
-                      <Text style={[styles.signalPillText, { color: '#DC2626' }]}>
-                        ▼ {item.label} (-{item.count})
-                      </Text>
-                      <TouchableOpacity
-                        onPress={() => removeFeedbackPenalty(item.category, item.key)}
-                        style={styles.signalRemoveBtn}
-                        accessibilityLabel={`${item.label} Dämpfung aufheben`}
-                      >
-                        <Ionicons name="close" size={12} color="#DC2626" />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-
-            {/* Reset feedback memory button */}
-            {(boostedItems.length > 0 || penalizedItems.length > 0) && (
-              <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
-                <TouchableOpacity
-                  onPress={async () => {
-                    await clearFeedbackMemory();
-                    setResetMemoryNotice('✓ Lern-Historie & Signale zurückgesetzt');
-                    setTimeout(() => setResetMemoryNotice(null), 3000);
-                  }}
-                  style={[styles.resetMemoryBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                >
-                  <Ionicons name="refresh-outline" size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary }}>
-                    Lern-Historie & Signale zurücksetzen
-                  </Text>
-                </TouchableOpacity>
-                {resetMemoryNotice && (
-                  <Text style={{ fontSize: 11, color: colors.accent, marginTop: 4, fontWeight: '600' }}>
-                    {resetMemoryNotice}
-                  </Text>
-                )}
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Section: News-Hub & Quellen-Zentrale */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            News-Hub & Quellen-Zentrale
-          </Text>
-          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Verwalte 29 verifizierte RSS-Feeds (ÖRR, Spektrum, Quanta, YouTube) und importiere eigene Feeds oder OPML-Dateien.
-          </Text>
-
-          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-              <View style={{ flex: 1, minWidth: 200 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                  <Ionicons name="radio-outline" size={16} color={colors.accent} />
-                  <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 14 }}>
-                    29 Aktive Primärquellen & Import-Center
-                  </Text>
-                </View>
-                <Text style={{ fontSize: 12, color: colors.textMuted, lineHeight: 16 }}>
-                  Öffentlich-Rechtliche (Tagesschau, ZDF, DLF), Wissenschaft, Kultur & OPML-Export für maximale Datensouveränität.
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                onPress={() => setShowNewsHub(true)}
-                style={[styles.manageSourcesBtn, { backgroundColor: colors.accent }]}
-                accessibilityRole="button"
-                accessibilityLabel="News-Hub öffnen"
-              >
-                <Ionicons name="options-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 12 }}>News-Hub öffnen</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-
-        {/* Section: Topic Weights */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            Themengewichtung für die Tagesausgabe
-          </Text>
-          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Passe die Relevanz an. Änderungen wirken sich sofort spürbar auf die Reihung deines Feeds aus.
-          </Text>
-
-          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-            {(Object.keys(TOPIC_METADATA) as TopicTag[]).map((tag, idx) => {
-              const meta = TOPIC_METADATA[tag];
-              const weight = profile.explicitInterests[tag] ?? 0.5;
-              const weightPct = Math.round(weight * 100);
-
-              return (
-                <View
-                  key={tag}
-                  style={[
-                    styles.weightRow,
-                    idx > 0 && { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }
-                  ]}
-                >
-                  <View style={styles.weightInfo}>
-                    <View style={styles.labelRow}>
-                      <Ionicons name={meta.icon as any} size={15} color={colors.accent} style={{ marginRight: 6 }} />
-                      <Text style={[styles.weightLabel, { color: colors.textPrimary }]}>
-                        {meta.label}
-                      </Text>
-                    </View>
-                    <Text style={[styles.weightPercent, { color: colors.accent }]}>
-                      {weightPct}% Priorität
-                    </Text>
-                  </View>
-
-                  <View style={styles.stepperContainer}>
-                    <TouchableOpacity
-                      onPress={() => handleAdjustWeight(tag, -0.1)}
-                      style={[styles.stepperButton, { backgroundColor: colors.surfaceSecondary }]}
-                      disabled={weight <= 0.05}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${meta.label} Priorität verringern`}
-                    >
-                      <Ionicons name="remove" size={16} color={weight <= 0.05 ? colors.border : colors.textPrimary} />
-                    </TouchableOpacity>
-
-                    {/* Visual Progress Pill */}
-                    <View style={[styles.weightBarTrack, { backgroundColor: colors.surfaceSecondary }]}>
-                      <View
-                        style={[
-                          styles.weightBarFill,
-                          { width: `${weightPct}%`, backgroundColor: colors.accent }
-                        ]}
-                      />
-                    </View>
-
-                    <TouchableOpacity
-                      onPress={() => handleAdjustWeight(tag, 0.1)}
-                      style={[styles.stepperButton, { backgroundColor: colors.surfaceSecondary }]}
-                      disabled={weight >= 0.95}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${meta.label} Priorität erhöhen`}
-                    >
-                      <Ionicons name="add" size={16} color={weight >= 0.95 ? colors.border : colors.textPrimary} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Section: Reading Format */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            Lesezeit-Präferenz
-          </Text>
-          <View style={styles.toggleRow}>
-            {[
-              { id: 'quick', label: 'Kompakt (1–2m)' },
-              { id: 'balanced', label: 'Ausgewogen (3–5m)' },
-              { id: 'deep', label: 'Tiefgang (5m+)' }
-            ].map(d => (
-              <TouchableOpacity
-                key={d.id}
-                onPress={() => updateDurationPreference(d.id as ReadingPreferenceDuration)}
-                style={[
-                  styles.togglePill,
-                  {
-                    backgroundColor: profile.readingPreferences.preferredDuration === d.id ? colors.accent : colors.surface,
-                    borderColor: colors.borderSubtle
-                  }
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={`Lesezeit ${d.label} wählen`}
-              >
-                <Text
-                  style={[
-                    styles.toggleText,
-                    { color: profile.readingPreferences.preferredDuration === d.id ? '#FFFFFF' : colors.textPrimary }
-                  ]}
-                >
-                  {d.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Section: Modular Feature Registry (Atmen Baukasten) */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            Modulare Funktionen (Atmen Baukasten)
-          </Text>
-          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Schalte einzelne Module nach deinen persönlichen Lern- und Konzentrationsbedürfnissen ein oder aus.
-          </Text>
-          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-            {FEATURE_MODULES.map((mod, index) => {
-              const enabled = isFeatureEnabled(profile, mod.id);
-              return (
-                <View
-                  key={mod.id}
-                  style={[
-                    styles.settingItemRow,
-                    index > 0 && { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }
-                  ]}
-                >
-                  <View style={{ flex: 1, paddingRight: spacing.md }}>
-                    <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
-                      {mod.title}
-                    </Text>
-                    <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, marginTop: 2 }}>
-                      {mod.description}
-                    </Text>
-                  </View>
-                  <Switch
-                    value={enabled}
-                    onValueChange={() => void toggleFeatureModule(mod.id)}
-                    trackColor={{ false: colors.borderSubtle, true: colors.accent }}
-                    thumbColor="#FFFFFF"
-                    accessibilityRole="switch"
-                    accessibilityLabel={`${mod.title} umschalten`}
-                  />
-                </View>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Section: Daily Editions & Weather Location */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            Tagesausgaben & Wetter-Ort
-          </Text>
-          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Honeste Wetterlage (Open-Meteo & DWD) für deinen morgendlichen Fokus-Start ohne Standort-Tracking.
-          </Text>
-          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-            {/* Weather Toggle */}
-            <View style={styles.settingItemRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
-                  Morgenwetter anzeigen
-                </Text>
-                <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, marginTop: 2 }}>
-                  Echtes WMO-Wetter in der Guten-Morgen-Ausgabe
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => updateEditionPreferences({
-                  weatherEnabled: profile.editionPreferences?.weatherEnabled === false ? true : false
-                })}
-                style={[
-                  styles.smallPill,
-                  {
-                    backgroundColor: profile.editionPreferences?.weatherEnabled !== false ? colors.accent : colors.surfaceSecondary
-                  }
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Wetteranzeige umschalten"
-              >
-                <Text
-                  style={[
-                    styles.smallPillText,
-                    { color: profile.editionPreferences?.weatherEnabled !== false ? '#FFFFFF' : colors.textPrimary }
-                  ]}
-                >
-                  {profile.editionPreferences?.weatherEnabled !== false ? 'Aktiv' : 'Aus'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* City Selector */}
-            <View style={[styles.settingItemRow, { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle, flexDirection: 'column', alignItems: 'flex-start', gap: 8 }]}>
-              <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
-                Wetter-Stadt:
-              </Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, width: '100%' }}>
-                {[
-                  { id: 'dresden', label: 'Dresden' },
-                  { id: 'leipzig', label: 'Leipzig' },
-                  { id: 'berlin', label: 'Berlin' },
-                  { id: 'muenchen', label: 'München' },
-                  { id: 'hamburg', label: 'Hamburg' },
-                  { id: 'wien', label: 'Wien' },
-                  { id: 'zuerich', label: 'Zürich' }
-                ].map(c => {
-                  const currentCity = (profile.editionPreferences?.weatherCity || 'dresden').toLowerCase();
-                  const isSelected = currentCity === c.id;
-                  return (
-                    <TouchableOpacity
-                      key={c.id}
-                      onPress={() => updateEditionPreferences({ weatherCity: c.id })}
-                      style={[
-                        styles.smallPill,
-                        {
-                          backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
-                          borderColor: isSelected ? colors.accent : colors.borderSubtle,
-                          borderWidth: 1,
-                          paddingHorizontal: 12,
-                          paddingVertical: 6
-                        }
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Stadt ${c.label} wählen`}
-                    >
-                      <Text
-                        style={[
-                          styles.smallPillText,
-                          {
-                            color: isSelected ? '#FFFFFF' : colors.textPrimary,
-                            fontWeight: isSelected ? '700' : '500'
-                          }
-                        ]}
-                      >
-                        {isSelected ? `✓ ${c.label}` : c.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* Section: Typography & Appearance */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            Darstellung & Lesekomfort
-          </Text>
-          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-            {/* Theme */}
-            <View style={styles.settingItemRow}>
-              <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
-                Erscheinungsbild
-              </Text>
-              <View style={styles.subToggleRow}>
-                {[
-                  { id: 'system', label: 'Auto' },
-                  { id: 'light', label: 'Hell' },
-                  { id: 'dark', label: 'Dunkel' }
-                ].map(t => (
-                  <TouchableOpacity
-                    key={t.id}
-                    onPress={() => setThemePreference(t.id as any)}
-                    style={[
-                      styles.smallPill,
-                      {
-                        backgroundColor: profile.readingPreferences.theme === t.id ? colors.accent : colors.surfaceSecondary
-                      }
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Erscheinungsbild ${t.label} aktivieren`}
-                  >
-                    <Text
-                      style={[
-                        styles.smallPillText,
-                        { color: profile.readingPreferences.theme === t.id ? '#FFFFFF' : colors.textPrimary }
-                      ]}
-                    >
-                      {t.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {/* Font Size */}
-            <View style={[styles.settingItemRow, { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }]}>
-              <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
-                Schriftgröße im Reader
-              </Text>
-              <View style={styles.subToggleRow}>
-                {(['sm', 'md', 'lg', 'xl'] as const).map(size => (
-                  <TouchableOpacity
-                    key={size}
-                    onPress={() => setFontSize(size)}
-                    style={[
-                      styles.smallPill,
-                      {
-                        backgroundColor: profile.readingPreferences.fontSize === size ? colors.accent : colors.surfaceSecondary
-                      }
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Schriftgröße ${size.toUpperCase()} wählen`}
-                  >
-                    <Text
-                      style={[
-                        styles.smallPillText,
-                        { color: profile.readingPreferences.fontSize === size ? '#FFFFFF' : colors.textPrimary }
-                      ]}
-                    >
-                      {size.toUpperCase()}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* Section: AI Brain & Model Selector (BYOK Gemini / OpenRouter) */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-            KI-Gehirn & Modell-Auswahl (Gemini / OpenRouter)
-          </Text>
           <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
             Bring Your Own Key (BYOK): Die veröffentlichte Web-App hat keinen eigenen KI-Server. Mit deinem Schlüssel werden Anfragen direkt an den gewählten Anbieter gesendet; dort können Kosten entstehen. Ohne KI-Konfiguration bleibt der lokale Lesemodus verfügbar.
           </Text>
@@ -1661,6 +913,862 @@ export const SettingsScreen: React.FC = () => {
           </View>
         </View>
 
+        {/* Section: Live-Sync & Geräte koppeln (Eine Instanz) */}
+        <View style={styles.section}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="cloud-done" size={20} color="#10B981" />
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                ⚡ Live-Sync & Geräte koppeln (Eine Instanz)
+              </Text>
+            </View>
+            <View style={[
+              styles.syncStatusBadge,
+              {
+                backgroundColor: cloudSyncConfig.enabled ? 'rgba(16, 185, 129, 0.16)' : colors.surfaceSecondary,
+                borderColor: cloudSyncConfig.enabled ? '#10B981' : colors.borderSubtle
+              }
+            ]}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary }}>
+                {isSyncing ? '🔄 Synchronisiere…' : cloudSyncConfig.enabled ? '🟢 Live-Sync aktiv' : '⚪ Nicht gekoppelt'}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Verbindet Mac, iPhone und iPad zu einer einzigen synchronen ATMEN-Instanz. Lesezeichen, Lesefortschritt, API-Keys, Channels & gesehene Artikel werden verschlüsselt abgeglichen.
+          </Text>
+
+          {syncStatusMessage && (
+            <View style={[styles.syncNoticeCard, { backgroundColor: 'rgba(16, 185, 129, 0.14)', borderColor: '#10B981' }]}>
+              <Ionicons name="checkmark-circle" size={16} color="#10B981" />
+              <Text style={{ color: '#10B981', fontSize: 12.5, fontWeight: '600', flex: 1, marginLeft: 6 }}>
+                {syncStatusMessage}
+              </Text>
+            </View>
+          )}
+
+          {syncNotice && (
+            <View style={[
+              styles.syncNoticeCard,
+              {
+                backgroundColor: syncNoticeType === 'success' ? 'rgba(16, 185, 129, 0.14)' : 'rgba(239, 68, 68, 0.14)',
+                borderColor: syncNoticeType === 'success' ? '#10B981' : '#EF4444'
+              }
+            ]}>
+              <Ionicons
+                name={syncNoticeType === 'success' ? 'checkmark-circle' : 'alert-circle'}
+                size={16}
+                color={syncNoticeType === 'success' ? '#10B981' : '#EF4444'}
+              />
+              <Text style={{
+                color: syncNoticeType === 'success' ? '#10B981' : '#EF4444',
+                fontSize: 12.5,
+                fontWeight: '600',
+                flex: 1,
+                marginLeft: 6
+              }}>
+                {syncNotice}
+              </Text>
+            </View>
+          )}
+
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
+            {/* Telemetry info when enabled */}
+            {cloudSyncConfig.enabled && (
+              <View style={[styles.syncTelemetryRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
+                    ☁️ Gist-ID: {cloudSyncConfig.gistId}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
+                    Zuletzt synchronisiert: {cloudSyncConfig.lastSyncAt ? new Date(cloudSyncConfig.lastSyncAt).toLocaleTimeString() : 'noch nicht'} · {readCount} Artikel, {customChannelsCount} Channels synchron
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => triggerCloudSync(true)}
+                  disabled={isSyncing}
+                  style={[styles.smallActionBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Jetzt synchronisieren"
+                >
+                  <Ionicons name="refresh" size={13} color={colors.accent} style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 11.5, fontWeight: '700', color: colors.accent }}>
+                    {isSyncing ? 'Sync…' : 'Jetzt synchronisieren'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Mode Selector: Primärgerät (Mac) vs Zweitgerät (iPad/iPhone) */}
+            <View style={styles.syncModeSelector}>
+              <TouchableOpacity
+                onPress={() => setSyncMode('primary')}
+                style={[
+                  styles.syncModeTab,
+                  syncMode === 'primary' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                ]}
+              >
+                <Text style={[styles.syncModeTabText, { color: syncMode === 'primary' ? colors.accent : colors.textSecondary }]}>
+                  🖥️ Primärgerät (Mac / 1-Klick Setup)
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setSyncMode('secondary')}
+                style={[
+                  styles.syncModeTab,
+                  syncMode === 'secondary' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                ]}
+              >
+                <Text style={[styles.syncModeTabText, { color: syncMode === 'secondary' ? colors.accent : colors.textSecondary }]}>
+                  📲 iPad & iPhone koppeln
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {syncMode === 'primary' ? (
+              <View style={{ marginTop: 12 }}>
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                  GitHub Access Token (PAT mit gist-Berechtigung):
+                </Text>
+                <TextInput
+                  value={githubTokenInput}
+                  onChangeText={setGithubTokenInput}
+                  placeholder="ghp_... oder github_pat_..."
+                  placeholderTextColor={colors.textMuted}
+                  secureTextEntry
+                  style={[styles.textInput, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+
+                <Text style={[styles.inputLabel, { color: colors.textSecondary, marginTop: 10 }]}>
+                  Verschlüsselungs-Passphrase (Client-Side Encryption):
+                </Text>
+                <TextInput
+                  value={passphraseInput}
+                  onChangeText={setPassphraseInput}
+                  placeholder="Passphrase für Ende-zu-Ende-Verschlüsselung (optional)"
+                  placeholderTextColor={colors.textMuted}
+                  secureTextEntry
+                  style={[styles.textInput, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+
+                <TouchableOpacity
+                  onPress={handleActivateLiveSync}
+                  disabled={isActivatingSync}
+                  style={[styles.primaryActionBtn, { backgroundColor: colors.accent, marginTop: 14 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Live-Sync aktivieren"
+                >
+                  {isActivatingSync ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
+                  ) : (
+                    <Ionicons name="sync" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  )}
+                  <Text style={styles.primaryActionBtnText}>
+                    {isActivatingSync ? 'Verbinde Gist…' : cloudSyncConfig.enabled ? 'Live-Sync neu verbinden' : '🔄 Live-Sync aktivieren'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Instant Pairing Code & QR for secondary devices */}
+                {pairingBundle && (
+                  <View style={[styles.pairingCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: 16 }]}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 }}>
+                      📲 Zweitgerät (iPad / iPhone) koppeln:
+                    </Text>
+                    <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 10 }}>
+                      Scanne diesen QR-Code mit der iPhone-Kamera oder kopiere den Koppel-Code, um das iPad in 1 Sekunde synchron zu verbinden.
+                    </Text>
+
+                    {pairingBundle.qrDataUrl ? (
+                      <View style={{ alignItems: 'center', marginVertical: 8 }}>
+                        <Image
+                          source={{ uri: pairingBundle.qrDataUrl }}
+                          style={{ width: 180, height: 180, borderRadius: 8, backgroundColor: '#FFFFFF' }}
+                          resizeMode="contain"
+                        />
+                      </View>
+                    ) : null}
+
+                    <TextInput
+                      value={pairingBundle.pairingCode}
+                      editable={false}
+                      selectTextOnFocus
+                      multiline
+                      numberOfLines={2}
+                      style={[
+                        styles.textInput,
+                        {
+                          backgroundColor: colors.background,
+                          borderColor: colors.borderSubtle,
+                          color: colors.textPrimary,
+                          fontSize: 11,
+                          height: 54,
+                          marginVertical: 8,
+                          textAlignVertical: 'top'
+                        }
+                      ]}
+                    />
+
+                    <TouchableOpacity
+                      onPress={handleCopyPairingCode}
+                      style={[styles.smallActionBtn, { backgroundColor: colors.accentSubtle, borderColor: colors.accent, alignSelf: 'center', marginTop: 8 }]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Koppel-Code kopieren"
+                    >
+                      <Ionicons name="copy-outline" size={14} color={colors.accent} style={{ marginRight: 5 }} />
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: colors.accent }}>
+                        📋 Koppel-Code kopieren
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginBottom: 12, lineHeight: 18 }}>
+                  Füge hier den Koppel-Code ein, den du auf deinem Mac generiert hast, um dieses iPad oder iPhone dauerhaft mit derselben synchronen ATMEN-Instanz zu verknüpfen.
+                </Text>
+
+                <TouchableOpacity
+                  onPress={handlePasteFromClipboardAndConnect}
+                  disabled={isActivatingSync}
+                  style={[styles.primaryActionBtn, { backgroundColor: '#10B981', marginBottom: 12 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Koppel-Code aus Zwischenablage einfügen und verbinden"
+                >
+                  <Ionicons name="clipboard-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                  <Text style={styles.primaryActionBtnText}>
+                    📲 Koppel-Code aus Zwischenablage einfügen & verbinden
+                  </Text>
+                </TouchableOpacity>
+
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+                  Oder Koppel-Code manuell einfügen:
+                </Text>
+                <TextInput
+                  value={pairingCodeInput}
+                  onChangeText={setPairingCodeInput}
+                  placeholder="atmen-pair-v1:..."
+                  placeholderTextColor={colors.textMuted}
+                  multiline
+                  numberOfLines={3}
+                  style={[styles.textInput, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, color: colors.textPrimary, height: 75, textAlignVertical: 'top' }]}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+
+                <TouchableOpacity
+                  onPress={handleApplyPairingCode}
+                  disabled={isActivatingSync || !pairingCodeInput.trim()}
+                  style={[
+                    styles.primaryActionBtn,
+                    {
+                      backgroundColor: pairingCodeInput.trim() ? colors.accent : colors.surfaceSecondary,
+                      marginTop: 10
+                    }
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Verbinden"
+                >
+                  <Ionicons name="link" size={15} color={pairingCodeInput.trim() ? '#FFFFFF' : colors.textMuted} style={{ marginRight: 6 }} />
+                  <Text style={[styles.primaryActionBtnText, !pairingCodeInput.trim() && { color: colors.textMuted }]}>
+                    Koppeln & Synchronisieren
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+
+          </>
+        )}
+
+        {activeSubTab === 'appearance' && (
+          <>
+        {/* Section: Typography & Appearance */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Darstellung & Lesekomfort
+          </Text>
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            {/* Theme */}
+            <View style={styles.settingItemRow}>
+              <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
+                Erscheinungsbild
+              </Text>
+              <View style={styles.subToggleRow}>
+                {[
+                  { id: 'system', label: 'Auto' },
+                  { id: 'light', label: 'Hell' },
+                  { id: 'dark', label: 'Dunkel' }
+                ].map(t => (
+                  <TouchableOpacity
+                    key={t.id}
+                    onPress={() => setThemePreference(t.id as any)}
+                    style={[
+                      styles.smallPill,
+                      {
+                        backgroundColor: profile.readingPreferences.theme === t.id ? colors.accent : colors.surfaceSecondary
+                      }
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Erscheinungsbild ${t.label} aktivieren`}
+                  >
+                    <Text
+                      style={[
+                        styles.smallPillText,
+                        { color: profile.readingPreferences.theme === t.id ? '#FFFFFF' : colors.textPrimary }
+                      ]}
+                    >
+                      {t.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* Font Size */}
+            <View style={[styles.settingItemRow, { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }]}>
+              <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
+                Schriftgröße im Reader
+              </Text>
+              <View style={styles.subToggleRow}>
+                {(['sm', 'md', 'lg', 'xl'] as const).map(size => (
+                  <TouchableOpacity
+                    key={size}
+                    onPress={() => setFontSize(size)}
+                    style={[
+                      styles.smallPill,
+                      {
+                        backgroundColor: profile.readingPreferences.fontSize === size ? colors.accent : colors.surfaceSecondary
+                      }
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Schriftgröße ${size.toUpperCase()} wählen`}
+                  >
+                    <Text
+                      style={[
+                        styles.smallPillText,
+                        { color: profile.readingPreferences.fontSize === size ? '#FFFFFF' : colors.textPrimary }
+                      ]}
+                    >
+                      {size.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* Section: Reading Format */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Lesezeit-Präferenz
+          </Text>
+          <View style={styles.toggleRow}>
+            {[
+              { id: 'quick', label: 'Kompakt (1–2m)' },
+              { id: 'balanced', label: 'Ausgewogen (3–5m)' },
+              { id: 'deep', label: 'Tiefgang (5m+)' }
+            ].map(d => (
+              <TouchableOpacity
+                key={d.id}
+                onPress={() => updateDurationPreference(d.id as ReadingPreferenceDuration)}
+                style={[
+                  styles.togglePill,
+                  {
+                    backgroundColor: profile.readingPreferences.preferredDuration === d.id ? colors.accent : colors.surface,
+                    borderColor: colors.borderSubtle
+                  }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={`Lesezeit ${d.label} wählen`}
+              >
+                <Text
+                  style={[
+                    styles.toggleText,
+                    { color: profile.readingPreferences.preferredDuration === d.id ? '#FFFFFF' : colors.textPrimary }
+                  ]}
+                >
+                  {d.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Section: Modular Feature Registry (Atmen Baukasten) */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Modulare Funktionen (Atmen Baukasten)
+          </Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Schalte einzelne Module nach deinen persönlichen Lern- und Konzentrationsbedürfnissen ein oder aus.
+          </Text>
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            {FEATURE_MODULES.map((mod, index) => {
+              const enabled = isFeatureEnabled(profile, mod.id);
+              return (
+                <View
+                  key={mod.id}
+                  style={[
+                    styles.settingItemRow,
+                    index > 0 && { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }
+                  ]}
+                >
+                  <View style={{ flex: 1, paddingRight: spacing.md }}>
+                    <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
+                      {mod.title}
+                    </Text>
+                    <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, marginTop: 2 }}>
+                      {mod.description}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={enabled}
+                    onValueChange={() => void toggleFeatureModule(mod.id)}
+                    trackColor={{ false: colors.borderSubtle, true: colors.accent }}
+                    thumbColor="#FFFFFF"
+                    accessibilityRole="switch"
+                    accessibilityLabel={`${mod.title} umschalten`}
+                  />
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Section: Daily Editions & Weather Location */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Tagesausgaben & Wetter-Ort
+          </Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Honeste Wetterlage (Open-Meteo & DWD) für deinen morgendlichen Fokus-Start ohne Standort-Tracking.
+          </Text>
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            {/* Weather Toggle */}
+            <View style={styles.settingItemRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
+                  Morgenwetter anzeigen
+                </Text>
+                <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, marginTop: 2 }}>
+                  Echtes WMO-Wetter in der Guten-Morgen-Ausgabe
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => updateEditionPreferences({
+                  weatherEnabled: profile.editionPreferences?.weatherEnabled === false ? true : false
+                })}
+                style={[
+                  styles.smallPill,
+                  {
+                    backgroundColor: profile.editionPreferences?.weatherEnabled !== false ? colors.accent : colors.surfaceSecondary
+                  }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Wetteranzeige umschalten"
+              >
+                <Text
+                  style={[
+                    styles.smallPillText,
+                    { color: profile.editionPreferences?.weatherEnabled !== false ? '#FFFFFF' : colors.textPrimary }
+                  ]}
+                >
+                  {profile.editionPreferences?.weatherEnabled !== false ? 'Aktiv' : 'Aus'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* City Selector */}
+            <View style={[styles.settingItemRow, { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle, flexDirection: 'column', alignItems: 'flex-start', gap: 8 }]}>
+              <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
+                Wetter-Stadt:
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, width: '100%' }}>
+                {[
+                  { id: 'dresden', label: 'Dresden' },
+                  { id: 'leipzig', label: 'Leipzig' },
+                  { id: 'berlin', label: 'Berlin' },
+                  { id: 'muenchen', label: 'München' },
+                  { id: 'hamburg', label: 'Hamburg' },
+                  { id: 'wien', label: 'Wien' },
+                  { id: 'zuerich', label: 'Zürich' }
+                ].map(c => {
+                  const currentCity = (profile.editionPreferences?.weatherCity || 'dresden').toLowerCase();
+                  const isSelected = currentCity === c.id;
+                  return (
+                    <TouchableOpacity
+                      key={c.id}
+                      onPress={() => updateEditionPreferences({ weatherCity: c.id })}
+                      style={[
+                        styles.smallPill,
+                        {
+                          backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary,
+                          borderColor: isSelected ? colors.accent : colors.borderSubtle,
+                          borderWidth: 1,
+                          paddingHorizontal: 12,
+                          paddingVertical: 6
+                        }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Stadt ${c.label} wählen`}
+                    >
+                      <Text
+                        style={[
+                          styles.smallPillText,
+                          {
+                            color: isSelected ? '#FFFFFF' : colors.textPrimary,
+                            fontWeight: isSelected ? '700' : '500'
+                          }
+                        ]}
+                      >
+                        {isSelected ? `✓ ${c.label}` : c.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+        </View>
+
+          </>
+        )}
+
+        {activeSubTab === 'focus' && (
+          <>
+        {/* Section: Topic Weights */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            Themengewichtung für die Tagesausgabe
+          </Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Passe die Relevanz an. Änderungen wirken sich sofort spürbar auf die Reihung deines Feeds aus.
+          </Text>
+
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+            {(Object.keys(TOPIC_METADATA) as TopicTag[]).map((tag, idx) => {
+              const meta = TOPIC_METADATA[tag];
+              const weight = profile.explicitInterests[tag] ?? 0.5;
+              const weightPct = Math.round(weight * 100);
+
+              return (
+                <View
+                  key={tag}
+                  style={[
+                    styles.weightRow,
+                    idx > 0 && { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }
+                  ]}
+                >
+                  <View style={styles.weightInfo}>
+                    <View style={styles.labelRow}>
+                      <Ionicons name={meta.icon as any} size={15} color={colors.accent} style={{ marginRight: 6 }} />
+                      <Text style={[styles.weightLabel, { color: colors.textPrimary }]}>
+                        {meta.label}
+                      </Text>
+                    </View>
+                    <Text style={[styles.weightPercent, { color: colors.accent }]}>
+                      {weightPct}% Priorität
+                    </Text>
+                  </View>
+
+                  <View style={styles.stepperContainer}>
+                    <TouchableOpacity
+                      onPress={() => handleAdjustWeight(tag, -0.1)}
+                      style={[styles.stepperButton, { backgroundColor: colors.surfaceSecondary }]}
+                      disabled={weight <= 0.05}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${meta.label} Priorität verringern`}
+                    >
+                      <Ionicons name="remove" size={16} color={weight <= 0.05 ? colors.border : colors.textPrimary} />
+                    </TouchableOpacity>
+
+                    {/* Visual Progress Pill */}
+                    <View style={[styles.weightBarTrack, { backgroundColor: colors.surfaceSecondary }]}>
+                      <View
+                        style={[
+                          styles.weightBarFill,
+                          { width: `${weightPct}%`, backgroundColor: colors.accent }
+                        ]}
+                      />
+                    </View>
+
+                    <TouchableOpacity
+                      onPress={() => handleAdjustWeight(tag, 0.1)}
+                      style={[styles.stepperButton, { backgroundColor: colors.surfaceSecondary }]}
+                      disabled={weight >= 0.95}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${meta.label} Priorität erhöhen`}
+                    >
+                      <Ionicons name="add" size={16} color={weight >= 0.95 ? colors.border : colors.textPrimary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Section: Algorithmus-Spiegel (Live-Profil) */}
+        <View style={styles.section}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="sparkles" size={18} color={colors.accent} />
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
+                Dein Algorithmus-Spiegel (Live-Profil)
+              </Text>
+            </View>
+          </View>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Transparente Einsicht in alle gelernten Signale deiner Interaktionen. 100% lokal, ohne geheime Tracker.
+          </Text>
+
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
+            {/* Live Interaction Counters */}
+            <View style={styles.mirrorStatsGrid}>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: colors.accent }]}>{readCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>📖 Gelesen</Text>
+              </View>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: '#10B981' }]}>{upvoteCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>▲ Upvotes</Text>
+              </View>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: '#EF4444' }]}>{downvoteCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>▼ Downvotes</Text>
+              </View>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: '#38BDF8' }]}>{savedCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>★ Gespeichert</Text>
+              </View>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: '#F59E0B' }]}>{notesCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>✍️ Notizen</Text>
+              </View>
+              <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
+                <Text style={[styles.mirrorStatNumber, { color: '#8B5CF6' }]}>{customChannelsCount}</Text>
+                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>🪐 Spaces</Text>
+              </View>
+            </View>
+
+            {/* Feed-Mischverhältnis Bar & Presets */}
+            <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>
+                  Feed-Mischverhältnis (Fokus / Reibung / Entdeckung)
+                </Text>
+                <Text style={{ fontSize: 11, fontWeight: '600', color: colors.textMuted }}>
+                  {focusPct}% / {socraticPct}% / {serendipityPct}%
+                </Text>
+              </View>
+
+              {/* Multi-color ratio bar */}
+              <View style={styles.ratioBarTrack}>
+                <View style={[styles.ratioBarSegment, { width: `${focusPct}%`, backgroundColor: '#10B981' }]} />
+                <View style={[styles.ratioBarSegment, { width: `${socraticPct}%`, backgroundColor: '#F59E0B' }]} />
+                <View style={[styles.ratioBarSegment, { width: `${serendipityPct}%`, backgroundColor: '#8B5CF6' }]} />
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, marginBottom: 10 }}>
+                <Text style={{ fontSize: 10, color: '#10B981', fontWeight: '600' }}>● Fokus ({focusPct}%)</Text>
+                <Text style={{ fontSize: 10, color: '#F59E0B', fontWeight: '600' }}>● Sokratisch ({socraticPct}%)</Text>
+                <Text style={{ fontSize: 10, color: '#8B5CF6', fontWeight: '600' }}>● Entdecker ({serendipityPct}%)</Text>
+              </View>
+
+              {/* Preset buttons */}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                <TouchableOpacity
+                  onPress={() => updateFeedMixRatio(0.60, 0.20, 0.20)}
+                  style={[
+                    styles.presetPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    focusPct === 60 && socraticPct === 20 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
+                  ]}
+                >
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>⚖️ Ausgewogen (60/20/20)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => updateFeedMixRatio(0.80, 0.10, 0.10)}
+                  style={[
+                    styles.presetPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    focusPct === 80 && socraticPct === 10 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
+                  ]}
+                >
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>🎯 Tiefer Fokus (80/10/10)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => updateFeedMixRatio(0.40, 0.40, 0.20)}
+                  style={[
+                    styles.presetPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    focusPct === 40 && socraticPct === 40 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
+                  ]}
+                >
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>⚡ Sokratische Reibung (40/40/20)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => updateFeedMixRatio(0.40, 0.20, 0.40)}
+                  style={[
+                    styles.presetPill,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle },
+                    focusPct === 40 && socraticPct === 20 && serendipityPct === 40 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
+                  ]}
+                >
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>🧭 Entdecker (40/20/40)</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* ▲ Boosted Signals Section */}
+            <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <Ionicons name="arrow-up-circle" size={16} color="#10B981" />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>
+                  ▲ Verstärkte Signale ({boostedItems.length})
+                </Text>
+              </View>
+              {boostedItems.length === 0 ? (
+                <Text style={{ fontSize: 11, color: colors.textMuted, fontStyle: 'italic', marginVertical: 4 }}>
+                  Noch keine aktiven Verstärkungen. Mit ▲ aufgewertete Beiträge verankern Themen, Autoren & Quellen hier.
+                </Text>
+              ) : (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                  {boostedItems.map((item, idx) => (
+                    <View
+                      key={`${item.category}-${item.key}-${idx}`}
+                      style={[styles.signalPill, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.3)' }]}
+                    >
+                      <Text style={[styles.signalPillText, { color: '#059669' }]}>
+                        ▲ {item.label} (+{item.count})
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => removeFeedbackBoost(item.category, item.key)}
+                        style={styles.signalRemoveBtn}
+                        accessibilityLabel={`${item.label} Verstärkung aufheben`}
+                      >
+                        <Ionicons name="close" size={12} color="#059669" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* ▼ Penalized Signals Section */}
+            <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <Ionicons name="arrow-down-circle" size={16} color="#EF4444" />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>
+                  ▼ Gedämpfte Signale ({penalizedItems.length})
+                </Text>
+              </View>
+              {penalizedItems.length === 0 ? (
+                <Text style={{ fontSize: 11, color: colors.textMuted, fontStyle: 'italic', marginVertical: 4 }}>
+                  Keine Dämpfungen aktiv. Mit ▼ abgewertete Beiträge dämpfen Relevanz deterministisch.
+                </Text>
+              ) : (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                  {penalizedItems.map((item, idx) => (
+                    <View
+                      key={`${item.category}-${item.key}-${idx}`}
+                      style={[styles.signalPill, { backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)' }]}
+                    >
+                      <Text style={[styles.signalPillText, { color: '#DC2626' }]}>
+                        ▼ {item.label} (-{item.count})
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => removeFeedbackPenalty(item.category, item.key)}
+                        style={styles.signalRemoveBtn}
+                        accessibilityLabel={`${item.label} Dämpfung aufheben`}
+                      >
+                        <Ionicons name="close" size={12} color="#DC2626" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* Reset feedback memory button */}
+            {(boostedItems.length > 0 || penalizedItems.length > 0) && (
+              <View style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colors.borderSubtle }}>
+                <TouchableOpacity
+                  onPress={async () => {
+                    await clearFeedbackMemory();
+                    setResetMemoryNotice('✓ Lern-Historie & Signale zurückgesetzt');
+                    setTimeout(() => setResetMemoryNotice(null), 3000);
+                  }}
+                  style={[styles.resetMemoryBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+                >
+                  <Ionicons name="refresh-outline" size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary }}>
+                    Lern-Historie & Signale zurücksetzen
+                  </Text>
+                </TouchableOpacity>
+                {resetMemoryNotice && (
+                  <Text style={{ fontSize: 11, color: colors.accent, marginTop: 4, fontWeight: '600' }}>
+                    {resetMemoryNotice}
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* Section: News-Hub & Quellen-Zentrale */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            News-Hub & Quellen-Zentrale
+          </Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+            Verwalte 29 verifizierte RSS-Feeds (ÖRR, Spektrum, Quanta, YouTube) und importiere eigene Feeds oder OPML-Dateien.
+          </Text>
+
+          <View style={[styles.box, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, padding: spacing.md }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+              <View style={{ flex: 1, minWidth: 200 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                  <Ionicons name="radio-outline" size={16} color={colors.accent} />
+                  <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 14 }}>
+                    29 Aktive Primärquellen & Import-Center
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 12, color: colors.textMuted, lineHeight: 16 }}>
+                  Öffentlich-Rechtliche (Tagesschau, ZDF, DLF), Wissenschaft, Kultur & OPML-Export für maximale Datensouveränität.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => setShowNewsHub(true)}
+                style={[styles.manageSourcesBtn, { backgroundColor: colors.accent }]}
+                accessibilityRole="button"
+                accessibilityLabel="News-Hub öffnen"
+              >
+                <Ionicons name="options-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 12 }}>News-Hub öffnen</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
+          </>
+        )}
+
+        {activeSubTab === 'data' && (
+          <>
         {/* Section: Serverless Live-Sync & GitHub Snapshot URL */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
@@ -1935,6 +2043,8 @@ export const SettingsScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
         </View>
+          </>
+        )}
       </ScrollView>
 
       {/* Confirmation Modal for Destructive Reset */}
@@ -2153,6 +2263,28 @@ export const SettingsScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  subTabBarContainer: {
+    borderBottomWidth: 0.5,
+    paddingHorizontal: spacing.pageHorizontal,
+    paddingVertical: 8,
+  },
+  subTabBarInner: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    maxWidth: 860,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  subTabButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  subTabText: {
+    fontSize: typography.sizes.caption,
+  },
   container: {
     flex: 1
   },

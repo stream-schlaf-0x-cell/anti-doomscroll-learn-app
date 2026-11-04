@@ -481,6 +481,7 @@ export const FeedItemSchema = z.object({
 
   // Virtual Newsroom & P0 Pipeline Upgrades (Work Packages 5-8)
   pinnedManualRunAt: z.number().optional(),
+  isNewlyArrived: z.boolean().optional(),
   isStoryDossier: z.boolean().optional(),
   corroboratingSources: z.array(CorroboratingSourceSchema).optional(),
   recommendedBecauseOfTitle: z.string().optional(),

@@ -258,10 +258,10 @@ describe('Subreddit Purity, Visual Art Gallery & Formatting Sanitizer Audit', ()
     const indexHtml = fs.readFileSync(path.resolve(__dirname, '../public/index.html'), 'utf8');
     assert.ok(indexHtml.includes('viewport-fit=cover'), 'index.html must have viewport-fit=cover');
     assert.ok(indexHtml.includes('100dvh'), 'index.html must use 100dvh for standalone PWA');
-    assert.ok(indexHtml.includes('-webkit-fill-available'), 'index.html must support -webkit-fill-available');
+    assert.ok(!indexHtml.includes('-webkit-fill-available'), 'index.html must NOT use -webkit-fill-available because it clips above iOS home indicator');
 
     const appTsx = fs.readFileSync(path.resolve(__dirname, '../App.tsx'), 'utf8');
     assert.ok(appTsx.includes("bottom: 'off'"), "SafeAreaView must set bottom: 'off' to prevent double insets");
-    assert.ok(appTsx.includes("paddingBottom: Math.max(insets.bottom, 14)"));
+    assert.ok(appTsx.includes("isStandaloneIosPwa"));
   });
 });

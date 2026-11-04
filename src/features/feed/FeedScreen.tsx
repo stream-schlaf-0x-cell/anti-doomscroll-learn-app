@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, FeedItem, TOPIC_SPACE_MAP } from '../../core/domain/types';
+import { appStorage } from '../../core/data/storage';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
 import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
@@ -135,11 +136,29 @@ export const FeedScreen: React.FC = () => {
   const scrollViewRef = React.useRef<ScrollView>(null);
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => defaultFeedOperationManager.getPinnedItemIds());
 
-  // Viewport Top-Lock & Background Arrivals (WP 1 & WP 5)
+  // Viewport Top-Lock & Background Arrivals (WP 1, WP 3 & WP 5)
+  const appMountedAtRef = React.useRef<number>(Date.now());
+  const surfacedArrivalIdsRef = React.useRef<Set<string>>(new Set());
   const lockedTopItemIdsRef = React.useRef<string[] | null>(null);
   const previousScopeRef = React.useRef<string>('');
   const [pendingStreamArrivals, setPendingStreamArrivals] = useState<ScoredFeedItem[]>([]);
   const [showPipelineModal, setShowPipelineModal] = useState<boolean>(false);
+
+  // Restore today's surfaced arrival IDs so duplicate background items never re-trigger the pill repeatedly
+  React.useEffect(() => {
+    void appStorage.getItem('@atem:surfaced_arrival_ids:v1').then((raw: string | null) => {
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            surfacedArrivalIdsRef.current = new Set(parsed.map(String));
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+    });
+  }, []);
 
   const handleSortChange = useCallback((mode: FeedSortMode) => {
     defaultFeedOperationManager.clearAutomaticPins();
@@ -152,10 +171,30 @@ export const FeedScreen: React.FC = () => {
   }, []);
 
   const handleRevealPendingArrivals = useCallback(() => {
-    lockedTopItemIdsRef.current = null;
+    if (pendingStreamArrivals.length === 0) return;
+    const now = Date.now();
+    const stampedArrivals = pendingStreamArrivals.map(item => ({
+      ...item,
+      pinnedManualRunAt: now,
+      isNewlyArrived: true
+    }));
+
+    if ((feedRepository as any).addItems) {
+      (feedRepository as any).addItems(stampedArrivals);
+    }
+
+    // Immediately reset lockedTopItemIdsRef and prepend new arrival IDs
+    const newArrivalIds = stampedArrivals.map(i => i.id);
+    lockedTopItemIdsRef.current = newArrivalIds;
+
+    for (const item of stampedArrivals) {
+      defaultFeedOperationManager.pinItem(item.id);
+    }
+    setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
     setPendingStreamArrivals([]);
+
     scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-  }, []);
+  }, [pendingStreamArrivals]);
 
   const [pendingNewItemIds, setPendingNewItemIds] = useState<string[]>([]);
   const [revealedNewItems, setRevealedNewItems] = useState<FeedItem[]>([]);
@@ -551,7 +590,7 @@ export const FeedScreen: React.FC = () => {
   }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, matchesSelectedSpace, dismissedSet, profile, interactions, selectedFilter, sortMode, pinnedIds, seenIds]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
-  // Viewport Top-Lock (WP 1): Lock the visible top 12 cards for active session/scope
+  // Viewport Top-Lock (WP 1 & WP 3): Lock the visible top 12 cards for active session/scope
   // Incoming background items are kept in pendingStreamArrivals instead of jumping the screen!
   const lockedInfiniteBase = useMemo(() => {
     if (previousScopeRef.current !== presentationScope) {
@@ -566,6 +605,12 @@ export const FeedScreen: React.FC = () => {
       return infiniteInterleavedBase;
     }
 
+    // Work Package 3: During the first 15 seconds after app boot, merge silently without populating banner
+    if (Date.now() - appMountedAtRef.current < 15_000) {
+      lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
+      return infiniteInterleavedBase;
+    }
+
     const lockedIds = lockedTopItemIdsRef.current;
     const lockedSet = new Set(lockedIds);
     const itemMap = new Map(infiniteInterleavedBase.map(i => [i.id, i]));
@@ -573,11 +618,35 @@ export const FeedScreen: React.FC = () => {
     // Identify new items arriving in the top 12 of infiniteInterleavedBase that were not in lockedSet
     const incomingTop12New = infiniteInterleavedBase.slice(0, 12).filter(i => !lockedSet.has(i.id));
     if (incomingTop12New.length > 0) {
-      setPendingStreamArrivals(prev => {
-        const existingIds = new Set(prev.map(p => p.id));
-        const added = incomingTop12New.filter(n => !existingIds.has(n.id));
-        return added.length > 0 ? [...prev, ...added] : prev;
+      const existingTitlesNormalized = new Set(
+        infiniteInterleavedBase
+          .filter(i => lockedSet.has(i.id))
+          .map(c => c.title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''))
+      );
+      const validIncoming = incomingTop12New.filter(item => {
+        if (lockedSet.has(item.id)) return false;
+        const normTitle = item.title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+        if (existingTitlesNormalized.has(normTitle)) return false;
+        if (seenIds.has(item.id)) return false;
+        if (surfacedArrivalIdsRef.current.has(item.id)) return false;
+        return true;
       });
+
+      if (validIncoming.length > 0) {
+        for (const it of validIncoming) {
+          surfacedArrivalIdsRef.current.add(it.id);
+        }
+        void appStorage.setItem(
+          '@atem:surfaced_arrival_ids:v1',
+          JSON.stringify(Array.from(surfacedArrivalIdsRef.current).slice(-200))
+        );
+
+        setPendingStreamArrivals(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const added = validIncoming.filter(n => !existingIds.has(n.id));
+          return added.length > 0 ? [...prev, ...added] : prev;
+        });
+      }
     }
 
     const lockedCards: ScoredFeedItem[] = [];
@@ -587,7 +656,7 @@ export const FeedScreen: React.FC = () => {
     }
     const remainingCards = infiniteInterleavedBase.filter(i => !lockedSet.has(i.id));
     return [...lockedCards, ...remainingCards];
-  }, [infiniteInterleavedBase, presentationScope]);
+  }, [infiniteInterleavedBase, presentationScope, seenIds]);
 
   // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
   const evergreenFallbackItems = useMemo(() => {
@@ -742,15 +811,24 @@ export const FeedScreen: React.FC = () => {
       });
       if (result.items.length > 0) {
         const seenIds = await seenImpressionsService.getSeenIds();
+        const now = Date.now();
         const safeItems = result.items.map(item => {
           if (item.isStaticFallback || seenIds.has(item.id) || existingIds.has(item.id)) {
             const { pinnedManualRunAt, ...rest } = item;
             return rest;
           }
-          return item;
+          return {
+            ...item,
+            pinnedManualRunAt: now,
+            isNewlyArrived: true
+          };
         });
         feedRepository.addItems(safeItems);
-        lockedTopItemIdsRef.current = null;
+        lockedTopItemIdsRef.current = safeItems.map(i => i.id);
+        for (const item of safeItems) {
+          defaultFeedOperationManager.pinItem(item.id);
+        }
+        setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
         setPendingStreamArrivals([]);
         await recomputeFeed();
         await refreshFeed();
@@ -1385,26 +1463,6 @@ export const FeedScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Floating Arrivals Pill (WP 1): Shows when new background items arrive without jumping the stream */}
-      {pendingStreamArrivals.length > 0 && (
-        <View style={styles.floatingArrivalsContainer} pointerEvents="box-none">
-          <TouchableOpacity
-            activeOpacity={0.88}
-            onPress={handleRevealPendingArrivals}
-            style={[
-              styles.floatingArrivalsPill,
-              { backgroundColor: colors.accent, shadowColor: colors.accent }
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel={`${pendingStreamArrivals.length} neue Beiträge aus der Redaktion anzeigen`}
-          >
-            <Text style={[styles.floatingArrivalsText, { color: '#0E1424' }]}>
-              ↑ {pendingStreamArrivals.length} {pendingStreamArrivals.length === 1 ? 'neuer Beitrag' : 'neue Beiträge'} aus der Redaktion anzeigen
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
       {/* Top Header: Reddit Desktop Header vs Mobile Header */}
       {isDesktop ? (
         <DesktopRedditHeader
@@ -1765,6 +1823,27 @@ export const FeedScreen: React.FC = () => {
                     </TouchableOpacity>
                   </View>
                 </View>
+
+                {/* Smart "New Items" Pill: positioned cleanly above the first card, never overlapping navigation pills */}
+                {pendingStreamArrivals.length > 0 && (
+                  <View style={styles.inlineArrivalsContainer}>
+                    <TouchableOpacity
+                      activeOpacity={0.88}
+                      onPress={handleRevealPendingArrivals}
+                      style={[
+                        styles.inlineArrivalsPill,
+                        { backgroundColor: colors.accent, shadowColor: colors.accent }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${pendingStreamArrivals.length} neue Beiträge aus der Redaktion anzeigen`}
+                    >
+                      <Ionicons name="arrow-up" size={15} color="#0E1424" style={{ marginRight: 6 }} />
+                      <Text style={[styles.floatingArrivalsText, { color: '#0E1424' }]}>
+                        ↑ {pendingStreamArrivals.length} {pendingStreamArrivals.length === 1 ? 'neuer Beitrag' : 'neue Beiträge'} aus der Redaktion anzeigen
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
 
                 {/* Visible Curated Selection Header */}
                 {curatedSelection && (
@@ -2577,6 +2656,22 @@ export const FeedScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1
+  },
+  inlineArrivalsContainer: {
+    width: '100%',
+    alignItems: 'center',
+    marginVertical: 12
+  },
+  inlineArrivalsPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 4
   },
   floatingArrivalsContainer: {
     position: 'absolute',

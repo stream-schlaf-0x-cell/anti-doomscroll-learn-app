@@ -250,6 +250,7 @@ interface AppContextValue {
   syncStatusMessage: string | null;
   triggerCloudSync: (forcePush?: boolean) => Promise<boolean>;
   updateCloudSyncConfig: (patch: Partial<CloudSyncConfig>) => Promise<void>;
+  activateCloudSync: (token: string, passphrase?: string) => Promise<{ success: boolean; error?: string; gistId?: string }>;
   applyPairingCode: (code: string) => Promise<boolean>;
   getPairingBundle: () => Promise<{ pairingCode: string; pairingUrl: string; qrDataUrl: string }>;
   scheduleCloudSyncPush: () => void;
@@ -1717,6 +1718,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [triggerCloudSync]);
 
+  const activateCloudSync = useCallback(async (token: string, passphrase?: string) => {
+    setIsSyncing(true);
+    try {
+      const res = await cloudSyncService.activateCloudSync(token, passphrase);
+      const cfg = await cloudSyncService.getConfig();
+      setCloudSyncConfig(cfg);
+      setIsSyncing(false);
+      return res;
+    } catch (err: any) {
+      setIsSyncing(false);
+      return { success: false, error: err?.message || String(err) };
+    }
+  }, []);
+
   const applyPairingCode = useCallback(async (code: string): Promise<boolean> => {
     try {
       const ok = await cloudSyncService.applyPairingCode(code);
@@ -1867,6 +1882,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         syncStatusMessage,
         triggerCloudSync,
         updateCloudSyncConfig,
+        activateCloudSync,
         applyPairingCode,
         getPairingBundle,
         scheduleCloudSyncPush

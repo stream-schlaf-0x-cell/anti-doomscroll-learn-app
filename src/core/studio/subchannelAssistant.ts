@@ -199,7 +199,7 @@ Erstelle eine maßgeschneiderte Konfiguration für diesen Channel.
 Regeln:
 - Kein PR-Slop, keine Marketing-Floskeln ("Tauche ein in die faszinierende Welt...").
 - Beschreibung: 1 bis maximal 2 prägnante, tiefgründige Sätze auf Deutsch.
-- Handle: prägnanter lowercase c/... Identifier (z.B. c/buddhismus, c/stoizismus, c/rust_systems).
+- Handle: prägnanter lowercase c/... Identifier (z.B. c/geopolitik, c/literatur, c/kybernetik).
 - Flair: kurzes 2-3 Wort Badge mit führendem Emoji (z.B. "🌱 Stoa & Zen", "⚡ Systems", "🏛️ Bauhaus").
 - primaryTopic: wähle das exakteste aus: "philosophy_ethics", "german_didactics", "ai_apple", "contemplation_mind", "science_society", "sound_synthesis", "memes_satire", "youtube_gems", "book_mastery", "health_biohacking", "opportunities_growth", "art_aesthetics".
 - seedSources: 2 bis 4 reale, seriöse Quellen-Domains (z.B. "plato.stanford.edu", "plumvillage.org", "arxiv.org", "artic.edu").

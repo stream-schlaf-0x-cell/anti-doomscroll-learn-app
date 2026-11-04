@@ -217,6 +217,16 @@ export class FeedOperationManager {
   }
 
   /**
+   * Pins a specific item to the top.
+   */
+  public pinItem(id: string): void {
+    const now = Date.now();
+    this.pinnedItemIds.add(id);
+    this.pinnedItemTimestampMap.set(id, now);
+    this.pinnedItemOrder = [id, ...this.pinnedItemOrder.filter(pinnedId => pinnedId !== id)];
+  }
+
+  /**
    * Unpins a specific item.
    */
   public unpinItem(id: string): void {

@@ -2229,9 +2229,9 @@ const BATCH_2_ITEMS: CorpusSeed[] = [
     "id": "fc-the-guardian-longreads",
     "name": "The Guardian Long Reads",
     "url": "https://www.theguardian.com/news/series/the-long-read/rss",
-    "primaryTopic": "book_mastery",
+    "primaryTopic": "science_society",
     "topics": [
-      "book_mastery",
+      "science_society",
       "philosophy_ethics"
     ],
     "defaultEvidenceTier": "peer_reviewed_journal",

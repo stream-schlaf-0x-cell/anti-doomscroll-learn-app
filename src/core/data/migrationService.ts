@@ -15,7 +15,7 @@ import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 import { FeedItem } from '../domain/types';
 
-export const CURRENT_DATA_MIGRATION_VERSION = '2026-11-03-v4.0-single-instance-sync';
+export const CURRENT_DATA_MIGRATION_VERSION = '2026-11-04-v4.1-bloomscroll-polish';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
@@ -227,11 +227,12 @@ export async function runInPlaceDataMigration(
       firstSeenAt: sanitized.firstSeenAt || sanitized.publishedAt || new Date().toISOString()
     };
 
-    // Re-route any legacy protest or political articles out of c/serendipity
+    // Re-route any legacy protest or political articles out of c/serendipity or c/books
     if (
-      normalizedItem.space === 'c/serendipity' &&
+      (normalizedItem.space === 'c/serendipity' || normalizedItem.space === 'c/books' || normalizedItem.primaryTopic === 'book_mastery') &&
       (isPoliticalOrProtestNews(normalizedItem.title, normalizedItem.feedText || normalizedItem.body) ||
-        (normalizedItem.title || '').includes('Jugendprotest'))
+        (normalizedItem.title || '').includes('Jugendprotest') ||
+        /habeck|politician|green party|minister|government|election|parliament|bundestag|klima|wirtschaft/i.test(`${normalizedItem.title} ${normalizedItem.feedText || ''}`))
     ) {
       normalizedItem.space = 'c/dialektik';
       normalizedItem.primaryTopic = 'philosophy_ethics';

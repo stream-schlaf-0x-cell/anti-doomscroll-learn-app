@@ -82,6 +82,18 @@ export const ReaderScreen: React.FC = () => {
   const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
   const [readerImageAspectRatio, setReaderImageAspectRatio] = useState<number | null>(null);
   const [showReaderImageLightbox, setShowReaderImageLightbox] = useState<boolean>(false);
+
+  // Web Escape key listener to exit fullscreen lightbox effortlessly
+  useEffect(() => {
+    if (!showReaderImageLightbox || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowReaderImageLightbox(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showReaderImageLightbox]);
   const [rabbitHoleEntries, setRabbitHoleEntries] = useState<RabbitHoleEntry[]>([]);
   const [loadingRabbitHole, setLoadingRabbitHole] = useState<boolean>(false);
   const [aiEnrichedOverride, setAiEnrichedOverride] = useState<FeedItem | null>(null);
@@ -1809,8 +1821,20 @@ export const ReaderScreen: React.FC = () => {
           onRequestClose={() => setShowReaderImageLightbox(false)}
         >
           <View style={styles.readerLightboxBackdrop}>
-            <View style={styles.readerLightboxTopBar}>
-              <View style={{ flex: 1 }}>
+            {/* Top-Right Reachable Close Pill (well below iPhone Dynamic Island / Status Bar) */}
+            <TouchableOpacity
+              onPress={() => setShowReaderImageLightbox(false)}
+              style={styles.readerLightboxTopClosePill}
+              hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+              accessibilityRole="button"
+              accessibilityLabel="Vollbild schließen"
+            >
+              <Ionicons name="close" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.readerLightboxClosePillText}>✕ Schließen</Text>
+            </TouchableOpacity>
+
+            <View style={styles.readerLightboxTopBar} pointerEvents="box-none">
+              <View style={{ flex: 1, paddingRight: 130 }}>
                 <Text style={styles.readerLightboxTitle} numberOfLines={1}>
                   {selectedArticle.title}
                 </Text>
@@ -1818,22 +1842,18 @@ export const ReaderScreen: React.FC = () => {
                   {selectedArticle.imageCredit || selectedArticle.artMeta?.artist || publisherDisplay}
                 </Text>
               </View>
-              <TouchableOpacity
-                onPress={() => setShowReaderImageLightbox(false)}
-                style={styles.readerLightboxCloseBtn}
-                accessibilityLabel="Vollbild schließen"
-              >
-                <Ionicons name="close" size={22} color="#FFFFFF" />
-              </TouchableOpacity>
             </View>
 
+            {/* Tap anywhere on backdrop or image to close */}
             <ScrollView
               contentContainerStyle={styles.readerLightboxScrollContent}
               maximumZoomScale={3}
               minimumZoomScale={1}
               centerContent
             >
-              <View
+              <TouchableOpacity
+                activeOpacity={0.95}
+                onPress={() => setShowReaderImageLightbox(false)}
                 style={[
                   styles.readerLightboxCanvas,
                   (selectedArticle.format === 'meme' || Boolean(selectedArticle.memeMeta)) && {
@@ -1842,6 +1862,8 @@ export const ReaderScreen: React.FC = () => {
                     borderRadius: radius.md
                   }
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel="Vollbild durch Antippen schließen"
               >
                 <Image
                   source={{
@@ -1856,7 +1878,7 @@ export const ReaderScreen: React.FC = () => {
                   ]}
                   resizeMode="contain"
                 />
-              </View>
+              </TouchableOpacity>
 
               {selectedArticle.memeMeta?.punchline && (
                 <View style={styles.readerLightboxPunchlineBox}>
@@ -1865,6 +1887,20 @@ export const ReaderScreen: React.FC = () => {
                 </View>
               )}
             </ScrollView>
+
+            {/* Prominent Bottom Close Pill (Always thumb-reachable on iPhone) */}
+            <View style={styles.readerLightboxBottomBar} pointerEvents="box-none">
+              <TouchableOpacity
+                onPress={() => setShowReaderImageLightbox(false)}
+                style={styles.readerLightboxBottomClosePill}
+                hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                accessibilityRole="button"
+                accessibilityLabel="Vollbild schließen"
+              >
+                <Ionicons name="close-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.readerLightboxBottomCloseText}>✕ Vollbild schließen</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </Modal>
       )}
@@ -3063,7 +3099,62 @@ const styles = StyleSheet.create({
   },
   readerLightboxBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 13, 22, 0.95)'
+    backgroundColor: 'rgba(9, 13, 22, 0.95)',
+    position: 'relative'
+  },
+  readerLightboxTopClosePill: {
+    position: 'absolute',
+    top: 56,
+    right: 20,
+    zIndex: 100,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 8
+  },
+  readerLightboxClosePillText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '700'
+  },
+  readerLightboxBottomBar: {
+    position: 'absolute',
+    bottom: 48,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  readerLightboxBottomClosePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderWidth: 1.5,
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    borderRadius: radius.pill,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 10
+  },
+  readerLightboxBottomCloseText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '700',
+    letterSpacing: 0.3
   },
   readerLightboxTopBar: {
     flexDirection: 'row',

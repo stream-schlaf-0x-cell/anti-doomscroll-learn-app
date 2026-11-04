@@ -9,8 +9,13 @@ import { seenImpressionsService, SeenImpressionRecord } from '../data/seenImpres
 import {
   AiCredentials,
   DEFAULT_AI_CREDENTIALS,
+  DEFAULT_GEMINI_MODEL,
   loadAiCredentials,
-  saveAiCredentials
+  saveAiCredentials,
+  getGeminiApiKey,
+  getOpenRouterApiKey,
+  getPreferredProvider,
+  getSelectedModelId
 } from '../ai/atmenAiClient';
 
 export type Space = Subchannel;
@@ -544,18 +549,72 @@ export async function pullSnapshotFromGist(
   }
 
   const rawContent = file.content;
-  const decrypted = await decryptSyncPayload(rawContent, secret);
-  if (!decrypted) return null;
+  const cleanPassphrase = (secret || '').trim();
 
+  let encryptedPayload = rawContent;
+  let credentialsBackupData: AtmenSyncSnapshot['aiCredentials'] | undefined = undefined;
+
+  // Check if content is a JSON envelope with encrypted + credentialsBackup
   try {
-    const parsed = JSON.parse(decrypted);
-    if (parsed && typeof parsed === 'object') {
-      return parsed as AtmenSyncSnapshot;
+    const parsedEnvelope = JSON.parse(rawContent);
+    if (parsedEnvelope && typeof parsedEnvelope === 'object') {
+      if (typeof parsedEnvelope.encrypted === 'string') {
+        encryptedPayload = parsedEnvelope.encrypted;
+      }
+      if (typeof parsedEnvelope.credentialsBackup === 'string') {
+        try {
+          const decBytes = base64ToBytes(parsedEnvelope.credentialsBackup);
+          const decStr = new TextDecoder().decode(decBytes);
+          credentialsBackupData = JSON.parse(decStr);
+        } catch {
+          // Non-fatal
+        }
+      }
     }
   } catch {
-    return null;
+    // rawContent is directly the encrypted payload
   }
-  return null;
+
+  let decrypted = await decryptSyncPayload(encryptedPayload, cleanPassphrase);
+
+  // If decryption failed with user passphrase, try default fallback key
+  if (!decrypted && cleanPassphrase) {
+    decrypted = await decryptSyncPayload(encryptedPayload, 'atmen-single-instance-default-key');
+  }
+
+  let snapshot: AtmenSyncSnapshot | null = null;
+  if (decrypted) {
+    try {
+      const parsed = JSON.parse(decrypted);
+      if (parsed && typeof parsed === 'object') {
+        snapshot = parsed as AtmenSyncSnapshot;
+      }
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  // 100% Always recover aiCredentials if credentialsBackup is present
+  if (credentialsBackupData) {
+    if (!snapshot) {
+      snapshot = {
+        version: 1,
+        deviceId: 'remote-gist',
+        updatedAt: new Date().toISOString(),
+        aiCredentials: credentialsBackupData
+      };
+    } else if (
+      !snapshot.aiCredentials ||
+      (!snapshot.aiCredentials.geminiApiKey && !snapshot.aiCredentials.openRouterApiKey)
+    ) {
+      snapshot.aiCredentials = {
+        ...snapshot.aiCredentials,
+        ...credentialsBackupData
+      };
+    }
+  }
+
+  return snapshot;
 }
 
 export async function pushSnapshotToGist(
@@ -564,6 +623,29 @@ export async function pushSnapshotToGist(
   secret: string,
   snapshot: AtmenSyncSnapshot
 ): Promise<void> {
+  const cleanPassphrase = (secret || '').trim();
+  const plainJson = JSON.stringify(snapshot, null, 2);
+  const encrypted = await encryptSyncPayload(plainJson, cleanPassphrase);
+
+  // Fallback base64-encoded credentials backup inside user's private secret Gist
+  let credentialsBackup: string | undefined = undefined;
+  if (snapshot.aiCredentials) {
+    try {
+      const backupJson = JSON.stringify(snapshot.aiCredentials);
+      credentialsBackup = bytesToBase64(new TextEncoder().encode(backupJson));
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  const envelope = {
+    description: 'ATMEN Single-Instance Live Sync Vault',
+    encrypted,
+    credentialsBackup,
+    updatedAt: snapshot.updatedAt,
+    deviceId: snapshot.deviceId
+  };
+
   const headers = {
     Authorization: `Bearer ${token.trim()}`,
     Accept: 'application/vnd.github+json',
@@ -572,9 +654,6 @@ export async function pushSnapshotToGist(
     'User-Agent': 'Atmen-Single-Instance-Sync'
   };
 
-  const plainJson = JSON.stringify(snapshot, null, 2);
-  const encrypted = await encryptSyncPayload(plainJson, secret);
-
   const resp = await fetch(`https://api.github.com/gists/${gistId.trim()}`, {
     method: 'PATCH',
     headers,
@@ -582,7 +661,7 @@ export async function pushSnapshotToGist(
       description: 'ATMEN Single-Instance Live Sync Vault',
       files: {
         [GIST_SYNC_FILENAME]: {
-          content: encrypted
+          content: JSON.stringify(envelope, null, 2)
         }
       }
     })
@@ -663,15 +742,23 @@ export class CloudSyncService {
       rawSavedArticles,
       seenRecordsMap,
       aiCreds,
-      rawDismissed
+      rawDismissed,
+      directGeminiKey,
+      directOpenRouterKey,
+      directProvider,
+      directModel
     ] = await Promise.all([
       userProfileRepository.getProfile().catch(() => DEFAULT_USER_PROFILE),
       defaultSpaceRepository.getAllSpaces().catch(() => []),
       this.storage.getItem(INTERACTIONS_STORAGE_KEY).catch(() => null),
       this.storage.getItem(SAVED_ARTICLES_STORAGE_KEY).catch(() => null),
       seenImpressionsService.getSeenRecordMap().catch(() => new Map<string, SeenImpressionRecord>()),
-      loadAiCredentials().catch(() => DEFAULT_AI_CREDENTIALS),
-      this.storage.getItem(DISMISSED_ITEMS_KEY).catch(() => null)
+      loadAiCredentials(this.storage).catch(() => DEFAULT_AI_CREDENTIALS),
+      this.storage.getItem(DISMISSED_ITEMS_KEY).catch(() => null),
+      getGeminiApiKey(this.storage).catch(() => ''),
+      getOpenRouterApiKey(this.storage).catch(() => ''),
+      getPreferredProvider(this.storage).catch(() => 'gemini' as const),
+      getSelectedModelId(this.storage).catch(() => DEFAULT_GEMINI_MODEL)
     ]);
 
     const interactions: Record<string, ReadingInteraction> = {};
@@ -723,15 +810,20 @@ export class CloudSyncService {
       }
     }
 
+    const geminiKey = directGeminiKey || (aiCreds?.provider === 'gemini' ? aiCreds.apiKey : '');
+    const openRouterKey = directOpenRouterKey || (aiCreds?.provider === 'openrouter' ? aiCreds.apiKey : '');
+    const preferred = directProvider || aiCreds?.provider || 'gemini';
+    const effectiveModel = directModel || aiCreds?.model || DEFAULT_GEMINI_MODEL;
+
     return {
       version: 1,
       deviceId,
       updatedAt: nowIso,
       aiCredentials: {
-        geminiApiKey: aiCreds?.provider === 'gemini' ? aiCreds.apiKey : undefined,
-        openRouterApiKey: aiCreds?.provider === 'openrouter' ? aiCreds.apiKey : undefined,
-        preferredProvider: aiCreds?.provider,
-        selectedGeminiModelId: aiCreds?.model
+        geminiApiKey: geminiKey || undefined,
+        openRouterApiKey: openRouterKey || undefined,
+        preferredProvider: preferred,
+        selectedGeminiModelId: effectiveModel
       },
       profile,
       spaces,
@@ -759,19 +851,35 @@ export class CloudSyncService {
 
     // 2. AI Credentials
     if (snapshot.aiCredentials) {
-      const current = await loadAiCredentials().catch(() => DEFAULT_AI_CREDENTIALS);
+      const current = await loadAiCredentials(this.storage).catch(() => DEFAULT_AI_CREDENTIALS);
+      const incomingGemini = snapshot.aiCredentials.geminiApiKey?.trim();
+      const incomingOpenRouter = snapshot.aiCredentials.openRouterApiKey?.trim();
       const preferred = snapshot.aiCredentials.preferredProvider || current.provider || 'gemini';
-      const effectiveKey = preferred === 'openrouter'
-        ? (snapshot.aiCredentials.openRouterApiKey || current.apiKey)
-        : (snapshot.aiCredentials.geminiApiKey || current.apiKey);
+
+      // Never overwrite non-empty local key with empty remote key, but ALWAYS accept remote non-empty key over empty local key
+      const geminiKey = incomingGemini || (current.provider === 'gemini' ? current.apiKey : '');
+      const openRouterKey = incomingOpenRouter || (current.provider === 'openrouter' ? current.apiKey : '');
+      const activeKey = preferred === 'openrouter' ? (openRouterKey || geminiKey) : (geminiKey || openRouterKey);
 
       const updatedCreds: AiCredentials = {
         ...current,
         provider: preferred,
-        apiKey: effectiveKey || '',
+        apiKey: activeKey,
+        persistApiKey: true,
         model: snapshot.aiCredentials.selectedGeminiModelId || current.model
       };
-      writes.push(saveAiCredentials(updatedCreds));
+
+      writes.push(saveAiCredentials(updatedCreds, this.storage));
+      if (incomingGemini) {
+        writes.push(this.storage.setItem('@atem:gemini_api_key:v1', incomingGemini));
+      }
+      if (incomingOpenRouter) {
+        writes.push(this.storage.setItem('@atem:openrouter_api_key:v1', incomingOpenRouter));
+      }
+      writes.push(this.storage.setItem('@atem:preferred_ai_provider:v1', preferred));
+      if (snapshot.aiCredentials.selectedGeminiModelId) {
+        writes.push(this.storage.setItem('@atem:selected_model_id:v1', snapshot.aiCredentials.selectedGeminiModelId));
+      }
     }
 
     // 3. Interactions
@@ -932,7 +1040,7 @@ export class CloudSyncService {
 
     // Also import API keys if present
     if (payload.gk || payload.ok || payload.m || payload.p) {
-      const current = await loadAiCredentials().catch(() => DEFAULT_AI_CREDENTIALS);
+      const current = await loadAiCredentials(this.storage).catch(() => DEFAULT_AI_CREDENTIALS);
       const preferred = payload.p || (payload.ok && !payload.gk ? 'openrouter' : 'gemini');
       const effectiveKey = preferred === 'openrouter'
         ? (payload.ok || payload.gk || '')
@@ -942,8 +1050,17 @@ export class CloudSyncService {
         ...current,
         provider: preferred,
         apiKey: effectiveKey,
+        persistApiKey: true,
         model: payload.m || current.model
-      });
+      }, this.storage);
+
+      if (payload.gk) {
+        await this.storage.setItem('@atem:gemini_api_key:v1', payload.gk);
+      }
+      if (payload.ok) {
+        await this.storage.setItem('@atem:openrouter_api_key:v1', payload.ok);
+      }
+      await this.storage.setItem('@atem:preferred_ai_provider:v1', preferred);
     }
 
     // If Gist is configured, trigger initial sync pull immediately
@@ -952,6 +1069,48 @@ export class CloudSyncService {
     }
 
     return true;
+  }
+
+  /**
+   * Connects via GitHub Token + Password, pulling first to ensure remote keys are merged into local state.
+   */
+  public async activateCloudSync(token: string, passphrase?: string): Promise<{
+    success: boolean;
+    error?: string;
+    gistId?: string;
+  }> {
+    const cleanToken = (token || '').trim();
+    const cleanPassphrase = (passphrase || '').trim();
+    if (!cleanToken) {
+      return { success: false, error: 'Token fehlt.' };
+    }
+
+    try {
+      const { gistId } = await findOrCreateSyncGist(cleanToken);
+      await this.saveConfig({
+        enabled: true,
+        githubToken: cleanToken,
+        gistId,
+        encryptionPassphrase: cleanPassphrase,
+        autoSync: true
+      });
+
+      // Secondary device connecting: MUST PULL FIRST!
+      const remoteSnap = await pullSnapshotFromGist(cleanToken, gistId, cleanPassphrase);
+      if (remoteSnap) {
+        const localSnap = await this.buildLocalSnapshot();
+        const merged = mergeSyncSnapshots(localSnap, remoteSnap);
+        await this.applySnapshot(merged);
+        await pushSnapshotToGist(cleanToken, gistId, cleanPassphrase, merged);
+      } else {
+        const localSnap = await this.buildLocalSnapshot();
+        await pushSnapshotToGist(cleanToken, gistId, cleanPassphrase, localSnap);
+      }
+
+      return { success: true, gistId };
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) };
+    }
   }
 }
 

@@ -236,6 +236,19 @@ export function cleanArticleBodyFormatting(raw: string, title?: string): string 
       continue;
     }
 
+    // Guardian & podcast boilerplate anywhere in the body
+    if (
+      /^By\s+[^\n]+(\.\s*Read by\s+[^\n]+)?$/i.test(line) ||
+      /^Read by\s+[^\n]+$/i.test(line) ||
+      /^Read the text version here.*$/i.test(line) ||
+      /^Support (the )?Guardian.*$/i.test(line) ||
+      /^theguardian\.com\/[^\s]+$/i.test(line) ||
+      /^Continue reading\.{0,3}$/i.test(line) ||
+      /^Photograph:\s*.*$/i.test(line)
+    ) {
+      continue;
+    }
+
     // Photo captions & agency credits anywhere in the body
     if (CAPTION_LABEL_REGEX.test(line)) {
       const rest = line.replace(CAPTION_LABEL_REGEX, '').trim();
@@ -334,7 +347,7 @@ export function isDomesticPartyPolitics(title: string, text: string = ''): boole
 }
 
 export const POLITICAL_PROTEST_SOCIETY_REGEX =
-  /\b(protest\w*|demonstrier\w*|ausschreitung\w*|polizei|regierung\w*|koalition\w*|wahl\w*|bundestagswahl|landtagswahl|krieg\w*|streik\w*|bundestag|landtag|gericht|verfassungsgericht|afd|spd|cdu|csu|fdp|bsw|grüne|grünen|linkspartei|linke)\b/i;
+  /\b(protest\w*|demonstrier\w*|ausschreitung\w*|polizei|regierung\w*|koalition\w*|wahl\w*|bundestagswahl|landtagswahl|krieg\w*|streik\w*|bundestag|landtag|gericht|verfassungsgericht|afd|spd|cdu|csu|fdp|bsw|grüne|grünen|linkspartei|linke|habeck|politician\w*|green party|minister\w*|government\w*|election\w*|parliament\w*|klima\w*|wirtschaft\w*|geopolitics|geopolitik)\b/i;
 
 /** Detects protest, political conflict, legal, or societal disruption articles. */
 export function isPoliticalOrProtestNews(title: string, text: string = ''): boolean {
@@ -569,7 +582,11 @@ export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefine
  * - Ensures a genuine conceptual keyInsight
  */
 export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
-  const title = item.title || '';
+  let cleanedTitle = (item.title || '')
+    .replace(/^From the archive:\s*/i, '')
+    .replace(/\s*[–-]\s*podcast$/i, '')
+    .trim();
+  const title = cleanedTitle;
   const slopClean = (s: string) => (item.aiAssisted ? stripAiSlopPhrases(s) : s);
   let cleanedFeedText = slopClean(stripPublisherBoilerplate(item.feedText || item.body || item.articleBody || '', title));
   let cleanedBody = slopClean(stripPublisherBoilerplate(item.body || cleanedFeedText, title));
@@ -580,44 +597,60 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
   const isProtestOrPolitical = isPoliticalOrProtestNews(title, routingText);
   const isCelebrity = isCelebrityFluff(title);
   const currentSpace = (item.space || '').toLowerCase();
-  const isRoutableSpace = !currentSpace || currentSpace === 'c/serendipity' || currentSpace === 'c/dialektik' || currentSpace === 'c/kunst_galerie';
+  const isRoutableSpace = !currentSpace || currentSpace === 'c/serendipity' || currentSpace === 'c/dialektik' || currentSpace === 'c/kunst_galerie' || currentSpace === 'c/books';
 
-  const correctedTopic: TopicTag = isPartyPolitics && isRoutableSpace
+  let correctedTopic: TopicTag = isPartyPolitics && isRoutableSpace
     ? 'science_society'
     : isProtestOrPolitical
     ? 'philosophy_ethics'
     : classifyTopicDeterministically(title, routingText, item.primaryTopic);
 
+  if ((isProtestOrPolitical || isPartyPolitics) && correctedTopic === 'book_mastery') {
+    correctedTopic = 'philosophy_ethics';
+  }
+
   let routedSpace: string | undefined = item.space;
   if (isPartyPolitics && isRoutableSpace) {
     routedSpace = 'c/gesellschaft_politik';
-  } else if (isProtestOrPolitical && (currentSpace === 'c/serendipity' || currentSpace === 'c/kunst_galerie' || !currentSpace)) {
+  } else if (isProtestOrPolitical && (currentSpace === 'c/serendipity' || currentSpace === 'c/kunst_galerie' || currentSpace === 'c/books' || !currentSpace)) {
     routedSpace = 'c/dialektik';
   } else if (isCelebrity && (!currentSpace || currentSpace === 'c/dialektik')) {
     routedSpace = 'c/kultur';
   }
 
+  if ((isProtestOrPolitical || isPartyPolitics) && routedSpace === 'c/books') {
+    routedSpace = 'c/dialektik';
+  }
+
+  const isVisualArtOrMeme =
+    item.format === 'art_showcase' ||
+    item.format === 'meme' ||
+    item.space === 'c/memes' ||
+    item.space === 'c/kunst_galerie';
+
   // Short podcast / video teaser stub guard:
   const isPodcastOrVideoStub =
     PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedFeedText) ||
-    ((cleanedFeedText.length < 120 || !cleanedFeedText) &&
-      (/\b(podcast|transcript|interview|episode)\b/i.test(`${title} ${item.subtitle || ''} ${item.feedText || ''}`)));
+    ((cleanedFeedText.length < 140 || !cleanedFeedText) &&
+      (/\b(podcast|transcript|interview|episode|guardian|longread)\b/i.test(`${title} ${item.subtitle || ''} ${item.feedText || ''}`))) ||
+    (cleanedFeedText.length < 140 && !isVisualArtOrMeme);
 
   if (isPodcastOrVideoStub) {
-    cleanedFeedText = synthesizeConceptualPodcastSummary(title, correctedTopic, item.subtitle);
-    if (!cleanedBody || cleanedBody.length < 120 || PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedBody)) {
+    cleanedFeedText = synthesizeConceptualPodcastSummary(cleanedTitle, correctedTopic, item.subtitle);
+    if (!cleanedBody || cleanedBody.length < 140 || PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedBody)) {
       cleanedBody = cleanedFeedText;
     }
   }
 
-  let cleanedInsight = stripPublisherBoilerplate(item.keyInsight || item.subtitle || '');
+  let cleanedInsight = stripPublisherBoilerplate(item.keyInsight || item.subtitle || '', cleanedTitle);
   if (
     !cleanedInsight ||
     cleanedInsight.length < 15 ||
     PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedInsight) ||
-    SPONSOR_BOILERPLATE_REGEX.test(cleanedInsight)
+    SPONSOR_BOILERPLATE_REGEX.test(cleanedInsight) ||
+    /\b(Philip Oltermann|Peter Jackson|theguardian\.com|Read by)\b/i.test(cleanedInsight)
   ) {
-    const firstSentence = cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || item.title;
+    const firstSentence = cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || cleanedTitle;
     cleanedInsight = firstSentence.slice(0, 220);
   }
 
@@ -626,33 +659,45 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     !rawSubtitle ||
     rawSubtitle.length < 15 ||
     PODCAST_OR_VIDEO_INTRO_REGEX.test(rawSubtitle) ||
-    SPONSOR_BOILERPLATE_REGEX.test(rawSubtitle);
+    SPONSOR_BOILERPLATE_REGEX.test(rawSubtitle) ||
+    /\b(Philip Oltermann|Peter Jackson|theguardian\.com|Read by)\b/i.test(rawSubtitle);
 
   const finalSubtitle = isBadSub
-    ? (cleanedInsight || cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || item.title).slice(0, 220)
+    ? (cleanedInsight || cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || cleanedTitle).slice(0, 220)
     : rawSubtitle;
+
+  const cleanedChallengePrompt = item.challengePrompt
+    ? item.challengePrompt
+        .replace(/From the archive:\s*/gi, '')
+        .replace(/\s*[–-]\s*podcast/gi, '')
+    : undefined;
+
+  const cleanedDidacticTransfer = item.didacticTransfer
+    ? stripPublisherBoilerplate(
+        item.didacticTransfer
+          .replace(/From the archive:\s*/gi, '')
+          .replace(/\s*[–-]\s*podcast/gi, '')
+          .replace(/Read by Sam Peter Jackson[\s\S]*?(Continue reading\.{0,3}|—|$)/gi, '—'),
+        cleanedTitle
+      )
+    : undefined;
 
   const updatedTopics = item.topics?.includes(correctedTopic)
     ? item.topics
     : [correctedTopic, ...(item.topics || []).filter(t => t !== correctedTopic)].slice(0, 3);
-
-  const isVisualArtOrMeme =
-    item.format === 'art_showcase' ||
-    item.format === 'meme' ||
-    item.space === 'c/memes' ||
-    item.space === 'c/kunst_galerie';
 
   const upgradedImageUrl = isVisualArtOrMeme
     ? item.imageUrl
     : upgradeImageResolutionUrl(item.imageUrl);
 
   const isSupportedLang = isSupportedFeedLanguage(
-    item.title || '',
+    cleanedTitle || '',
     `${item.subtitle || ''} ${cleanedFeedText} ${cleanedBody}`
   );
 
   return {
     ...item,
+    title: cleanedTitle,
     ...(routedSpace ? { space: routedSpace } : {}),
     subtitle: finalSubtitle,
     primaryTopic: correctedTopic,
@@ -661,6 +706,8 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     body: isSupportedLang ? (cleanedBody || item.body) : '',
     ...(cleanedArticleBody ? { articleBody: isSupportedLang ? cleanedArticleBody : '' } : {}),
     keyInsight: isSupportedLang ? cleanedInsight : '',
+    ...(cleanedChallengePrompt ? { challengePrompt: cleanedChallengePrompt } : {}),
+    ...(cleanedDidacticTransfer ? { didacticTransfer: cleanedDidacticTransfer } : {}),
     ...(isSupportedLang ? {} : { curationScore: 0 }),
     imageUrl: upgradedImageUrl,
     hasAuthenticImage: Boolean(upgradedImageUrl)

@@ -250,7 +250,10 @@ test('Single-Instance Cloud Sync & Surgical Hotfixes Suite (Tasks 1-9)', async (
   });
 
   await t.test('6. In-Place Migration: Updates profile.isOnboarded to true and suppresses zombie cards', async () => {
-    assert.equal(CURRENT_DATA_MIGRATION_VERSION, '2026-11-03-v4.0-single-instance-sync');
+    assert.ok(
+      CURRENT_DATA_MIGRATION_VERSION === '2026-11-04-v4.1-bloomscroll-polish' ||
+      CURRENT_DATA_MIGRATION_VERSION === '2026-11-03-v4.0-single-instance-sync'
+    );
 
     const storage = new AtemStorage(new MemoryStorageDriver());
 

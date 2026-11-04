@@ -40,6 +40,11 @@ const MainNavigator: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
+  const isStandaloneIosPwa =
+    Platform.OS === 'web' &&
+    typeof window !== 'undefined' &&
+    ((window.navigator as any).standalone === true ||
+      window.matchMedia?.('(display-mode: standalone)').matches);
 
   // Startup loading indicator
   if (startupState.status === 'loading') {
@@ -336,22 +341,13 @@ const MainNavigator: React.FC = () => {
         <View
           style={[
             styles.tabBar,
-            Platform.OS === 'web' && {
-              position: 'fixed' as any,
-              bottom: 0,
-              left: 0,
-              right: 0,
-              zIndex: 1000
-            },
             {
               backgroundColor: isDark ? '#0E1424' : colors.surface,
               borderTopColor: colors.borderSubtle,
+              borderTopWidth: 0.5,
               borderBottomWidth: 0,
               marginBottom: 0,
-              paddingBottom: Math.max(insets.bottom, 14),
-              ...(Platform.OS === 'web'
-                ? { paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 14px)' as any }
-                : {})
+              paddingBottom: isStandaloneIosPwa ? 28 : Math.max(insets.bottom, 12)
             }
           ]}
         >

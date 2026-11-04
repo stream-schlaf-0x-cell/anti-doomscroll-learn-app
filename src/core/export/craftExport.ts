@@ -106,11 +106,30 @@ export async function copyToClipboard(text: string): Promise<boolean> {
       await navigator.clipboard.writeText(text);
       return true;
     }
-    return false;
   } catch (err) {
-    console.warn('Clipboard copy failed:', err);
-    return false;
+    console.warn('navigator.clipboard.writeText failed, trying execCommand fallback:', err);
   }
+
+  // Fallback for iOS Safari / Mobile web
+  try {
+    if (typeof document !== 'undefined') {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-9999px';
+      textArea.style.top = '-9999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      if (successful) return true;
+    }
+  } catch (fallbackErr) {
+    console.warn('execCommand copy fallback failed:', fallbackErr);
+  }
+
+  return false;
 }
 
 /**

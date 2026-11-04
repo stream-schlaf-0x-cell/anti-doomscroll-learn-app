@@ -330,7 +330,7 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
                         <TextInput
                           value={newChannelTitle}
                           onChangeText={handleTitleChange}
-                          placeholder="z.B. Buddhismus, Rust Systems oder Bauhaus"
+                          placeholder="Thema oder Raum eingeben, z.B. Geopolitik, Literatur, Kybernetik …"
                           placeholderTextColor={colors.textMuted}
                           style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
                         />
@@ -338,7 +338,7 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
 
                       <View style={{ flex: 1, minWidth: 200 }}>
                         <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
-                          Handle (z.B. c/buddhismus):
+                          Handle (z.B. c/geopolitik):
                         </Text>
                         <TextInput
                           value={newChannelHandle}

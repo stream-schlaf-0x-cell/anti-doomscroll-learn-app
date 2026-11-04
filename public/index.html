@@ -30,17 +30,23 @@
         margin: 0;
         padding: 0;
         width: 100%;
-        height: 100%;
+        height: 100vh;
         min-height: 100dvh;
-        min-height: -webkit-fill-available;
         overflow: hidden;
       }
       body {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        background-color: #0E1424 !important;
         -webkit-tap-highlight-color: transparent;
       }
       #root {
         display: flex;
         flex: 1;
+        height: 100%;
+        background-color: #0E1424 !important;
       }
     </style>
   </head>

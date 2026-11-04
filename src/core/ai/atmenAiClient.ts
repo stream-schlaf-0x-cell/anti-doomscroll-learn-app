@@ -180,12 +180,85 @@ export async function loadAiCredentials(storage: AtemStorage = appStorage): Prom
   return credentials;
 }
 
+export type CredentialChangeListener = (creds: AiCredentials) => void;
+const credentialListeners = new Set<CredentialChangeListener>();
+
+export function onAiCredentialsChange(listener: CredentialChangeListener): () => void {
+  credentialListeners.add(listener);
+  return () => {
+    credentialListeners.delete(listener);
+  };
+}
+
+export function notifyAiCredentialsChange(creds: AiCredentials): void {
+  for (const listener of credentialListeners) {
+    try {
+      listener(creds);
+    } catch {
+      // Non-fatal listener error
+    }
+  }
+}
+
 export async function saveAiCredentials(credentials: AiCredentials, storage: AtemStorage = appStorage): Promise<void> {
   const normalized = normalizeCredentials(credentials);
   await storage.setItem(AI_CREDENTIALS_STORAGE_KEY, JSON.stringify({ ...normalized, apiKey: normalized.persistApiKey ? normalized.apiKey : '' }));
   if (normalized.apiKey) sessionApiKeys.set(storage, normalized.apiKey);
   else sessionApiKeys.delete(storage);
+  notifyAiCredentialsChange(normalized);
 }
+
+export async function getGeminiApiKey(storage: AtemStorage = appStorage): Promise<string> {
+  const direct = await storage.getItem('@atem:gemini_api_key:v1');
+  if (direct && direct.trim()) return direct.trim();
+  const creds = await loadAiCredentials(storage);
+  return (creds.provider === 'gemini' && creds.apiKey) ? creds.apiKey.trim() : '';
+}
+
+export async function getOpenRouterApiKey(storage: AtemStorage = appStorage): Promise<string> {
+  const direct = await storage.getItem('@atem:openrouter_api_key:v1');
+  if (direct && direct.trim()) return direct.trim();
+  const creds = await loadAiCredentials(storage);
+  return (creds.provider === 'openrouter' && creds.apiKey) ? creds.apiKey.trim() : '';
+}
+
+export async function getPreferredProvider(storage: AtemStorage = appStorage): Promise<'gemini' | 'openrouter'> {
+  const direct = await storage.getItem('@atem:preferred_ai_provider:v1');
+  if (direct === 'openrouter' || direct === 'gemini') return direct;
+  const creds = await loadAiCredentials(storage);
+  return creds.provider;
+}
+
+export async function getSelectedModelId(storage: AtemStorage = appStorage): Promise<string> {
+  const direct = await storage.getItem('@atem:selected_model_id:v1');
+  if (direct && direct.trim()) return direct.trim();
+  const creds = await loadAiCredentials(storage);
+  return creds.model || DEFAULT_GEMINI_MODEL;
+}
+
+export const atmenAiClient = {
+  loadCredentials: loadAiCredentials,
+  saveCredentials: saveAiCredentials,
+  getGeminiApiKey,
+  getOpenRouterApiKey,
+  getPreferredProvider,
+  getSelectedModelId,
+  setApiKey: async (key: string, provider: 'gemini' | 'openrouter' = 'gemini', storage: AtemStorage = appStorage) => {
+    const creds = await loadAiCredentials(storage);
+    const trimmed = key.trim();
+    await saveAiCredentials({
+      ...creds,
+      provider,
+      apiKey: trimmed,
+      persistApiKey: true
+    }, storage);
+    if (provider === 'gemini') {
+      await storage.setItem('@atem:gemini_api_key:v1', trimmed);
+    } else {
+      await storage.setItem('@atem:openrouter_api_key:v1', trimmed);
+    }
+  }
+};
 
 export async function clearAiCredentials(storage: AtemStorage = appStorage): Promise<void> {
   await storage.removeItem(AI_CREDENTIALS_STORAGE_KEY);

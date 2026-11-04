@@ -3,6 +3,7 @@ import * as path from 'path';
 import { FeedItem, FeedItemSchema } from '../src/core/domain/types';
 import { ZERO_WIDTH_REGEX, sanitizeImageUrl } from '../src/core/ingestion/rssParser';
 import { stripBoilerplate, splitSentencesAware, isSubstantialSubtitle } from '../src/core/ingestion/normalizer';
+import { sanitizeCuratedFeedItem } from '../src/core/enrichment/batchEnricher';
 
 const PUBLIC_SNAPSHOT_PATH = path.resolve(__dirname, '../public/feed-snapshot.json');
 const PIPELINE_OUTPUT_PATH = path.resolve(__dirname, '../src/core/data/pipeline-output.json');
@@ -76,7 +77,8 @@ function sanitizeItem(rawItem: FeedItem): FeedItem {
     };
   }
 
-  return FeedItemSchema.parse(cleaned);
+  const fullyCurated = sanitizeCuratedFeedItem(cleaned);
+  return FeedItemSchema.parse(fullyCurated);
 }
 
 function runSanitization() {

@@ -8,7 +8,8 @@ import {
   Linking,
   Modal,
   ScrollView,
-  useWindowDimensions
+  useWindowDimensions,
+  Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ScoredFeedItem } from '../../core/domain/ranking';
@@ -169,6 +170,18 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     setImageRejected(false);
     setUsedFallbackUrl(false);
   }, [item.imageUrl, item.id]);
+
+  // Web Escape key listener to exit fullscreen lightbox effortlessly
+  useEffect(() => {
+    if (!showImageLightbox || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowImageLightbox(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showImageLightbox]);
 
   const originalUrl = item.canonicalUrl || item.sourceReferences[0]?.originalUrl;
 
@@ -387,6 +400,16 @@ export const FeedCard: React.FC<FeedCardProps> = ({
             {timeAgo}
             {!isQuick20sCard && item.estimatedReadingMinutes > 1 ? ` · ${item.estimatedReadingMinutes}m` : ''}
           </Text>
+
+          {(Boolean(item.isNewlyArrived) ||
+            (typeof item.pinnedManualRunAt === 'number' && (Date.now() - item.pinnedManualRunAt) <= 30 * 60 * 1000)) && (
+            <>
+              <Text style={[styles.dotSeparator, { color: colors.textMuted }]}>•</Text>
+              <View style={[styles.neuBadge, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}>
+                <Text style={[styles.neuBadgeText, { color: colors.accent }]}>✨ Neu</Text>
+              </View>
+            </>
+          )}
         </View>
 
         {compactBadge && (
@@ -762,8 +785,20 @@ export const FeedCard: React.FC<FeedCardProps> = ({
           onRequestClose={() => setShowImageLightbox(false)}
         >
           <View style={styles.lightboxBackdrop}>
-            <View style={styles.lightboxTopBar}>
-              <View style={{ flex: 1 }}>
+            {/* Top-Right Reachable Close Pill (well below iPhone Dynamic Island / Status Bar) */}
+            <TouchableOpacity
+              onPress={() => setShowImageLightbox(false)}
+              style={styles.lightboxTopClosePill}
+              hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+              accessibilityRole="button"
+              accessibilityLabel="Vollbild schließen"
+            >
+              <Ionicons name="close" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.lightboxClosePillText}>✕ Schließen</Text>
+            </TouchableOpacity>
+
+            <View style={styles.lightboxTopBar} pointerEvents="box-none">
+              <View style={{ flex: 1, paddingRight: 130 }}>
                 <Text style={styles.lightboxTitle} numberOfLines={1}>
                   {item.title}
                 </Text>
@@ -771,26 +806,24 @@ export const FeedCard: React.FC<FeedCardProps> = ({
                   {publisherName} • {provenanceLabel}
                 </Text>
               </View>
-              <TouchableOpacity
-                onPress={() => setShowImageLightbox(false)}
-                style={styles.lightboxCloseBtn}
-                accessibilityLabel="Vollbild schließen"
-              >
-                <Ionicons name="close" size={22} color="#FFFFFF" />
-              </TouchableOpacity>
             </View>
 
+            {/* Tap anywhere on backdrop or image to close */}
             <ScrollView
               contentContainerStyle={styles.lightboxScrollContent}
               maximumZoomScale={3}
               minimumZoomScale={1}
               centerContent
             >
-              <View
+              <TouchableOpacity
+                activeOpacity={0.95}
+                onPress={() => setShowImageLightbox(false)}
                 style={[
                   styles.lightboxCanvas,
                   isMemeCard && { backgroundColor: '#FFFFFF', padding: 16, borderRadius: radius.md }
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel="Vollbild durch Antippen schließen"
               >
                 <Image
                   source={{ uri: activeVisualUri }}
@@ -800,7 +833,7 @@ export const FeedCard: React.FC<FeedCardProps> = ({
                   ]}
                   resizeMode="contain"
                 />
-              </View>
+              </TouchableOpacity>
 
               {item.memeMeta?.punchline && (
                 <View style={styles.lightboxPunchlineBox}>
@@ -809,6 +842,20 @@ export const FeedCard: React.FC<FeedCardProps> = ({
                 </View>
               )}
             </ScrollView>
+
+            {/* Prominent Bottom Close Pill (Always thumb-reachable on iPhone) */}
+            <View style={styles.lightboxBottomBar} pointerEvents="box-none">
+              <TouchableOpacity
+                onPress={() => setShowImageLightbox(false)}
+                style={styles.lightboxBottomClosePill}
+                hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+                accessibilityRole="button"
+                accessibilityLabel="Vollbild schließen"
+              >
+                <Ionicons name="close-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.lightboxBottomCloseText}>✕ Vollbild schließen</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </Modal>
       )}
@@ -999,9 +1046,77 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%'
   },
+  neuBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: radius.pill,
+    borderWidth: 0.5,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  neuBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    letterSpacing: 0.2
+  },
   lightboxBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 13, 22, 0.94)'
+    backgroundColor: 'rgba(9, 13, 22, 0.94)',
+    position: 'relative'
+  },
+  lightboxTopClosePill: {
+    position: 'absolute',
+    top: 56,
+    right: 20,
+    zIndex: 100,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 8
+  },
+  lightboxClosePillText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '700'
+  },
+  lightboxBottomBar: {
+    position: 'absolute',
+    bottom: 48,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  lightboxBottomClosePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    borderWidth: 1.5,
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    borderRadius: radius.pill,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 10
+  },
+  lightboxBottomCloseText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '700',
+    letterSpacing: 0.3
   },
   lightboxTopBar: {
     flexDirection: 'row',
