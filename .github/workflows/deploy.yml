@@ -46,6 +46,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Install Python Scrapling for Fulltext Web Harvesting
+        run: pip install --quiet scrapling || true
+
       - name: Run Multi-Daily Feed Ingestion & Snapshot Pipeline
         if: github.event_name == 'schedule' || hashFiles('public/feed-snapshot.json') == ''
         env:

@@ -15,7 +15,8 @@ import { pureJsSha256 } from '../ingestion/normalizer';
 import { EnrichmentUsageLedger, defaultUsageLedger } from './ledger';
 import { synthesizeDidacticTransfer } from '../synthesis/backgroundResearchPipeline';
 import { upgradeImageResolutionUrl, isRejectedLowResOrLogoUrl } from '../utils/imageQuality';
-export { upgradeImageResolutionUrl };
+import { extractCleanArticleFromHtml, enrichStubItemWithFulltext } from '../ingestion/webContentExtractor';
+export { upgradeImageResolutionUrl, extractCleanArticleFromHtml, enrichStubItemWithFulltext };
 
 export interface BatchEnrichmentItemInput {
   id: string;
@@ -642,6 +643,25 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     }
   }
 
+  // Stub item fulltext enrichment (Tier A essence >= 220 chars & Tier B reader body >= 500 chars)
+  if (!isVisualArtOrMeme && isSupportedFeedLanguage(cleanedTitle, `${item.subtitle || ''} ${cleanedFeedText} ${cleanedBody}`)) {
+    if (cleanedFeedText.length < 220 || cleanedBody.length < 500) {
+      const harvested = extractCleanArticleFromHtml(
+        item.body || item.feedText || item.articleBody || cleanedBody || cleanedFeedText,
+        item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || ''
+      );
+      if (cleanedFeedText.length < 220) {
+        cleanedFeedText =
+          cleanedFeedText && !/^(Listen to|Subscribe|Read by)/i.test(cleanedFeedText)
+            ? (harvested.essenceText.includes(cleanedFeedText) ? harvested.essenceText : `${cleanedFeedText} ${harvested.essenceText}`)
+            : harvested.essenceText;
+      }
+      if (cleanedBody.length < 500) {
+        cleanedBody = harvested.fullMarkdownBody;
+      }
+    }
+  }
+
   let cleanedInsight = stripPublisherBoilerplate(item.keyInsight || item.subtitle || '', cleanedTitle);
   if (
     !cleanedInsight ||
@@ -695,6 +715,9 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     `${item.subtitle || ''} ${cleanedFeedText} ${cleanedBody}`
   );
 
+  const computedWordCount = (cleanedBody || '').split(/\s+/).filter(Boolean).length;
+  const computedReadingMinutes = Math.max(1, Math.ceil(computedWordCount / 200));
+
   return {
     ...item,
     title: cleanedTitle,
@@ -704,6 +727,11 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     topics: updatedTopics,
     feedText: isSupportedLang ? (cleanedFeedText || item.feedText) : '',
     body: isSupportedLang ? (cleanedBody || item.body) : '',
+    wordCount: computedWordCount > (item.wordCount || 0) ? computedWordCount : item.wordCount,
+    estimatedReadingMinutes:
+      computedReadingMinutes > (item.estimatedReadingMinutes || 0)
+        ? computedReadingMinutes
+        : item.estimatedReadingMinutes,
     ...(cleanedArticleBody ? { articleBody: isSupportedLang ? cleanedArticleBody : '' } : {}),
     keyInsight: isSupportedLang ? cleanedInsight : '',
     ...(cleanedChallengePrompt ? { challengePrompt: cleanedChallengePrompt } : {}),
@@ -1278,33 +1306,34 @@ Antworte AUSSCHLIESSLICH als JSON-Array:
    * Deterministic zero-token fallback enrichment with strict source language preservation.
    */
   enrichDeterministically(item: FeedItem): FeedItem {
-    const semanticTopic = classifyTopicDeterministically(item.title, item.body || item.feedText, item.primaryTopic);
-    const topics = item.topics.includes(semanticTopic) ? item.topics : [semanticTopic, ...item.topics];
+    const stubEnriched = enrichStubItemWithFulltext(item);
+    const semanticTopic = classifyTopicDeterministically(stubEnriched.title, stubEnriched.body || stubEnriched.feedText, stubEnriched.primaryTopic);
+    const topics = stubEnriched.topics.includes(semanticTopic) ? stubEnriched.topics : [semanticTopic, ...stubEnriched.topics];
 
-    const lang = detectLanguage(`${item.title} ${item.feedText || item.subtitle || ''}`);
+    const lang = detectLanguage(`${stubEnriched.title} ${stubEnriched.feedText || stubEnriched.subtitle || ''}`);
 
-    const keyInsight = item.keyInsight || item.subtitle || (
-      item.feedText.split('.')[0] ? `${item.feedText.split('.')[0]}.` : item.title
+    const keyInsight = stubEnriched.keyInsight || stubEnriched.subtitle || (
+      stubEnriched.feedText.split('.')[0] ? `${stubEnriched.feedText.split('.')[0]}.` : stubEnriched.title
     );
 
     const hasGermanClash = lang === 'en' && Boolean(
-      (item.didacticTransfer && detectLanguage(item.didacticTransfer) === 'de') ||
-      (item.didacticSeed && detectLanguage(item.didacticSeed) === 'de')
+      (stubEnriched.didacticTransfer && detectLanguage(stubEnriched.didacticTransfer) === 'de') ||
+      (stubEnriched.didacticSeed && detectLanguage(stubEnriched.didacticSeed) === 'de')
     );
 
-    const didacticTransfer = (!hasGermanClash && (item.didacticTransfer || item.didacticSeed)) || (
+    const didacticTransfer = (!hasGermanClash && (stubEnriched.didacticTransfer || stubEnriched.didacticSeed)) || (
       lang === 'en'
-        ? `Reflective inquiry: How does this insight regarding "${item.title}" inform your perspective or daily practice?`
+        ? `Reflective inquiry: How does this insight regarding "${stubEnriched.title}" inform your perspective or daily practice?`
         : synthesizeDidacticTransfer(
-            item.title,
-            item.body || item.feedText,
+            stubEnriched.title,
+            stubEnriched.body || stubEnriched.feedText,
             semanticTopic,
-            item.isTeachingRelated
+            stubEnriched.isTeachingRelated
           )
     );
 
     return {
-      ...item,
+      ...stubEnriched,
       primaryTopic: semanticTopic,
       topics,
       keyInsight,

@@ -32,3 +32,49 @@ export function prependRevealedItems<T extends { id: string }>(
   const remaining = items.filter(i => !revealedIds.has(i.id));
   return [...revealedItems, ...remaining];
 }
+
+export interface ScrollFreezeResult<T extends { id: string }> {
+  items: T[];
+  queuedArrivals: T[];
+}
+
+/**
+ * Hard Scroll-Freeze:
+ * When scrollOffsetY > threshold (default 80px), freezes the visible item order
+ * to prevent background re-orders or prepends from shifting the screen.
+ * In-place card updates (upvotes, bookmarks) are applied cleanly, while new
+ * background arrivals are queued into queuedArrivals.
+ */
+export function applyScrollFreeze<T extends { id: string }>(
+  currentRendered: T[],
+  incomingItems: T[],
+  scrollOffsetY: number,
+  existingQueuedArrivals: T[] = [],
+  threshold = 80
+): ScrollFreezeResult<T> {
+  if (scrollOffsetY <= threshold || currentRendered.length === 0) {
+    return {
+      items: incomingItems,
+      queuedArrivals: []
+    };
+  }
+
+  // Scrolled down (scrollOffsetY > threshold): FREEZE ORDER
+  const currentIdSet = new Set(currentRendered.map(i => i.id));
+  const incomingMap = new Map(incomingItems.map(i => [i.id, i]));
+
+  // In-place updates for already rendered items (preserves exact order)
+  const frozenItems: T[] = currentRendered.map(item => {
+    return incomingMap.get(item.id) || item;
+  });
+
+  // Identify new arrivals not present in the currently rendered items
+  const newArrivals = incomingItems.filter(item => !currentIdSet.has(item.id));
+  const existingQueuedIds = new Set(existingQueuedArrivals.map(i => i.id));
+  const newlyQueued = newArrivals.filter(item => !existingQueuedIds.has(item.id));
+
+  return {
+    items: frozenItems,
+    queuedArrivals: [...existingQueuedArrivals, ...newlyQueued]
+  };
+}

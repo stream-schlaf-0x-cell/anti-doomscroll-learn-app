@@ -13,6 +13,7 @@ import {
   satisfiesDefaultCuratedStandard,
   sanitizeCuratedFeedItem
 } from '../src/core/enrichment/batchEnricher';
+import { enrichStubItemWithFulltext, harvestWebPageContent } from '../src/core/ingestion/webContentExtractor';
 import { enforceCuratedStreamDiversity } from '../src/core/domain/ranking';
 import { defaultUsageLedger } from '../src/core/enrichment/ledger';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from '../src/core/ai/atmenAiClient';
@@ -102,10 +103,18 @@ async function runIngestionPipeline() {
       async () => ({ provider, apiKey, model })
     );
 
-    console.log('\nApplying Batch Edition Enrichment (semantic classification & German synthesis)...');
-    const preCurated = interleavedItems
+    console.log('\nApplying Fulltext Web Harvesting & Batch Edition Enrichment...');
+    const fulltextEnriched = interleavedItems.map(item => {
+      if ((item.feedText || '').trim().length < 220 || (item.body || '').trim().length < 500) {
+        return enrichStubItemWithFulltext(item);
+      }
+      return item;
+    });
+
+    const preCurated = fulltextEnriched
       .filter(i => isSupportedFeedLanguage(i.title || '', `${i.subtitle || ''} ${i.feedText || ''} ${i.body || ''}`))
       .map(sanitizeCuratedFeedItem)
+      .map(item => enrichStubItemWithFulltext(item))
       .filter(satisfiesDefaultCuratedStandard);
     const itemsToEnrich = preCurated.slice(0, 30);
     const tailItems = preCurated.slice(30);

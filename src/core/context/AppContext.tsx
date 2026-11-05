@@ -186,6 +186,8 @@ interface AppContextValue {
   openArticle: (id: string) => Promise<void>;
   closeArticle: () => void;
   goHome: () => void;
+  feedScrollToTopSignal: number;
+  requestFeedScrollToTop: () => void;
   whyModalItem: ScoredFeedItem | null;
   openWhyModal: (item: ScoredFeedItem) => void;
   closeWhyModal: () => void;
@@ -277,6 +279,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [historySortOrder, setHistorySortOrder] = useState<'recent' | 'chronological'>('recent');
   const [selectedFilter, setSelectedFilter] = useState<string | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [feedScrollToTopSignal, setFeedScrollToTopSignal] = useState<number>(0);
+  const requestFeedScrollToTop = useCallback(() => {
+    setFeedScrollToTopSignal(s => s + 1);
+  }, []);
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<FeedItem | null>(null);
   const [whyModalItem, setWhyModalItem] = useState<ScoredFeedItem | null>(null);
@@ -958,6 +964,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const goHome = useCallback(() => {
     void flushReadingProgress();
+    requestFeedScrollToTop();
     setSelectedArticleId(null);
     setSelectedArticle(null);
     setWhyModalItem(null);
@@ -979,7 +986,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Ignored
       }
     }
-  }, [flushReadingProgress, scheduleFeedRecompute]);
+  }, [flushReadingProgress, scheduleFeedRecompute, requestFeedScrollToTop]);
 
   // Web Browser History Navigation (back / forward / direct URL)
   useEffect(() => {
@@ -1826,6 +1833,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         openArticle,
         closeArticle,
         goHome,
+        feedScrollToTopSignal,
+        requestFeedScrollToTop,
         whyModalItem,
         openWhyModal,
         closeWhyModal,

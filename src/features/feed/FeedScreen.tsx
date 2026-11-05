@@ -58,7 +58,7 @@ import { LiveCivicPulseService, ManualPipelineStage } from '../../core/ingestion
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
 import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
 import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
-import { holdFeedPresentation, prependRevealedItems } from '../../core/feed/feedPresentation';
+import { holdFeedPresentation, prependRevealedItems, applyScrollFreeze } from '../../core/feed/feedPresentation';
 import { NewsEvolutionModal } from '../../ui/components/NewsEvolutionModal';
 import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
 import { NewsroomPipelineModal } from '../../ui/components/NewsroomPipelineModal';
@@ -120,7 +120,8 @@ export const FeedScreen: React.FC = () => {
     spaces,
     updateSpace,
     isHydrated,
-    scheduleCloudSyncPush
+    scheduleCloudSyncPush,
+    feedScrollToTopSignal
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -133,8 +134,18 @@ export const FeedScreen: React.FC = () => {
   }, []);
   const [isScrolledDown, setIsScrolledDown] = useState<boolean>(false);
   const scrollYRef = React.useRef<number>(0);
+  const scrollOffsetYRef = React.useRef<number>(0);
   const scrollViewRef = React.useRef<ScrollView>(null);
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => defaultFeedOperationManager.getPinnedItemIds());
+
+  // Explicit user tap scroll-to-top signal (e.g. tapping active Stream tab or Home brand logo)
+  const lastScrollSignalRef = React.useRef(feedScrollToTopSignal);
+  React.useEffect(() => {
+    if (feedScrollToTopSignal > lastScrollSignalRef.current) {
+      lastScrollSignalRef.current = feedScrollToTopSignal;
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    }
+  }, [feedScrollToTopSignal]);
 
   // Viewport Top-Lock & Background Arrivals (WP 1, WP 3 & WP 5)
   const appMountedAtRef = React.useRef<number>(Date.now());
@@ -477,6 +488,9 @@ export const FeedScreen: React.FC = () => {
   const handleFilterChange = (filter: string | 'all') => {
     setSelectedFilter(filter);
     setVisibleInfiniteCount(24);
+    lockedTopItemIdsRef.current = null;
+    setPendingStreamArrivals([]);
+    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     if (filter !== 'all' && (activeFeedOption === 'live_news' || activeFeedOption === 'classics')) {
       setActiveFeedOption('infinite');
     }
@@ -682,9 +696,30 @@ export const FeedScreen: React.FC = () => {
     return filterByQuery(scored);
   }, [revealedNewItems, dismissedSet, matchesSelectedSpace, filterByQuery, profile, interactions]);
 
+  const frozenRenderedFreshRef = React.useRef<ScoredFeedItem[]>([]);
+  const newArrivalsQueueRef = React.useRef<ScoredFeedItem[]>([]);
+
   const renderedInfiniteFreshItems = useMemo(() => {
-    return lockedInfiniteBase.slice(0, Math.min(visibleInfiniteCount, lockedInfiniteBase.length));
-  }, [lockedInfiniteBase, visibleInfiniteCount]);
+    const freshBatch = lockedInfiniteBase.slice(0, Math.min(visibleInfiniteCount, lockedInfiniteBase.length));
+    const frozen = applyScrollFreeze(
+      frozenRenderedFreshRef.current,
+      freshBatch,
+      scrollOffsetYRef.current,
+      pendingStreamArrivals,
+      80
+    );
+    if (frozen.queuedArrivals.length > pendingStreamArrivals.length) {
+      newArrivalsQueueRef.current = frozen.queuedArrivals;
+    }
+    frozenRenderedFreshRef.current = frozen.items;
+    return frozen.items;
+  }, [lockedInfiniteBase, visibleInfiniteCount, pendingStreamArrivals]);
+
+  React.useEffect(() => {
+    if (newArrivalsQueueRef.current.length > pendingStreamArrivals.length) {
+      setPendingStreamArrivals(newArrivalsQueueRef.current);
+    }
+  }, [renderedInfiniteFreshItems, pendingStreamArrivals.length]);
 
   const renderedInfiniteEvergreenItems = useMemo(() => {
     if (visibleInfiniteCount <= lockedInfiniteBase.length) return [];
@@ -945,12 +980,13 @@ export const FeedScreen: React.FC = () => {
   // Seamless infinite mind-scroll listener (triggers next items & background auto-replenishment at 75% scroll depth)
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    scrollOffsetYRef.current = contentOffset.y;
     scrollYRef.current = contentOffset.y;
     if (layoutMeasurement.height > 0) {
       viewportHeightRef.current = layoutMeasurement.height;
     }
 
-    const isDown = contentOffset.y > 180;
+    const isDown = contentOffset.y > 80;
     setIsScrolledDown(isDown);
 
     flushVisibleCardsToChronik();
@@ -1504,6 +1540,7 @@ export const FeedScreen: React.FC = () => {
       {/* Main Feed Scroll (Desktop Centered & Two-Column Layout) */}
       <ScrollView
         ref={scrollViewRef}
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}

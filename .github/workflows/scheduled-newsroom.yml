@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Python Scrapling for Fulltext Web Harvesting
+        run: pip install --quiet scrapling || true
+
       - name: Run 5-Stage Virtual Newsroom Ingestion Pipeline
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

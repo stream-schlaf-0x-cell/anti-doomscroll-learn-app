@@ -49,3 +49,8 @@ atmen_source_code_*
 atmen_codebase_report.txt
 ATMEN_COMPLETE_CODEBASE.txt
 
+# Python
+__pycache__/
+*.pyc
+
+
