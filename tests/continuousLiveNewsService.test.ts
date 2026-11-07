@@ -92,7 +92,11 @@ describe('ContinuousLiveNewsService & Instant Research Invariants', () => {
   it('filters out disabled sources from the live stream', async () => {
     const { defaultSourceRepository } = await import('../src/core/data/sourceRepository');
     const allSources = await defaultSourceRepository.getAllSources();
-    const tagesschauSources = allSources.filter(s => s.name.toLowerCase().includes('tagesschau'));
+    const tagesschauSources = allSources.filter(s =>
+      s.name.toLowerCase().includes('tagesschau') ||
+      s.id.includes('tagesschau') ||
+      Boolean(s.url && s.url.includes('tagesschau.de'))
+    );
     assert.ok(tagesschauSources.length > 0);
 
     for (const s of tagesschauSources) {
