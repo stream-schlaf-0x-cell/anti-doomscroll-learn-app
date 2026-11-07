@@ -1831,3 +1831,112 @@ export function computeUpvoteSimilarityBoost(
   const net = Math.min(0.30, boost) - Math.min(0.45, penalty);
   return Math.round(net * 1000) / 1000;
 }
+
+export interface FeedCardMemoComparableProps {
+  item: { id: string; upvotesCount?: number };
+  interaction?: ReadingInteraction;
+  isDark?: boolean;
+  isHero?: boolean;
+  isFocused?: boolean;
+  isExpanded?: boolean;
+  hivemindTrackProgressPercent?: number;
+  hivemindProgressPercent?: number;
+  isHivemindStepCompleted?: boolean;
+  isCompletedHivemindStep?: boolean;
+}
+
+/**
+ * Strict React.memo comparator for FeedCard.
+ * Prevents sibling cards from re-rendering when a single card is upvoted, bookmarked, or scrolled past.
+ */
+export function areFeedCardPropsEqual<T extends FeedCardMemoComparableProps>(prev: T, next: T): boolean {
+  if (prev.item.id !== next.item.id) return false;
+  if ((prev.item.upvotesCount ?? 0) !== (next.item.upvotesCount ?? 0)) return false;
+  const prevVote = (prev.interaction as any)?.vote ?? prev.interaction?.voteScore ?? 0;
+  const nextVote = (next.interaction as any)?.vote ?? next.interaction?.voteScore ?? 0;
+  if (prevVote !== nextVote) return false;
+  if (Boolean(prev.interaction?.saved) !== Boolean(next.interaction?.saved)) return false;
+  if ((prev.interaction?.feedback ?? 'neutral') !== (next.interaction?.feedback ?? 'neutral')) return false;
+  if ((prev.interaction?.progressPercent ?? 0) !== (next.interaction?.progressPercent ?? 0)) return false;
+  if (Boolean(prev.isDark) !== Boolean(next.isDark)) return false;
+  if (
+    (prev.hivemindTrackProgressPercent ?? prev.hivemindProgressPercent) !==
+    (next.hivemindTrackProgressPercent ?? next.hivemindProgressPercent)
+  ) {
+    return false;
+  }
+  if (
+    Boolean(prev.isHivemindStepCompleted ?? prev.isCompletedHivemindStep) !==
+    Boolean(next.isHivemindStepCompleted ?? next.isCompletedHivemindStep)
+  ) {
+    return false;
+  }
+  if (Boolean(prev.isHero) !== Boolean(next.isHero)) return false;
+  if (Boolean(prev.isFocused) !== Boolean(next.isFocused)) return false;
+  if (Boolean(prev.isExpanded) !== Boolean(next.isExpanded)) return false;
+  return true;
+}
+
+/**
+ * Pure, synchronous 0ms state updater for optimistic voting.
+ * Updates interaction state immediately and adjusts upvotesCount in-place without reordering items.
+ */
+export function computeOptimisticVoteState<T extends FeedItem>(
+  prevInteractions: Record<string, ReadingInteraction>,
+  items: T[],
+  itemId: string,
+  direction: 'up' | 'down' | 'clear'
+): {
+  nextInteractions: Record<string, ReadingInteraction>;
+  nextItems: T[];
+  deltaUpvotes: number;
+} {
+  const prevInt: ReadingInteraction = prevInteractions[itemId] ?? {
+    itemId,
+    saved: false,
+    progressPercent: 0,
+    furthestPositionPercent: 0,
+    userNotes: []
+  };
+  const prevVoteScore = prevInt.voteScore ?? 0;
+  const nextVoteScore: -1 | 0 | 1 = direction === 'up' ? 1 : direction === 'down' ? -1 : 0;
+  const deltaUpvotes = (nextVoteScore === 1 ? 1 : 0) - (prevVoteScore === 1 ? 1 : 0);
+
+  const nextFeedback =
+    direction === 'up'
+      ? 'more_like_this'
+      : direction === 'down'
+      ? 'less_like_this'
+      : prevInt.feedback;
+
+  const nextInteraction: ReadingInteraction = {
+    ...prevInt,
+    voteScore: nextVoteScore,
+    feedback: nextFeedback
+  };
+
+  const nextInteractions: Record<string, ReadingInteraction> = {
+    ...prevInteractions,
+    [itemId]: nextInteraction
+  };
+
+  if (deltaUpvotes === 0) {
+    return { nextInteractions, nextItems: items, deltaUpvotes: 0 };
+  }
+
+  let changed = false;
+  const nextItems = items.map(item => {
+    if (item.id !== itemId) return item;
+    changed = true;
+    return {
+      ...item,
+      upvotesCount: Math.max(0, (item.upvotesCount ?? 0) + deltaUpvotes)
+    };
+  });
+
+  return {
+    nextInteractions,
+    nextItems: changed ? nextItems : items,
+    deltaUpvotes
+  };
+}

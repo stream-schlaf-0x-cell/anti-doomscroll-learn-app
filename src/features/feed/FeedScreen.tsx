@@ -181,6 +181,7 @@ export const FeedScreen: React.FC = () => {
     setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
     lockedTopItemIdsRef.current = null;
     setPendingStreamArrivals([]);
+    setVisibleInfiniteCount(12);
     setSortMode(mode);
     setActiveCardIndex(0);
     scrollViewRef.current?.scrollTo({ y: 0, animated: true });
@@ -231,7 +232,7 @@ export const FeedScreen: React.FC = () => {
   const [lastOperationResult, setLastOperationResult] = useState<FeedOperationResult | null>(null);
 
   const presentationScope = `${activeFeedOption}:${selectedFilter}:${searchQuery}:${sortMode}`;
-  const [visibleInfiniteCount, setVisibleInfiniteCount] = useState<number>(24);
+  const [visibleInfiniteCount, setVisibleInfiniteCount] = useState<number>(12);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [simToast, setSimToast] = useState<string | null>(null);
   const subchannels = spaces;
@@ -534,17 +535,47 @@ export const FeedScreen: React.FC = () => {
     }
   };
 
-  const handleFilterChange = (filter: string | 'all') => {
+  const handleFilterChange = useCallback((filter: string | 'all') => {
     setActiveHivemindTrackId(null);
     setSelectedFilter(filter);
-    setVisibleInfiniteCount(24);
+    setVisibleInfiniteCount(12);
     lockedTopItemIdsRef.current = null;
     setPendingStreamArrivals([]);
     scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     if (filter !== 'all' && (activeFeedOption === 'live_news' || activeFeedOption === 'classics')) {
       setActiveFeedOption('infinite');
     }
-  };
+  }, [activeFeedOption, setActiveFeedOption, setSelectedFilter]);
+
+  const handleInvestigateTopic = useCallback((topic: TopicTag) => {
+    setSelectedFilter(`c/${topic}`);
+  }, [setSelectedFilter]);
+
+  // Keep latest interactions in a ref so upvoting/saving NEVER triggers full feed re-filtering or re-ranking
+  const interactionsRef = React.useRef(interactions);
+  interactionsRef.current = interactions;
+
+  // Persistent O(1) cache of sanitized feed items so regex cleaners run at most ONCE per unique article ID
+  const sanitizedItemCacheRef = React.useRef<Map<string, {
+    item: FeedItem;
+    strictStandardOk: boolean;
+    bodyContractOk: boolean;
+    resolvedSpace: string | null;
+  }>>(new Map());
+
+  const getCachedSanitizedEntry = useCallback((rawItem: FeedItem) => {
+    const existing = sanitizedItemCacheRef.current.get(rawItem.id);
+    if (existing) return existing;
+    const cleaned = sanitizeCuratedFeedItem(rawItem);
+    const entry = {
+      item: cleaned,
+      strictStandardOk: satisfiesDefaultCuratedStandard(cleaned),
+      bodyContractOk: satisfiesCuratedBodyContract(cleaned),
+      resolvedSpace: resolveItemSpaceHandle(cleaned)
+    };
+    sanitizedItemCacheRef.current.set(rawItem.id, entry);
+    return entry;
+  }, []);
 
   // Helper to filter items by search query
   const filterByQuery = useCallback((items: ScoredFeedItem[]) => {
@@ -563,6 +594,7 @@ export const FeedScreen: React.FC = () => {
   const dismissedSet = useMemo(() => new Set(dismissedItemIds), [dismissedItemIds]);
 
   const latestScoredLiveItems = useMemo(() => {
+    const currentInteractions = interactionsRef.current;
     let items = liveNewsItems.filter(item => !dismissedSet.has(item.id));
     if (newsSearchQuery.trim()) {
       const q = newsSearchQuery.toLowerCase().trim();
@@ -576,79 +608,109 @@ export const FeedScreen: React.FC = () => {
     if (liveNewsWindowMode === 'chronological') {
       // In chronological mode, strictly preserve publication timestamp order without user interest re-sorting
       return items.map(item => {
-        const scored = scoreFeedItem(item, profile, interactions);
+        const scored = scoreFeedItem(item, profile, currentInteractions);
         return {
           ...scored,
           score: 1.0
         };
       });
     }
-    return items.map(item => scoreFeedItem(item, profile, interactions));
-  }, [liveNewsItems, dismissedSet, newsSearchQuery, liveNewsWindowMode, profile, interactions]);
+    return items.map(item => scoreFeedItem(item, profile, currentInteractions));
+  }, [liveNewsItems, dismissedSet, newsSearchQuery, liveNewsWindowMode, profile]);
   const scoredLiveItems = useReadingStableFeed(latestScoredLiveItems, isScrolledDown, `${presentationScope}:${liveNewsCategory}:${liveNewsWindowMode}:${newsSearchQuery}`);
 
   const scoredClassicsItems = useMemo(() => {
+    const currentInteractions = interactionsRef.current;
     const scored = classicsItems
       .filter(item => !dismissedSet.has(item.id))
       .filter(matchesSelectedSpace)
-      .map(item => scoreFeedItem(item, profile, interactions));
+      .map(item => scoreFeedItem(item, profile, currentInteractions));
     return filterByQuery(scored);
-  }, [classicsItems, dismissedSet, matchesSelectedSpace, profile, interactions, filterByQuery]);
+  }, [classicsItems, dismissedSet, matchesSelectedSpace, profile, filterByQuery]);
 
-  // Filter daily edition items
-  const filteredDaily = useMemo(() => {
-    const spaceFiltered = dailyEdition.filter(item => !dismissedSet.has(item.id)).filter(matchesSelectedSpace);
-    return filterByQuery(spaceFiltered);
-  }, [dailyEdition, dismissedSet, matchesSelectedSpace, filterByQuery]);
-
-  // Filter discovery pool items
-  const filteredDiscovery = useMemo(() => {
-    const spaceFiltered = discoveryItems.filter(item => !dismissedSet.has(item.id)).filter(matchesSelectedSpace);
-    return filterByQuery(spaceFiltered);
-  }, [discoveryItems, dismissedSet, matchesSelectedSpace, filterByQuery]);
-
-  // OpenWeb harvested candidates scored and filtered
+  // OpenWeb harvested candidates scored once on ingest/load (decoupled from filter/sort switches and interactions)
   const scoredOpenWebItems = useMemo(() => {
+    const currentInteractions = interactionsRef.current;
     return openWebItems
       .filter(item => !dismissedSet.has(item.id))
-      .map(item => scoreFeedItem(item, profile, interactions));
-  }, [openWebItems, dismissedSet, profile, interactions]);
+      .map(item => scoreFeedItem(item, profile, currentInteractions));
+  }, [openWebItems, dismissedSet, profile]);
 
-  const filteredOpenWeb = useMemo(() => {
-    const spaceFiltered = scoredOpenWebItems.filter(matchesSelectedSpace);
-    return filterByQuery(spaceFiltered);
-  }, [scoredOpenWebItems, matchesSelectedSpace, filterByQuery]);
-
-  // Combined endless stream with Always-On "Frisch kuratiert" Quality Gate & Sliding-Window Bloom-Ranking
-  const latestInfiniteInterleavedBase = useMemo(() => {
-    const combined = [
-      ...filteredDaily,
-      ...filteredOpenWeb,
-      ...filteredDiscovery,
-      ...scoredLiveItems.filter(matchesSelectedSpace)
+  // Pre-sanitized, pre-scored, and space-indexed master pool (runs ONLY when raw pools change, NEVER on space/sort switch or upvote)
+  const preSanitizedMasterPool = useMemo(() => {
+    const currentInteractions = interactionsRef.current;
+    const rawCombined = [
+      ...dailyEdition,
+      ...scoredOpenWebItems,
+      ...discoveryItems,
+      ...scoredLiveItems
     ];
     const seen = new Set<string>();
     const seenCanon = new Set<string>();
-    const unique: ScoredFeedItem[] = [];
-    for (const item of combined) {
-      if (dismissedSet.has(item.id)) continue;
-      if (seen.has(item.id)) continue;
-      const canon = item.canonicalUrl?.toLowerCase().trim();
+    const allEntries: {
+      scoredItem: ScoredFeedItem;
+      strictStandardOk: boolean;
+      bodyContractOk: boolean;
+      resolvedSpace: string | null;
+    }[] = [];
+    const bySpaceHandle = new Map<string, typeof allEntries>();
+
+    for (const raw of rawCombined) {
+      if (dismissedSet.has(raw.id)) continue;
+      if (seen.has(raw.id)) continue;
+      const canon = raw.canonicalUrl?.toLowerCase().trim();
       if (canon && seenCanon.has(canon)) continue;
-      seen.add(item.id);
+      seen.add(raw.id);
       if (canon) seenCanon.add(canon);
-      unique.push(item);
+
+      const cached = getCachedSanitizedEntry(raw);
+      const scoredItem = scoreFeedItem(cached.item, profile, currentInteractions);
+      const entry = {
+        scoredItem,
+        strictStandardOk: cached.strictStandardOk,
+        bodyContractOk: cached.bodyContractOk,
+        resolvedSpace: cached.resolvedSpace
+      };
+      allEntries.push(entry);
+      if (cached.resolvedSpace) {
+        const list = bySpaceHandle.get(cached.resolvedSpace);
+        if (list) {
+          list.push(entry);
+        } else {
+          bySpaceHandle.set(cached.resolvedSpace, [entry]);
+        }
+      }
     }
 
-    // 100% Default Curated Quality Gate ("Frisch kuratiert" standard on every stream card)
-    const sanitized = unique.map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions));
-    // Re-check purity after sanitization (sanitizer may re-route e.g. party politics to c/gesellschaft_politik)
-    const strictCurated = sanitized
-      .filter(item => satisfiesDefaultCuratedStandard(item))
-      .filter(matchesSelectedSpace);
-    const curatedPool = strictCurated.length >= 3 || selectedFilter === 'all'
-      ? strictCurated
-      : sanitized.filter(item => satisfiesCuratedBodyContract(item)).filter(matchesSelectedSpace);
+    return { allEntries, bySpaceHandle };
+  }, [dailyEdition, scoredOpenWebItems, discoveryItems, scoredLiveItems, dismissedSet, profile, getCachedSanitizedEntry]);
+
+  // Combined endless stream with O(1) Space Lookup, Always-On "Frisch kuratiert" Quality Gate & Sliding-Window Bloom-Ranking
+  const latestInfiniteInterleavedBase = useMemo(() => {
+    const currentInteractions = interactionsRef.current;
+
+    // Fast O(1) space slice when a specific c/... handle is selected
+    const targetSpaceHandle = selectedFilter !== 'all' ? selectedSpaceContext?.targetHandle : null;
+    const candidateEntries = targetSpaceHandle
+      ? (preSanitizedMasterPool.bySpaceHandle.get(targetSpaceHandle) ?? [])
+      : preSanitizedMasterPool.allEntries;
+
+    const strictMatches: ScoredFeedItem[] = [];
+    const fallbackMatches: ScoredFeedItem[] = [];
+
+    for (const entry of candidateEntries) {
+      if (!matchesSelectedSpace(entry.scoredItem)) continue;
+      if (entry.strictStandardOk) {
+        strictMatches.push(entry.scoredItem);
+      }
+      if (entry.bodyContractOk) {
+        fallbackMatches.push(entry.scoredItem);
+      }
+    }
+
+    const baseCuratedPool =
+      strictMatches.length >= 3 || selectedFilter === 'all' ? strictMatches : fallbackMatches;
+    const curatedPool = filterByQuery(baseCuratedPool);
 
     // Hard 72-Hour Seen Quarantine (Work Package 3):
     // Any article seen in a previous session (> 5 min before current session started) within 72h
@@ -661,7 +723,7 @@ export const FeedScreen: React.FC = () => {
     const quarantinedTail: ScoredFeedItem[] = [];
 
     for (const item of curatedPool) {
-      const userInt = interactions[item.id];
+      const userInt = currentInteractions[item.id];
       const isSaved = Boolean(userInt?.saved);
       const isUpvoted = Boolean(userInt?.voteScore === 1);
       const rec = seenRecordMap.get(item.id);
@@ -706,13 +768,13 @@ export const FeedScreen: React.FC = () => {
       return hivemindLearningService.interleaveAmbientDripCards(
         combinedSorted,
         hivemindTracks,
-        it => scoreFeedItem(it, profile, interactions),
+        it => scoreFeedItem(it, profile, currentInteractions),
         5
       );
     }
 
     return combinedSorted;
-  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, matchesSelectedSpace, dismissedSet, profile, interactions, selectedFilter, searchQuery, activeHivemindTrackId, sortMode, pinnedIds, seenIds, seenRecordMap, hivemindTracks]);
+  }, [preSanitizedMasterPool, selectedSpaceContext, matchesSelectedSpace, filterByQuery, profile, selectedFilter, searchQuery, activeHivemindTrackId, sortMode, pinnedIds, seenIds, seenRecordMap, hivemindTracks]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
   // Viewport Top-Lock (WP 1 & WP 3): Lock the visible top 12 cards for active session/scope
@@ -786,26 +848,27 @@ export const FeedScreen: React.FC = () => {
   // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
   const evergreenFallbackItems = useMemo(() => {
     if (sortMode === 'today') return []; // Never append old evergreen items under ⚡ Heute!
+    const currentInteractions = interactionsRef.current;
     const freshIds = new Set(lockedInfiniteBase.map(i => i.id));
     const rawClassics = ContinuousLiveNewsService.getEvergreenClassics();
     const scored = rawClassics
       .filter(item => !freshIds.has(item.id) && !dismissedSet.has(item.id))
-      .filter(matchesSelectedSpace)
-      .filter(satisfiesDefaultCuratedStandard)
-      .map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions))
-      .filter(matchesSelectedSpace);
+      .map(item => getCachedSanitizedEntry(item))
+      .filter(entry => entry.strictStandardOk && matchesSelectedSpace(entry.item))
+      .map(entry => scoreFeedItem(entry.item, profile, currentInteractions));
     return filterByQuery(scored);
-  }, [sortMode, lockedInfiniteBase, dismissedSet, profile, interactions, matchesSelectedSpace, filterByQuery]);
+  }, [sortMode, lockedInfiniteBase, dismissedSet, profile, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery]);
 
   const scoredRevealedItems = useMemo(() => {
     if (revealedNewItems.length === 0) return [];
-    const spaceFiltered = revealedNewItems
+    const currentInteractions = interactionsRef.current;
+    const scored = revealedNewItems
       .filter(item => !dismissedSet.has(item.id))
-      .filter(matchesSelectedSpace)
-      .filter(satisfiesDefaultCuratedStandard);
-    const scored = spaceFiltered.map(item => scoreFeedItem(sanitizeCuratedFeedItem(item), profile, interactions));
+      .map(item => getCachedSanitizedEntry(item))
+      .filter(entry => entry.strictStandardOk && matchesSelectedSpace(entry.item))
+      .map(entry => scoreFeedItem(entry.item, profile, currentInteractions));
     return filterByQuery(scored);
-  }, [revealedNewItems, dismissedSet, matchesSelectedSpace, filterByQuery, profile, interactions]);
+  }, [revealedNewItems, dismissedSet, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery, profile]);
 
   const frozenRenderedFreshRef = React.useRef<ScoredFeedItem[]>([]);
   const newArrivalsQueueRef = React.useRef<ScoredFeedItem[]>([]);
@@ -845,18 +908,19 @@ export const FeedScreen: React.FC = () => {
 
   // Active items array depending on selected feed option
   const currentFeedItems = useMemo((): ScoredFeedItem[] => {
+    const currentInteractions = interactionsRef.current;
     if (curatedSelection && curatedSelection.items.length > 0) {
       return curatedSelection.items
         .filter(item => !dismissedSet.has(item.id))
-        .map(item => scoreFeedItem(item, profile, interactions));
+        .map(item => scoreFeedItem(item, profile, currentInteractions));
     }
     if (activeFeedOption === 'live_news') return scoredLiveItems;
     if (activeFeedOption === 'classics') return scoredClassicsItems;
     if (activeFeedOption === 'history') {
-      return historyItems.map(h => scoreFeedItem(h.item, profile, interactions));
+      return historyItems.map(h => scoreFeedItem(h.item, profile, currentInteractions));
     }
     return renderedInfiniteItems;
-  }, [curatedSelection, dismissedSet, activeFeedOption, renderedInfiniteItems, scoredLiveItems, scoredClassicsItems, historyItems, profile, interactions]);
+  }, [curatedSelection, dismissedSet, activeFeedOption, renderedInfiniteItems, scoredLiveItems, scoredClassicsItems, historyItems, profile]);
 
   // 1-Tap "🚫 Weniger davon" state & Undo handler
   const [lastDismissedItem, setLastDismissedItem] = useState<{ id: string; title: string } | null>(null);
@@ -2065,6 +2129,8 @@ export const FeedScreen: React.FC = () => {
                         >
                           <FeedCard
                             item={item}
+                            interaction={interactions[item.id]}
+                            isDark={isDark}
                             isHero={index === 0}
                             isFocused={index === activeCardIndex}
                             isExpanded={Boolean(expandedCardIds[item.id])}
@@ -2074,7 +2140,7 @@ export const FeedScreen: React.FC = () => {
                                 [item.id]: !prev[item.id]
                               }));
                             }}
-                            onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                            onInvestigateTopic={handleInvestigateTopic}
                             onDismissItem={handleDismissCard}
                             onOpenHivemindTrack={handleStartFocusTrack}
                             onCompleteHivemindStep={handleCompleteHivemindStep}
@@ -2088,7 +2154,7 @@ export const FeedScreen: React.FC = () => {
                 ) : curatedSelection && curatedSelection.items.length > 0 ? (
                   <>
                     {curatedSelection.items.map((rawItem, index) => {
-                      const item = scoreFeedItem(rawItem, profile, interactions);
+                      const item = scoreFeedItem(rawItem, profile, interactionsRef.current);
                       return (
                         <View
                           key={item.id}
@@ -2096,6 +2162,8 @@ export const FeedScreen: React.FC = () => {
                         >
                           <FeedCard
                             item={item}
+                            interaction={interactions[item.id]}
+                            isDark={isDark}
                             isHero={index === 0}
                             isFocused={index === activeCardIndex}
                             isExpanded={Boolean(expandedCardIds[item.id])}
@@ -2105,7 +2173,7 @@ export const FeedScreen: React.FC = () => {
                                 [item.id]: !prev[item.id]
                               }));
                             }}
-                            onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                            onInvestigateTopic={handleInvestigateTopic}
                             onDismissItem={handleDismissCard}
                           />
                         </View>
@@ -2174,6 +2242,8 @@ export const FeedScreen: React.FC = () => {
                       >
                         <FeedCard
                           item={item}
+                          interaction={interactions[item.id]}
+                          isDark={isDark}
                           isHero={index === 0 && selectedFilter === 'all' && !searchQuery}
                           isFocused={index === activeCardIndex}
                           isExpanded={Boolean(expandedCardIds[item.id])}
@@ -2183,7 +2253,7 @@ export const FeedScreen: React.FC = () => {
                               [item.id]: !prev[item.id]
                             }));
                           }}
-                          onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                          onInvestigateTopic={handleInvestigateTopic}
                           onDismissItem={handleDismissCard}
                           onOpenHivemindTrack={handleStartFocusTrack}
                           onCompleteHivemindStep={handleCompleteHivemindStep}
@@ -2231,6 +2301,8 @@ export const FeedScreen: React.FC = () => {
                             >
                               <FeedCard
                                 item={item}
+                                interaction={interactions[item.id]}
+                                isDark={isDark}
                                 isHero={false}
                                 isFocused={globalIdx === activeCardIndex}
                                 isExpanded={Boolean(expandedCardIds[item.id])}
@@ -2240,7 +2312,7 @@ export const FeedScreen: React.FC = () => {
                                     [item.id]: !prev[item.id]
                                   }));
                                 }}
-                                onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                                onInvestigateTopic={handleInvestigateTopic}
                                 onDismissItem={handleDismissCard}
                               />
 
@@ -2510,6 +2582,8 @@ export const FeedScreen: React.FC = () => {
                       <FeedCard
                         key={item.id}
                         item={item}
+                        interaction={interactions[item.id]}
+                        isDark={isDark}
                         isHero={index === 0 && !searchQuery}
                         isFocused={index === activeCardIndex}
                         isExpanded={Boolean(expandedCardIds[item.id])}
@@ -2519,7 +2593,7 @@ export const FeedScreen: React.FC = () => {
                             [item.id]: !prev[item.id]
                           }));
                         }}
-                        onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                        onInvestigateTopic={handleInvestigateTopic}
                       />
                     ))}
 
@@ -2557,6 +2631,8 @@ export const FeedScreen: React.FC = () => {
                   <FeedCard
                     key={item.id}
                     item={item}
+                    interaction={interactions[item.id]}
+                    isDark={isDark}
                     isHero={index === 0}
                     isFocused={index === activeCardIndex}
                     isExpanded={Boolean(expandedCardIds[item.id])}
@@ -2566,7 +2642,7 @@ export const FeedScreen: React.FC = () => {
                         [item.id]: !prev[item.id]
                       }));
                     }}
-                    onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                    onInvestigateTopic={handleInvestigateTopic}
                   />
                 ))}
               </View>
@@ -2656,6 +2732,8 @@ export const FeedScreen: React.FC = () => {
                         </View>
                         <FeedCard
                           item={scoredItem}
+                          interaction={interactions[item.id]}
+                          isDark={isDark}
                           isHero={false}
                           isFocused={index === activeCardIndex}
                           isExpanded={Boolean(expandedCardIds[item.id])}
@@ -2665,7 +2743,7 @@ export const FeedScreen: React.FC = () => {
                               [item.id]: !prev[item.id]
                             }));
                           }}
-                          onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                          onInvestigateTopic={handleInvestigateTopic}
                         />
                       </View>
                     );

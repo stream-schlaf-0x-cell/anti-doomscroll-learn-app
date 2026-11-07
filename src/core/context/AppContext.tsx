@@ -132,6 +132,69 @@ export function revertDismissFeedbackFromProfile(profile: UserProfile, item: Fee
   };
 }
 
+/**
+ * Pure, synchronous 0ms state updater for optimistic voting.
+ * Updates interaction state immediately and adjusts upvotesCount in-place without reordering items.
+ */
+export function computeOptimisticVoteState<T extends FeedItem>(
+  prevInteractions: Record<string, ReadingInteraction>,
+  items: T[],
+  itemId: string,
+  direction: 'up' | 'down' | 'clear'
+): {
+  nextInteractions: Record<string, ReadingInteraction>;
+  nextItems: T[];
+  deltaUpvotes: number;
+} {
+  const prevInt: ReadingInteraction = prevInteractions[itemId] ?? {
+    itemId,
+    saved: false,
+    progressPercent: 0,
+    furthestPositionPercent: 0
+  };
+  const prevVoteScore = prevInt.voteScore ?? 0;
+  const nextVoteScore: -1 | 0 | 1 = direction === 'up' ? 1 : direction === 'down' ? -1 : 0;
+  const deltaUpvotes = (nextVoteScore === 1 ? 1 : 0) - (prevVoteScore === 1 ? 1 : 0);
+
+  const nextFeedback =
+    direction === 'up'
+      ? 'more_like_this'
+      : direction === 'down'
+      ? 'less_like_this'
+      : prevInt.feedback;
+
+  const nextInteraction: ReadingInteraction = {
+    ...prevInt,
+    voteScore: nextVoteScore,
+    feedback: nextFeedback
+  };
+
+  const nextInteractions: Record<string, ReadingInteraction> = {
+    ...prevInteractions,
+    [itemId]: nextInteraction
+  };
+
+  if (deltaUpvotes === 0) {
+    return { nextInteractions, nextItems: items, deltaUpvotes: 0 };
+  }
+
+  let changed = false;
+  const nextItems = items.map(item => {
+    if (item.id !== itemId) return item;
+    changed = true;
+    return {
+      ...item,
+      upvotesCount: Math.max(0, (item.upvotesCount ?? 0) + deltaUpvotes)
+    };
+  });
+
+  return {
+    nextInteractions,
+    nextItems: changed ? nextItems : items,
+    deltaUpvotes
+  };
+}
+
 export { harvestRabbitHoleForItem } from '../synthesis/rabbitHoleService';
 
 export type StartupState =
@@ -1082,20 +1145,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const toggleSaveItem = useCallback(async (id: string) => {
+    const prevInt = latestInteractionsRef.current[id] ?? {
+      itemId: id,
+      saved: false,
+      progressPercent: 0,
+      furthestPositionPercent: 0
+    };
+    const isCurrentlySaved = Boolean(prevInt.saved);
+
+    // 1. Instant 0ms optimistic state update BEFORE any async storage I/O
+    const optimisticInt: ReadingInteraction = {
+      ...prevInt,
+      saved: !isCurrentlySaved,
+      savedAt: !isCurrentlySaved ? new Date().toISOString() : undefined
+    };
+    const optimisticInteractions = { ...latestInteractionsRef.current, [id]: optimisticInt };
+    latestInteractionsRef.current = optimisticInteractions;
+    setInteractions(optimisticInteractions);
+
     try {
-      const isCurrentlySaved = latestInteractionsRef.current[id]?.saved ?? false;
       if (isCurrentlySaved) {
+        setSavedArticles(prev => prev.filter(a => a.id !== id));
         const updated = await libraryRepository.unsaveArticle(id);
         setInteractions(prev => {
           const next = { ...prev, [id]: updated };
           latestInteractionsRef.current = next;
           return next;
         });
-        setSavedArticles(prev => prev.filter(a => a.id !== id));
         void BackupService.saveAutoBackup();
         scheduleCloudSyncPushRef.current();
       } else {
-        let articleToSave: FeedItem | null =
+        const articleToSave: FeedItem | null =
           dailyEdition.find(i => i.id === id) ??
           discoveryItems.find(i => i.id === id) ??
           openWebItems.find(i => i.id === id) ??
@@ -1103,24 +1183,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           (await feedRepository.getItemById(id));
 
         if (articleToSave) {
+          setSavedArticles(prev => {
+            const exists = prev.some(a => a.id === id);
+            return exists ? prev : [articleToSave, ...prev];
+          });
           const updated = await libraryRepository.saveArticle(articleToSave);
           setInteractions(prev => {
             const next = { ...prev, [id]: updated };
             latestInteractionsRef.current = next;
             return next;
           });
-          setSavedArticles(prev => {
-            const exists = prev.some(a => a.id === id);
-            return exists ? prev : [articleToSave!, ...prev];
-          });
-          // Automatically sync to Raindrop.io in background if token is configured
-          void RaindropService.syncArticleIfConnected(articleToSave);
-          void BackupService.saveAutoBackup();
-        scheduleCloudSyncPushRef.current();
-          // Stage 5 (WP 8): Autonomous rabbit-hole expansion on save
-          void harvestRabbitHoleForItem(articleToSave).then(() => {
-            void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
-          }).catch(() => {});
+          // Defer background sync & rabbit-hole harvesting so UI stays at 60fps
+          const timer = setTimeout(() => {
+            void RaindropService.syncArticleIfConnected(articleToSave);
+            void BackupService.saveAutoBackup();
+            scheduleCloudSyncPushRef.current();
+            void harvestRabbitHoleForItem(articleToSave).catch(() => {});
+          }, 50);
+          if (timer && typeof (timer as any).unref === 'function') (timer as any).unref();
         } else {
           const updated = await libraryRepository.saveItem(id);
           setInteractions(prev => {
@@ -1129,13 +1209,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return next;
           });
           void BackupService.saveAutoBackup();
-        scheduleCloudSyncPushRef.current();
+          scheduleCloudSyncPushRef.current();
         }
       }
     } catch {
       setErrorMessage('Lesezeichen konnte nicht gespeichert werden.');
     }
-  }, [dailyEdition, discoveryItems, openWebItems, selectedArticle, scheduleFeedRecompute]);
+  }, [dailyEdition, discoveryItems, openWebItems, selectedArticle]);
 
   // Throttled reading progress write (bounds write rate to max 1 write / 800ms while scrolling)
   const updateReadingProgress = useCallback(async (id: string, percent: number) => {
@@ -1189,38 +1269,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     feedback: 'more_like_this' | 'less_like_this' | 'neutral' | 'already_known' | 'more_depth',
     timeWorthFeedback?: 'very_worthwhile' | 'worthwhile' | 'neutral' | 'not_worthwhile'
   ) => {
+    // 1. Instant 0ms optimistic state update BEFORE any async storage I/O
+    const prevInt = latestInteractionsRef.current[id] ?? {
+      itemId: id,
+      saved: false,
+      progressPercent: 0,
+      furthestPositionPercent: 0
+    };
+    const optimisticInt: ReadingInteraction = {
+      ...prevInt,
+      feedback,
+      timeWorthFeedback: timeWorthFeedback ?? prevInt.timeWorthFeedback
+    };
+    const optimisticInteractions = { ...latestInteractionsRef.current, [id]: optimisticInt };
+    latestInteractionsRef.current = optimisticInteractions;
+    setInteractions(optimisticInteractions);
+
     try {
       const updated = await libraryRepository.setFeedback(id, feedback, timeWorthFeedback);
       const nextInteractions = { ...latestInteractionsRef.current, [id]: updated };
       latestInteractionsRef.current = nextInteractions;
       setInteractions(nextInteractions);
 
-      let item = await feedRepository.getItemById(id);
-      if (!item) {
-        item = await libraryRepository.getSavedArticle(id);
-      }
-      if (item && (feedback === 'more_like_this' || feedback === 'less_like_this' || feedback === 'already_known' || feedback === 'more_depth')) {
-        let eventType: 'feedback_positive' | 'feedback_negative' | 'feedback_already_known' | 'feedback_more_depth' = 'feedback_positive';
-        if (feedback === 'less_like_this') {
-          eventType = 'feedback_negative';
-        } else if (feedback === 'already_known') {
-          eventType = 'feedback_already_known';
-        } else if (feedback === 'more_depth') {
-          eventType = 'feedback_more_depth';
+      const timer = setTimeout(async () => {
+        try {
+          let item = await feedRepository.getItemById(id);
+          if (!item) {
+            item = await libraryRepository.getSavedArticle(id);
+          }
+          if (item && (feedback === 'more_like_this' || feedback === 'less_like_this' || feedback === 'already_known' || feedback === 'more_depth')) {
+            let eventType: 'feedback_positive' | 'feedback_negative' | 'feedback_already_known' | 'feedback_more_depth' = 'feedback_positive';
+            if (feedback === 'less_like_this') {
+              eventType = 'feedback_negative';
+            } else if (feedback === 'already_known') {
+              eventType = 'feedback_already_known';
+            } else if (feedback === 'more_depth') {
+              eventType = 'feedback_more_depth';
+            }
+            const res = await RecursiveLearningEngine.recordInteractionEvent(latestProfileRef.current, item, eventType);
+            if (res.event) {
+              latestProfileRef.current = res.updatedProfile;
+              setProfile(res.updatedProfile);
+              await userProfileRepository.saveProfile(res.updatedProfile);
+            }
+          }
+        } catch {
+          // Non-fatal background profile adjustment
         }
-        const res = await RecursiveLearningEngine.recordInteractionEvent(latestProfileRef.current, item, eventType);
-        if (res.event) {
-          latestProfileRef.current = res.updatedProfile;
-          setProfile(res.updatedProfile);
-          await userProfileRepository.saveProfile(res.updatedProfile);
-        }
-      }
-
-      await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
+      }, 50);
+      if (timer && typeof (timer as any).unref === 'function') (timer as any).unref();
     } catch {
       setErrorMessage('Feedback konnte nicht gespeichert werden.');
     }
-  }, [scheduleFeedRecompute]);
+  }, []);
 
   const addNote = useCallback(async (id: string, text: string, tag?: 'einwand' | 'unterricht' | 'these' | 'notiz') => {
     try {
@@ -1242,7 +1343,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }));
           latestProfileRef.current = updatedProfile;
           setProfile(updatedProfile);
-          await scheduleFeedRecompute(updatedProfile, nextInteractions);
         }
       }
 
@@ -1277,53 +1377,96 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {
       setErrorMessage('Notiz konnte nicht gespeichert werden.');
     }
-  }, [scheduleFeedRecompute]);
+  }, []);
 
   const voteItem = useCallback(async (id: string, direction: 'up' | 'down' | 'clear') => {
+    // 1. Instant 0ms optimistic state update BEFORE any async storage I/O (NEVER reorders active stream)
+    const { nextInteractions, deltaUpvotes } = computeOptimisticVoteState(
+      latestInteractionsRef.current,
+      [],
+      id,
+      direction
+    );
+    latestInteractionsRef.current = nextInteractions;
+    setInteractions(nextInteractions);
+
+    if (deltaUpvotes !== 0) {
+      setDailyEdition(prev => {
+        let changed = false;
+        const next = prev.map(it => {
+          if (it.id !== id) return it;
+          changed = true;
+          return { ...it, upvotesCount: Math.max(0, (it.upvotesCount ?? 0) + deltaUpvotes) };
+        });
+        return changed ? next : prev;
+      });
+      setDiscoveryItems(prev => {
+        let changed = false;
+        const next = prev.map(it => {
+          if (it.id !== id) return it;
+          changed = true;
+          return { ...it, upvotesCount: Math.max(0, (it.upvotesCount ?? 0) + deltaUpvotes) };
+        });
+        return changed ? next : prev;
+      });
+      setOpenWebItems(prev => {
+        let changed = false;
+        const next = prev.map(it => {
+          if (it.id !== id) return it;
+          changed = true;
+          return { ...it, upvotesCount: Math.max(0, (it.upvotesCount ?? 0) + deltaUpvotes) };
+        });
+        return changed ? next : prev;
+      });
+    }
+
     try {
       const updated = await libraryRepository.voteItem(id, direction);
-      const nextInteractions = { ...latestInteractionsRef.current, [id]: updated };
-      latestInteractionsRef.current = nextInteractions;
-      setInteractions(nextInteractions);
+      const committedInteractions = { ...latestInteractionsRef.current, [id]: updated };
+      latestInteractionsRef.current = committedInteractions;
+      setInteractions(committedInteractions);
 
-      let item = await feedRepository.getItemById(id);
-      if (!item) {
-        item = await libraryRepository.getSavedArticle(id);
-      }
-      if (item && (direction === 'up' || direction === 'down')) {
-        const isUp = direction === 'up';
-        const committed = await userProfileRepository.updateProfile(curr =>
-          applyVoteFeedbackToProfile(curr, item, direction)
-        );
+      // 2. Defer taste-profile persistence & rabbit-hole expansion to background (never re-sorts active feed)
+      const timer = setTimeout(async () => {
+        try {
+          let item = await feedRepository.getItemById(id);
+          if (!item) {
+            item = await libraryRepository.getSavedArticle(id);
+          }
+          if (item && (direction === 'up' || direction === 'down')) {
+            const isUp = direction === 'up';
+            const committed = await userProfileRepository.updateProfile(curr =>
+              applyVoteFeedbackToProfile(curr, item, direction)
+            );
 
-        latestProfileRef.current = committed;
-        setProfile(committed);
+            latestProfileRef.current = committed;
+            setProfile(committed);
 
-        const eventType = isUp ? 'upvote' : 'downvote';
-        const res = await RecursiveLearningEngine.recordInteractionEvent(committed, item, eventType);
-        if (res.event) {
-          const updatedProfile = await userProfileRepository.updateProfile(fresh => ({
-            ...fresh,
-            derivedWeights: res.updatedProfile.derivedWeights
-          }));
-          latestProfileRef.current = updatedProfile;
-          setProfile(updatedProfile);
+            const eventType = isUp ? 'upvote' : 'downvote';
+            const res = await RecursiveLearningEngine.recordInteractionEvent(committed, item, eventType);
+            if (res.event) {
+              const updatedProfile = await userProfileRepository.updateProfile(fresh => ({
+                ...fresh,
+                derivedWeights: res.updatedProfile.derivedWeights
+              }));
+              latestProfileRef.current = updatedProfile;
+              setProfile(updatedProfile);
+            }
+
+            if (isUp) {
+              void harvestRabbitHoleForItem(item).catch(() => {});
+            }
+          }
+          scheduleCloudSyncPushRef.current();
+        } catch {
+          // Non-fatal background profile adjustment
         }
-
-        if (isUp) {
-          // Stage 5 (WP 8): Autonomous rabbit-hole expansion on upvote
-          void harvestRabbitHoleForItem(item).then(() => {
-            void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
-          }).catch(() => {});
-        }
-      }
-
-      await scheduleFeedRecompute(latestProfileRef.current, nextInteractions);
-      scheduleCloudSyncPushRef.current();
+      }, 50);
+      if (timer && typeof (timer as any).unref === 'function') (timer as any).unref();
     } catch {
       setErrorMessage('Bewertung konnte nicht gespeichert werden.');
     }
-  }, [scheduleFeedRecompute]);
+  }, []);
 
   const dismissItem = useCallback(async (id: string, itemOverride?: FeedItem) => {
     setDismissedItemIds(prev => {
@@ -1841,109 +1984,210 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     })();
   }, [triggerCloudSync]);
 
+  const contextValue = useMemo<AppContextValue>(
+    () => ({
+      isHydrated,
+      profile,
+      interactions,
+      dailyEdition,
+      discoveryItems,
+      savedArticles,
+      startupState,
+      errorMessage,
+      clearError,
+      colors,
+      isDark,
+      palette,
+      activeTab,
+      setActiveTab,
+      activeFeedOption,
+      setActiveFeedOption,
+      openWebItems,
+      historyItems,
+      historySortOrder,
+      setHistorySortOrder,
+      refreshHistory,
+      clearAppearanceHistory,
+      recordCardAppearances,
+      selectedEditionType,
+      currentEditionType,
+      setSelectedEditionType,
+      weatherData,
+      selectedFilter,
+      setSelectedFilter,
+      searchQuery,
+      setSearchQuery,
+      selectedArticleId,
+      selectedArticle,
+      openArticle,
+      closeArticle,
+      goHome,
+      feedScrollToTopSignal,
+      requestFeedScrollToTop,
+      whyModalItem,
+      openWhyModal,
+      closeWhyModal,
+      isInvestigationOpen,
+      investigationTargetArticle,
+      investigationInitialQuestion,
+      openInvestigation,
+      closeInvestigation,
+      toggleSaveItem,
+      updateReadingProgress,
+      flushReadingProgress,
+      setFeedback,
+      addNote,
+      voteItem,
+      updateTopicWeight,
+      updateDurationPreference,
+      setFontSize,
+      setThemePreference,
+      setPalettePreference,
+      toggleFeatureModule,
+      completeOnboarding,
+      repeatOnboarding,
+      clearAllLocalData,
+      refreshFeed,
+      recomputeFeed,
+      shuffleSeed,
+      shuffleFeed,
+      updateEditionPreferences,
+      simulateDailyGeneration,
+      activeDateSeed,
+      retryStartup: loadInitialData,
+      resetCorruptedData,
+      reloadFromStorage: loadInitialData,
+      remoteSnapshotUrl,
+      setRemoteSnapshotUrl,
+      refreshLiveFeed,
+      snapshotSyncInfo,
+      spaces,
+      createSpace,
+      updateSpace,
+      deleteSpace,
+      togglePinSpace,
+      setSpaceFeedPriority,
+      selectSpace,
+      removeFeedbackBoost,
+      removeFeedbackPenalty,
+      updateFeedMixRatio,
+      clearFeedbackMemory,
+      dismissedItemIds,
+      dismissItem,
+      undoDismissItem,
+      cloudSyncConfig,
+      isSyncing,
+      syncStatusMessage,
+      triggerCloudSync,
+      updateCloudSyncConfig,
+      activateCloudSync,
+      applyPairingCode,
+      getPairingBundle,
+      scheduleCloudSyncPush
+    }),
+    [
+      isHydrated,
+      profile,
+      interactions,
+      dailyEdition,
+      discoveryItems,
+      savedArticles,
+      startupState,
+      errorMessage,
+      clearError,
+      colors,
+      isDark,
+      palette,
+      activeTab,
+      setActiveTab,
+      activeFeedOption,
+      setActiveFeedOption,
+      openWebItems,
+      historyItems,
+      historySortOrder,
+      setHistorySortOrder,
+      refreshHistory,
+      clearAppearanceHistory,
+      recordCardAppearances,
+      selectedEditionType,
+      currentEditionType,
+      setSelectedEditionType,
+      weatherData,
+      selectedFilter,
+      setSelectedFilter,
+      searchQuery,
+      setSearchQuery,
+      selectedArticleId,
+      selectedArticle,
+      openArticle,
+      closeArticle,
+      goHome,
+      feedScrollToTopSignal,
+      requestFeedScrollToTop,
+      whyModalItem,
+      openWhyModal,
+      closeWhyModal,
+      isInvestigationOpen,
+      investigationTargetArticle,
+      investigationInitialQuestion,
+      openInvestigation,
+      closeInvestigation,
+      toggleSaveItem,
+      updateReadingProgress,
+      flushReadingProgress,
+      setFeedback,
+      addNote,
+      voteItem,
+      updateTopicWeight,
+      updateDurationPreference,
+      setFontSize,
+      setThemePreference,
+      setPalettePreference,
+      toggleFeatureModule,
+      completeOnboarding,
+      repeatOnboarding,
+      clearAllLocalData,
+      refreshFeed,
+      recomputeFeed,
+      shuffleSeed,
+      shuffleFeed,
+      updateEditionPreferences,
+      simulateDailyGeneration,
+      activeDateSeed,
+      loadInitialData,
+      resetCorruptedData,
+      remoteSnapshotUrl,
+      setRemoteSnapshotUrl,
+      refreshLiveFeed,
+      snapshotSyncInfo,
+      spaces,
+      createSpace,
+      updateSpace,
+      deleteSpace,
+      togglePinSpace,
+      setSpaceFeedPriority,
+      selectSpace,
+      removeFeedbackBoost,
+      removeFeedbackPenalty,
+      updateFeedMixRatio,
+      clearFeedbackMemory,
+      dismissedItemIds,
+      dismissItem,
+      undoDismissItem,
+      cloudSyncConfig,
+      isSyncing,
+      syncStatusMessage,
+      triggerCloudSync,
+      updateCloudSyncConfig,
+      activateCloudSync,
+      applyPairingCode,
+      getPairingBundle,
+      scheduleCloudSyncPush
+    ]
+  );
+
   return (
-    <AppContext.Provider
-      value={{
-        isHydrated,
-        profile,
-        interactions,
-        dailyEdition,
-        discoveryItems,
-        savedArticles,
-        startupState,
-        errorMessage,
-        clearError,
-        colors,
-        isDark,
-        palette,
-        activeTab,
-        setActiveTab,
-        activeFeedOption,
-        setActiveFeedOption,
-        openWebItems,
-        historyItems,
-        historySortOrder,
-        setHistorySortOrder,
-        refreshHistory,
-        clearAppearanceHistory,
-        recordCardAppearances,
-        selectedEditionType,
-        currentEditionType,
-        setSelectedEditionType,
-        weatherData,
-        selectedFilter,
-        setSelectedFilter,
-        searchQuery,
-        setSearchQuery,
-        selectedArticleId,
-        selectedArticle,
-        openArticle,
-        closeArticle,
-        goHome,
-        feedScrollToTopSignal,
-        requestFeedScrollToTop,
-        whyModalItem,
-        openWhyModal,
-        closeWhyModal,
-        isInvestigationOpen,
-        investigationTargetArticle,
-        investigationInitialQuestion,
-        openInvestigation,
-        closeInvestigation,
-        toggleSaveItem,
-        updateReadingProgress,
-        flushReadingProgress,
-        setFeedback,
-        addNote,
-        voteItem,
-        updateTopicWeight,
-        updateDurationPreference,
-        setFontSize,
-        setThemePreference,
-        setPalettePreference,
-        toggleFeatureModule,
-        completeOnboarding,
-        repeatOnboarding,
-        clearAllLocalData,
-        refreshFeed,
-        recomputeFeed,
-        shuffleSeed,
-        shuffleFeed,
-        updateEditionPreferences,
-        simulateDailyGeneration,
-        activeDateSeed,
-        retryStartup: loadInitialData,
-        resetCorruptedData,
-        reloadFromStorage: loadInitialData,
-        remoteSnapshotUrl,
-        setRemoteSnapshotUrl,
-        refreshLiveFeed,
-        snapshotSyncInfo,
-        spaces,
-        createSpace,
-        updateSpace,
-        deleteSpace,
-        togglePinSpace,
-        setSpaceFeedPriority,
-        selectSpace,
-        removeFeedbackBoost,
-        removeFeedbackPenalty,
-        updateFeedMixRatio,
-        clearFeedbackMemory,
-        dismissedItemIds,
-        dismissItem,
-        undoDismissItem,
-        cloudSyncConfig,
-        isSyncing,
-        syncStatusMessage,
-        triggerCloudSync,
-        updateCloudSyncConfig,
-        activateCloudSync,
-        applyPairingCode,
-        getPairingBundle,
-        scheduleCloudSyncPush
-      }}
-    >
+    <AppContext.Provider value={contextValue}>
       {children}
     </AppContext.Provider>
   );

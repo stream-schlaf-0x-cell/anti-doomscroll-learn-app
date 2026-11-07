@@ -12,9 +12,10 @@ import {
   Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { ScoredFeedItem } from '../../core/domain/ranking';
+import { ScoredFeedItem, areFeedCardPropsEqual } from '../../core/domain/ranking';
 import {
   formatVerifiedProvenanceLabel,
+  ReadingInteraction,
   TOPIC_SPACE_MAP,
   TopicTag
 } from '../../core/domain/types';
@@ -34,6 +35,8 @@ import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { SubchannelBadge } from './SubchannelBadge';
 import { hivemindLearningService } from '../../core/learning/hivemindLearningService';
 import { QuizCheckpointCard } from './QuizCheckpointCard';
+
+export { areFeedCardPropsEqual };
 
 const ESCALATION_VISUAL_THEMES: Record<1 | 2 | 3 | 4, {
   bg: string;
@@ -82,8 +85,10 @@ const ESCALATION_VISUAL_THEMES: Record<1 | 2 | 3 | 4, {
   }
 };
 
-interface FeedCardProps {
+export interface FeedCardProps {
   item: ScoredFeedItem;
+  interaction?: ReadingInteraction;
+  isDark?: boolean;
   isHero?: boolean;
   isFocused?: boolean;
   isExpanded?: boolean;
@@ -93,7 +98,9 @@ interface FeedCardProps {
   onOpenHivemindTrack?: (trackId: string) => void;
   onCompleteHivemindStep?: (trackId: string, itemId: string) => void;
   hivemindTrackProgressPercent?: number;
+  hivemindProgressPercent?: number;
   isHivemindStepCompleted?: boolean;
+  isCompletedHivemindStep?: boolean;
 }
 
 function formatRelativeTime(isoString?: string): string {
@@ -190,8 +197,9 @@ function isAuthenticCardImage(item: ScoredFeedItem): boolean {
   return true;
 }
 
-export const FeedCard: React.FC<FeedCardProps> = ({
+const FeedCardInner: React.FC<FeedCardProps> = ({
   item,
+  interaction: propInteraction,
   isHero = false,
   isFocused = false,
   onInvestigateTopic,
@@ -199,8 +207,12 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   onOpenHivemindTrack,
   onCompleteHivemindStep,
   hivemindTrackProgressPercent,
-  isHivemindStepCompleted
+  hivemindProgressPercent,
+  isHivemindStepCompleted,
+  isCompletedHivemindStep
 }) => {
+  const resolvedTrackProgress = hivemindTrackProgressPercent ?? hivemindProgressPercent;
+  const resolvedStepCompleted = isHivemindStepCompleted ?? isCompletedHivemindStep;
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
   const {
@@ -210,7 +222,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     toggleSaveItem,
     openArticle,
     voteItem,
-    setFeedback,
     dismissItem,
     scheduleCloudSyncPush
   } = useApp();
@@ -221,8 +232,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const [naturalAspectRatio, setNaturalAspectRatio] = useState<number | null>(null);
   const [showSimulatedReplies, setShowSimulatedReplies] = useState(false);
-  const [markedHivemindDone, setMarkedHivemindDone] = useState<boolean>(Boolean(isHivemindStepCompleted));
-  const [dynamicTrackProgress, setDynamicTrackProgress] = useState<number | undefined>(hivemindTrackProgressPercent);
+  const [markedHivemindDone, setMarkedHivemindDone] = useState<boolean>(Boolean(resolvedStepCompleted));
+  const [dynamicTrackProgress, setDynamicTrackProgress] = useState<number | undefined>(resolvedTrackProgress);
 
   const hivemindTrackId = item.hivemindMeta?.trackId || item.memeMeta?.trackId;
   const hivemindTrackTitle = item.hivemindMeta?.trackTitle || item.sourceBroadcasterName?.replace(/^Lernpfad:\s*/i, '') || 'Lernpfad';
@@ -233,12 +244,12 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const simulatedReplies = item.hivemindMeta?.simulatedReplies || item.memeMeta?.simulatedReplies;
 
   useEffect(() => {
-    setMarkedHivemindDone(Boolean(isHivemindStepCompleted));
-  }, [isHivemindStepCompleted, item.id]);
+    setMarkedHivemindDone(Boolean(resolvedStepCompleted));
+  }, [resolvedStepCompleted, item.id]);
 
   useEffect(() => {
-    setDynamicTrackProgress(hivemindTrackProgressPercent);
-  }, [hivemindTrackProgressPercent]);
+    setDynamicTrackProgress(resolvedTrackProgress);
+  }, [resolvedTrackProgress]);
 
   const handleMarkHivemindCompleted = async () => {
     if (!hivemindTrackId) return;
@@ -290,12 +301,11 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     }
   };
 
-  const interaction = interactions[item.id];
+  const interaction = propInteraction ?? interactions[item.id];
   const isSaved = interaction?.saved ?? false;
   const progress = interaction?.progressPercent ?? 0;
   const isCompleted = interaction?.completedAt !== undefined || progress >= 95;
   const voteScore = interaction?.voteScore ?? 0;
-  const currentFeedback = interaction?.feedback ?? 'neutral';
 
   // Space metadata (colorful Reddit-like community identity)
   const spaceMeta = TOPIC_SPACE_MAP[item.primaryTopic as TopicTag];
@@ -435,23 +445,17 @@ export const FeedCard: React.FC<FeedCardProps> = ({
 
   const handleUpvote = () => {
     if (voteScore === 1) {
-      voteItem(item.id, 'clear');
+      void voteItem(item.id, 'clear');
     } else {
-      voteItem(item.id, 'up');
-      if (currentFeedback === 'neutral') {
-        setFeedback(item.id, 'more_like_this');
-      }
+      void voteItem(item.id, 'up');
     }
   };
 
   const handleDownvote = () => {
     if (voteScore === -1) {
-      voteItem(item.id, 'clear');
+      void voteItem(item.id, 'clear');
     } else {
-      voteItem(item.id, 'down');
-      if (currentFeedback === 'neutral') {
-        setFeedback(item.id, 'less_like_this');
-      }
+      void voteItem(item.id, 'down');
     }
   };
 
@@ -1163,6 +1167,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     </View>
   );
 };
+
+export const FeedCard = React.memo(FeedCardInner, areFeedCardPropsEqual);
 
 const styles = StyleSheet.create({
   card: {

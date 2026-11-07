@@ -278,7 +278,7 @@ const MainNavigator: React.FC = () => {
         </View>
       )}
 
-      {/* Screen Body: Always mounted to preserve feed scroll position and topic filters! */}
+      {/* Screen Body: FeedScreen stays mounted to preserve feed scroll position and topic filters; heavy tabs mount on demand */}
       <View style={[styles.screenContainer, { backgroundColor: colors.background }]}>
         <View
           style={[
@@ -289,33 +289,21 @@ const MainNavigator: React.FC = () => {
         >
           <FeedScreen />
         </View>
-        <View
-          style={[
-            styles.tabPane,
-            { display: activeTab === 'library' ? 'flex' : 'none' }
-          ]}
-          pointerEvents={activeTab === 'library' ? 'auto' : 'none'}
-        >
-          <LibraryScreen />
-        </View>
-        <View
-          style={[
-            styles.tabPane,
-            { display: activeTab === 'settings' ? 'flex' : 'none' }
-          ]}
-          pointerEvents={activeTab === 'settings' ? 'auto' : 'none'}
-        >
-          <SettingsScreen />
-        </View>
-        <View
-          style={[
-            styles.tabPane,
-            { display: activeTab === 'network' ? 'flex' : 'none' }
-          ]}
-          pointerEvents={activeTab === 'network' ? 'auto' : 'none'}
-        >
-          <NetworkScreen />
-        </View>
+        {activeTab === 'library' && (
+          <View style={styles.tabPane}>
+            <LibraryScreen />
+          </View>
+        )}
+        {activeTab === 'settings' && (
+          <View style={styles.tabPane}>
+            <SettingsScreen />
+          </View>
+        )}
+        {activeTab === 'network' && (
+          <View style={styles.tabPane}>
+            <NetworkScreen />
+          </View>
+        )}
       </View>
 
       {/* Fullscreen Reader Overlay: Renders on top of tabs so originating tab & scroll are preserved */}
