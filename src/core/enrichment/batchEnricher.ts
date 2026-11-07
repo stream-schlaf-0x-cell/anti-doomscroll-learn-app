@@ -289,10 +289,11 @@ export function cleanArticleBodyFormatting(raw: string, title?: string): string 
     out.push(line);
   }
 
-  return out
+  const cleaned = out
     .join('\n')
     .replace(/\n{2,}/g, '\n\n')
     .trim();
+  return stripSyntheticFillerSentences(cleaned);
 }
 
 /**
@@ -332,6 +333,76 @@ export function stripAiSlopPhrases(text: string): string {
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
   return capitalize(out);
+}
+
+/**
+ * Eradicates all synthetic fallback sentences, minimum-length padding,
+ * and canned philosophical/didactic boilerplate templates.
+ */
+export function stripSyntheticFillerSentences(text: string): string {
+  if (!text || typeof text !== 'string') return '';
+  let s = text;
+
+  // Markdown sections
+  s = s.replace(/##\s*Erkenntnisdimensionen & Kernbefunde[\s\S]*?(?:Mittelpunkt\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Core Dimensions & Key Findings[\s\S]*?(?:center stage\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Didaktische Relevanz & Ausblick[\s\S]*?(?:Mittelpunkt\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Didactic Relevance & Outlook[\s\S]*?(?:center stage\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Kontext & Einordnung[\s\S]*?(?:Schlagzeilen\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Context & Analysis[\s\S]*?(?:headlines\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Didaktische Reflexion[\s\S]*?(?:Fragestellungen\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Didactic Inquiry[\s\S]*?(?:society\.?|\n\n|$)/gi, '');
+
+  // Orphan blockquotes
+  s = s.replace(/>\s*[„"'\u201e\u201c]Eine differenzierte Betrachtung[^“"'\u201d\n]*[“"'\u201d]/gi, '');
+  s = s.replace(/>\s*[„"'\u201e\u201c]Nuanced understanding[^“"'\u201d\n]*[“"'\u201d]/gi, '');
+  s = s.replace(/>\s*[„"'\u201e\u201c]Wissen entfaltet seine transformative Kraft[^“"'\u201d\n]*[“"'\u201d]/gi, '');
+  s = s.replace(/>\s*[„"'\u201e\u201c]Knowledge reveals its transformative power[^“"'\u201d\n]*[“"'\u201d]/gi, '');
+
+  // Orphan section headers
+  s = s.replace(/##\s*(?:Erkenntnisdimensionen & Kernbefunde|Didaktische Relevanz & Ausblick|Core Dimensions & Key Findings|Didactic Relevance & Outlook|Kontext & Einordnung|Didaktische Reflexion|Context & Analysis|Didactic Inquiry)\b/gi, '');
+
+  // German sentences
+  s = s.replace(/In diesem Beitrag zu\s+.*?\s*werden die zentralen Thesen[^.!?]*[.!?]/gi, '');
+  s = s.replace(/In diesem didaktischen Fachbeitrag zu\s+.*?\s*steht die Weiterentwicklung[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Anhand konkreter Unterrichtsbeispiele wird reflektiert[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Die Argumentation beleuchtet wesentliche Perspektiven[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Damit bietet der Text sowohl eine fundierte Wissensgrundlage[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Die detaillierten Analysen(?: und Fallbeispiele)?\s+stehen(?: im vollständigen Beitrag)?\s+zur vertiefenden Lektüre[^.!?]*[.!?]?/gi, '');
+  s = s.replace(/Dieser (?:philosophische )?(?:Diskurs|Beitrag) zu\s+.*?\s*(?:widmet sich|fasst die wesentlichen)[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Er hinterfragt gängige Prämissen[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Die Erörterung bietet fundierte Orientierung[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Im Mittelpunkt stehen methodische Klarheit[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Die Recherche verweist auf weiterführende Primärquellen[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Besonderes Augenmerk gilt dabei den Wechselwirkungen zwischen individuellen Entscheidungen[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Für Schule, Lehre und gesellschaftliche Diskurse eröffnet dieser Befund[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Statt bloßer Informationsvermittlung steht die Förderung kritischer Urteilskraft[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Die detaillierte Untersuchung widmet sich den Kernmechanismen und Ursachen des Phänomens[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Die behandelten Fragestellungen berühren grundlegende epistemische und ethische Aspekte[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Die Analyse ermöglicht eine fundierte Urteilsbildung jenseits kurzlebiger Schlagzeilen[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Die Reflexion vermittelt nicht nur Sachwissen, sondern stärkt die Urteilskraft[^.!?]*[.!?]/gi, '');
+  s = s.replace(/widmet sich den ethischen\s+und\s+erkenntnistheoretischen Grundfragen[^.!?]*[.!?]/gi, '');
+
+  // English sentences
+  s = s.replace(/This (?:comprehensive analysis|article|piece) on\s+.*?\s*(?:systematically|summarizes)[^.!?]*[.!?]/gi, '');
+  s = s.replace(/The analysis examines critical perspectives[^.!?]*[.!?]/gi, '');
+  s = s.replace(/The argumentation examines critical perspectives[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Detailed inquiries and case studies remain available[^.!?]*[.!?]?/gi, '');
+  s = s.replace(/It offers a solid knowledge foundation as well as nuanced impulses[^.!?]*[.!?]/gi, '');
+  s = s.replace(/The complete piece is ready for in-depth exploration[^.!?]*[.!?]?/gi, '');
+  s = s.replace(/The discussion provides clear orientation[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Methodological clarity, conceptual precision[^.!?]*[.!?]/gi, '');
+  s = s.replace(/The detailed investigation examines the underlying mechanisms[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Special attention is given to the interplay between individual choices[^.!?]*[.!?]/gi, '');
+  s = s.replace(/For education, inquiry, and public discourse, these findings open new horizons[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Rather than passive information absorption, cultivating critical discernment[^.!?]*[.!?]/gi, '');
+  s = s.replace(/The questions examined touch fundamental epistemic and ethical dimensions[^.!?]*[.!?]/gi, '');
+  s = s.replace(/Cultivating analytical reasoning empowers learners to engage with systemic challenges[^.!?]*[.!?]/gi, '');
+
+  return s
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 const PARTY_POLITICS_CASE_SENSITIVE = /\b(SPD|AfD|CDU|CSU|FDP|BSW|Linke|Grüne|Grünen)\b/g;
@@ -415,7 +486,7 @@ export function synthesizeConceptualPodcastSummary(
   }
 
   if (sub && sub.length >= 40 && !PODCAST_OR_VIDEO_INTRO_REGEX.test(sub)) {
-    return sub;
+    return stripSyntheticFillerSentences(sub);
   }
   return '';
 }
@@ -587,9 +658,9 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     .trim();
   const title = cleanedTitle;
   const slopClean = (s: string) => (item.aiAssisted ? stripAiSlopPhrases(s) : s);
-  let cleanedFeedText = slopClean(stripPublisherBoilerplate(item.feedText || item.body || item.articleBody || '', title));
-  let cleanedBody = slopClean(stripPublisherBoilerplate(item.body || cleanedFeedText, title));
-  const cleanedArticleBody = item.articleBody ? stripPublisherBoilerplate(item.articleBody, title) : undefined;
+  let cleanedFeedText = stripSyntheticFillerSentences(slopClean(stripPublisherBoilerplate(item.feedText || item.body || item.articleBody || '', title)));
+  let cleanedBody = stripSyntheticFillerSentences(slopClean(stripPublisherBoilerplate(item.body || cleanedFeedText, title)));
+  const cleanedArticleBody = item.articleBody ? stripSyntheticFillerSentences(stripPublisherBoilerplate(item.articleBody, title)) : undefined;
 
   const routingText = `${item.subtitle || ''} ${cleanedFeedText}`;
   const isPartyPolitics = isDomesticPartyPolitics(title, routingText);
@@ -643,26 +714,27 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     }
   }
 
-  // Stub item fulltext enrichment (Tier A essence >= 220 chars & Tier B reader body >= 500 chars)
+  // Stub item fulltext enrichment (Tier A essence >= 220 chars & Tier B reader body >= 500 chars):
+  // For thin stubs (< 120 chars), use harvested essence.
+  // Genuine journalistic excerpts (>= 120 chars) are complete and honest as-is — NEVER pad or concatenate them!
+  const isThinStub = cleanedFeedText.length < 120;
+
   if (!isVisualArtOrMeme && isSupportedFeedLanguage(cleanedTitle, `${item.subtitle || ''} ${cleanedFeedText} ${cleanedBody}`)) {
-    if (cleanedFeedText.length < 220 || cleanedBody.length < 500) {
+    if (isThinStub || cleanedBody.length < 500) {
       const harvested = extractCleanArticleFromHtml(
         item.body || item.feedText || item.articleBody || cleanedBody || cleanedFeedText,
         item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || ''
       );
-      if (cleanedFeedText.length < 220) {
-        cleanedFeedText =
-          cleanedFeedText && !/^(Listen to|Subscribe|Read by)/i.test(cleanedFeedText)
-            ? (harvested.essenceText.includes(cleanedFeedText) ? harvested.essenceText : `${cleanedFeedText} ${harvested.essenceText}`)
-            : harvested.essenceText;
+      if (isThinStub && harvested.essenceText) {
+        cleanedFeedText = stripSyntheticFillerSentences(harvested.essenceText);
       }
-      if (cleanedBody.length < 500) {
-        cleanedBody = harvested.fullMarkdownBody;
+      if (cleanedBody.length < 500 || isPodcastOrVideoStub) {
+        cleanedBody = stripSyntheticFillerSentences(harvested.fullMarkdownBody);
       }
     }
   }
 
-  let cleanedInsight = stripPublisherBoilerplate(item.keyInsight || item.subtitle || '', cleanedTitle);
+  let cleanedInsight = stripSyntheticFillerSentences(stripPublisherBoilerplate(item.keyInsight || item.subtitle || '', cleanedTitle));
   if (
     !cleanedInsight ||
     cleanedInsight.length < 15 ||
@@ -671,10 +743,10 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     /\b(Philip Oltermann|Peter Jackson|theguardian\.com|Read by)\b/i.test(cleanedInsight)
   ) {
     const firstSentence = cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || cleanedTitle;
-    cleanedInsight = firstSentence.slice(0, 220);
+    cleanedInsight = stripSyntheticFillerSentences(firstSentence.slice(0, 220));
   }
 
-  const rawSubtitle = stripPublisherBoilerplate(item.subtitle || '', title);
+  const rawSubtitle = stripSyntheticFillerSentences(stripPublisherBoilerplate(item.subtitle || '', title));
   const isBadSub =
     !rawSubtitle ||
     rawSubtitle.length < 15 ||
@@ -683,7 +755,7 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     /\b(Philip Oltermann|Peter Jackson|theguardian\.com|Read by)\b/i.test(rawSubtitle);
 
   const finalSubtitle = isBadSub
-    ? (cleanedInsight || cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || cleanedTitle).slice(0, 220)
+    ? stripSyntheticFillerSentences((cleanedInsight || cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || cleanedTitle).slice(0, 220))
     : rawSubtitle;
 
   const cleanedChallengePrompt = item.challengePrompt
@@ -1666,7 +1738,7 @@ function generateDeterministicSocraticSalon(
 
   if (archetype === 'contemplation') {
     return {
-      context: `Dieser Beitrag zu „${title}“ verankert sich in der Tradition kontemplativer Selbstbeobachtung. Er lädt dazu ein, unruhige Reizüberflutung anzuhalten und die Aufmerksamkeit auf das unmittelbare Gewahrsein im Hier und Jetzt zu richten.`,
+      context: `Die kontemplative Betrachtung von „${title}“ verankert sich in der Tradition aufmerksamer Selbstbeobachtung. Sie lädt dazu ein, unruhige Reizüberflutung anzuhalten und die Aufmerksamkeit auf das unmittelbare Gewahrsein im Hier und Jetzt zu richten.`,
       blindSpot: `Achtsame Stille und Kontemplation sind keine Flucht vor gesellschaftlicher Verantwortung oder bloße Entspannungstechnik, sondern bedürfen der Reifung im mitfühlenden, aufmerksamen Alltagshandeln.`,
       impulse: `Atme einmal bewusst tief durch. Welcher Drang zur sofortigen Bewertung darf in diesem Moment einfach zur Ruhe kommen?`,
       archetype,

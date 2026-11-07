@@ -3,7 +3,7 @@ import * as path from 'path';
 import { FeedItem, FeedItemSchema } from '../src/core/domain/types';
 import { ZERO_WIDTH_REGEX, sanitizeImageUrl } from '../src/core/ingestion/rssParser';
 import { stripBoilerplate, splitSentencesAware, isSubstantialSubtitle } from '../src/core/ingestion/normalizer';
-import { sanitizeCuratedFeedItem } from '../src/core/enrichment/batchEnricher';
+import { sanitizeCuratedFeedItem, stripSyntheticFillerSentences, isSupportedFeedLanguage } from '../src/core/enrichment/batchEnricher';
 
 const PUBLIC_SNAPSHOT_PATH = path.resolve(__dirname, '../public/feed-snapshot.json');
 const PIPELINE_OUTPUT_PATH = path.resolve(__dirname, '../src/core/data/pipeline-output.json');
@@ -29,13 +29,13 @@ function sanitizeItem(rawItem: FeedItem): FeedItem {
   const item = deepCleanZeroWidth(rawItem);
   const cleanTitle = (item.title || '').replace(ZERO_WIDTH_REGEX, '').trim();
   const rawBody = (item.articleBody || item.body || item.feedText || '').replace(ZERO_WIDTH_REGEX, '').trim();
-  const cleanBody = stripBoilerplate(rawBody);
+  const cleanBody = stripSyntheticFillerSentences(stripBoilerplate(rawBody));
 
   let subtitle = (item.subtitle || '').replace(ZERO_WIDTH_REGEX, '').trim();
-  subtitle = stripBoilerplate(subtitle);
+  subtitle = stripSyntheticFillerSentences(stripBoilerplate(subtitle));
 
   let feedText = (item.feedText || '').replace(ZERO_WIDTH_REGEX, '').trim();
-  feedText = stripBoilerplate(feedText);
+  feedText = stripSyntheticFillerSentences(stripBoilerplate(feedText));
 
   // Subtitle substance guard
   if (!isSubstantialSubtitle(subtitle)) {
@@ -73,7 +73,7 @@ function sanitizeItem(rawItem: FeedItem): FeedItem {
   if (item.perspectiveDetails) {
     cleaned.perspectiveDetails = {
       ...item.perspectiveDetails,
-      claim: stripBoilerplate((item.perspectiveDetails.claim || '').replace(ZERO_WIDTH_REGEX, '') || subtitle)
+      claim: stripSyntheticFillerSentences(stripBoilerplate((item.perspectiveDetails.claim || '').replace(ZERO_WIDTH_REGEX, '') || subtitle))
     };
   }
 
@@ -89,9 +89,11 @@ function runSanitization() {
     const data = JSON.parse(raw);
     if (Array.isArray(data.items)) {
       console.log(`Sanitizing public/feed-snapshot.json (${data.items.length} items)...`);
-      data.items = data.items.map(sanitizeItem);
+      data.items = data.items
+        .map(sanitizeItem)
+        .filter((item: FeedItem) => isSupportedFeedLanguage(item.title || '', `${item.subtitle || ''} ${item.feedText || ''}`) && (item.feedText || '').trim().length > 0);
       fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(data, null, 2), 'utf8');
-      console.log('✓ public/feed-snapshot.json successfully sanitized.');
+      console.log(`✓ public/feed-snapshot.json successfully sanitized (${data.items.length} clean items).`);
     }
   }
 

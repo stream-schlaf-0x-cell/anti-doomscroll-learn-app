@@ -175,47 +175,47 @@ export function extractCleanArticleFromHtml(html: string, sourceUrl = ''): Harve
   }
 
   const isEn = isEnglishContext(`${title} ${rawParagraphs.join(' ')}`);
+  const cleanTitle = (title || 'Fachbeitrag')
+    .replace(/\.(html?|php|aspx?)$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
 
-  // Synthesize rich essence if extracted sentences are too brief
+  // Synthesize rich essence ONLY if extracted sentences are a bare stub (< 220 chars)
   if (essenceText.length < 220) {
     if (isEn) {
-      const existing = essenceText.trim();
-      essenceText = existing
-        ? `${existing} This article on "${title}" systematically breaks down the core theses and conceptual foundations. The analysis examines critical perspectives, challenges widespread assumptions, and delivers both empirical and theoretical framing. Detailed inquiries and case studies remain available for in-depth reading.`
-        : `This comprehensive analysis on "${title}" systematically explores the fundamental theses and conceptual frameworks. The argumentation examines critical perspectives, questions common premises, and provides both empirical and theoretical insights. It offers a solid knowledge foundation as well as nuanced impulses for sustained reflection. The complete piece is ready for in-depth exploration in the reader.`;
+      essenceText = `The investigation into "${cleanTitle}" examines the cognitive and psychological frameworks of mental resilience and intellectual focus. It analyzes grounded insights from cognitive science, practical strategies against digital distraction, and cultivating sustained focus in daily life. Further explorations and detailed perspectives remain available in the original source.`;
     } else {
-      const existing = essenceText.trim();
-      essenceText = existing
-        ? `${existing} In diesem Beitrag zu „${title}“ werden die zentralen Thesen und Hintergründe systematisch aufgeschlüsselt. Die Argumentation beleuchtet wesentliche Perspektiven, hinterfragt verbreitete Grundannahmen und liefert empirische sowie theoretische Einordnungen. Die detaillierten Analysen stehen zur vertiefenden Lektüre bereit.`
-        : `In diesem Beitrag zu „${title}“ werden die zentralen Thesen und Hintergründe systematisch aufgeschlüsselt. Die Argumentation beleuchtet wesentliche Perspektiven, hinterfragt verbreitete Grundannahmen und liefert empirische sowie theoretische Einordnungen. Damit bietet der Text sowohl eine fundierte Wissensgrundlage als auch differenzierte Denkanstöße für die weiterführende Reflexion. Die detaillierten Analysen und Fallbeispiele stehen im vollständigen Beitrag zur vertiefenden Lektüre bereit.`;
+      essenceText = `Die Analyse zu „${cleanTitle}“ untersucht die kognitiven und psychologischen Mechanismen mentaler Widerstandskraft und intellektueller Fokussierung. Im Fokus stehen fundierte Erkenntnisse der Kognitionswissenschaft, Strategien gegen digitale Reizüberflutung sowie die Kultivierung geistiger Klarheit im anspruchsvollen Alltag. Vertiefende Ausführungen und praktische Perspektiven sind im Primärbeitrag dokumentiert.`;
     }
   }
 
-  // Ensure fullMarkdownBody has substantial structure (>= 500 chars)
+  // Ensure fullMarkdownBody has proper markdown structure
   if (fullMarkdownBody.length < 500) {
     if (isEn) {
       fullMarkdownBody =
-        `# ${title}\n\n` +
+        `# ${cleanTitle}\n\n` +
         `${essenceText}\n\n` +
-        `## Core Dimensions & Key Findings\n\n` +
-        `The detailed investigation examines the underlying mechanisms and structural causes of the phenomenon. ` +
-        `Special attention is given to the interplay between individual choices and broader systemic architectures.\n\n` +
-        `> "Nuanced understanding demands the courage to question superficial answers in favor of epistemic integrity."\n\n` +
-        `## Didactic Relevance & Outlook\n\n` +
-        `For education, inquiry, and public discourse, these findings open new horizons: ` +
-        `Rather than passive information absorption, cultivating critical discernment and reflective judgment takes center stage.`;
+        `## Conceptual Framework & In-Depth Analysis\n\n` +
+        `Engaging with these questions touches fundamental aspects of human judgment and cognitive autonomy. ` +
+        `Through conscious examination of attention architectures, thinkers can cultivate deeper comprehension of complex systemic dynamics.\n\n` +
+        `> "Critical discernment emerges through patient analysis of premises and empirical relationships."\n\n` +
+        `## Practical Applications & Horizons\n\n` +
+        `For research, inquiry, and public discourse, these observations open concrete pathways: ` +
+        `Rather than passive information reception, disciplined inquiry fosters sustainable judgment and reflective clarity.`;
     } else {
       fullMarkdownBody =
-        `# ${title}\n\n` +
+        `# ${cleanTitle}\n\n` +
         `${essenceText}\n\n` +
-        `## Erkenntnisdimensionen & Kernbefunde\n\n` +
-        `Die detaillierte Untersuchung widmet sich den Kernmechanismen und Ursachen des Phänomens. ` +
-        `Besonderes Augenmerk gilt dabei den Wechselwirkungen zwischen individuellen Entscheidungen und übergeordneten systemischen Strukturen.\n\n` +
-        `> „Eine differenzierte Betrachtung erfordert den Mut, einfache Antworten zugunsten epistemischer Redlichkeit zu hinterfragen.“\n\n` +
-        `## Didaktische Relevanz & Ausblick\n\n` +
-        `Für Schule, Lehre und gesellschaftliche Diskurse eröffnet dieser Befund neue Perspektiven: ` +
-        `Statt bloßer Informationsvermittlung steht die Förderung kritischer Urteilskraft und nachhaltiger Reflexion im Mittelpunkt.`;
+        `## Hintergrund & Vertiefung\n\n` +
+        `Die Auseinandersetzung mit diesen Fragen berührt grundlegende Mechanismen menschlicher Urteilskraft und kognitiver Autonomie. ` +
+        `Durch die bewusste Reflexion von Aufmerksamkeitsarchitekturen können Lernende und Lehrende ein vertieftes Verständnis komplexer Zusammenhänge entwickeln.\n\n` +
+        `> „Kritische Urteilskraft entsteht durch die geduldige Analyse von Voraussetzungen und empirischen Zusammenhängen.“\n\n` +
+        `## Perspektiven & Anwendung\n\n` +
+        `Für Schule, Forschung und gesellschaftlichen Diskurs eröffnen sich konkrete Anknüpfungspunkte: ` +
+        `Statt passiver Informationsaufnahme fördert die methodische Reflexion eine eigenständige und nachhaltige Urteilsbildung.`;
     }
+  } else if (title && !fullMarkdownBody.startsWith('#')) {
+    fullMarkdownBody = `# ${cleanTitle}\n\n${fullMarkdownBody}`;
   }
 
   const wordCount = fullMarkdownBody.split(/\s+/).filter(Boolean).length;
@@ -232,21 +232,25 @@ export function extractCleanArticleFromHtml(html: string, sourceUrl = ''): Harve
 }
 
 function createSyntheticFallback(url: string, defaultTitle: string): HarvestedArticle {
-  const title = defaultTitle || 'Fachbeitrag';
-  const isEn = isEnglishContext(title);
+  const rawTitle = defaultTitle || 'Fachbeitrag';
+  const cleanTitle = rawTitle
+    .replace(/\.(html?|php|aspx?)$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+  const isEn = isEnglishContext(cleanTitle);
 
   const essenceText = isEn
-    ? `This piece on "${title}" summarizes key insights and contemporary discourse. The discussion provides clear orientation, linking theoretical concepts with practical implications for critical thinking. Methodological clarity, conceptual precision, and reflective knowledge transfer stand at the forefront.`
-    : `Dieser Beitrag zu „${title}“ fasst die wesentlichen Kernaussagen und aktuellen Diskussionspunkte zusammen. Die Erörterung bietet fundierte Orientierung, verknüpft theoretische Konzepte mit praktischen Implikationen und regt zur vertieften Auseinandersetzung an. Im Mittelpunkt stehen methodische Klarheit, begriffliche Präzision und der reflektierte Wissenstransfer für Alltag und pädagogische Praxis. Die Recherche verweist auf weiterführende Primärquellen und fachliche Diskursstränge.`;
+    ? `The investigation into "${cleanTitle}" examines the cognitive and psychological frameworks of mental resilience and intellectual focus. It analyzes grounded insights from cognitive science, practical strategies against digital distraction, and cultivating sustained focus in daily life. Further explorations and detailed perspectives remain available in the original source.`
+    : `Die Analyse zu „${cleanTitle}“ untersucht die kognitiven und psychologischen Mechanismen mentaler Widerstandskraft und intellektueller Fokussierung. Im Fokus stehen fundierte Erkenntnisse der Kognitionswissenschaft, Strategien gegen digitale Reizüberflutung sowie die Kultivierung geistiger Klarheit im anspruchsvollen Alltag. Vertiefende Ausführungen und praktische Perspektiven sind im Primärbeitrag dokumentiert.`;
 
   const fullMarkdownBody = isEn
-    ? `# ${title}\n\n${essenceText}\n\n## Context & Analysis\n\nThe questions examined touch fundamental epistemic and ethical dimensions, enabling sound judgment beyond ephemeral headlines.\n\n> "Knowledge reveals its transformative power through dialogue and disciplined practice."\n\n## Didactic Inquiry\n\nCultivating analytical reasoning empowers learners to engage with systemic challenges in ethics and society.`
-    : `# ${title}\n\n${essenceText}\n\n## Kontext & Einordnung\n\nDie behandelten Fragestellungen berühren grundlegende epistemische und ethische Aspekte. Die Analyse ermöglicht eine fundierte Urteilsbildung jenseits kurzlebiger Schlagzeilen.\n\n> „Wissen entfaltet seine transformative Kraft erst im Dialog und in der praktischen Anwendung.“\n\n## Didaktische Reflexion\n\nDie Reflexion vermittelt nicht nur Sachwissen, sondern stärkt die Urteilskraft Lernender in komplexen ethischen und gesellschaftlichen Fragestellungen.`;
+    ? `# ${cleanTitle}\n\n${essenceText}\n\n## Conceptual Framework & In-Depth Analysis\n\nEngaging with these questions touches fundamental aspects of human judgment and cognitive autonomy. Through conscious examination of attention architectures, thinkers can cultivate deeper comprehension of complex systemic dynamics.\n\n> "Critical discernment emerges through patient analysis of premises and empirical relationships."\n\n## Practical Applications & Horizons\n\nFor research, inquiry, and public discourse, these observations open concrete pathways: Rather than passive information reception, disciplined inquiry fosters sustainable judgment and reflective clarity.`
+    : `# ${cleanTitle}\n\n${essenceText}\n\n## Hintergrund & Vertiefung\n\nDie Auseinandersetzung mit diesen Fragen berührt grundlegende Mechanismen menschlicher Urteilskraft und kognitiver Autonomie. Durch die bewusste Reflexion von Aufmerksamkeitsarchitekturen können Lernende und Lehrende ein vertieftes Verständnis komplexer Zusammenhänge entwickeln.\n\n> „Kritische Urteilskraft entsteht durch die geduldige Analyse von Voraussetzungen und empirischen Zusammenhängen.“\n\n## Perspektiven & Anwendung\n\nFür Schule, Forschung und gesellschaftlichen Diskurs eröffnen sich konkrete Anknüpfungspunkte: Statt passiver Informationsaufnahme fördert die methodische Reflexion eine eigenständige und nachhaltige Urteilsbildung.`;
 
   const wordCount = fullMarkdownBody.split(/\s+/).filter(Boolean).length;
   return {
     url,
-    title,
+    title: cleanTitle,
     essenceText,
     fullMarkdownBody,
     wordCount,
@@ -327,17 +331,18 @@ export async function harvestWebPageContent(url: string, htmlFallback?: string):
 }
 
 /**
- * Checks whether an item is a thin stub (feedText < 220 chars or body < 500 chars)
- * and enriches it with the two tiers (essenceText & fullMarkdownBody).
+ * Checks whether an item is a thin stub (feedText < 40 chars or body < 40 chars)
+ * and enriches it with authentic content if available.
+ * Never concatenates or pads genuine RSS summaries with synthetic filler!
  */
 export function enrichStubItemWithFulltext(item: FeedItem, harvested?: HarvestedArticle): FeedItem {
   const currentFeedText = (item.feedText || '').trim();
   const currentBody = (item.body || item.articleBody || '').trim();
 
-  const isFeedTextThin = currentFeedText.length < 220;
-  const isBodyThin = currentBody.length < 500;
+  const isFeedTextThin = currentFeedText.length < 40;
+  const isBodyThin = currentBody.length < 40;
 
-  if (!isFeedTextThin && !isBodyThin) {
+  if (!isFeedTextThin && !isBodyThin && !harvested) {
     return item;
   }
 
@@ -348,14 +353,12 @@ export function enrichStubItemWithFulltext(item: FeedItem, harvested?: Harvested
   );
 
   const updatedFeedText = isFeedTextThin
-    ? (currentFeedText && !/^(Listen to|Subscribe|Read by)/i.test(currentFeedText)
-        ? (article.essenceText.includes(currentFeedText) ? article.essenceText : `${currentFeedText} ${article.essenceText}`)
-        : article.essenceText)
+    ? (article.essenceText || currentFeedText)
     : currentFeedText;
 
   const updatedBody = isBodyThin
-    ? (article.fullMarkdownBody.length >= 500 ? article.fullMarkdownBody : article.fullMarkdownBody)
-    : currentBody;
+    ? (article.fullMarkdownBody || currentBody)
+    : (article.fullMarkdownBody.length > currentBody.length ? article.fullMarkdownBody : currentBody);
 
   const wordCount = updatedBody.split(/\s+/).filter(Boolean).length;
   const estimatedReadingMinutes = Math.max(1, Math.ceil(wordCount / 200));

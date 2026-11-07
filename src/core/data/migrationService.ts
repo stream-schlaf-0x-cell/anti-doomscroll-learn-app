@@ -8,7 +8,8 @@ import {
   isSupportedFeedLanguage,
   satisfiesCuratedBodyContract,
   sanitizeCuratedFeedItem,
-  isPoliticalOrProtestNews
+  isPoliticalOrProtestNews,
+  stripSyntheticFillerSentences
 } from '../enrichment/batchEnricher';
 import { isArdSource } from '../domain/ranking';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
@@ -192,33 +193,32 @@ export async function runInPlaceDataMigration(
   for (const [id, item] of candidateMap.entries()) {
     const isUserProtected = protectedUserItemIds.has(id);
 
-    // WP 2: Purge or repair generic slop templates ("widmet sich den ethischen und erkenntnistheoretischen Grundfragen" etc.)
-    const slopRegex = /widmet sich den ethischen und erkenntnistheoretischen Grundfragen|Dieser philosophische Diskurs zu/i;
-    if (slopRegex.test(item.feedText || '') || slopRegex.test(item.body || '') || slopRegex.test(item.keyInsight || '') || slopRegex.test(item.subtitle || '')) {
-      let realText = '';
-      if (item.articleBody && !slopRegex.test(item.articleBody) && item.articleBody.trim().length >= 40) {
-        realText = item.articleBody.trim();
-      } else if (item.subtitle && !slopRegex.test(item.subtitle) && item.subtitle.trim().length >= 40) {
-        realText = item.subtitle.trim();
-      } else {
-        const strippedBody = (item.body || '')
-          .replace(/Dieser philosophische Diskurs zu[^\.\!\?]*[\.\!\?]/gi, '')
-          .replace(/Er hinterfragt gängige Prämissen[^\.\!\?]*[\.\!\?]/gi, '')
-          .trim();
-        if (strippedBody.length >= 40) {
-          realText = strippedBody;
-        }
-      }
-      if (realText.length >= 40) {
-        item.feedText = realText.slice(0, 480);
-        item.body = realText;
-        if (slopRegex.test(item.keyInsight || '')) {
-          item.keyInsight = item.subtitle && !slopRegex.test(item.subtitle) ? item.subtitle : realText.slice(0, 200);
-        }
-        if (slopRegex.test(item.subtitle || '')) {
-          item.subtitle = realText.slice(0, 150);
-        }
-      } else if (!isUserProtected) {
+    // WP 2: Purge or repair generic slop templates & synthetic filler sentences
+    item.feedText = stripSyntheticFillerSentences(item.feedText || '');
+    item.body = stripSyntheticFillerSentences(item.body || '');
+    if (item.articleBody) {
+      item.articleBody = stripSyntheticFillerSentences(item.articleBody);
+    }
+    if (item.subtitle) {
+      item.subtitle = stripSyntheticFillerSentences(item.subtitle);
+    }
+    if (item.keyInsight) {
+      item.keyInsight = stripSyntheticFillerSentences(item.keyInsight);
+    }
+
+    if (!item.feedText && (item.body || item.articleBody)) {
+      item.feedText = (item.body || item.articleBody || '').replace(/^#\s+[^\n]+\n\n/, '').slice(0, 480);
+    }
+
+    if (!isUserProtected) {
+      const isVisual =
+        item.format === 'art_showcase' ||
+        item.format === 'meme' ||
+        item.format === 'comic' ||
+        item.space === 'c/memes' ||
+        item.space === 'c/kunst_galerie';
+
+      if (!isVisual && ((item.feedText || '').trim().length < 40 && (item.body || '').trim().length < 40)) {
         purgedCount++;
         continue;
       }

@@ -34,11 +34,11 @@ export interface HivemindStreamModalProps {
 type CreatorSourceMode = 'topic_book' | 'pdf_file' | 'url_wiki';
 
 const QUICK_SUGGESTIONS = [
-  { label: '🏛️ Römisches Reich', value: 'Aufstieg & Fall Roms (Marius bis Augustus)' },
-  { label: '⚛️ Quantenphysik', value: 'Quantenphysik & Realität' },
-  { label: '🦉 Kants Erkenntnistheorie', value: 'Kants Kritik der reinen Vernunft' },
-  { label: '📚 Hartmann von Aue: Erec', value: 'Hartmann von Aue: Erec (Mittelhochdeutsche Epik)' },
-  { label: '🎛️ Ableton & Klangsynthese', value: 'Modulare Klangsynthese & Frequenz-Architektur' }
+  { label: 'Römisches Reich', value: 'Aufstieg & Fall Roms (Marius bis Augustus)' },
+  { label: 'Quantenphysik', value: 'Quantenphysik & Realität' },
+  { label: 'Kants Erkenntnistheorie', value: 'Kants Kritik der reinen Vernunft' },
+  { label: 'Hartmann von Aue: Erec', value: 'Hartmann von Aue: Erec (Mittelhochdeutsche Epik)' },
+  { label: 'Ableton & Klangsynthese', value: 'Modulare Klangsynthese & Frequenz-Architektur' }
 ];
 
 export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
@@ -198,7 +198,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
           <View style={styles.headerTitleGroup}>
             <View style={styles.headerBadgeRow}>
-              <Text style={{ fontSize: 18, marginRight: 6 }}>🧠</Text>
+              <Ionicons name="school-outline" size={20} color={colors.accent} style={{ marginRight: 8 }} />
               <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
                 Atmen Hivemind — Scroll to Study
               </Text>
@@ -238,13 +238,19 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                 accessibilityRole="tab"
                 accessibilityState={{ selected: sourceMode === 'topic_book' }}
               >
+                <Ionicons
+                  name="book-outline"
+                  size={14}
+                  color={sourceMode === 'topic_book' ? '#FFFFFF' : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
                 <Text
                   style={[
                     styles.sourceModePillText,
                     { color: sourceMode === 'topic_book' ? '#FFFFFF' : colors.textPrimary }
                   ]}
                 >
-                  📚 Thema oder Buch
+                  Thema oder Buch
                 </Text>
               </TouchableOpacity>
 
@@ -260,13 +266,19 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                 accessibilityRole="tab"
                 accessibilityState={{ selected: sourceMode === 'pdf_file' }}
               >
+                <Ionicons
+                  name="document-text-outline"
+                  size={14}
+                  color={sourceMode === 'pdf_file' ? '#FFFFFF' : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
                 <Text
                   style={[
                     styles.sourceModePillText,
                     { color: sourceMode === 'pdf_file' ? '#FFFFFF' : colors.textPrimary }
                   ]}
                 >
-                  📄 PDF / Textdatei hochladen
+                  PDF / Textdatei hochladen
                 </Text>
               </TouchableOpacity>
 
@@ -282,13 +294,19 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                 accessibilityRole="tab"
                 accessibilityState={{ selected: sourceMode === 'url_wiki' }}
               >
+                <Ionicons
+                  name="globe-outline"
+                  size={14}
+                  color={sourceMode === 'url_wiki' ? '#FFFFFF' : colors.textSecondary}
+                  style={{ marginRight: 6 }}
+                />
                 <Text
                   style={[
                     styles.sourceModePillText,
                     { color: sourceMode === 'url_wiki' ? '#FFFFFF' : colors.textPrimary }
                   ]}
                 >
-                  🔗 Web-Link / Wikipedia
+                  Web-Link / Wikipedia
                 </Text>
               </TouchableOpacity>
             </View>
@@ -345,8 +363,8 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                     <Ionicons name="document-attach-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
                     <Text style={[styles.fileUploadBtnText, { color: colors.accent }]}>
                       {uploadedFileName
-                        ? `📄 Geladen: ${uploadedFileName} (${documentTextInput.length} Zeichen)`
-                        : '📄 PDF, .txt oder .md Datei vom Gerät auswählen…'}
+                        ? `Geladen: ${uploadedFileName} (${documentTextInput.length} Zeichen)`
+                        : 'PDF, .txt oder .md Datei vom Gerät auswählen…'}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -394,11 +412,14 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
             {/* Ambient Drip Toggle for New Track */}
             <View style={[styles.ambientOptionRow, { borderTopColor: colors.borderSubtle }]}>
               <View style={{ flex: 1, paddingRight: 10 }}>
-                <Text style={[styles.ambientOptionTitle, { color: colors.textPrimary }]}>
-                  🔀 Beiläufig im Haupt-Feed beimischen
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="shuffle-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+                  <Text style={[styles.ambientOptionTitle, { color: colors.textPrimary }]}>
+                    Beiläufig im Haupt-Feed beimischen
+                  </Text>
+                </View>
                 <Text style={[styles.ambientOptionSub, { color: colors.textMuted }]}>
-                  Streut automatisch die nächsten 1–2 ungelesenen Lernkarten unter „🔥 Für dich“ ein
+                  Streut automatisch die nächsten 1–2 ungelesenen Lernkarten unter „Für dich“ ein
                 </Text>
               </View>
               <Switch
@@ -408,7 +429,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
               />
             </View>
 
-            {/* ✨ Lern-Feed generieren Button */}
+            {/* Lern-Feed generieren Button */}
             <TouchableOpacity
               onPress={() => void handleGenerateTrack()}
               disabled={isGenerating}
@@ -430,7 +451,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                 <>
                   <Ionicons name="sparkles" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
                   <Text style={styles.generateButtonText}>
-                    ✨ Lern-Feed generieren (12 Karten · Memes, Diskurs & Quiz)
+                    Lern-Feed generieren (12 Micro-Steps)
                   </Text>
                 </>
               )}
@@ -489,7 +510,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                       accessibilityRole="button"
                       accessibilityLabel={`Lernpfad ${track.title} löschen`}
                     >
-                      <Text style={{ fontSize: 13 }}>🗑️</Text>
+                      <Ionicons name="trash-outline" size={15} color={colors.textMuted} />
                     </TouchableOpacity>
                   </View>
 
@@ -531,12 +552,13 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                       accessibilityRole="button"
                       accessibilityLabel={`Fokus-Stream starten für ${track.title}`}
                     >
+                      <Ionicons name="play" size={13} color="#FFFFFF" style={{ marginRight: 6 }} />
                       <Text style={styles.focusStartBtnText}>
                         {completedCount === 0
-                          ? '▶️ Fokus-Stream starten (Schritt 1)'
+                          ? 'Fokus-Stream starten (Schritt 1)'
                           : isFinished
-                          ? '▶️ Fokus-Stream nochmals öffnen'
-                          : `▶️ Fokus-Stream starten (Weiter bei Schritt ${nextStepIndex})`}
+                          ? 'Fokus-Stream erneut öffnen'
+                          : `Fokus-Stream fortsetzen (Schritt ${nextStepIndex})`}
                       </Text>
                     </TouchableOpacity>
 
@@ -553,13 +575,19 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                       accessibilityState={{ checked: track.mixIntoMainFeed }}
                       accessibilityLabel="Im Haupt-Feed beimischen"
                     >
+                      <Ionicons
+                        name="shuffle-outline"
+                        size={13}
+                        color={track.mixIntoMainFeed ? colors.accent : colors.textSecondary}
+                        style={{ marginRight: 5 }}
+                      />
                       <Text
                         style={[
                           styles.mixToggleText,
                           { color: track.mixIntoMainFeed ? colors.accent : colors.textSecondary }
                         ]}
                       >
-                        🔀 Im Haupt-Feed beimischen: {track.mixIntoMainFeed ? 'An' : 'Aus'}
+                        Im Haupt-Feed: {track.mixIntoMainFeed ? 'Aktiv' : 'Pausiert'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -634,6 +662,8 @@ const styles = StyleSheet.create({
     gap: 8
   },
   sourceModePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: radius.pill,
@@ -795,6 +825,7 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
   focusStartBtn: {
+    flexDirection: 'row',
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: radius.md,
@@ -808,6 +839,7 @@ const styles = StyleSheet.create({
     fontWeight: '800'
   },
   mixTogglePill: {
+    flexDirection: 'row',
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: radius.md,
