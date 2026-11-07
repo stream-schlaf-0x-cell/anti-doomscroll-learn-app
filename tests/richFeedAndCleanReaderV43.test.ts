@@ -16,7 +16,7 @@ test('Rich Feed Discovery, Slop Eradication, Hard Quarantine & Clean Reader Suit
     const result = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
       storage: memoryStorage,
       existingIds: new Set(['existing-article-1', 'existing-article-2']),
-      desiredNewCount: 15
+      targetNewCount: 15
     });
 
     assert.ok(result && typeof result === 'object', 'Result must be an object');
@@ -49,7 +49,7 @@ test('Rich Feed Discovery, Slop Eradication, Hard Quarantine & Clean Reader Suit
     await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
       storage: memoryStorage,
       existingIds: new Set(candidates.map((c) => c.id)),
-      desiredNewCount: 10
+      targetNewCount: 10
     });
     const secondPolledJson = await memoryStorage.getItem(lastPolledKey);
     const secondPolledIds = JSON.parse(secondPolledJson || '[]') as string[];
@@ -96,28 +96,30 @@ test('Rich Feed Discovery, Slop Eradication, Hard Quarantine & Clean Reader Suit
   await t.test('3. Migration Service: Purges and cleanses generic slop items in storage', async () => {
     const memoryStorage = new AtemStorage(new MemoryStorageDriver());
 
-    const dirtyItem: FeedItem = {
+    const dirtyItem = {
       id: 'dirty-slop-item-1',
       title: 'Politik in Sachsen',
       feedText:
         'Dieser philosophische Diskurs zu „Politik in Sachsen“ widmet sich den ethischen und erkenntnistheoretischen Grundfragen des Themas.',
       body:
         'Dieser philosophische Diskurs zu „Politik in Sachsen“ widmet sich den ethischen und erkenntnistheoretischen Grundfragen des Themas. Hier ist ein echter Absatz über die Landtagswahlen.',
-      topic: 'general_intellect',
-      deepeningLevel: 1,
-      format: 'article',
+      topics: ['philosophy_ethics'],
+      primaryTopic: 'philosophy_ethics',
+      format: 'sourced_update',
       evidenceTier: 'permitted_full_text',
-      factReviewStatus: 'primary_source_verified',
+      factReviewStatus: 'curated_illustrative',
       sourceReferences: [
         {
           originalUrl: 'https://example.com/sachsen',
           publisher: 'MDR',
-          title: 'Politik in Sachsen'
+          title: 'Politik in Sachsen',
+          retrievalTimestamp: '2026-11-01T12:00:00.000Z',
+          isVerified: true
         }
       ],
       publishedAt: '2026-11-01T12:00:00.000Z',
-      readingTimeMinutes: 2
-    };
+      estimatedReadingMinutes: 2
+    } as unknown as FeedItem;
 
     await memoryStorage.setItem('@atem:feed_items:v1', JSON.stringify([dirtyItem]));
     const migrated = await runInPlaceDataMigration(memoryStorage);
@@ -143,50 +145,50 @@ test('Rich Feed Discovery, Slop Eradication, Hard Quarantine & Clean Reader Suit
     const sessionStartedAt = now;
 
     // Simulate 3 items: unseen, seen just now in current session, and seen 10 mins ago in previous session
-    const unseenItem: FeedItem = {
+    const unseenItem = {
       id: 'fresh-unseen',
       title: 'Fresh Unseen',
       feedText: 'Neu und ungesehen.',
       body: 'Neu und ungesehener Text.',
-      topic: 'science',
-      deepeningLevel: 1,
-      format: 'article',
+      topics: ['science_society'],
+      primaryTopic: 'science_society',
+      format: 'sourced_update',
       evidenceTier: 'permitted_full_text',
-      factReviewStatus: 'primary_source_verified',
-      sourceReferences: [{ originalUrl: 'https://a.com', publisher: 'Science' }],
+      factReviewStatus: 'curated_illustrative',
+      sourceReferences: [{ originalUrl: 'https://a.com', publisher: 'Science', title: 'Science Item', retrievalTimestamp: '2026-11-01T12:00:00.000Z', isVerified: true }],
       publishedAt: new Date(now - 3600_000).toISOString(),
-      readingTimeMinutes: 3
-    };
+      estimatedReadingMinutes: 3
+    } as unknown as FeedItem;
 
-    const currentSessionSeenItem: FeedItem = {
+    const currentSessionSeenItem = {
       id: 'current-session-seen',
       title: 'Current Session Seen',
       feedText: 'Gerade eben im Viewport gescrollt.',
       body: 'Gerade eben gesehen.',
-      topic: 'philosophy',
-      deepeningLevel: 1,
-      format: 'article',
+      topics: ['philosophy_ethics'],
+      primaryTopic: 'philosophy_ethics',
+      format: 'sourced_update',
       evidenceTier: 'permitted_full_text',
-      factReviewStatus: 'primary_source_verified',
-      sourceReferences: [{ originalUrl: 'https://b.com', publisher: 'Philo' }],
+      factReviewStatus: 'curated_illustrative',
+      sourceReferences: [{ originalUrl: 'https://b.com', publisher: 'Philo', title: 'Philo Item', retrievalTimestamp: '2026-11-01T12:00:00.000Z', isVerified: true }],
       publishedAt: new Date(now - 7200_000).toISOString(),
-      readingTimeMinutes: 4
-    };
+      estimatedReadingMinutes: 4
+    } as unknown as FeedItem;
 
-    const prevSessionSeenItem: FeedItem = {
+    const prevSessionSeenItem = {
       id: 'prev-session-seen',
       title: 'Previous Session Seen',
       feedText: 'Bereits vor 20 Minuten in alter Session gesehen.',
       body: 'Alter Text.',
-      topic: 'technology',
-      deepeningLevel: 1,
-      format: 'article',
+      topics: ['ai_apple'],
+      primaryTopic: 'ai_apple',
+      format: 'sourced_update',
       evidenceTier: 'permitted_full_text',
-      factReviewStatus: 'primary_source_verified',
-      sourceReferences: [{ originalUrl: 'https://c.com', publisher: 'Tech' }],
+      factReviewStatus: 'curated_illustrative',
+      sourceReferences: [{ originalUrl: 'https://c.com', publisher: 'Tech', title: 'Tech Item', retrievalTimestamp: '2026-11-01T12:00:00.000Z', isVerified: true }],
       publishedAt: new Date(now - 86400_000).toISOString(),
-      readingTimeMinutes: 5
-    };
+      estimatedReadingMinutes: 5
+    } as unknown as FeedItem;
 
     const items = [prevSessionSeenItem, unseenItem, currentSessionSeenItem];
     const seenMap: Record<string, { firstSeenAt: number }> = {

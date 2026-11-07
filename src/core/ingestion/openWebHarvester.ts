@@ -7,7 +7,7 @@ import {
   isSupportedFeedLanguage,
   defaultBatchEditionEnricher
 } from '../enrichment/batchEnricher';
-import { appStorage } from '../data/storage';
+import { appStorage, AtemStorage } from '../data/storage';
 import { VERIFIED_FEED_SOURCES } from './sources';
 import { GLOBAL_CORPUS_RESERVE_SOURCES } from './globalCorpusSources';
 import { fetchSingleFeed } from './feedFetcher';
@@ -15,6 +15,7 @@ import { normalizeFeedEntry } from './normalizer';
 import { loadAiCredentials, hasAiConfiguration, AiCredentials } from '../ai/atmenAiClient';
 
 export interface MultiLaneDiscoveryOptions {
+  storage?: AtemStorage;
   existingIds?: Set<string>;
   seenIds?: Set<string>;
   targetNewCount?: number;
