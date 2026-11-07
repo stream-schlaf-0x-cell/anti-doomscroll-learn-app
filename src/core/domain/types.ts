@@ -421,7 +421,53 @@ export const FeedItemSchema = z.object({
   memeMeta: z.object({
     templateName: z.string(),
     punchline: z.string(),
-    satireContext: z.string().optional()
+    satireContext: z.string().optional(),
+    trackId: z.string().optional(),
+    stepIndex: z.number().int().positive().optional(),
+    totalSteps: z.number().int().positive().optional(),
+    cardArchetype: z.enum([
+      'story_thread',
+      'expanding_brain_meme',
+      'contrast_meme',
+      'discourse_replies',
+      'milestone_quiz'
+    ]).optional(),
+    escalationStages: z.array(z.object({
+      stageLabel: z.string(),
+      caption: z.string(),
+      visualLevel: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)])
+    })).optional(),
+    simulatedReplies: z.array(z.object({
+      handle: z.string(),
+      roleBadge: z.string(),
+      text: z.string(),
+      upvotes: z.number().int().default(12)
+    })).optional()
+  }).optional(),
+
+  hivemindMeta: z.object({
+    trackId: z.string().optional(),
+    trackTitle: z.string().optional(),
+    stepIndex: z.number().int().positive().optional(),
+    totalSteps: z.number().int().positive().optional(),
+    cardArchetype: z.enum([
+      'story_thread',
+      'expanding_brain_meme',
+      'contrast_meme',
+      'discourse_replies',
+      'milestone_quiz'
+    ]).optional(),
+    escalationStages: z.array(z.object({
+      stageLabel: z.string(),
+      caption: z.string(),
+      visualLevel: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)])
+    })).optional(),
+    simulatedReplies: z.array(z.object({
+      handle: z.string(),
+      roleBadge: z.string(),
+      text: z.string(),
+      upvotes: z.number().int().default(12)
+    })).optional()
   }).optional(),
 
   opportunityMeta: z.object({
@@ -498,6 +544,36 @@ export const ArtMetaSchema = z.object({
   aestheticImpulse: z.string()
 });
 export type ArtMeta = z.infer<typeof ArtMetaSchema>;
+
+export type HivemindCardArchetype =
+  | 'story_thread'
+  | 'expanding_brain_meme'
+  | 'contrast_meme'
+  | 'discourse_replies'
+  | 'milestone_quiz';
+
+export interface HivemindEscalationStage {
+  stageLabel: string;
+  caption: string;
+  visualLevel: 1 | 2 | 3 | 4;
+}
+
+export interface HivemindSimulatedReply {
+  handle: string;
+  roleBadge: string;
+  text: string;
+  upvotes: number;
+}
+
+export interface HivemindMeta {
+  trackId?: string;
+  trackTitle?: string;
+  stepIndex?: number;
+  totalSteps?: number;
+  cardArchetype?: HivemindCardArchetype;
+  escalationStages?: HivemindEscalationStage[];
+  simulatedReplies?: HivemindSimulatedReply[];
+}
 
 export type FeedItem = z.infer<typeof FeedItemSchema>;
 

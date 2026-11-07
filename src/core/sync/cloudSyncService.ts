@@ -7,6 +7,13 @@ import { defaultSpaceRepository, Subchannel } from '../spaces/spaceRepository';
 import { INTERACTIONS_STORAGE_KEY, SAVED_ARTICLES_STORAGE_KEY } from '../data/libraryRepository';
 import { seenImpressionsService, SeenImpressionRecord } from '../data/seenImpressionsService';
 import {
+  HivemindLearningTrack,
+  HIVEMIND_TRACKS_STORAGE_KEY,
+  DELETED_HIVEMIND_TRACK_IDS_KEY,
+  calculateTrackProgressPercent,
+  hivemindLearningService
+} from '../learning/hivemindLearningService';
+import {
   AiCredentials,
   DEFAULT_AI_CREDENTIALS,
   DEFAULT_GEMINI_MODEL,
@@ -59,6 +66,8 @@ export interface AtmenSyncSnapshot {
   savedArticles?: FeedItem[];
   dismissedItemIds?: string[];
   seenImpressions?: Record<string, { firstSeenAt: string; lastSeenAt: string; count: number }>;
+  hivemindTracks?: HivemindLearningTrack[];
+  deletedHivemindTrackIds?: string[];
 }
 
 export interface PairingPayload {
@@ -438,6 +447,54 @@ export function mergeSyncSnapshots(
     .slice(0, 500);
   const cappedImpressions = Object.fromEntries(sortedImpressionEntries);
 
+  // 6. Hivemind Learning Tracks: Union by trackId, union completedItemIds, recalculate progressPercent
+  const deletedTrackSet = new Set<string>([
+    ...(local.deletedHivemindTrackIds || []),
+    ...(remote.deletedHivemindTrackIds || [])
+  ]);
+
+  const tracksMap = new Map<string, HivemindLearningTrack>();
+  for (const t of local.hivemindTracks || []) {
+    if (!deletedTrackSet.has(t.id)) {
+      tracksMap.set(t.id, t);
+    }
+  }
+
+  for (const rTrack of remote.hivemindTracks || []) {
+    if (deletedTrackSet.has(rTrack.id)) {
+      continue;
+    }
+    const lTrack = tracksMap.get(rTrack.id);
+    if (!lTrack) {
+      tracksMap.set(rTrack.id, rTrack);
+    } else {
+      const lTime = new Date(lTrack.updatedAt || lTrack.createdAt || 0).getTime() || 0;
+      const rTime = new Date(rTrack.updatedAt || rTrack.createdAt || 0).getTime() || 0;
+      const remoteTrackNewer = rTime >= lTime;
+
+      const mergedCompleted = Array.from(
+        new Set([...(lTrack.completedItemIds || []), ...(rTrack.completedItemIds || [])])
+      );
+      const mergedItems =
+        (remoteTrackNewer && rTrack.items?.length ? rTrack.items : lTrack.items?.length ? lTrack.items : rTrack.items) || [];
+      const totalItemsCount =
+        mergedItems.length || Math.max(lTrack.totalItemsCount || 0, rTrack.totalItemsCount || 0);
+      const progressPercent = calculateTrackProgressPercent(mergedCompleted, totalItemsCount);
+
+      tracksMap.set(rTrack.id, {
+        ...(remoteTrackNewer ? rTrack : lTrack),
+        items: mergedItems,
+        completedItemIds: mergedCompleted,
+        totalItemsCount,
+        progressPercent,
+        mixIntoMainFeed: remoteTrackNewer ? rTrack.mixIntoMainFeed : lTrack.mixIntoMainFeed,
+        updatedAt: new Date(Math.max(lTime, rTime)).toISOString()
+      });
+    }
+  }
+
+  const mergedHivemindTracks = Array.from(tracksMap.values());
+
   return {
     version: 1,
     deviceId: isRemoteNewer ? remote.deviceId : local.deviceId,
@@ -449,7 +506,9 @@ export function mergeSyncSnapshots(
     interactions: interactionsMap,
     savedArticles: mergedSavedArticles,
     dismissedItemIds: mergedDismissedItemIds,
-    seenImpressions: cappedImpressions
+    seenImpressions: cappedImpressions,
+    hivemindTracks: mergedHivemindTracks,
+    deletedHivemindTrackIds: Array.from(deletedTrackSet)
   };
 }
 
@@ -746,7 +805,9 @@ export class CloudSyncService {
       directGeminiKey,
       directOpenRouterKey,
       directProvider,
-      directModel
+      directModel,
+      hivemindTracks,
+      deletedHivemindTrackIds
     ] = await Promise.all([
       userProfileRepository.getProfile().catch(() => DEFAULT_USER_PROFILE),
       defaultSpaceRepository.getAllSpaces().catch(() => []),
@@ -758,7 +819,9 @@ export class CloudSyncService {
       getGeminiApiKey(this.storage).catch(() => ''),
       getOpenRouterApiKey(this.storage).catch(() => ''),
       getPreferredProvider(this.storage).catch(() => 'gemini' as const),
-      getSelectedModelId(this.storage).catch(() => DEFAULT_GEMINI_MODEL)
+      getSelectedModelId(this.storage).catch(() => DEFAULT_GEMINI_MODEL),
+      hivemindLearningService.getTracks(this.storage).catch(() => []),
+      hivemindLearningService.getDeletedTrackIds(this.storage).catch(() => [])
     ]);
 
     const interactions: Record<string, ReadingInteraction> = {};
@@ -831,7 +894,9 @@ export class CloudSyncService {
       interactions,
       savedArticles,
       dismissedItemIds,
-      seenImpressions
+      seenImpressions,
+      hivemindTracks,
+      deletedHivemindTrackIds
     };
   }
 
@@ -919,11 +984,20 @@ export class CloudSyncService {
       writes.push(this.storage.setItem('@atem:subchannel_priorities', JSON.stringify(priorities)));
     }
 
+    // 8. Hivemind Learning Tracks
+    if (snapshot.deletedHivemindTrackIds) {
+      writes.push(this.storage.setItem(DELETED_HIVEMIND_TRACK_IDS_KEY, JSON.stringify(snapshot.deletedHivemindTrackIds)));
+    }
+    if (snapshot.hivemindTracks) {
+      writes.push(this.storage.setItem(HIVEMIND_TRACKS_STORAGE_KEY, JSON.stringify(snapshot.hivemindTracks)));
+    }
+
     await Promise.all(writes);
 
-    // Notify space listeners so UI updates instantly
+    // Notify space and hivemind listeners so UI updates instantly
     try {
       await defaultSpaceRepository.notify();
+      await hivemindLearningService.notify(this.storage);
     } catch {
       // Non-fatal
     }

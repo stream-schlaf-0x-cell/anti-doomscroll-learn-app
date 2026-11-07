@@ -60,6 +60,10 @@ import { holdFeedPresentation, prependRevealedItems, applyScrollFreeze } from '.
 import { NewsEvolutionModal } from '../../ui/components/NewsEvolutionModal';
 import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
 import { NewsroomPipelineModal } from '../../ui/components/NewsroomPipelineModal';
+import {
+  HivemindLearningTrack,
+  hivemindLearningService
+} from '../../core/learning/hivemindLearningService';
 
 function useReadingStableFeed(items: ScoredFeedItem[], reading: boolean, scope: string): ScoredFeedItem[] {
   const latest = useMemo(() => ({ items, scope }), [items, scope]);
@@ -242,6 +246,46 @@ export const FeedScreen: React.FC = () => {
   const [streamFinished, setStreamFinished] = useState<boolean>(false);
   const [showBreathingModal, setShowBreathingModal] = useState<boolean>(false);
   const [showHivemindModal, setShowHivemindModal] = useState<boolean>(false);
+  const [hivemindTracks, setHivemindTracks] = useState<HivemindLearningTrack[]>([]);
+  const [activeHivemindTrackId, setActiveHivemindTrackId] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    void hivemindLearningService.getTracks().then(loaded => {
+      setHivemindTracks(loaded);
+      const allTrackItems = loaded.flatMap(t => t.items);
+      if (allTrackItems.length > 0 && (feedRepository as any).addItems) {
+        (feedRepository as any).addItems(allTrackItems);
+      }
+    });
+    return hivemindLearningService.subscribe(loaded => {
+      setHivemindTracks(loaded);
+      const allTrackItems = loaded.flatMap(t => t.items);
+      if (allTrackItems.length > 0 && (feedRepository as any).addItems) {
+        (feedRepository as any).addItems(allTrackItems);
+      }
+    });
+  }, []);
+
+  const trackByIdMap = useMemo(() => {
+    return new Map(hivemindTracks.map(t => [t.id, t]));
+  }, [hivemindTracks]);
+
+  const activeHivemindTrack = useMemo(() => {
+    if (!activeHivemindTrackId) return null;
+    return trackByIdMap.get(activeHivemindTrackId) || null;
+  }, [activeHivemindTrackId, trackByIdMap]);
+
+  const handleStartFocusTrack = useCallback((trackId: string) => {
+    setActiveHivemindTrackId(trackId);
+    setCuratedSelection(null);
+    setActiveFeedOption('infinite');
+    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+  }, [setActiveFeedOption]);
+
+  const handleCompleteHivemindStep = useCallback(async (trackId: string, itemId: string) => {
+    await hivemindLearningService.markItemCompleted(trackId, itemId);
+    scheduleCloudSyncPush();
+  }, [scheduleCloudSyncPush]);
 
   // Live News Hub & Classics State
   const [liveNewsCategory, setLiveNewsCategory] = useState<NewsHubFilterCategory>('all');
@@ -491,6 +535,7 @@ export const FeedScreen: React.FC = () => {
   };
 
   const handleFilterChange = (filter: string | 'all') => {
+    setActiveHivemindTrackId(null);
     setSelectedFilter(filter);
     setVisibleInfiniteCount(24);
     lockedTopItemIdsRef.current = null;
@@ -646,8 +691,28 @@ export const FeedScreen: React.FC = () => {
       seenRecords: seenRecordMap
     });
 
-    return [...sortedUnseen, ...sortedTail];
-  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, matchesSelectedSpace, dismissedSet, profile, interactions, selectedFilter, sortMode, pinnedIds, seenIds, seenRecordMap]);
+    const combinedSorted = [...sortedUnseen, ...sortedTail];
+
+    // Mode 2 — Beiläufig im Haupt-Stream (Ambient Drip Interleaving):
+    // When viewing "Alle Spaces" in "Für dich" mode, weave the next 1-2 unread cards from active learning tracks
+    // with mixIntoMainFeed === true into the stream every ~5th card.
+    if (
+      selectedFilter === 'all' &&
+      !searchQuery.trim() &&
+      !activeHivemindTrackId &&
+      (sortMode === 'for_you' || sortMode === 'hot') &&
+      hivemindTracks.length > 0
+    ) {
+      return hivemindLearningService.interleaveAmbientDripCards(
+        combinedSorted,
+        hivemindTracks,
+        it => scoreFeedItem(it, profile, interactions),
+        5
+      );
+    }
+
+    return combinedSorted;
+  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, matchesSelectedSpace, dismissedSet, profile, interactions, selectedFilter, searchQuery, activeHivemindTrackId, sortMode, pinnedIds, seenIds, seenRecordMap, hivemindTracks]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
   // Viewport Top-Lock (WP 1 & WP 3): Lock the visible top 12 cards for active session/scope
@@ -1321,6 +1386,25 @@ export const FeedScreen: React.FC = () => {
           Neuer Raum
         </Text>
       </TouchableOpacity>
+
+      {/* Persistent "🧠 Lernen (Hivemind)" Pill */}
+      <TouchableOpacity
+        onPress={() => setShowHivemindModal(true)}
+        style={[
+          styles.spacePill,
+          {
+            backgroundColor: 'rgba(139, 92, 246, 0.16)',
+            borderColor: '#8B5CF6'
+          }
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel="Lernen (Hivemind) öffnen"
+      >
+        <Text style={{ fontSize: 12, marginRight: 5 }}>🧠</Text>
+        <Text style={[styles.spacePillText, { color: '#8B5CF6', fontWeight: '700' }]}>
+          Lernen (Hivemind)
+        </Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 
@@ -1421,9 +1505,10 @@ export const FeedScreen: React.FC = () => {
           activeSpaceName={activeSpaceName}
           selectedFilter={selectedFilter}
           onSelectSpace={handleFilterChange}
+          onOpenHivemind={() => setShowHivemindModal(true)}
         />
       ) : (
-        <Header />
+        <Header onOpenHivemind={() => setShowHivemindModal(true)} />
       )}
 
       {/* Mobile Community Space Selector Bar (Only on mobile as global bar) */}
@@ -1752,6 +1837,28 @@ export const FeedScreen: React.FC = () => {
                     </TouchableOpacity>
 
                     <TouchableOpacity
+                      activeOpacity={0.75}
+                      onPress={() => setShowHivemindModal(true)}
+                      style={[
+                        styles.sortTab,
+                        {
+                          borderColor: '#8B5CF6',
+                          backgroundColor: isDark ? 'rgba(139, 92, 246, 0.16)' : '#F5F3FF',
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          marginLeft: 6
+                        }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Lernen (Hivemind) öffnen"
+                    >
+                      <Text style={{ fontSize: 12, marginRight: 4 }}>🧠</Text>
+                      <Text style={[styles.sortTabText, { color: '#8B5CF6', fontSize: 11.5, fontWeight: '700' }]}>
+                        Lernen (Hivemind)
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
                       activeOpacity={0.7}
                       onPress={() => setShowPipelineModal(true)}
                       style={[
@@ -1827,7 +1934,158 @@ export const FeedScreen: React.FC = () => {
                   </View>
                 )}
 
-                {curatedSelection && curatedSelection.items.length > 0 ? (
+                {/* MODE 1: HIVEMIND FOCUS TRACK VIEW (Sticky Progress Banner + Sequential Learning Stream) */}
+                {activeHivemindTrack ? (
+                  <>
+                    <View
+                      style={[
+                        styles.curatedSelectionBanner,
+                        {
+                          backgroundColor: colors.surface,
+                          borderColor: '#8B5CF6',
+                          borderWidth: 1.5,
+                          marginBottom: spacing.md
+                        }
+                      ]}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 220 }}>
+                          <View
+                            style={{
+                              width: 38,
+                              height: 38,
+                              borderRadius: 12,
+                              backgroundColor: 'rgba(139, 92, 246, 0.16)',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              marginRight: 10
+                            }}
+                          >
+                            <Text style={{ fontSize: 20 }}>{activeHivemindTrack.iconEmoji || '🧠'}</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.curatedSelectionTitle, { color: colors.textPrimary }]}>
+                              {activeHivemindTrack.title} · {activeHivemindTrack.progressPercent}% ({activeHivemindTrack.completedItemIds.length}/{activeHivemindTrack.totalItemsCount} Karten)
+                            </Text>
+                            <Text style={[styles.curatedSelectionSubtitle, { color: colors.textSecondary }]}>
+                              {activeHivemindTrack.subtitle}
+                            </Text>
+                          </View>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <TouchableOpacity
+                            onPress={async () => {
+                              await hivemindLearningService.toggleMixIntoMainFeed(activeHivemindTrack.id);
+                              scheduleCloudSyncPush();
+                            }}
+                            style={[
+                              styles.curatedSelectionExitButton,
+                              {
+                                backgroundColor: activeHivemindTrack.mixIntoMainFeed
+                                  ? 'rgba(16, 185, 129, 0.14)'
+                                  : colors.surfaceSecondary,
+                                borderColor: activeHivemindTrack.mixIntoMainFeed ? '#10B981' : colors.borderSubtle
+                              }
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Im Haupt-Feed beimischen umschalten"
+                          >
+                            <Text
+                              style={[
+                                styles.curatedSelectionExitText,
+                                {
+                                  color: activeHivemindTrack.mixIntoMainFeed ? '#10B981' : colors.textSecondary,
+                                  fontWeight: '700'
+                                }
+                              ]}
+                            >
+                              🔀 Beimischen: {activeHivemindTrack.mixIntoMainFeed ? 'An' : 'Aus'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            onPress={() => setShowHivemindModal(true)}
+                            style={[
+                              styles.curatedSelectionExitButton,
+                              { backgroundColor: 'rgba(139, 92, 246, 0.14)', borderColor: '#8B5CF6' }
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Alle Lern-Pfade öffnen"
+                          >
+                            <Text style={[styles.curatedSelectionExitText, { color: '#8B5CF6', fontWeight: '700' }]}>
+                              🧠 Lern-Cockpit
+                            </Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            onPress={() => setActiveHivemindTrackId(null)}
+                            style={[
+                              styles.curatedSelectionExitButton,
+                              { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Zurück zu Alle Spaces"
+                          >
+                            <Text style={[styles.curatedSelectionExitText, { color: colors.textPrimary }]}>
+                              ← Alle Spaces
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+
+                      {/* Live Visual Progress Bar (0% - 100%) */}
+                      <View
+                        style={{
+                          height: 8,
+                          borderRadius: 4,
+                          backgroundColor: colors.surfaceSecondary,
+                          overflow: 'hidden',
+                          marginTop: 12
+                        }}
+                      >
+                        <View
+                          style={{
+                            height: '100%',
+                            width: `${Math.min(100, Math.max(0, activeHivemindTrack.progressPercent))}%`,
+                            backgroundColor: activeHivemindTrack.progressPercent >= 100 ? '#10B981' : '#8B5CF6',
+                            borderRadius: 4
+                          }}
+                        />
+                      </View>
+                    </View>
+
+                    {activeHivemindTrack.items.map((rawItem, index) => {
+                      const item = scoreFeedItem(rawItem, profile, interactions);
+                      const isDone = activeHivemindTrack.completedItemIds.includes(item.id);
+                      return (
+                        <View
+                          key={item.id}
+                          onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+                        >
+                          <FeedCard
+                            item={item}
+                            isHero={index === 0}
+                            isFocused={index === activeCardIndex}
+                            isExpanded={Boolean(expandedCardIds[item.id])}
+                            onToggleKurzCheck={() => {
+                              setExpandedCardIds(prev => ({
+                                ...prev,
+                                [item.id]: !prev[item.id]
+                              }));
+                            }}
+                            onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
+                            onDismissItem={handleDismissCard}
+                            onOpenHivemindTrack={handleStartFocusTrack}
+                            onCompleteHivemindStep={handleCompleteHivemindStep}
+                            hivemindTrackProgressPercent={activeHivemindTrack.progressPercent}
+                            isHivemindStepCompleted={isDone}
+                          />
+                        </View>
+                      );
+                    })}
+                  </>
+                ) : curatedSelection && curatedSelection.items.length > 0 ? (
                   <>
                     {curatedSelection.items.map((rawItem, index) => {
                       const item = scoreFeedItem(rawItem, profile, interactions);
@@ -1906,7 +2164,10 @@ export const FeedScreen: React.FC = () => {
                   )
                 ) : (
                   <>
-                    {renderedInfiniteFreshItems.map((item, index) => (
+                    {renderedInfiniteFreshItems.map((item, index) => {
+                      const itemTrackId = item.hivemindMeta?.trackId || item.memeMeta?.trackId;
+                      const itemTrack = itemTrackId ? trackByIdMap.get(itemTrackId) : undefined;
+                      return (
                       <View
                         key={item.id}
                         onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
@@ -1924,6 +2185,10 @@ export const FeedScreen: React.FC = () => {
                           }}
                           onInvestigateTopic={(topic) => setSelectedFilter(`c/${topic}`)}
                           onDismissItem={handleDismissCard}
+                          onOpenHivemindTrack={handleStartFocusTrack}
+                          onCompleteHivemindStep={handleCompleteHivemindStep}
+                          hivemindTrackProgressPercent={itemTrack?.progressPercent}
+                          isHivemindStepCompleted={itemTrack ? itemTrack.completedItemIds.includes(item.id) : false}
                         />
 
                         {/* Gentle Bloomscrolling Quiz Checkpoint every 9 cards (Off by default in feed, available in Reader) */}
@@ -1939,7 +2204,8 @@ export const FeedScreen: React.FC = () => {
                           </View>
                         )}
                       </View>
-                    ))}
+                      );
+                    })}
 
                     {/* Clean Transition to Evergreen / Archive when fresh pool is exhausted */}
                     {renderedInfiniteEvergreenItems.length > 0 && (
@@ -2455,6 +2721,7 @@ export const FeedScreen: React.FC = () => {
       <HivemindStreamModal
         visible={showHivemindModal}
         onClose={() => setShowHivemindModal(false)}
+        onStartFocusTrack={handleStartFocusTrack}
       />
 
       {/* News-Hub Sources, Gatherer & Settings Modal */}

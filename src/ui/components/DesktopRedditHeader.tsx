@@ -40,6 +40,7 @@ interface DesktopRedditHeaderProps {
   activeSpaceName?: string;
   selectedFilter?: TopicTag | 'all' | string;
   onSelectSpace?: (space: TopicTag | 'all' | string) => void;
+  onOpenHivemind?: () => void;
 }
 
 export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
@@ -47,7 +48,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
   onSearchChange,
   activeSpaceName = 'Alle Spaces',
   selectedFilter = 'all',
-  onSelectSpace
+  onSelectSpace,
+  onOpenHivemind
 }) => {
   const {
     colors,
@@ -341,6 +343,37 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                   ]}
                 >
                   ✨ AI Studio
+                </Text>
+              </TouchableOpacity>
+
+              {/* 4. 🧠 Lernen (Hivemind) */}
+              <TouchableOpacity
+                onPress={() => {
+                  if (onOpenHivemind) {
+                    onOpenHivemind();
+                  } else {
+                    setShowHivemindModal(true);
+                  }
+                }}
+                style={[
+                  styles.navPill,
+                  {
+                    backgroundColor: 'rgba(139, 92, 246, 0.14)',
+                    borderColor: '#8B5CF6'
+                  }
+                ]}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Lernen (Hivemind) öffnen"
+              >
+                <Text style={{ fontSize: 13, marginRight: 5 }}>🧠</Text>
+                <Text
+                  style={[
+                    styles.navPillText,
+                    { color: '#8B5CF6', fontWeight: '700' }
+                  ]}
+                >
+                  Lernen (Hivemind)
                 </Text>
               </TouchableOpacity>
             </View>

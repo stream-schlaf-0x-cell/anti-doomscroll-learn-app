@@ -12,12 +12,14 @@ interface HeaderProps {
   title?: string;
   subtitle?: string;
   showThemeToggle?: boolean;
+  onOpenHivemind?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   title = 'atmen',
   subtitle,
-  showThemeToggle = true
+  showThemeToggle = true,
+  onOpenHivemind
 }) => {
   const { width } = useWindowDimensions();
   const isCompactMobile = width < 768;
@@ -86,6 +88,17 @@ export const Header: React.FC<HeaderProps> = ({
                 </Text>
               )}
             </TouchableOpacity>
+
+            {onOpenHivemind && (
+              <TouchableOpacity
+                onPress={onOpenHivemind}
+                style={[styles.themeToggle, { backgroundColor: 'rgba(139, 92, 246, 0.16)' }]}
+                accessibilityRole="button"
+                accessibilityLabel="Hivemind Lern-Feed öffnen"
+              >
+                <Text style={{ fontSize: 13 }}>🧠</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               onPress={() => setShowMaster(true)}

@@ -473,6 +473,9 @@ const CLINICAL_PATHOLOGY_JARGON_REGEX = /\b(carcinoma|oncology|chemotherapy|meta
  */
 export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined): boolean {
   if (!item || typeof item !== 'object') return false;
+  if (item.hivemindMeta?.trackId || item.memeMeta?.trackId) {
+    return true;
+  }
   // Visual formats (memes, comics, art showcases) carry their value in image / punchline
   const isVisual =
     item.format === 'art_showcase' ||
@@ -548,6 +551,9 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
 export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefined): boolean {
   if (!satisfiesCuratedBodyContract(item)) return false;
   if (!item) return false;
+  if (item.hivemindMeta?.trackId || item.memeMeta?.trackId) {
+    return true;
+  }
 
   const isVisual =
     item.format === 'art_showcase' ||

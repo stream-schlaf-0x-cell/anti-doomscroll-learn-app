@@ -32,6 +32,55 @@ import {
 import { detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { SubchannelBadge } from './SubchannelBadge';
+import { hivemindLearningService } from '../../core/learning/hivemindLearningService';
+import { QuizCheckpointCard } from './QuizCheckpointCard';
+
+const ESCALATION_VISUAL_THEMES: Record<1 | 2 | 3 | 4, {
+  bg: string;
+  border: string;
+  accent: string;
+  glowBg: string;
+  icon: string;
+  badgeText: string;
+  energyTitle: string;
+}> = {
+  1: {
+    bg: '#141833',
+    border: '#6366F1',
+    accent: '#818CF8',
+    glowBg: 'rgba(99, 102, 241, 0.22)',
+    icon: 'sparkles-outline',
+    badgeText: 'Stufe 1',
+    energyTitle: 'Indigo-Funke'
+  },
+  2: {
+    bg: '#092B3A',
+    border: '#06B6D4',
+    accent: '#22D3EE',
+    glowBg: 'rgba(6, 182, 212, 0.24)',
+    icon: 'git-network-outline',
+    badgeText: 'Stufe 2',
+    energyTitle: 'Cyan-Synapse'
+  },
+  3: {
+    bg: '#2A1048',
+    border: '#A855F7',
+    accent: '#C084FC',
+    glowBg: 'rgba(168, 85, 247, 0.26)',
+    icon: 'planet-outline',
+    badgeText: 'Stufe 3',
+    energyTitle: 'Violett-Kortex'
+  },
+  4: {
+    bg: '#3B1A06',
+    border: '#F59E0B',
+    accent: '#FBBF24',
+    glowBg: 'rgba(245, 158, 11, 0.30)',
+    icon: 'sunny',
+    badgeText: 'Stufe 4',
+    energyTitle: 'Supernova-Erwachen'
+  }
+};
 
 interface FeedCardProps {
   item: ScoredFeedItem;
@@ -41,6 +90,10 @@ interface FeedCardProps {
   onToggleKurzCheck?: () => void;
   onInvestigateTopic?: (topic: TopicTag) => void;
   onDismissItem?: (item: ScoredFeedItem) => void;
+  onOpenHivemindTrack?: (trackId: string) => void;
+  onCompleteHivemindStep?: (trackId: string, itemId: string) => void;
+  hivemindTrackProgressPercent?: number;
+  isHivemindStepCompleted?: boolean;
 }
 
 function formatRelativeTime(isoString?: string): string {
@@ -142,7 +195,11 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   isHero = false,
   isFocused = false,
   onInvestigateTopic,
-  onDismissItem
+  onDismissItem,
+  onOpenHivemindTrack,
+  onCompleteHivemindStep,
+  hivemindTrackProgressPercent,
+  isHivemindStepCompleted
 }) => {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -154,7 +211,8 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     openArticle,
     voteItem,
     setFeedback,
-    dismissItem
+    dismissItem,
+    scheduleCloudSyncPush
   } = useApp();
 
   const [imageError, setImageError] = useState(false);
@@ -162,6 +220,38 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const [usedFallbackUrl, setUsedFallbackUrl] = useState(false);
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const [naturalAspectRatio, setNaturalAspectRatio] = useState<number | null>(null);
+  const [showSimulatedReplies, setShowSimulatedReplies] = useState(false);
+  const [markedHivemindDone, setMarkedHivemindDone] = useState<boolean>(Boolean(isHivemindStepCompleted));
+  const [dynamicTrackProgress, setDynamicTrackProgress] = useState<number | undefined>(hivemindTrackProgressPercent);
+
+  const hivemindTrackId = item.hivemindMeta?.trackId || item.memeMeta?.trackId;
+  const hivemindTrackTitle = item.hivemindMeta?.trackTitle || item.sourceBroadcasterName?.replace(/^Lernpfad:\s*/i, '') || 'Lernpfad';
+  const hivemindStepIndex = item.hivemindMeta?.stepIndex || item.memeMeta?.stepIndex || 1;
+  const hivemindTotalSteps = item.hivemindMeta?.totalSteps || item.memeMeta?.totalSteps || 12;
+  const hivemindArchetype = item.hivemindMeta?.cardArchetype || item.memeMeta?.cardArchetype;
+  const escalationStages = item.hivemindMeta?.escalationStages || item.memeMeta?.escalationStages;
+  const simulatedReplies = item.hivemindMeta?.simulatedReplies || item.memeMeta?.simulatedReplies;
+
+  useEffect(() => {
+    setMarkedHivemindDone(Boolean(isHivemindStepCompleted));
+  }, [isHivemindStepCompleted, item.id]);
+
+  useEffect(() => {
+    setDynamicTrackProgress(hivemindTrackProgressPercent);
+  }, [hivemindTrackProgressPercent]);
+
+  const handleMarkHivemindCompleted = async () => {
+    if (!hivemindTrackId) return;
+    setMarkedHivemindDone(true);
+    if (onCompleteHivemindStep) {
+      onCompleteHivemindStep(hivemindTrackId, item.id);
+    }
+    const updatedTrack = await hivemindLearningService.markItemCompleted(hivemindTrackId, item.id);
+    if (updatedTrack) {
+      setDynamicTrackProgress(updatedTrack.progressPercent);
+    }
+    scheduleCloudSyncPush();
+  };
 
   useEffect(() => {
     setImageError(false);
@@ -449,6 +539,46 @@ export const FeedCard: React.FC<FeedCardProps> = ({
       </View>
 
       {/* Virtual Newsroom / Editorial Origin Badges */}
+      {hivemindTrackId && (
+        <TouchableOpacity
+          activeOpacity={0.82}
+          onPress={() => {
+            if (onOpenHivemindTrack) {
+              onOpenHivemindTrack(hivemindTrackId);
+            }
+          }}
+          style={[
+            styles.hivemindTrackPill,
+            {
+              backgroundColor: markedHivemindDone ? 'rgba(16, 185, 129, 0.14)' : colors.accentSubtle,
+              borderColor: markedHivemindDone ? '#10B981' : colors.accent
+            }
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={`Lernpfad ${hivemindTrackTitle} im Fokus-Modus öffnen`}
+        >
+          <Text style={{ fontSize: 12, marginRight: 5 }}>🧠</Text>
+          <Text
+            style={[
+              styles.hivemindTrackPillText,
+              { color: markedHivemindDone ? '#10B981' : colors.accent }
+            ]}
+            numberOfLines={1}
+          >
+            Lernpfad: {hivemindTrackTitle} · Schritt {hivemindStepIndex}/{hivemindTotalSteps}
+            {typeof dynamicTrackProgress === 'number'
+              ? ` (${dynamicTrackProgress}%)`
+              : ` (${Math.round(((hivemindStepIndex - 1) / Math.max(1, hivemindTotalSteps)) * 100)}%)`}
+          </Text>
+          <Ionicons
+            name="chevron-forward"
+            size={12}
+            color={markedHivemindDone ? '#10B981' : colors.accent}
+            style={{ marginLeft: 4 }}
+          />
+        </TouchableOpacity>
+      )}
+
       {typeof item.pinnedManualRunAt === 'number' && (Date.now() - item.pinnedManualRunAt) <= 15 * 60 * 1000 && (
         <View style={[styles.editorialBadgeRow, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}>
           <Ionicons name="sparkles" size={12} color={colors.accent} style={{ marginRight: 4 }} />
@@ -634,8 +764,137 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         </TouchableOpacity>
       )}
 
+      {/* Native 4-Stage Visual Concept-Meme Grid (Work Package 2) */}
+      {escalationStages && escalationStages.length >= 3 && (
+        <View style={[styles.escalationGridContainer, { borderColor: colors.borderSubtle }]}>
+          {escalationStages.map((stage, sIdx) => {
+            const levelKey = (Math.min(4, Math.max(1, stage.visualLevel || (sIdx + 1))) as 1 | 2 | 3 | 4);
+            const vTheme = ESCALATION_VISUAL_THEMES[levelKey];
+            return (
+              <View
+                key={`${item.id}-esc-${sIdx}`}
+                style={[
+                  styles.escalationRow,
+                  {
+                    borderBottomWidth: sIdx < escalationStages.length - 1 ? 1 : 0,
+                    borderBottomColor: colors.borderSubtle,
+                    backgroundColor: colors.surface
+                  }
+                ]}
+              >
+                {/* Left Column (62% width): Bold editorial statement */}
+                <View style={styles.escalationLeftCol}>
+                  <Text style={[styles.escalationStageLabel, { color: vTheme.accent }]}>
+                    {stage.stageLabel || `${vTheme.badgeText} · ${vTheme.energyTitle}`}
+                  </Text>
+                  <Text style={[styles.escalationCaptionText, { color: colors.textPrimary }]}>
+                    {stage.caption}
+                  </Text>
+                </View>
+
+                {/* Right Column (38% width): Luminous Cosmic / Neural Stage Panel */}
+                <View
+                  style={[
+                    styles.escalationRightCol,
+                    {
+                      backgroundColor: vTheme.bg,
+                      borderLeftColor: vTheme.border
+                    }
+                  ]}
+                >
+                  <View style={[styles.escalationGlowOrb, { backgroundColor: vTheme.glowBg, borderColor: vTheme.border }]}>
+                    <Ionicons name={vTheme.icon as any} size={22} color={vTheme.accent} />
+                  </View>
+                  <Text style={[styles.escalationVisualBadge, { color: vTheme.accent }]}>
+                    {vTheme.badgeText}
+                  </Text>
+                  <Text style={styles.escalationVisualSubtitle} numberOfLines={1}>
+                    {vTheme.energyTitle}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Inline Milestone Quiz on Hivemind Milestone Cards */}
+      {hivemindArchetype === 'milestone_quiz' && item.quiz && (
+        <View style={{ marginVertical: 6 }}>
+          <QuizCheckpointCard
+            questions={[item.quiz]}
+            compact={true}
+          />
+        </View>
+      )}
+
+      {/* Inline Expandable Community Replies (💬 X Antworten anzeigen) */}
+      {simulatedReplies && simulatedReplies.length > 0 && (
+        <View style={styles.simulatedRepliesWrapper}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setShowSimulatedReplies(prev => !prev)}
+            style={[
+              styles.simulatedRepliesToggleBtn,
+              {
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: showSimulatedReplies ? colors.accent : colors.borderSubtle
+              }
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`${simulatedReplies.length} Antworten anzeigen`}
+          >
+            <Text style={{ fontSize: 13, marginRight: 6 }}>💬</Text>
+            <Text style={[styles.simulatedRepliesToggleText, { color: colors.textPrimary }]}>
+              {simulatedReplies.length} Antworten aus dem Lern-Salon anzeigen
+            </Text>
+            <Ionicons
+              name={showSimulatedReplies ? 'chevron-up' : 'chevron-down'}
+              size={15}
+              color={colors.accent}
+              style={{ marginLeft: 'auto' }}
+            />
+          </TouchableOpacity>
+
+          {showSimulatedReplies && (
+            <View style={styles.simulatedRepliesList}>
+              {simulatedReplies.map((rep, rIdx) => (
+                <View
+                  key={`${item.id}-rep-${rIdx}`}
+                  style={[
+                    styles.simulatedReplyCard,
+                    {
+                      backgroundColor: colors.surfaceSecondary,
+                      borderColor: colors.borderSubtle,
+                      borderLeftColor: colors.accent
+                    }
+                  ]}
+                >
+                  <View style={styles.simulatedReplyHeader}>
+                    <Text style={[styles.simulatedReplyHandle, { color: colors.textPrimary }]}>
+                      {rep.handle}
+                    </Text>
+                    <View style={[styles.simulatedReplyBadge, { backgroundColor: colors.accentSubtle }]}>
+                      <Text style={[styles.simulatedReplyBadgeText, { color: colors.accent }]}>
+                        {rep.roleBadge}
+                      </Text>
+                    </View>
+                    <Text style={[styles.simulatedReplyUpvotes, { color: colors.textMuted }]}>
+                      ▲ {rep.upvotes}
+                    </Text>
+                  </View>
+                  <Text style={[styles.simulatedReplyBody, { color: colors.textPrimary }]}>
+                    {rep.text}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+
       {/* Special Format Compact Callout: Comic Alt-Text Bonus Punchline / Book Thesis / Sound Track */}
-      {item.memeMeta && (
+      {item.memeMeta && !(escalationStages && escalationStages.length >= 3) && (
         <View style={[styles.compactCallout, { backgroundColor: colors.surfaceSecondary, borderLeftColor: spaceColor }]}>
           <Text style={[styles.compactCalloutLabel, { color: spaceColor }]}>
             🎁 {item.memeMeta.satireContext || 'Bonus-Punchline (Alt-Text)'}
@@ -745,24 +1004,51 @@ export const FeedCard: React.FC<FeedCardProps> = ({
           </TouchableOpacity>
         )}
 
-        {/* Right: [ 🚫 Weniger ] + [ 🔖 Bookmark ] */}
+        {/* Right: [ ✓ Verstanden (Hivemind) ] + [ 🚫 Weniger ] + [ 🔖 Bookmark ] */}
         <View style={styles.footerRightGroup}>
-          <TouchableOpacity
-            onPress={() => {
-              if (onDismissItem) {
-                onDismissItem(item);
-              } else {
-                void dismissItem(item.id, item);
-              }
-            }}
-            style={[styles.wenigerChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-            accessibilityRole="button"
-            accessibilityLabel="Weniger davon"
-          >
-            <Text style={[styles.actionChipText, { color: colors.textMuted }]} numberOfLines={1}>
-              🚫 Weniger
-            </Text>
-          </TouchableOpacity>
+          {hivemindTrackId && (
+            <TouchableOpacity
+              onPress={() => void handleMarkHivemindCompleted()}
+              style={[
+                styles.hivemindDoneChip,
+                {
+                  backgroundColor: markedHivemindDone ? 'rgba(16, 185, 129, 0.16)' : colors.accent,
+                  borderColor: markedHivemindDone ? '#10B981' : colors.accent
+                }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={markedHivemindDone ? 'Schritt bereits gelernt' : 'Verstanden (+Fortschritt)'}
+            >
+              <Text
+                style={[
+                  styles.hivemindDoneChipText,
+                  { color: markedHivemindDone ? '#10B981' : '#FFFFFF' }
+                ]}
+                numberOfLines={1}
+              >
+                {markedHivemindDone ? '✓ Gelernt' : '✓ Verstanden (+Fortschritt)'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {!hivemindTrackId && (
+            <TouchableOpacity
+              onPress={() => {
+                if (onDismissItem) {
+                  onDismissItem(item);
+                } else {
+                  void dismissItem(item.id, item);
+                }
+              }}
+              style={[styles.wenigerChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
+              accessibilityRole="button"
+              accessibilityLabel="Weniger davon"
+            >
+              <Text style={[styles.actionChipText, { color: colors.textMuted }]} numberOfLines={1}>
+                🚫 Weniger
+              </Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             onPress={() => toggleSaveItem(item.id)}
@@ -1493,5 +1779,151 @@ const styles = StyleSheet.create({
   },
   completedBadge: {
     marginLeft: 2
+  },
+  hivemindTrackPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    marginBottom: 8,
+    maxWidth: '100%'
+  },
+  hivemindTrackPillText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+    flexShrink: 1
+  },
+  escalationGridContainer: {
+    width: '100%',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginVertical: 8
+  },
+  escalationRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    minHeight: 88
+  },
+  escalationLeftCol: {
+    width: '62%',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: 'center'
+  },
+  escalationStageLabel: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 4
+  },
+  escalationCaptionText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '800',
+    letterSpacing: 0.15
+  },
+  escalationRightCol: {
+    width: '38%',
+    borderLeftWidth: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  escalationGlowOrb: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 5
+  },
+  escalationVisualBadge: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase'
+  },
+  escalationVisualSubtitle: {
+    color: 'rgba(255, 255, 255, 0.78)',
+    fontSize: 9.5,
+    fontWeight: '600',
+    marginTop: 1
+  },
+  simulatedRepliesWrapper: {
+    marginTop: 4,
+    marginBottom: 8
+  },
+  simulatedRepliesToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  simulatedRepliesToggleText: {
+    fontSize: 12.5,
+    fontWeight: '700'
+  },
+  simulatedRepliesList: {
+    marginTop: 8,
+    gap: 8
+  },
+  simulatedReplyCard: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: radius.sm,
+    borderWidth: 0.5,
+    borderLeftWidth: 3
+  },
+  simulatedReplyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+    flexWrap: 'wrap'
+  },
+  simulatedReplyHandle: {
+    fontSize: 11.5,
+    fontWeight: '700'
+  },
+  simulatedReplyBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill
+  },
+  simulatedReplyBadgeText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  simulatedReplyUpvotes: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    marginLeft: 'auto'
+  },
+  simulatedReplyBody: {
+    fontSize: 13,
+    lineHeight: 18.5
+  },
+  hivemindDoneChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexShrink: 0
+  },
+  hivemindDoneChipText: {
+    fontSize: 11.5,
+    fontWeight: '800'
   }
 });

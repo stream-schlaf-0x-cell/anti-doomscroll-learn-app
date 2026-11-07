@@ -50,6 +50,7 @@ import { runInPlaceDataMigration } from '../data/migrationService';
 import { satisfiesDefaultCuratedStandard, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
 import { harvestRabbitHoleForItem } from '../synthesis/rabbitHoleService';
 import { seenImpressionsService } from '../data/seenImpressionsService';
+import { hivemindLearningService } from '../learning/hivemindLearningService';
 
 export function extractSalientKeywords(titleOrItem: string | Pick<FeedItem, 'title' | 'subtitle' | 'keyInsight' | 'feedText'>): string[] {
   return extractConceptKeywords(titleOrItem);
@@ -959,6 +960,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!item) {
       item = savedArticles.find(a => a.id === id) ?? null;
     }
+    if (!item) {
+      try {
+        const tracks = await hivemindLearningService.getTracks();
+        for (const t of tracks) {
+          const found = t.items.find(i => i.id === id);
+          if (found) {
+            item = found;
+            break;
+          }
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+    void hivemindLearningService.markItemCompletedByItemId(id).then(updatedTrack => {
+      if (updatedTrack) {
+        scheduleCloudSyncPushRef.current();
+      }
+    }).catch(() => {});
     setSelectedArticleId(id);
     setSelectedArticle(item); // item can be null if missing; ReaderScreen gracefully displays fallback
 
