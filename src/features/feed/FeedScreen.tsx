@@ -33,7 +33,7 @@ import {
   resolveItemSpaceHandle
 } from '../../core/spaces/spaceRepository';
 import { UltraMasterModal, MasterTab } from '../../ui/components/UltraMasterModal';
-import { OnTheFlyStreamService, generateHivemindStream } from '../../core/synthesis/onTheFlyStreamService';
+import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
 import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerationProgressModal';
 import { AtmenBreathingPortal } from '../breathing/AtmenBreathingPortal';
 import { QuizCheckpointCard } from '../../ui/components/QuizCheckpointCard';
@@ -46,15 +46,13 @@ import {
   defaultBatchEditionEnricher,
   satisfiesCuratedBodyContract,
   satisfiesDefaultCuratedStandard,
-  sanitizeCuratedFeedItem,
-  getCardRenderableText
+  sanitizeCuratedFeedItem
 } from '../../core/enrichment/batchEnricher';
-import { REAL_KNOWLEDGE_VAULT } from '../../core/data/realKnowledgeVault';
-import { seenImpressionsService } from '../../core/data/seenImpressionsService';
+import { seenImpressionsService, SeenImpressionRecord } from '../../core/data/seenImpressionsService';
+import { OpenWebHarvester } from '../../core/ingestion/openWebHarvester';
 import { loadAiCredentials } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
 import { SubchannelFlourishService, detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
-import { LiveCivicPulseService, ManualPipelineStage } from '../../core/ingestion/liveCivicPulseService';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
 import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
 import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
@@ -128,9 +126,11 @@ export const FeedScreen: React.FC = () => {
 
   const [sortMode, setSortMode] = useState<FeedSortMode>('for_you');
   const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
+  const [seenRecordMap, setSeenRecordMap] = useState<Map<string, SeenImpressionRecord>>(new Map());
 
   React.useEffect(() => {
     void seenImpressionsService.getSeenIds().then(setSeenIds);
+    void seenImpressionsService.getSeenRecordMap().then(setSeenRecordMap);
   }, []);
   const [isScrolledDown, setIsScrolledDown] = useState<boolean>(false);
   const scrollYRef = React.useRef<number>(0);
@@ -149,6 +149,7 @@ export const FeedScreen: React.FC = () => {
 
   // Viewport Top-Lock & Background Arrivals (WP 1, WP 3 & WP 5)
   const appMountedAtRef = React.useRef<number>(Date.now());
+  const sessionStartedAt = React.useRef<number>(Date.now());
   const surfacedArrivalIdsRef = React.useRef<Set<string>>(new Set());
   const lockedTopItemIdsRef = React.useRef<string[] | null>(null);
   const previousScopeRef = React.useRef<string>('');
@@ -435,8 +436,12 @@ export const FeedScreen: React.FC = () => {
     setPendingStreamArrivals([]);
     await refreshLiveFeed();
     await loadSubchannels();
-    const updatedSeen = await seenImpressionsService.getSeenIds();
+    const [updatedSeen, updatedRecords] = await Promise.all([
+      seenImpressionsService.getSeenIds(),
+      seenImpressionsService.getSeenRecordMap()
+    ]);
     setSeenIds(updatedSeen);
+    setSeenRecordMap(updatedRecords);
     if (activeFeedOption === 'live_news') {
       await loadLiveNews();
     } else if (activeFeedOption === 'classics') {
@@ -600,8 +605,49 @@ export const FeedScreen: React.FC = () => {
       ? strictCurated
       : sanitized.filter(item => satisfiesCuratedBodyContract(item)).filter(matchesSelectedSpace);
 
-    return sortFeedForDisplay(curatedPool, sortMode, { pinnedIds, interleave: true, seenItemIds: seenIds });
-  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, matchesSelectedSpace, dismissedSet, profile, interactions, selectedFilter, sortMode, pinnedIds, seenIds]);
+    // Hard 72-Hour Seen Quarantine (Work Package 3):
+    // Any article seen in a previous session (> 5 min before current session started) within 72h
+    // and not bookmarked/upvoted is strictly moved behind 100% of all unseen items.
+    const cutoffMs = sessionStartedAt.current - 5 * 60_000;
+    const seventyTwoHoursMs = 72 * 3600 * 1000;
+    const nowTime = Date.now();
+
+    const unseenCandidates: ScoredFeedItem[] = [];
+    const quarantinedTail: ScoredFeedItem[] = [];
+
+    for (const item of curatedPool) {
+      const userInt = interactions[item.id];
+      const isSaved = Boolean(userInt?.saved);
+      const isUpvoted = Boolean(userInt?.voteScore === 1);
+      const rec = seenRecordMap.get(item.id);
+
+      if (rec && !isSaved && !isUpvoted) {
+        const firstSeen = new Date(rec.firstSeenAt).getTime();
+        const ageSinceSeen = nowTime - firstSeen;
+        if (firstSeen < cutoffMs && ageSinceSeen <= seventyTwoHoursMs) {
+          quarantinedTail.push(item);
+          continue;
+        }
+      }
+      unseenCandidates.push(item);
+    }
+
+    const sortedUnseen = sortFeedForDisplay(unseenCandidates, sortMode, {
+      pinnedIds,
+      interleave: true,
+      seenItemIds: seenIds,
+      seenRecords: seenRecordMap
+    });
+
+    const sortedTail = sortFeedForDisplay(quarantinedTail, sortMode, {
+      ignorePins: true,
+      interleave: true,
+      seenItemIds: seenIds,
+      seenRecords: seenRecordMap
+    });
+
+    return [...sortedUnseen, ...sortedTail];
+  }, [filteredDaily, filteredOpenWeb, filteredDiscovery, scoredLiveItems, matchesSelectedSpace, dismissedSet, profile, interactions, selectedFilter, sortMode, pinnedIds, seenIds, seenRecordMap]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
   // Viewport Top-Lock (WP 1 & WP 3): Lock the visible top 12 cards for active session/scope
@@ -831,36 +877,49 @@ export const FeedScreen: React.FC = () => {
   const [manualPipelineStageLabel, setManualPipelineStageLabel] = useState<string>('');
 
   const handleRunManualResearchPipeline = useCallback(async () => {
-    if (isRunningManualPipeline || LiveCivicPulseService.isPipelineRunning()) return;
+    if (isRunningManualPipeline) return;
     setIsRunningManualPipeline(true);
-    setManualPipelineStageLabel('Quellen abrufen');
+    setManualPipelineStageLabel('Multi-Lane Internet-Recherche…');
+    const initialOp = defaultFeedOperationManager.startOperation('manual_refresh');
+    const operationId = initialOp.operationId;
     try {
       const existingIds = new Set(
         (feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id)
       );
-      const result = await LiveCivicPulseService.runManualResearchPipeline({
+      const seenIds = await seenImpressionsService.getSeenIds();
+      const creds = await loadAiCredentials().catch(() => undefined);
+
+      const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
         existingIds,
-        onStageChange: (_stage: ManualPipelineStage, label: string) => {
-          setManualPipelineStageLabel(label);
-        }
+        seenIds,
+        targetNewCount: 20,
+        credentials: creds,
+        onStageChange: (_stage: string) => setManualPipelineStageLabel(_stage)
       });
-      if (result.items.length > 0) {
-        const seenIds = await seenImpressionsService.getSeenIds();
-        const now = Date.now();
-        const safeItems = result.items.map(item => {
-          if (item.isStaticFallback || seenIds.has(item.id) || existingIds.has(item.id)) {
-            const { pinnedManualRunAt, ...rest } = item;
-            return rest;
-          }
-          return {
-            ...item,
-            pinnedManualRunAt: now,
-            isNewlyArrived: true
-          };
-        });
-        feedRepository.addItems(safeItems);
-        lockedTopItemIdsRef.current = safeItems.map(i => i.id);
-        for (const item of safeItems) {
+
+      if (discoveryResult.items.length > 0) {
+        if (feedRepository.executeContentOperation) {
+          const opResult = await feedRepository.executeContentOperation('manual_refresh', discoveryResult.items, {
+            pinInserted: true,
+            pinUpdated: false,
+            operationId,
+            telemetry: {
+              candidateCount: discoveryResult.fetchedCount,
+              approvedCount: discoveryResult.insertedCount,
+              rejectedCount: discoveryResult.duplicateCount,
+              usedAI: discoveryResult.usedAI,
+              usedFallback: false,
+              cacheHits: 0,
+              modelUsed: discoveryResult.modelUsed
+            }
+          });
+          setLastOperationResult(opResult);
+        } else {
+          feedRepository.addItems(discoveryResult.items);
+        }
+
+        lockedTopItemIdsRef.current = discoveryResult.items.map((i: FeedItem) => i.id);
+        for (const item of discoveryResult.items) {
           defaultFeedOperationManager.pinItem(item.id);
         }
         setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
@@ -869,10 +928,13 @@ export const FeedScreen: React.FC = () => {
         await refreshFeed();
         scrollViewRef.current?.scrollTo({ y: 0, animated: true });
       }
-      const modeText = result.mode === 'ai' ? 'KI-Synthese' : 'Lokal';
-      setSimToast(`${result.curatedCount} neu kuratiert · ${result.discardedCount} verworfen · Modus: ${modeText}`);
+
+      const modeText = discoveryResult.usedAI ? `KI (${discoveryResult.modelUsed || 'Gemini'})` : 'Lokal';
+      setSimToast(`${discoveryResult.insertedCount} neu hinzugefügt · Modus: ${modeText}`);
       setTimeout(() => setSimToast(null), 4500);
-    } catch {
+    } catch (e: any) {
+      console.warn('Manual research pipeline failed:', e);
+      defaultFeedOperationManager.failOperation(e?.message || 'Fehler beim Quellenabruf.');
       setSimToast('Recherche abgeschlossen.');
       setTimeout(() => setSimToast(null), 3000);
     } finally {
@@ -1034,175 +1096,20 @@ export const FeedScreen: React.FC = () => {
 
     try {
       const creds = await loadAiCredentials();
-      const candidatePool: FeedItem[] = [];
+      const existingIds = new Set(
+        (feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id)
+      );
+      const seenIds = await seenImpressionsService.getSeenIds();
 
-      if (isChannelCurating) {
-        // --- CHANNEL-DRIVEN HARVEST (Stages 1, 2, 3) ---
-        const cleanSearchQuery = activeTopicTitle || activeSpaceHandle.replace(/^c\//, '').replace(/_/g, ' ');
-        const searchTerms = cleanSearchQuery.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+      const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
+        existingIds,
+        seenIds,
+        targetNewCount: 20,
+        credentials: creds,
+        onStageChange: (stage: string) => setCurationStage(stage)
+      });
 
-        // Stage 1: Filter existing pools and Real Knowledge Vault
-        const localMatches: FeedItem[] = [];
-        const allLocalPool: FeedItem[] = [...openWebItems, ...discoveryItems, ...liveNewsItems, ...REAL_KNOWLEDGE_VAULT];
-        for (const item of allLocalPool) {
-          const text = `${item.title} ${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''} ${(item.topics || []).join(' ')}`.toLowerCase();
-          const matchesKeyword = searchTerms.some(term => text.includes(term));
-          const matchesSpace = item.space?.toLowerCase() === activeSpaceHandle.toLowerCase();
-          const matchesTopic = activePrimaryTopic && (item.primaryTopic === activePrimaryTopic || item.topics?.includes(activePrimaryTopic));
-          if (matchesSpace || matchesKeyword || matchesTopic) {
-            localMatches.push(item);
-          }
-        }
-
-        // Stage 2: Live Scholarly Research (OpenAlex & Wikipedia) if local matches < 6
-        let liveHarvested: FeedItem[] = [];
-        if (localMatches.length < 6) {
-          setCurationStage(`1/3: Offene Primärquellen zu „${cleanSearchQuery}“ recherchieren …`);
-          try {
-            const today = new Date().toISOString().slice(0, 10);
-            const [openAlexItems, wikiItems] = await Promise.all([
-              OnTheFlyStreamService.searchOpenAlex(cleanSearchQuery, activePrimaryTopic || 'science_society', activeSpaceHandle, today),
-              OnTheFlyStreamService.searchWikipedia(cleanSearchQuery, activePrimaryTopic || 'science_society', activeSpaceHandle, today)
-            ]);
-            liveHarvested = [...openAlexItems, ...wikiItems];
-          } catch (err) {
-            console.warn('Live research error:', err);
-          }
-        }
-
-        // Stage 3: On-demand Hivemind Synthesis if total candidates < 5
-        let synthesizedItems: FeedItem[] = [];
-        if (localMatches.length + liveHarvested.length < 5) {
-          setCurationStage(`1/3: Vertiefende Synthese für „${cleanSearchQuery}“ erstellen …`);
-          try {
-            const hivemindRes = await generateHivemindStream({
-              seedTopicOrQuestion: cleanSearchQuery,
-              targetCount: 4,
-              preferredLanguage: 'de',
-              credentials: creds,
-              space: activeSpaceHandle
-            });
-            if (hivemindRes.items && hivemindRes.items.length > 0) {
-              synthesizedItems = hivemindRes.items;
-            }
-          } catch (err) {
-            console.warn('Hivemind stream generation error:', err);
-          }
-        }
-
-        const combinedChannelPool = [...synthesizedItems, ...liveHarvested, ...localMatches];
-        const seenKeys = new Set<string>();
-        for (const item of combinedChannelPool) {
-          const key = item.canonicalUrl || item.id || item.title;
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
-            candidatePool.push({
-              ...item,
-              space: activeSpaceHandle,
-              primaryTopic: activePrimaryTopic || item.primaryTopic || 'science_society'
-            });
-          }
-        }
-      } else {
-        // --- GLOBAL FEED SELECTION (Mode A vs Mode B) ---
-        const visibleIds = new Set(renderedInfiniteItems.slice(0, visibleInfiniteCount).map(i => i.id));
-        const pinnedSet = new Set(defaultFeedOperationManager.getPinnedItemIds());
-        const seenUrls = new Set<string>();
-        for (const item of renderedInfiniteItems.slice(0, visibleInfiniteCount)) {
-          if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
-        }
-
-        if (isNewsMode) {
-          // Mode B: Growth News Research - only admit verified journalistic news with reliable dates & real body excerpts
-          const newsSources = [...liveNewsItems, ...openWebItems];
-          for (const item of newsSources) {
-            if (!visibleIds.has(item.id) && !pinnedSet.has(item.id)) {
-              if (!item.canonicalUrl || !seenUrls.has(item.canonicalUrl)) {
-                if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
-                if (item.primaryTopic !== 'memes_satire' && item.primaryTopic !== 'art_aesthetics') {
-                  if (getCardRenderableText(item).length >= 120) {
-                    candidatePool.push(item);
-                  }
-                }
-              }
-            }
-          }
-          if (candidatePool.length < 6) {
-            try {
-              const freshLive = await ContinuousLiveNewsService.getLiveStream({ limit: 20, forceRefresh: false });
-              for (const item of freshLive) {
-                if (!visibleIds.has(item.id) && !pinnedSet.has(item.id)) {
-                  if (!item.canonicalUrl || !seenUrls.has(item.canonicalUrl)) {
-                    if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
-                    if (getCardRenderableText(item).length >= 120) {
-                      candidatePool.push(item);
-                    }
-                  }
-                }
-              }
-            } catch {}
-          }
-        } else {
-          // Mode A: Evergreen Depth - pull timeless high-substance essays, papers, historical reflections
-          const evergreenSources = [...REAL_KNOWLEDGE_VAULT, ...discoveryItems, ...openWebItems];
-          for (const item of evergreenSources) {
-            if (!visibleIds.has(item.id) && !pinnedSet.has(item.id)) {
-              if (!item.canonicalUrl || !seenUrls.has(item.canonicalUrl)) {
-                if (item.canonicalUrl) seenUrls.add(item.canonicalUrl);
-                if (getCardRenderableText(item).length >= 120) {
-                  candidatePool.push(item);
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (candidatePool.length === 0) {
-        const uncuratedVisible = renderedInfiniteItems.filter(i => !i.aiAssisted).slice(0, 6);
-        candidatePool.push(...uncuratedVisible);
-      }
-
-      if (candidatePool.length === 0) {
-        const finishedOp = defaultFeedOperationManager.completeOperation({
-          candidateCount: 0,
-          insertedCount: 0,
-          updatedCount: 0,
-          status: 'completed'
-        });
-        setLastOperationResult(finishedOp);
-        setSimToast('Keine neuen Kandidaten gefunden. Alle verfügbaren Beiträge sind bereits geprüft.');
-        setTimeout(() => setSimToast(null), 3000);
-        return;
-      }
-
-      // Diversity enforcement: maximum 2 items per sourceDomain / publisher
-      const domainCounts = new Map<string, number>();
-      const diverseCandidates: FeedItem[] = [];
-      for (const item of candidatePool) {
-        let domain = item.sourceReferences?.[0]?.publisher || 'unknown';
-        const urlString = item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl;
-        if (urlString) {
-          try {
-            domain = new URL(urlString).hostname || domain;
-          } catch {}
-        }
-        const currentCount = domainCounts.get(domain) || 0;
-        if (currentCount < 2) {
-          domainCounts.set(domain, currentCount + 1);
-          diverseCandidates.push(item);
-        }
-      }
-      const poolToEnrich = diverseCandidates.length >= 4 ? diverseCandidates : candidatePool;
-      const candidatesToEnrich = poolToEnrich.slice(0, 8);
-
-      setCurationStage(`2/3: ${candidatesToEnrich.length} Fundstücke auf Relevanz & Substanz prüfen …`);
-      const enriched = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(candidatesToEnrich, creds);
-      const telemetry = defaultBatchEditionEnricher.getLastBatchReport();
-
-      // Verify that every item satisfies the curated body contract
-      const filteredSubstantive = enriched.filter(satisfiesCuratedBodyContract);
-      const itemsToPresent = filteredSubstantive.length >= 3 ? filteredSubstantive : (enriched.length > 0 ? enriched : candidatesToEnrich.slice(0, 5));
+      const itemsToPresent = discoveryResult.items;
 
       if (isChannelCurating) {
         for (const item of itemsToPresent) {
@@ -1216,19 +1123,26 @@ export const FeedScreen: React.FC = () => {
         }
       }
 
-      setCurationStage(`3/3: Deine persönliche Auswahl (${itemsToPresent.length} Beiträge) zusammenstellen …`);
-
-      // Always persist items to feedRepository so they permanently exist in this channel
-      feedRepository.addItems(itemsToPresent);
+      setCurationStage(`3/3: Deine persönliche Auswahl (${itemsToPresent.length} neue Beiträge) zusammenstellen …`);
 
       if (feedRepository.executeContentOperation) {
         const opResult = await feedRepository.executeContentOperation('ai_curation', itemsToPresent, {
           pinInserted: true,
           pinUpdated: false,
-          telemetry,
-          operationId
+          operationId,
+          telemetry: {
+            candidateCount: discoveryResult.fetchedCount,
+            approvedCount: discoveryResult.insertedCount,
+            rejectedCount: discoveryResult.duplicateCount,
+            usedAI: discoveryResult.usedAI,
+            usedFallback: false,
+            cacheHits: 0,
+            modelUsed: discoveryResult.modelUsed
+          }
         });
         setLastOperationResult(opResult);
+      } else {
+        feedRepository.addItems(itemsToPresent);
       }
 
       if (itemsToPresent.length > 0) {

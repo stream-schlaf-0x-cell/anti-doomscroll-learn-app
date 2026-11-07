@@ -147,18 +147,29 @@ export class LocalFeedRepository implements IFeedRepository {
         }
       }
 
-      // 3. Initial Curated Bootstrap Fixtures
-      for (const item of INITIAL_FIXTURES) {
-        if (!map.has(item.id)) {
-          map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
+      // 3. Initial Curated Bootstrap Fixtures (only inject if real pool < 30)
+      if (map.size < 30) {
+        for (const item of INITIAL_FIXTURES) {
+          if (!map.has(item.id)) {
+            map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
+          }
         }
       }
-      this.items = Array.from(map.values());
+      this.items = this.purgeDemoFixturesIfSufficient(Array.from(map.values()));
     }
 
     this.articleIndex.buildIndex(this.items);
     this.relatedService.setIndex(this.articleIndex);
     this.initDynamicItems();
+  }
+
+  private purgeDemoFixturesIfSufficient(items: FeedItem[]): FeedItem[] {
+    const demoIds = new Set(INITIAL_FIXTURES.map(f => f.id));
+    const realItems = items.filter(i => !demoIds.has(i.id));
+    if (realItems.length >= 30) {
+      return realItems;
+    }
+    return items;
   }
 
   private async initDynamicItems(): Promise<void> {
@@ -175,7 +186,7 @@ export class LocalFeedRepository implements IFeedRepository {
           for (const dyn of this.dynamicItems) {
             map.set(dyn.id, dyn);
           }
-          this.items = Array.from(map.values());
+          this.items = this.purgeDemoFixturesIfSufficient(Array.from(map.values()));
           this.articleIndex.buildIndex(this.items);
           this.relatedService.setIndex(this.articleIndex);
         }
@@ -227,7 +238,7 @@ export class LocalFeedRepository implements IFeedRepository {
       }
     }
     this.dynamicItems = survivingDynamic;
-    this.items = Array.from(map.values());
+    this.items = this.purgeDemoFixturesIfSufficient(Array.from(map.values()));
     this.articleIndex.buildIndex(this.items);
     this.relatedService.setIndex(this.articleIndex);
   }
@@ -239,7 +250,7 @@ export class LocalFeedRepository implements IFeedRepository {
       pinInserted: false
     });
 
-    this.items = mergeResult.mergedItems;
+    this.items = this.purgeDemoFixturesIfSufficient(mergeResult.mergedItems);
     this.rememberMergedChanges(mergeResult.operationResult);
     this.articleIndex.buildIndex(this.items);
     this.relatedService.setIndex(this.articleIndex);
@@ -397,7 +408,7 @@ export class LocalFeedRepository implements IFeedRepository {
       telemetry: defaultBatchEditionEnricher.getLastBatchReport()
     });
 
-    this.items = mergeResult.mergedItems;
+    this.items = this.purgeDemoFixturesIfSufficient(mergeResult.mergedItems);
     this.rememberMergedChanges(mergeResult.operationResult);
     this.articleIndex.buildIndex(this.items);
     this.relatedService.setIndex(this.articleIndex);
@@ -423,7 +434,7 @@ export class LocalFeedRepository implements IFeedRepository {
       telemetry: options?.telemetry
     });
 
-    this.items = mergeResult.mergedItems;
+    this.items = this.purgeDemoFixturesIfSufficient(mergeResult.mergedItems);
     this.rememberMergedChanges(mergeResult.operationResult);
     this.articleIndex.buildIndex(this.items);
     this.relatedService.setIndex(this.articleIndex);

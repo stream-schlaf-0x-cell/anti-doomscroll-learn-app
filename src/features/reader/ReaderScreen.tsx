@@ -33,7 +33,6 @@ import {
 import { ReadingTimeBadge } from '../../ui/components/ReadingTimeBadge';
 import { DeepeningCard } from '../../ui/components/DeepeningCard';
 import { typography, radius, spacing } from '../../ui/theme';
-import { LinkPreviewModal } from '../../ui/components/LinkPreviewModal';
 import { optimizeImageUrl } from '../../core/utils/imageQuality';
 import { RaindropService } from '../../core/raindrop/raindropService';
 import { copyToClipboard } from '../../core/export/craftExport';
@@ -76,7 +75,7 @@ export const ReaderScreen: React.FC = () => {
   const [isRaindropSaved, setIsRaindropSaved] = useState<boolean>(false);
   const [craftCopied, setCraftCopied] = useState<boolean>(false);
   const [layoutHeight, setLayoutHeight] = useState<number>(0);
-  const [previewTarget, setPreviewTarget] = useState<{ visible: boolean; url: string; title: string; publisher: string } | null>(null);
+  const [showExtraTools, setShowExtraTools] = useState<boolean>(false);
   const [noteText, setNoteText] = useState<string>('');
   const [selectedTag, setSelectedTag] = useState<'einwand' | 'unterricht' | 'these' | 'notiz'>('einwand');
   const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
@@ -340,13 +339,12 @@ export const ReaderScreen: React.FC = () => {
     }
   };
 
-  const handleOpenSource = async (url: string) => {
+  const handleOpenSource = (url: string) => {
     try {
-      const supported = await Linking.canOpenURL(url);
-      if (supported) {
-        await Linking.openURL(url);
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.open) {
+        window.open(url, '_blank', 'noopener,noreferrer');
       } else {
-        console.warn('Cannot open url:', url);
+        void Linking.openURL(url).catch(() => {});
       }
     } catch (e) {
       console.warn('Error opening external link:', e);
@@ -1027,6 +1025,22 @@ export const ReaderScreen: React.FC = () => {
                 </View>
               </View>
 
+              {/* PRIMARY PROMINENT BUTTON: Direkt im Header */}
+              {originalUrl && (
+                <TouchableOpacity
+                  onPress={() => handleOpenSource(originalUrl)}
+                  style={[styles.primaryDirectSourceBtn, { backgroundColor: colors.accent, marginVertical: 14 }]}
+                  activeOpacity={0.85}
+                  accessibilityRole="link"
+                  accessibilityLabel="Originalartikel in Safari / Firefox öffnen"
+                >
+                  <Ionicons name="globe-outline" size={17} color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.primaryDirectSourceBtnText}>
+                    🌐 Originalartikel in Safari / Firefox öffnen ↗
+                  </Text>
+                </TouchableOpacity>
+              )}
+
               {/* Museum-Grade Artwork Showcase OR Authentic Article Image */}
               {(selectedArticle.format === 'art_showcase' || !!selectedArticle.artMeta) &&
               (selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl) ? (
@@ -1156,22 +1170,6 @@ export const ReaderScreen: React.FC = () => {
                     </View>
                   </View>
                 )
-              )}
-
-              {/* PRIMARY ACTION: Direkt unter dem Bild platziert für sofortigen Volltext-Zugriff */}
-              {originalUrl && (
-                <TouchableOpacity
-                  onPress={() => handleOpenSource(originalUrl)}
-                  style={[styles.primaryDirectSourceBtn, { backgroundColor: colors.accent }]}
-                  activeOpacity={0.85}
-                  accessibilityRole="link"
-                  accessibilityLabel={`Originalbeitrag bei ${publisherDisplay} im Volltext öffnen`}
-                >
-                  <Ionicons name="open-outline" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
-                  <Text style={styles.primaryDirectSourceBtnText}>
-                    Originalbeitrag bei {publisherDisplay} im Volltext öffnen ↗
-                  </Text>
-                </TouchableOpacity>
               )}
 
               {/* ELEGANTER ABSTRACT (REDAKTIONELLES ATMEN-ABSTRACT OHNE EMOJI-ÜBERLADUNG) */}
@@ -1328,7 +1326,66 @@ export const ReaderScreen: React.FC = () => {
                 </>
               )}
 
-              {/* MUSEUM-GRADE KURATOREN-PLAKETTE: Dezent nach unten in den Archiv-Kontext versetzt */}
+              {/* ZWEITER DIREKTLINK AM TEXTENDE */}
+              {originalUrl && (
+                <TouchableOpacity
+                  onPress={() => handleOpenSource(originalUrl)}
+                  style={[
+                    styles.primaryDirectSourceBtn,
+                    {
+                      backgroundColor: colors.surfaceSecondary,
+                      borderWidth: 1.5,
+                      borderColor: colors.accent,
+                      marginVertical: 16
+                    }
+                  ]}
+                  activeOpacity={0.85}
+                  accessibilityRole="link"
+                  accessibilityLabel={`Vollständigen Originalartikel bei ${publisherDisplay} lesen`}
+                >
+                  <Ionicons name="globe-outline" size={17} color={colors.accent} style={{ marginRight: 8 }} />
+                  <Text style={[styles.primaryDirectSourceBtnText, { color: colors.accent, fontWeight: '700' }]}>
+                    🌐 Vollständigen Originalartikel bei {publisherDisplay} lesen ↗
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* 5. INTERAKTIVER WISSEN-CHECK / REFLEXIONS-QUIZ (IMMER OFFEN DIREKT UNTER DEM ARTIKEL) */}
+              <View style={{ marginVertical: spacing.md }}>
+                <QuizCheckpointCard
+                  questions={[aiQuizOverride || activeArticle.quiz || generateQuizForArticle(activeArticle)]}
+                  title="Wissen testen: Kernverständnis"
+                  subtitle="Überprüfe deine Erkenntnis aus diesem Beitrag mit einer schnellen Frage"
+                />
+              </View>
+
+              {/* 6. WEITERE WERKZEUGE & PERSPEKTIVEN (COLLAPSED BY DEFAULT) */}
+              <TouchableOpacity
+                onPress={() => setShowExtraTools((prev) => !prev)}
+                style={[
+                  styles.extraToolsToggleBtn,
+                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                ]}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Weitere Werkzeuge und Perspektiven ein- oder ausklappen"
+              >
+                <Ionicons
+                  name={showExtraTools ? 'chevron-up-circle-outline' : 'add-circle-outline'}
+                  size={18}
+                  color={colors.accent}
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={[styles.extraToolsToggleText, { color: colors.textPrimary }]}>
+                  {showExtraTools
+                    ? '➖ Weitere Werkzeuge & Perspektiven einklappen'
+                    : '➕ Weitere Werkzeuge & Perspektiven (Salon, Vertiefung, Herkunft)'}
+                </Text>
+              </TouchableOpacity>
+
+              {showExtraTools && (
+                <View style={styles.extraToolsContent}>
+                  {/* MUSEUM-GRADE KURATOREN-PLAKETTE: Dezent nach unten in den Archiv-Kontext versetzt */}
               {(selectedArticle.format === 'art_showcase' || !!selectedArticle.artMeta) && selectedArticle.artMeta && (
                 <View style={[styles.readerArtCuratorialPlaqueStandalone, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                   <View style={styles.readerArtPlaqueHeader}>
@@ -1529,16 +1586,6 @@ export const ReaderScreen: React.FC = () => {
                 )}
               </View>
 
-              {/* Wissen testen / Bloomscrolling Quiz Checkpoint */}
-              {isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
-                <View style={{ marginBottom: spacing.lg }}>
-                  <QuizCheckpointCard
-                    questions={[aiQuizOverride || activeArticle.quiz || generateQuizForArticle(activeArticle)]}
-                    title="Wissen testen: Kernverständnis"
-                    subtitle="Überprüfe deine Erkenntnis aus diesem Beitrag mit einer schnellen Frage"
-                  />
-                </View>
-              )}
 
               {/* Socratic Sparring Options */}
               {isFeatureEnabled(profile, 'socratic_sparring') && (
@@ -1611,28 +1658,14 @@ export const ReaderScreen: React.FC = () => {
 
                     <View style={[styles.sourceCardActions, { borderTopColor: colors.borderSubtle }]}>
                       <TouchableOpacity
-                        onPress={() =>
-                          setPreviewTarget({
-                            visible: true,
-                            url: ref.originalUrl,
-                            title: ref.title,
-                            publisher: ref.publisher
-                          })
-                        }
-                        style={[styles.sourcePreviewActionBtn, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
-                        activeOpacity={0.8}
-                      >
-                        <Ionicons name="eye-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
-                        <Text style={[styles.sourcePreviewActionBtnText, { color: colors.textPrimary }]}>Schnell-Vorschau</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
                         onPress={() => handleOpenSource(ref.originalUrl)}
-                        style={[styles.sourceOpenActionBtn, { backgroundColor: colors.accent }]}
+                        style={[styles.sourceOpenActionBtn, { backgroundColor: colors.accent, flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }]}
                         activeOpacity={0.85}
                         accessibilityRole="link"
+                        accessibilityLabel={`Originalquelle bei ${ref.publisher} im Browser öffnen`}
                       >
-                        <Text style={styles.sourceOpenActionBtnText}>Originalquelle öffnen ↗</Text>
+                        <Ionicons name="open-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                        <Text style={styles.sourceOpenActionBtnText}>Originalquelle in Safari / Firefox öffnen ↗</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1780,6 +1813,15 @@ export const ReaderScreen: React.FC = () => {
               </View>
             </View>
           </View>
+
+                    {/* Mobile Notes & Craft Section inside Collapsed Tools */}
+                    {!isDesktop && (
+                      <View style={styles.mobileNotesContainer}>
+                        {renderNotesAndCraftSidebar()}
+                      </View>
+                    )}
+                  </View>
+                )}
             </View>
 
             {/* Desktop Sticky Right Sidebar */}
@@ -1789,28 +1831,8 @@ export const ReaderScreen: React.FC = () => {
               </View>
             )}
           </View>
-
-          {/* Mobile Notes & Craft Section below Article */}
-          {!isDesktop && (
-            <View style={styles.mobileNotesContainer}>
-              {renderNotesAndCraftSidebar()}
-            </View>
-          )}
         </View>
       </ScrollView>
-
-      {/* In-App Quick Source Preview Modal */}
-      {previewTarget && (
-        <LinkPreviewModal
-          visible={previewTarget.visible}
-          onClose={() => setPreviewTarget(null)}
-          url={previewTarget.url}
-          title={previewTarget.title}
-          publisher={previewTarget.publisher}
-          snippet={selectedArticle?.feedText || selectedArticle?.subtitle}
-          estimatedMinutes={selectedArticle?.estimatedReadingMinutes}
-        />
-      )}
 
       {/* Lightbox Modal for Authentic Article Images and Museum Artworks */}
       {showReaderImageLightbox && (selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl) && (
@@ -2284,6 +2306,23 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '700'
+  },
+  extraToolsToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginVertical: spacing.md
+  },
+  extraToolsToggleText: {
+    fontSize: typography.sizes.body,
+    fontWeight: '700'
+  },
+  extraToolsContent: {
+    marginTop: spacing.sm
   },
   provenanceFooter: {
     marginTop: spacing.md,

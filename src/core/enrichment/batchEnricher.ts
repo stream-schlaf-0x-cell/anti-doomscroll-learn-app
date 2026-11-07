@@ -392,8 +392,8 @@ export function stripPublisherBoilerplate(raw: string, title?: string): string {
 }
 
 /**
- * Synthesizes a substantive 2-3 sentence conceptual summary when an article contains only
- * a podcast teaser stub or transcript link, rather than an informative body text.
+ * Resolves an authentic summary or subtitle when an item has podcast/video boilerplate.
+ * Never invents generic philosophical filler templates!
  */
 export function synthesizeConceptualPodcastSummary(
   title: string,
@@ -413,19 +413,11 @@ export function synthesizeConceptualPodcastSummary(
   if (topic === 'german_didactics') {
     return `In diesem didaktischen Fachbeitrag zu „${cleanTitle}“ steht die Weiterentwicklung von Aufgabenkultur, formativem Feedback und authentischen Leistungsnachweisen im Mittelpunkt. Anhand konkreter Unterrichtsbeispiele wird reflektiert, wie Lernende Wissen aktiv anwenden und nachhaltiges Verstehen statt bloßer Reproduktion demonstrieren können.`;
   }
-  if (topic === 'philosophy_ethics') {
-    return `Dieser philosophische Diskurs zu „${cleanTitle}“ widmet sich den ethischen und erkenntnistheoretischen Grundfragen des Themas. Er hinterfragt gängige Prämissen und lädt zu einer differenzierten Betrachtung widerstreitender Wert- und Denkmuster ein.`;
-  }
-  if (topic === 'contemplation_mind') {
-    return `Dieser Beitrag zu „${cleanTitle}“ verbindet kontemplative Praxis und achtsame Selbstwahrnehmung mit aktuellen Erkenntnissen der Kognitionsforschung. Im Fokus steht die Kultivierung innerer Klarheit und mentaler Souveränität im Alltag.`;
-  }
-  if (topic === 'ai_apple' || topic === 'science_society') {
-    return `Diese fundierte Analyse zu „${cleanTitle}“ beleuchtet die gesellschaftlichen und technologischen Auswirkungen aktueller Entwicklungen. Sie hinterfragt systemische Risiken und erörtert Wege zu digitaler Mündigkeit und epistemischer Souveränität.`;
-  }
-  if (sub && sub.length >= 60 && !PODCAST_OR_VIDEO_INTRO_REGEX.test(sub)) {
+
+  if (sub && sub.length >= 40 && !PODCAST_OR_VIDEO_INTRO_REGEX.test(sub)) {
     return sub;
   }
-  return `Diese thematische Vertiefung analysiert die Kernfragen rund um „${cleanTitle}“. Sie bietet eine fundierte Einordnung der zugrundeliegenden Debatten und regt zur reflexiven Auseinandersetzung an.`;
+  return '';
 }
 
 /**
@@ -629,17 +621,19 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     item.space === 'c/memes' ||
     item.space === 'c/kunst_galerie';
 
-  // Short podcast / video teaser stub guard:
+  // Short podcast / video teaser stub guard (strip boilerplate, never inject fake philosophical filler):
   const isPodcastOrVideoStub =
     PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedFeedText) ||
-    ((cleanedFeedText.length < 140 || !cleanedFeedText) &&
-      (/\b(podcast|transcript|interview|episode|guardian|longread)\b/i.test(`${title} ${item.subtitle || ''} ${item.feedText || ''}`))) ||
-    (cleanedFeedText.length < 140 && !isVisualArtOrMeme);
+    ((!cleanedFeedText || cleanedFeedText.length < 40) &&
+      (/\b(podcast|transcript|interview|episode|guardian|longread)\b/i.test(`${title} ${item.subtitle || ''} ${item.feedText || ''}`)));
 
   if (isPodcastOrVideoStub) {
-    cleanedFeedText = synthesizeConceptualPodcastSummary(cleanedTitle, correctedTopic, item.subtitle);
-    if (!cleanedBody || cleanedBody.length < 140 || PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedBody)) {
-      cleanedBody = cleanedFeedText;
+    const subSummary = synthesizeConceptualPodcastSummary(cleanedTitle, correctedTopic, item.subtitle);
+    if (subSummary) {
+      cleanedFeedText = subSummary;
+      if (!cleanedBody || cleanedBody.length < 40 || PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedBody)) {
+        cleanedBody = cleanedFeedText;
+      }
     }
   }
 

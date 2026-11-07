@@ -15,7 +15,7 @@ import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 import { FeedItem } from '../domain/types';
 
-export const CURRENT_DATA_MIGRATION_VERSION = '2026-11-04-v4.1-bloomscroll-polish';
+export const CURRENT_DATA_MIGRATION_VERSION = '2026-11-07-v4.3-rich-feed-clean-reader';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
@@ -192,6 +192,38 @@ export async function runInPlaceDataMigration(
   for (const [id, item] of candidateMap.entries()) {
     const isUserProtected = protectedUserItemIds.has(id);
 
+    // WP 2: Purge or repair generic slop templates ("widmet sich den ethischen und erkenntnistheoretischen Grundfragen" etc.)
+    const slopRegex = /widmet sich den ethischen und erkenntnistheoretischen Grundfragen|Dieser philosophische Diskurs zu/i;
+    if (slopRegex.test(item.feedText || '') || slopRegex.test(item.body || '') || slopRegex.test(item.keyInsight || '') || slopRegex.test(item.subtitle || '')) {
+      let realText = '';
+      if (item.articleBody && !slopRegex.test(item.articleBody) && item.articleBody.trim().length >= 40) {
+        realText = item.articleBody.trim();
+      } else if (item.subtitle && !slopRegex.test(item.subtitle) && item.subtitle.trim().length >= 40) {
+        realText = item.subtitle.trim();
+      } else {
+        const strippedBody = (item.body || '')
+          .replace(/Dieser philosophische Diskurs zu[^\.\!\?]*[\.\!\?]/gi, '')
+          .replace(/Er hinterfragt gängige Prämissen[^\.\!\?]*[\.\!\?]/gi, '')
+          .trim();
+        if (strippedBody.length >= 40) {
+          realText = strippedBody;
+        }
+      }
+      if (realText.length >= 40) {
+        item.feedText = realText.slice(0, 480);
+        item.body = realText;
+        if (slopRegex.test(item.keyInsight || '')) {
+          item.keyInsight = item.subtitle && !slopRegex.test(item.subtitle) ? item.subtitle : realText.slice(0, 200);
+        }
+        if (slopRegex.test(item.subtitle || '')) {
+          item.subtitle = realText.slice(0, 150);
+        }
+      } else if (!isUserProtected) {
+        purgedCount++;
+        continue;
+      }
+    }
+
     if (!isUserProtected) {
       if (!isSupportedFeedLanguage(item.title || '', `${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`)) {
         purgedCount++;
@@ -260,6 +292,7 @@ export async function runInPlaceDataMigration(
   // 5. Save upgraded articles to PersistentArticleStore, storage and repository
   try {
     await storage.setItem('@atem:persistent_articles:v1', JSON.stringify(finalItems));
+    await storage.setItem('@atem:feed_items:v1', JSON.stringify(finalItems));
     await defaultPersistentArticleStore.saveArticles(finalItems);
   } catch {
     // Non-fatal

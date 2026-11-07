@@ -21,7 +21,6 @@ import {
 import { getCardRenderableText } from '../../core/enrichment/batchEnricher';
 import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing } from '../theme';
-import { LinkPreviewModal } from './LinkPreviewModal';
 import { MusicTrackCard } from './MusicTrackCard';
 import { CURATED_SOUND_MASTERS, MusicTrackItem } from '../../core/music/musicRecommendationService';
 import {
@@ -161,7 +160,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({
   const [imageError, setImageError] = useState(false);
   const [imageRejected, setImageRejected] = useState(false);
   const [usedFallbackUrl, setUsedFallbackUrl] = useState(false);
-  const [showLinkPreview, setShowLinkPreview] = useState(false);
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const [naturalAspectRatio, setNaturalAspectRatio] = useState<number | null>(null);
 
@@ -195,10 +193,10 @@ export const FeedCard: React.FC<FeedCardProps> = ({
 
   const handleOpenOriginalSource = () => {
     if (!originalUrl) return;
-    if (typeof window !== 'undefined' && window.open) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.open) {
       window.open(originalUrl, '_blank', 'noopener,noreferrer');
     } else {
-      Linking.openURL(originalUrl);
+      void Linking.openURL(originalUrl).catch(() => {});
     }
   };
 
@@ -324,6 +322,19 @@ export const FeedCard: React.FC<FeedCardProps> = ({
     const prefixLen = Math.min(36, cleanSub.length);
     return cleanFeed.startsWith(cleanSub.slice(0, prefixLen));
   }, [item.subtitle, item.title, displayFeedText]);
+
+  // Essence + Key Takeaway Highlight: Distinct keyInsight that does not duplicate title or feedText
+  const distinctKeyInsight = useMemo(() => {
+    if (!item.keyInsight || typeof item.keyInsight !== 'string') return null;
+    const cleanKey = item.keyInsight.trim();
+    if (cleanKey.length < 15) return null;
+    const normKey = cleanKey.toLowerCase();
+    const normTitle = (item.title || '').toLowerCase();
+    const normFeed = (displayFeedText || '').toLowerCase();
+    if (normTitle.includes(normKey) || normKey.includes(normTitle)) return null;
+    if (normFeed.includes(normKey) || (normKey.length > 25 && normFeed.slice(0, 80).includes(normKey.slice(0, 30)))) return null;
+    return cleanKey;
+  }, [item.keyInsight, item.title, displayFeedText]);
 
   // Hide boilerplate feedText when it merely repeats HN metadata or comic alt-text punchline
   const shouldShowBodyText = Boolean(displayFeedText);
@@ -604,6 +615,25 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         </TouchableOpacity>
       )}
 
+      {/* Essence + Key Takeaway Highlight Bar */}
+      {distinctKeyInsight && (
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={handleCardPress}
+          style={[
+            styles.keyInsightCallout,
+            { backgroundColor: colors.accentSubtle, borderLeftWidth: 3, borderLeftColor: colors.accent }
+          ]}
+        >
+          <Text style={[styles.keyInsightLabel, { color: colors.accent }]}>
+            💡 Kernaussage
+          </Text>
+          <Text style={[styles.keyInsightText, { color: colors.textPrimary }]} numberOfLines={2}>
+            {distinctKeyInsight}
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {/* Special Format Compact Callout: Comic Alt-Text Bonus Punchline / Book Thesis / Sound Track */}
       {item.memeMeta && (
         <View style={[styles.compactCallout, { backgroundColor: colors.surfaceSecondary, borderLeftColor: spaceColor }]}>
@@ -694,7 +724,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({
         {originalUrl ? (
           <TouchableOpacity
             onPress={handleOpenOriginalSource}
-            onLongPress={() => setShowLinkPreview(true)}
             style={[styles.domainChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
             accessibilityRole="link"
             accessibilityLabel="Originalquelle im Browser öffnen"
@@ -761,20 +790,6 @@ export const FeedCard: React.FC<FeedCardProps> = ({
           )}
         </View>
       </View>
-
-      {/* Quick Link Preview Modal (on long-press of source link) */}
-      {originalUrl && (
-        <LinkPreviewModal
-          visible={showLinkPreview}
-          onClose={() => setShowLinkPreview(false)}
-          url={originalUrl}
-          title={item.sourceReferences[0]?.title || item.title}
-          publisher={publisherName}
-          domain={item.sourceDomain}
-          snippet={displayFeedText.slice(0, 240)}
-          estimatedMinutes={item.estimatedReadingMinutes}
-        />
-      )}
 
       {/* Fullscreen Comic & Artwork Zoom Lightbox */}
       {Boolean(activeVisualUri) && (
@@ -1224,6 +1239,22 @@ const styles = StyleSheet.create({
   quick20sFeedText: {
     fontSize: 15,
     lineHeight: 23.5
+  },
+  keyInsightCallout: {
+    borderRadius: radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginBottom: 8
+  },
+  keyInsightLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 2
+  },
+  keyInsightText: {
+    fontSize: 13,
+    lineHeight: 18.5,
+    fontWeight: '500'
   },
   compactCallout: {
     borderLeftWidth: 3,

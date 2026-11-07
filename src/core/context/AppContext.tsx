@@ -850,23 +850,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch {
         // Fallback
       }
+
+      // Execute genuine multi-lane live network harvest across rotating sources
       try {
-        const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
-        const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+        const existingIds = new Set((feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id));
         const seenIds = await seenImpressionsService.getSeenIds();
-        const safeLive = curatedLive.map(item => {
-          if (item.isStaticFallback || seenIds.has(item.id)) {
-            const { pinnedManualRunAt, ...rest } = item;
-            return rest;
-          }
-          return item;
+        const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
+          existingIds,
+          seenIds,
+          targetNewCount: 18
         });
-        if (safeLive.length > 0 && (feedRepository as any).addItems) {
-          (feedRepository as any).addItems(safeLive);
+        if (discoveryResult.items.length > 0 && (feedRepository as any).addItems) {
+          (feedRepository as any).addItems(discoveryResult.items);
         }
       } catch {
-        // Fallback
+        // Fallback to continuous live news
+        try {
+          const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
+          const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+          const seenIds = await seenImpressionsService.getSeenIds();
+          const safeLive = curatedLive.map(item => {
+            if (item.isStaticFallback || seenIds.has(item.id)) {
+              const { pinnedManualRunAt, ...rest } = item;
+              return rest;
+            }
+            return item;
+          });
+          if (safeLive.length > 0 && (feedRepository as any).addItems) {
+            (feedRepository as any).addItems(safeLive);
+          }
+        } catch {}
       }
+
       await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
     } catch (err) {
       console.warn('Feed-Aktualisierung fehlgeschlagen:', err);
@@ -889,21 +904,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     try {
-      const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
-      const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+      const existingIds = new Set((feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id));
       const seenIds = await seenImpressionsService.getSeenIds();
-      const safeLive = curatedLive.map(item => {
-        if (item.isStaticFallback || seenIds.has(item.id)) {
-          const { pinnedManualRunAt, ...rest } = item;
-          return rest;
-        }
-        return item;
+      const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
+        existingIds,
+        seenIds,
+        targetNewCount: 18
       });
-      if (safeLive.length > 0 && (feedRepository as any).addItems) {
-        (feedRepository as any).addItems(safeLive);
+      if (discoveryResult.items.length > 0 && (feedRepository as any).addItems) {
+        (feedRepository as any).addItems(discoveryResult.items);
       }
     } catch (err) {
-      console.warn('Live News Fetch fallback:', err);
+      console.warn('Live multi-lane harvest fallback:', err);
+      try {
+        const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
+        const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+        const seenIds = await seenImpressionsService.getSeenIds();
+        const safeLive = curatedLive.map(item => {
+          if (item.isStaticFallback || seenIds.has(item.id)) {
+            const { pinnedManualRunAt, ...rest } = item;
+            return rest;
+          }
+          return item;
+        });
+        if (safeLive.length > 0 && (feedRepository as any).addItems) {
+          (feedRepository as any).addItems(safeLive);
+        }
+      } catch {}
     }
 
     await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
