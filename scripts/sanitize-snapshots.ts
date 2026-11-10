@@ -1,9 +1,15 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { FeedItem, FeedItemSchema } from '../src/core/domain/types';
+import { FeedItem, FeedItemSchema, TopicTag } from '../src/core/domain/types';
+import { REAL_KNOWLEDGE_VAULT } from '../src/core/data/realKnowledgeVault';
 import { ZERO_WIDTH_REGEX, sanitizeImageUrl } from '../src/core/ingestion/rssParser';
 import { stripBoilerplate, splitSentencesAware, isSubstantialSubtitle } from '../src/core/ingestion/normalizer';
-import { sanitizeCuratedFeedItem, stripSyntheticFillerSentences, isSupportedFeedLanguage } from '../src/core/enrichment/batchEnricher';
+import {
+  sanitizeCuratedFeedItem,
+  stripSyntheticFillerSentences,
+  isSupportedFeedLanguage,
+  satisfiesDefaultCuratedStandard
+} from '../src/core/enrichment/batchEnricher';
 
 const PUBLIC_SNAPSHOT_PATH = path.resolve(__dirname, '../public/feed-snapshot.json');
 const PIPELINE_OUTPUT_PATH = path.resolve(__dirname, '../src/core/data/pipeline-output.json');
@@ -25,88 +31,195 @@ function deepCleanZeroWidth<T>(obj: T): T {
   return obj;
 }
 
-function sanitizeItem(rawItem: FeedItem): FeedItem {
-  const item = deepCleanZeroWidth(rawItem);
-  const cleanTitle = (item.title || '').replace(ZERO_WIDTH_REGEX, '').trim();
-  const rawBody = (item.articleBody || item.body || item.feedText || '').replace(ZERO_WIDTH_REGEX, '').trim();
-  const cleanBody = stripSyntheticFillerSentences(stripBoilerplate(rawBody));
+function sanitizeItem(rawItem: FeedItem): FeedItem | null {
+  try {
+    const item = deepCleanZeroWidth(rawItem);
+    const cleanTitle = (item.title || '').replace(ZERO_WIDTH_REGEX, '').trim();
+    if (!cleanTitle) return null;
 
-  let subtitle = (item.subtitle || '').replace(ZERO_WIDTH_REGEX, '').trim();
-  subtitle = stripSyntheticFillerSentences(stripBoilerplate(subtitle));
+    const rawBody = (item.articleBody || item.body || item.feedText || '').replace(ZERO_WIDTH_REGEX, '').trim();
+    const cleanBody = stripSyntheticFillerSentences(stripBoilerplate(rawBody));
 
-  let feedText = (item.feedText || '').replace(ZERO_WIDTH_REGEX, '').trim();
-  feedText = stripSyntheticFillerSentences(stripBoilerplate(feedText));
+    let subtitle = (item.subtitle || '').replace(ZERO_WIDTH_REGEX, '').trim();
+    subtitle = stripSyntheticFillerSentences(stripBoilerplate(subtitle));
 
-  // Subtitle substance guard
-  if (!isSubstantialSubtitle(subtitle)) {
-    const sentences = splitSentencesAware(cleanBody || feedText).filter(Boolean);
-    const substantialSentence = sentences.find(s => isSubstantialSubtitle(s));
-    if (substantialSentence) {
-      subtitle = substantialSentence.length > 150 ? substantialSentence.slice(0, 147).trim() + '…' : substantialSentence;
-    } else {
-      const publisher = item.sourceReferences?.[0]?.publisher || 'Redaktion';
-      subtitle = `${publisher} • Redaktion`;
+    let feedText = (item.feedText || '').replace(ZERO_WIDTH_REGEX, '').trim();
+    feedText = stripSyntheticFillerSentences(stripBoilerplate(feedText));
+
+    const isVisual =
+      item.format === 'art_showcase' ||
+      item.format === 'meme' ||
+      item.primaryTopic === 'memes_satire' ||
+      item.primaryTopic === 'art_aesthetics' ||
+      item.space === 'c/memes' ||
+      item.space === 'c/kunst_galerie';
+
+    if (!isVisual && feedText.length < 90) {
+      if (cleanBody.length >= 90) {
+        feedText = cleanBody.slice(0, 500);
+      } else {
+        return null;
+      }
     }
-  }
 
-  // Image sanitization
-  const cleanImg = sanitizeImageUrl(item.imageUrl);
+    // Subtitle substance guard
+    if (!isSubstantialSubtitle(subtitle)) {
+      const sentences = splitSentencesAware(cleanBody || feedText).filter(Boolean);
+      const substantialSentence = sentences.find(s => isSubstantialSubtitle(s));
+      if (substantialSentence) {
+        subtitle = substantialSentence.length > 150 ? substantialSentence.slice(0, 147).trim() + '…' : substantialSentence;
+      } else {
+        const publisher = item.sourceReferences?.[0]?.publisher || 'Redaktion';
+        subtitle = `${publisher} • Redaktion`;
+      }
+    }
 
-  // Clean sourceReferences
-  const sourceReferences = (item.sourceReferences || []).map(ref => ({
-    ...ref,
-    title: (ref.title || '').replace(ZERO_WIDTH_REGEX, '').trim()
-  }));
+    const cleanImg = sanitizeImageUrl(item.imageUrl);
+    const sourceReferences = (item.sourceReferences || []).map(ref => ({
+      ...ref,
+      title: (ref.title || '').replace(ZERO_WIDTH_REGEX, '').trim()
+    }));
 
-  const cleaned: FeedItem = {
-    ...item,
-    title: cleanTitle,
-    subtitle,
-    feedText: feedText || cleanBody.slice(0, 500),
-    articleBody: cleanBody || feedText,
-    body: cleanBody || feedText,
-    imageUrl: cleanImg,
-    hasAuthenticImage: Boolean(cleanImg),
-    sourceReferences
-  };
-
-  if (item.perspectiveDetails) {
-    cleaned.perspectiveDetails = {
-      ...item.perspectiveDetails,
-      claim: stripSyntheticFillerSentences(stripBoilerplate((item.perspectiveDetails.claim || '').replace(ZERO_WIDTH_REGEX, '') || subtitle))
+    const cleaned: FeedItem = {
+      ...item,
+      title: cleanTitle,
+      subtitle,
+      feedText: feedText || cleanBody.slice(0, 500),
+      articleBody: cleanBody || feedText,
+      body: cleanBody || feedText,
+      imageUrl: cleanImg,
+      hasAuthenticImage: Boolean(cleanImg),
+      sourceReferences
     };
+
+    if (item.perspectiveDetails) {
+      cleaned.perspectiveDetails = {
+        ...item.perspectiveDetails,
+        claim: stripSyntheticFillerSentences(stripBoilerplate((item.perspectiveDetails.claim || '').replace(ZERO_WIDTH_REGEX, '') || subtitle))
+      };
+    }
+
+    const fullyCurated = sanitizeCuratedFeedItem(cleaned);
+    return FeedItemSchema.parse(fullyCurated);
+  } catch {
+    return null;
+  }
+}
+
+function pruneAndBalanceItems(items: FeedItem[], targetLimit = 140): FeedItem[] {
+  const seenUrls = new Set<string>();
+  const seenTitles = new Set<string>();
+  const validItems: FeedItem[] = [];
+
+  for (const item of items) {
+    const normTitle = (item.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    const canonical = (item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '').trim().toLowerCase();
+
+    if (!normTitle || seenTitles.has(normTitle)) continue;
+    if (canonical && seenUrls.has(canonical)) continue;
+
+    if (!isSupportedFeedLanguage(item.title || '', `${item.subtitle || ''} ${item.feedText || ''}`)) {
+      continue;
+    }
+
+    seenTitles.add(normTitle);
+    if (canonical) seenUrls.add(canonical);
+    validItems.push(item);
   }
 
-  const fullyCurated = sanitizeCuratedFeedItem(cleaned);
-  return FeedItemSchema.parse(fullyCurated);
+  // Group by primary topic / space to ensure balanced representation
+  const byTopic = new Map<string, FeedItem[]>();
+  for (const item of validItems) {
+    const key = item.space || item.primaryTopic || 'general';
+    const list = byTopic.get(key) || [];
+    list.push(item);
+    byTopic.set(key, list);
+  }
+
+  // Sort within each topic by substance and recency
+  for (const [key, list] of byTopic.entries()) {
+    list.sort((a, b) => {
+      const aScore = (a.feedText?.length || 0) + (a.articleBody?.length || 0) * 0.2;
+      const bScore = (b.feedText?.length || 0) + (b.articleBody?.length || 0) * 0.2;
+      return bScore - aScore;
+    });
+  }
+
+  // Round-robin selection across topics up to targetLimit
+  const selected: FeedItem[] = [];
+  const keys = Array.from(byTopic.keys());
+  let addedInRound = true;
+  let roundIdx = 0;
+
+  while (selected.length < targetLimit && addedInRound) {
+    addedInRound = false;
+    for (const key of keys) {
+      if (selected.length >= targetLimit) break;
+      const list = byTopic.get(key);
+      if (list && roundIdx < list.length) {
+        selected.push(list[roundIdx]);
+        addedInRound = true;
+      }
+    }
+    roundIdx++;
+  }
+
+  return selected;
 }
 
 function runSanitization() {
-  console.log('Sanitizing snapshot files...');
+  console.log('Sanitizing and trimming snapshot files...');
 
-  if (fs.existsSync(PUBLIC_SNAPSHOT_PATH)) {
-    const raw = fs.readFileSync(PUBLIC_SNAPSHOT_PATH, 'utf8');
-    const data = JSON.parse(raw);
-    if (Array.isArray(data.items)) {
-      console.log(`Sanitizing public/feed-snapshot.json (${data.items.length} items)...`);
-      data.items = data.items
-        .map(sanitizeItem)
-        .filter((item: FeedItem) => isSupportedFeedLanguage(item.title || '', `${item.subtitle || ''} ${item.feedText || ''}`) && (item.feedText || '').trim().length > 0);
-      fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(data, null, 2), 'utf8');
-      console.log(`✓ public/feed-snapshot.json successfully sanitized (${data.items.length} clean items).`);
-    }
-  }
+  let pipelineCandidates: FeedItem[] = [];
 
   if (fs.existsSync(PIPELINE_OUTPUT_PATH)) {
     const raw = fs.readFileSync(PIPELINE_OUTPUT_PATH, 'utf8');
     const data = JSON.parse(raw);
-    if (Array.isArray(data)) {
-      console.log(`Sanitizing src/core/data/pipeline-output.json (${data.length} items)...`);
-      const sanitized = data.map(sanitizeItem);
-      fs.writeFileSync(PIPELINE_OUTPUT_PATH, JSON.stringify(sanitized, null, 2), 'utf8');
-      console.log('✓ src/core/data/pipeline-output.json successfully sanitized.');
+    const arr = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []);
+    for (const rawItem of arr) {
+      if (rawItem.id?.startsWith('vault-')) continue;
+      const sanitized = sanitizeItem(rawItem);
+      if (sanitized) pipelineCandidates.push(sanitized);
     }
   }
+
+  if (fs.existsSync(PUBLIC_SNAPSHOT_PATH)) {
+    const raw = fs.readFileSync(PUBLIC_SNAPSHOT_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    const arr = Array.isArray(data.items) ? data.items : [];
+    for (const rawItem of arr) {
+      if (rawItem.id?.startsWith('vault-')) continue;
+      const sanitized = sanitizeItem(rawItem);
+      if (sanitized) pipelineCandidates.push(sanitized);
+    }
+  }
+
+  // 1. Write clean pipeline output (120 articles, zero vault items, article at [0])
+  const prunedPipeline = pruneAndBalanceItems(pipelineCandidates, 120);
+  fs.writeFileSync(PIPELINE_OUTPUT_PATH, JSON.stringify(prunedPipeline, null, 2), 'utf8');
+  console.log(`✓ src/core/data/pipeline-output.json written (${prunedPipeline.length} items).`);
+
+  // 2. Build public snapshot: pipeline articles + 20 authentic museum artworks for c/kunst_galerie
+  const galleryArtworks: FeedItem[] = [];
+  for (const vaultItem of REAL_KNOWLEDGE_VAULT) {
+    if (vaultItem.space === 'c/kunst_galerie') {
+      const sanitized = sanitizeItem(vaultItem);
+      if (sanitized && galleryArtworks.length < 20) {
+        galleryArtworks.push(sanitized);
+      }
+    }
+  }
+
+  const snapshotItems: FeedItem[] = [...prunedPipeline, ...galleryArtworks];
+  const snapshotDate = new Date().toISOString().slice(0, 10);
+  const snapshotData = {
+    generatedAt: new Date().toISOString(),
+    snapshotDate,
+    itemCount: snapshotItems.length,
+    items: snapshotItems
+  };
+  fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(snapshotData, null, 2), 'utf8');
+  console.log(`✓ public/feed-snapshot.json written (${snapshotItems.length} items).`);
 }
 
 runSanitization();

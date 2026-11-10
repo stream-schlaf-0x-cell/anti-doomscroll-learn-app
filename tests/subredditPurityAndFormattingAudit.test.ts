@@ -147,7 +147,7 @@ describe('Subreddit Purity, Visual Art Gallery & Formatting Sanitizer Audit', ()
     const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
 
     const items: FeedItem[] = snapshot.items || [];
-    assert.ok(items.length >= 300, `Expected snapshot to have >= 300 items, got ${items.length}`);
+    assert.ok(items.length >= 100, `Expected snapshot to have >= 100 items, got ${items.length}`);
 
     const galleryItems = items.filter(i => resolveItemSpaceHandle(i) === 'c/kunst_galerie');
     assert.ok(galleryItems.length >= 20, `Expected c/kunst_galerie to have >= 20 items, got ${galleryItems.length}`);

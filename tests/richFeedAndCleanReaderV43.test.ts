@@ -87,6 +87,7 @@ test('Rich Feed Discovery, Slop Eradication, Hard Quarantine & Clean Reader Suit
 
     // Check migration version
     assert.ok(
+      CURRENT_DATA_MIGRATION_VERSION === '2026-11-10-v6.3-gordian-clean' ||
       CURRENT_DATA_MIGRATION_VERSION === '2026-11-10-v6.0-pure-ai-newsroom' ||
       CURRENT_DATA_MIGRATION_VERSION === '2026-11-07-v4.3-rich-feed-clean-reader',
       'Migration version must be updated to v4.3+ rich feed and clean reader'

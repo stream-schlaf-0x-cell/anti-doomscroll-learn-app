@@ -911,6 +911,7 @@ export function rankBloomScrollFeed(
       if (cand.primaryTopic === 'ai_apple') {
         if (topicCountIn6 >= 1) utility -= 1.1;
         if (topicCountIn30 >= 6) utility -= 3.0;
+        else if (topicCountIn30 < 2 && pos >= 8) utility += 0.55;
       }
       // Keep Wikipedia / Encyclopedia & Artworks balanced
       if (cand.sourceTrustLevel === 'encyclopedia' && pubCountIn30 >= 2) {

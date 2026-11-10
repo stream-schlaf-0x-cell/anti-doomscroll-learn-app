@@ -1,8 +1,6 @@
 import { appStorage, AtemStorage } from '../data/storage';
 import {
   AI_CONNECTION_TEST_TIMEOUT_MS,
-  AI_MAX_REQUEST_TIMEOUT_MS,
-  AI_REQUEST_TIMEOUT_MS,
   AiHttpError,
   boundedOutputTokens,
   fetchAiJson,
@@ -439,9 +437,10 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
     if (!proxySucceeded) {
       if (credentials.provider === 'gemini') {
         const isProTier = isProOrReasoningModelId(model);
-        const effectiveTimeoutMs = options.timeoutMs ?? (
-          isProTier ? AI_MAX_REQUEST_TIMEOUT_MS : AI_REQUEST_TIMEOUT_MS
-        );
+        const isConnectionTest = options.itemId === 'connection-test';
+        const candidateTimeoutMs = isConnectionTest
+          ? 8000
+          : (options.timeoutMs ? Math.min(options.timeoutMs, 18000) : (isProTier ? 18000 : 15000));
 
         const body = JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -455,18 +454,18 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
         const sendGemini = (chosenModel: string) => fetchAiJson(
           `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(chosenModel)}:generateContent`,
           { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey! }, body },
-          effectiveTimeoutMs
+          candidateTimeoutMs
         );
 
         // Pre-resolve codename aliases (e.g. gemini-4-argon, gemini-4-carbon, gemini-3.8-pro, gemini-3.8-flash)
         // against the user's live /v1beta/models list (cached in memory per API key).
         let primaryCandidate = sessionEffectiveGeminiModelBySelected.get(model) || model;
         if (!sessionEffectiveGeminiModelBySelected.has(model) && isGeminiCodenameAlias(model)) {
-          if (effectiveTimeoutMs >= 500) {
+          if (candidateTimeoutMs >= 500) {
             primaryCandidate = await resolveEffectiveGoogleApiModelId(
               model,
               apiKey,
-              Math.min(3000, effectiveTimeoutMs)
+              Math.min(3000, candidateTimeoutMs)
             );
           } else {
             primaryCandidate = mapGeminiModelIdToAvailable(model, []);
@@ -474,8 +473,8 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
         }
 
         const tierFallbacks = isProTier
-          ? ['gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-2.5-flash']
-          : ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'];
+          ? ['gemini-2.5-pro', 'gemini-2.5-flash']
+          : ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 
         const geminiCandidateModels = Array.from(new Set([
           primaryCandidate,
@@ -495,18 +494,20 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
             break;
           } catch (error) {
             lastError = error;
-            // Fast-fail on HTTP 404 or 400: resolve via /v1beta/models and immediately try the resolved endpoint
-            if (error instanceof AiHttpError && (error.status === 404 || error.status === 400)) {
-              if (idx === 0 && effectiveTimeoutMs >= 500) {
-                const dynamicallyResolved = await resolveEffectiveGoogleApiModelId(
-                  model,
-                  apiKey,
-                  Math.min(3000, effectiveTimeoutMs)
-                );
-                if (dynamicallyResolved && !geminiCandidateModels.includes(dynamicallyResolved)) {
-                  geminiCandidateModels.splice(idx + 1, 0, dynamicallyResolved);
-                }
-              }
+            // Immediate fatal stop ONLY if key is rejected as unauthorized (HTTP 401)
+            if (error instanceof AiHttpError && error.status === 401) {
+              throw error;
+            }
+            // Fail fast without candidate looping if network is completely unavailable / offline
+            if (error instanceof Error && (
+              error.message === 'Die KI-Anfrage konnte nicht abgeschlossen werden.' ||
+              error.message.includes('Network unavailable') ||
+              error.message.includes('fetch failed')
+            )) {
+              throw error;
+            }
+            // On ANY other error (timeout, 400, 404, 429, 500, 503): fall back to next candidate if available!
+            if (idx < geminiCandidateModels.length - 1) {
               continue;
             }
             throw error;

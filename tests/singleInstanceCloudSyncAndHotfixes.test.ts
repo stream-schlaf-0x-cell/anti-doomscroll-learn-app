@@ -251,6 +251,7 @@ test('Single-Instance Cloud Sync & Surgical Hotfixes Suite (Tasks 1-9)', async (
 
   await t.test('6. In-Place Migration: Updates profile.isOnboarded to true and suppresses zombie cards', async () => {
     assert.ok(
+      CURRENT_DATA_MIGRATION_VERSION === '2026-11-10-v6.3-gordian-clean' ||
       CURRENT_DATA_MIGRATION_VERSION === '2026-11-10-v6.0-pure-ai-newsroom' ||
       CURRENT_DATA_MIGRATION_VERSION === '2026-11-07-v4.3-rich-feed-clean-reader' ||
       CURRENT_DATA_MIGRATION_VERSION === '2026-11-04-v4.1-bloomscroll-polish' ||

@@ -38,7 +38,8 @@ function isDumpFile(filePath: string): boolean {
 const BULKY_EXCLUSIONS = new Set([
   'package-lock.json',
   'src/core/data/pipeline-output.json',
-  'public/feed-snapshot.json'
+  'public/feed-snapshot.json',
+  'src/core/data/source-health.json'
 ]);
 
 // Get all files tracked by git

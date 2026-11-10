@@ -166,10 +166,63 @@ export class LocalFeedRepository implements IFeedRepository {
   private purgeDemoFixturesIfSufficient(items: FeedItem[]): FeedItem[] {
     const demoIds = new Set(INITIAL_FIXTURES.map(f => f.id));
     const realItems = items.filter(i => !demoIds.has(i.id));
-    if (realItems.length >= 30) {
-      return realItems;
+    const pool = realItems.length >= 30 ? realItems : items;
+    return this.capActivePool(pool, 160);
+  }
+
+  /**
+   * Caps active in-memory article pool to at most 160 items to keep Space switching
+   * and in-memory filtering at < 3ms, while strictly protecting Hivemind learning items,
+   * saved items, and evergreen gems.
+   */
+  private capActivePool(items: FeedItem[], maxItems = 160): FeedItem[] {
+    if (items.length <= maxItems) return items;
+    const protectedIds = new Set<string>();
+    for (const item of items) {
+      if (
+        item.id.startsWith('hivemind-') ||
+        item.id.startsWith('flourish-') ||
+        item.isEvergreenGem === true ||
+        Boolean((item as any).isSaved) ||
+        Boolean(item.space && item.space !== 'c/memes')
+      ) {
+        protectedIds.add(item.id);
+      }
     }
-    return items;
+
+    const byTopic = new Map<string, FeedItem[]>();
+    for (const item of items) {
+      const topic = item.primaryTopic || 'general';
+      const list = byTopic.get(topic) || [];
+      list.push(item);
+      byTopic.set(topic, list);
+    }
+
+    const keptIds = new Set<string>();
+    for (const id of protectedIds) {
+      keptIds.add(id);
+    }
+
+    const topicKeys = Array.from(byTopic.keys());
+    let round = 0;
+    let added = true;
+    while (keptIds.size < maxItems && added) {
+      added = false;
+      for (const topic of topicKeys) {
+        if (keptIds.size >= maxItems) break;
+        const list = byTopic.get(topic);
+        if (list && round < list.length) {
+          const cand = list[round];
+          if (!keptIds.has(cand.id)) {
+            keptIds.add(cand.id);
+            added = true;
+          }
+        }
+      }
+      round++;
+    }
+
+    return items.filter(it => keptIds.has(it.id));
   }
 
   private async initDynamicItems(): Promise<void> {

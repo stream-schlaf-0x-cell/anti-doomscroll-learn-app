@@ -787,21 +787,18 @@ const resolvedModelsCacheByKey = new Map<string, ResolvedModelsCacheEntry>();
 const RESOLVED_MODELS_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 const PREFERRED_PRO_MODELS = [
-  'gemini-3.8-pro',
-  'gemini-3.1-pro-preview',
   'gemini-2.5-pro',
   'gemini-pro-latest',
   'gemini-1.5-pro-002',
-  'gemini-1.5-pro'
+  'gemini-1.5-pro',
+  'gemini-3.1-pro-preview'
 ];
 
 const PREFERRED_FLASH_MODELS = [
-  'gemini-3.8-flash',
-  'gemini-3.1-flash',
   'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
   'gemini-flash-latest',
-  'gemini-1.5-flash',
-  'gemini-2.0-flash'
+  'gemini-1.5-flash'
 ];
 
 /**
@@ -830,18 +827,18 @@ export function isProOrReasoningModelId(modelId: string): boolean {
 /**
  * Returns true if `modelId` is an internal/future codename alias that should be resolved
  * against `/v1beta/models` before hitting `:generateContent`.
+ * Any model ID that is not literally one of the direct official endpoints returns true.
  */
 export function isGeminiCodenameAlias(modelId: string): boolean {
   const clean = (modelId || '').replace(/^models\//, '').trim().toLowerCase();
-  return (
-    clean.includes('argon') ||
-    clean.includes('carbon') ||
-    clean.startsWith('gemini-4') ||
-    clean.startsWith('gemini-3.8') ||
-    clean.startsWith('gemini-3.1') ||
-    clean.startsWith('antigravity') ||
-    clean.startsWith('deep-research')
-  );
+  const directEndpoints = new Set([
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-1.5-pro',
+    'gemini-1.5-flash'
+  ]);
+  return !directEndpoints.has(clean);
 }
 
 /**

@@ -637,6 +637,13 @@ export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefine
 
   if (isVisual) return true;
 
+  const cleanFeed = stripSyntheticFillerSentences(item.feedText || '').trim();
+  const cleanTitle = (item.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const cleanFeedTest = cleanFeed.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  if (cleanFeed.length < 80 || (cleanFeedTest === cleanTitle && cleanTitle.length > 0)) {
+    return false;
+  }
+
   const renderable = getCardRenderableText(item);
   if (renderable.length < 140) {
     return false;

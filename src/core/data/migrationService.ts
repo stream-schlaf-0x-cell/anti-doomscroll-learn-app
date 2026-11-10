@@ -16,7 +16,7 @@ import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 import { FeedItem } from '../domain/types';
 
-export const CURRENT_DATA_MIGRATION_VERSION = '2026-11-10-v6.0-pure-ai-newsroom';
+export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-10-v6.3-gordian-clean';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {

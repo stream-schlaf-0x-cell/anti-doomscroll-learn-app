@@ -851,7 +851,7 @@ export const FeedScreen: React.FC = () => {
         return true;
       });
 
-      if (validIncoming.length > 0 && Date.now() - appMountedAtRef.current >= 2500) {
+      if (validIncoming.length > 0 && Date.now() >= appMountedAtRef.current) {
         for (const it of validIncoming) {
           surfacedArrivalIdsRef.current.add(it.id);
         }
@@ -982,7 +982,6 @@ export const FeedScreen: React.FC = () => {
   // Universal Subchannel Flourishing Engine (Work Package 2)
   const [isFlourishingChannel, setIsFlourishingChannel] = useState<boolean>(false);
   const [flourishStageText, setFlourishStageText] = useState<string>('');
-  const autoFlourishedHandlesRef = React.useRef<Set<string>>(new Set());
 
   const handleFlourishActiveChannel = useCallback(async (silent = false) => {
     if (selectedFilter === 'all' || isFlourishingChannel) return;
@@ -1022,16 +1021,8 @@ export const FeedScreen: React.FC = () => {
     }
   }, [selectedFilter, isFlourishingChannel, subchannels, recomputeFeed, refreshFeed]);
 
-  // Automatically flourish any selected c/... subchannel when it has < 25 unseen cards
-  React.useEffect(() => {
-    if (selectedFilter === 'all') return;
-    const normalized = normalizeSpaceHandle(selectedFilter).toLowerCase();
-    const unseenInChannel = infiniteInterleavedBase.filter(i => !seenIds.has(i.id)).length;
-    if (unseenInChannel < 25 && !autoFlourishedHandlesRef.current.has(normalized)) {
-      autoFlourishedHandlesRef.current.add(normalized);
-      void handleFlourishActiveChannel(true);
-    }
-  }, [selectedFilter, infiniteInterleavedBase, seenIds, handleFlourishActiveChannel]);
+  // Automatic subchannel flourishing during reading disabled (Task 2: manual on-demand flourish only)
+  // to prevent unprompted background network requests and UI reordering.
 
   // Manual Research Pipeline Runner ("🔄 Recherche jetzt starten" - Work Package 5)
   const [isRunningManualPipeline, setIsRunningManualPipeline] = useState<boolean>(false);
@@ -1152,20 +1143,7 @@ export const FeedScreen: React.FC = () => {
     }
   }, [recomputeFeed, refreshLiveFeed]);
 
-  // When switching to ⚡ Heute, if fewer than 10 fresh <=48h items exist locally, trigger live harvest immediately
-  React.useEffect(() => {
-    if (sortMode === 'today') {
-      const nowMs = Date.now();
-      const fresh48hCount = infiniteInterleavedBase.filter(i => {
-        if (i.publicationDateReliable !== true) return false;
-        const t = new Date(i.publishedAt).getTime();
-        return !isNaN(t) && (nowMs - t) <= 48 * 3600 * 1000;
-      }).length;
-      if (fresh48hCount < 10) {
-        void curateNextStreamBatch('today');
-      }
-    }
-  }, [sortMode, infiniteInterleavedBase, curateNextStreamBatch]);
+  // Automatic harvest on today switch disabled to prevent background reorders (Task 2: manual refresh only)
 
   const flushVisibleCardsToChronik = useCallback(() => {
     if (activeFeedOption === 'history') return;
@@ -2859,84 +2837,100 @@ export const FeedScreen: React.FC = () => {
       </ScrollView>
 
       {/* Ultra Master Studio Modal */}
-      <UltraMasterModal
-        visible={showMasterModal}
-        initialTab={masterModalTab}
-        onClose={() => {
-          setShowMasterModal(false);
-          void loadSubchannels();
-        }}
-      />
+      {showMasterModal && (
+        <UltraMasterModal
+          visible={true}
+          initialTab={masterModalTab}
+          onClose={() => {
+            setShowMasterModal(false);
+            void loadSubchannels();
+          }}
+        />
+      )}
 
       {/* Epistemic On-The-Fly Stream Progress Modal */}
-      <StreamGenerationProgressModal
-        visible={showProgressModal}
-        spaceName={progressSpaceName}
-        progress={streamProgress}
-        statusMessage={streamStatusText}
-        isFinished={streamFinished}
-        error={streamError}
-        onCompleted={() => setShowProgressModal(false)}
-        onCancel={() => setShowProgressModal(false)}
-      />
+      {showProgressModal && (
+        <StreamGenerationProgressModal
+          visible={true}
+          spaceName={progressSpaceName}
+          progress={streamProgress}
+          statusMessage={streamStatusText}
+          isFinished={streamFinished}
+          error={streamError}
+          onCompleted={() => setShowProgressModal(false)}
+          onCancel={() => setShowProgressModal(false)}
+        />
+      )}
 
       {/* Atmen Breathing Portal Modal */}
-      <AtmenBreathingPortal
-        visible={showBreathingModal}
-        onClose={() => setShowBreathingModal(false)}
-        mode="modal"
-      />
+      {showBreathingModal && (
+        <AtmenBreathingPortal
+          visible={true}
+          onClose={() => setShowBreathingModal(false)}
+          mode="modal"
+        />
+      )}
 
       {/* Hivemind Epistemic Stream Modal */}
-      <HivemindStreamModal
-        visible={showHivemindModal}
-        onClose={() => setShowHivemindModal(false)}
-        onStartFocusTrack={handleStartFocusTrack}
-      />
+      {showHivemindModal && (
+        <HivemindStreamModal
+          visible={true}
+          onClose={() => setShowHivemindModal(false)}
+          onStartFocusTrack={handleStartFocusTrack}
+        />
+      )}
 
       {/* News-Hub Sources, Gatherer & Settings Modal */}
-      <NewsHubModal
-        visible={showNewsHubSettingsModal}
-        onClose={() => {
-          setShowNewsHubSettingsModal(false);
-          void loadLiveNews();
-        }}
-      />
+      {showNewsHubSettingsModal && (
+        <NewsHubModal
+          visible={true}
+          onClose={() => {
+            setShowNewsHubSettingsModal(false);
+            void loadLiveNews();
+          }}
+        />
+      )}
 
       {/* News Evolution 3-Point Briefing Modal */}
-      <NewsEvolutionModal
-        visible={showEvolutionModal}
-        onClose={() => setShowEvolutionModal(false)}
-        briefing={evolutionBriefing}
-        loading={evolutionLoading}
-        onRefresh={() => void handleOpenEvolution(true)}
-        onOpenArticle={(urlOrId) => {
-          setShowEvolutionModal(false);
-          if (urlOrId.startsWith('http')) {
-            void Linking.openURL(urlOrId).catch(() => {});
-          } else {
-            void openArticle(urlOrId);
-          }
-        }}
-        colors={colors}
-        isDark={isDark}
-      />
+      {showEvolutionModal && (
+        <NewsEvolutionModal
+          visible={true}
+          onClose={() => setShowEvolutionModal(false)}
+          briefing={evolutionBriefing}
+          loading={evolutionLoading}
+          onRefresh={() => void handleOpenEvolution(true)}
+          onOpenArticle={(urlOrId) => {
+            setShowEvolutionModal(false);
+            if (urlOrId.startsWith('http')) {
+              void Linking.openURL(urlOrId).catch(() => {});
+            } else {
+              void openArticle(urlOrId);
+            }
+          }}
+          colors={colors}
+          isDark={isDark}
+        />
+      )}
 
       {/* Inspectable Curation Operation Telemetry Modal */}
-      <FeedOperationReportModal
-        visible={showReportModal}
-        onClose={() => setShowReportModal(false)}
-        result={lastOperationResult}
-        colors={colors}
-        isDark={isDark}
-      />
+      {showReportModal && (
+        <FeedOperationReportModal
+          visible={true}
+          onClose={() => setShowReportModal(false)}
+          result={lastOperationResult}
+          colors={colors}
+          isDark={isDark}
+        />
+      )}
 
       {/* 5-Stage Virtual Newsroom Pipeline Inspector Modal */}
-      <NewsroomPipelineModal
-        visible={showPipelineModal}
-        onClose={() => setShowPipelineModal(false)}
-        onSelectArticle={openArticle}
-      />
+      {showPipelineModal && (
+        <NewsroomPipelineModal
+          visible={true}
+          onClose={() => setShowPipelineModal(false)}
+          onSelectArticle={openArticle}
+        />
+      )}
 
       {/* Channel Edit & Typo-Correction Modal */}
       {editingChannel && (

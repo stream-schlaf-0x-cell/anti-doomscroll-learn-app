@@ -343,7 +343,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'feed' | 'library' | 'settings' | 'network'>('feed');
   const [activeFeedOption, setActiveFeedOption] = useState<FeedOption>('infinite');
-  const [openWebItems, setOpenWebItems] = useState<FeedItem[]>([]);
+  const [openWebItems] = useState<FeedItem[]>([]);
   const [historyItems, setHistoryItems] = useState<{ item: FeedItem; record: AppearanceRecord }[]>([]);
   const [historySortOrder, setHistorySortOrder] = useState<'recent' | 'chronological'>('recent');
   const [selectedFilter, setSelectedFilter] = useState<string | 'all'>('all');
@@ -549,13 +549,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         },
         isCurrent
       });
-
-      // Non-blocking background harvest of open-web items
-      void OpenWebHarvester.harvestAllOpenWeb().then(openWeb => {
-        if (isCurrent() && openWeb?.allHarvested) {
-          setOpenWebItems(openWeb.allHarvested);
-        }
-      }).catch(() => {});
     } catch (err) {
       console.warn('Feed-Berechnung fehlgeschlagen:', err);
     }
@@ -816,8 +809,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.warn('In-place auto-migration skipped:', migErr);
       }
 
-      // 1. Atomic Boot Hydration: Pre-warm seenImpressionsService and public snapshot (bounded 180ms)
-      // before computing the initial feed ONCE so the top viewport never reloads 3x on startup!
+      // 1. Atomic Boot Hydration: Pre-warm seenImpressionsService and public snapshot (bounded 1200ms)
+      // before computing the initial feed ONCE so the top viewport never reloads on startup!
       try {
         await Promise.race([
           Promise.all([
@@ -830,7 +823,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               }
             })().catch(() => {})
           ]),
-          new Promise<void>(resolve => setTimeout(resolve, 180))
+          new Promise<void>(resolve => setTimeout(resolve, 1200))
         ]);
       } catch {
         // Non-blocking fallback
@@ -841,7 +834,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setStartupState({ status: 'ready' });
       setIsHydrated(true);
 
-      // 3. Autonomous AI Editorial Newsroom Worker (3s after boot hydration when user API key is configured)
+      // 3. Autonomous AI Editorial Newsroom Worker (3s after boot; stores silently in repository without recomputing visible stream)
       setTimeout(() => {
         void (async () => {
           try {
@@ -854,7 +847,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
             if (batchRes.enrichedItems.length > 0 && (feedRepository as any).addItems) {
               (feedRepository as any).addItems(batchRes.enrichedItems);
-              await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, initialEdition);
             }
           } catch {
             // Silent background newsroom worker fallback
@@ -862,7 +854,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })();
       }, 3000);
 
-      // 4. Delayed background live harvest (8000ms after mount; routed to pendingStreamArrivals via viewport lock)
+      // 4. Delayed background live harvest (8000ms after mount; stores silently into repository without disruptive recomputation)
       setTimeout(() => {
         void (async () => {
           try {
@@ -878,13 +870,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
             if (safeLive.length > 0 && (feedRepository as any).addItems) {
               (feedRepository as any).addItems(safeLive);
-              void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, initialEdition);
             }
           } catch {
             // Non-blocking fallback
           }
         })();
       }, 8000);
+
+      // 5. Calm 15-minute background live check (never mutates active feed in-place; stores into repo for pendingArrivals)
+      const calmCheckInterval = setInterval(() => {
+        void (async () => {
+          try {
+            const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(false);
+            const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+            if (curatedLive.length > 0 && (feedRepository as any).addItems) {
+              (feedRepository as any).addItems(curatedLive);
+            }
+          } catch {
+            // Non-blocking background check
+          }
+        })();
+      }, 15 * 60 * 1000);
+      if (calmCheckInterval && typeof (calmCheckInterval as any).unref === 'function') {
+        (calmCheckInterval as any).unref();
+      }
 
       // On Web: check initial URL query for ?article=<id>
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -963,8 +972,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           seenIds,
           targetNewCount: 18
         });
-        if (discoveryResult.items.length > 0 && (feedRepository as any).addItems) {
-          (feedRepository as any).addItems(discoveryResult.items);
+        const sanitizedDiscovery = discoveryResult.items
+          .map(sanitizeCuratedFeedItem)
+          .filter(satisfiesDefaultCuratedStandard);
+        if (sanitizedDiscovery.length > 0 && (feedRepository as any).addItems) {
+          (feedRepository as any).addItems(sanitizedDiscovery);
         }
       } catch {
         // Fallback to continuous live news
@@ -1014,8 +1026,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         seenIds,
         targetNewCount: 18
       });
-      if (discoveryResult.items.length > 0 && (feedRepository as any).addItems) {
-        (feedRepository as any).addItems(discoveryResult.items);
+      const sanitizedDiscovery = discoveryResult.items
+        .map(sanitizeCuratedFeedItem)
+        .filter(satisfiesDefaultCuratedStandard);
+      if (sanitizedDiscovery.length > 0 && (feedRepository as any).addItems) {
+        (feedRepository as any).addItems(sanitizedDiscovery);
       }
     } catch (err) {
       console.warn('Live multi-lane harvest fallback:', err);
@@ -1420,7 +1435,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const voteItem = useCallback(async (id: string, direction: 'up' | 'down' | 'clear') => {
     // 1. Instant 0ms optimistic state update BEFORE any async storage I/O (NEVER reorders active stream)
-    const { nextInteractions, deltaUpvotes } = computeOptimisticVoteState(
+    const { nextInteractions } = computeOptimisticVoteState(
       latestInteractionsRef.current,
       [],
       id,
@@ -1428,36 +1443,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     latestInteractionsRef.current = nextInteractions;
     setInteractions(nextInteractions);
-
-    if (deltaUpvotes !== 0) {
-      setDailyEdition(prev => {
-        let changed = false;
-        const next = prev.map(it => {
-          if (it.id !== id) return it;
-          changed = true;
-          return { ...it, upvotesCount: Math.max(0, (it.upvotesCount ?? 0) + deltaUpvotes) };
-        });
-        return changed ? next : prev;
-      });
-      setDiscoveryItems(prev => {
-        let changed = false;
-        const next = prev.map(it => {
-          if (it.id !== id) return it;
-          changed = true;
-          return { ...it, upvotesCount: Math.max(0, (it.upvotesCount ?? 0) + deltaUpvotes) };
-        });
-        return changed ? next : prev;
-      });
-      setOpenWebItems(prev => {
-        let changed = false;
-        const next = prev.map(it => {
-          if (it.id !== id) return it;
-          changed = true;
-          return { ...it, upvotesCount: Math.max(0, (it.upvotesCount ?? 0) + deltaUpvotes) };
-        });
-        return changed ? next : prev;
-      });
-    }
 
     try {
       const updated = await libraryRepository.voteItem(id, direction);

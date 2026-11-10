@@ -31,6 +31,7 @@ const MainNavigator: React.FC = () => {
     colors,
     isDark,
     interactions,
+    whyModalItem,
     isInvestigationOpen,
     investigationTargetArticle,
     investigationInitialQuestion,
@@ -313,16 +314,18 @@ const MainNavigator: React.FC = () => {
         </View>
       )}
 
-      {/* Transparent "Why This" Modal */}
-      <WhyThisModal />
+      {/* Transparent "Why This" Modal (lazily mounted) */}
+      {whyModalItem && <WhyThisModal />}
 
-      {/* Epistemic Investigation Modal */}
-      <InvestigationModal
-        visible={isInvestigationOpen}
-        onClose={closeInvestigation}
-        initialArticle={investigationTargetArticle}
-        initialQuestion={investigationInitialQuestion}
-      />
+      {/* Epistemic Investigation Modal (lazily mounted) */}
+      {isInvestigationOpen && (
+        <InvestigationModal
+          visible={true}
+          onClose={closeInvestigation}
+          initialArticle={investigationTargetArticle}
+          initialQuestion={investigationInitialQuestion}
+        />
+      )}
 
       {/* Bottom Tab Bar with Inset Padding (Mobile/Tablet only) */}
       {!isDesktop && (

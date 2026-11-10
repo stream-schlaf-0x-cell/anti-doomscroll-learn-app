@@ -643,9 +643,9 @@ export class AutonomousResearcherService {
       realSourceUrl = primarySource.sourceReferences?.[0]?.originalUrl || primarySource.canonicalUrl || 'https://openalex.org';
     }
 
-    const substantiveFeedText = retrievedExcerpt && retrievedExcerpt.length >= 120
-      ? `Systematische Untersuchung über „${query}“: ${retrievedExcerpt}`
-      : `Eine systematische Untersuchung über „${query}“: Wie verknüpfen sich hier theoretische Evidenz, kognitive Gelassenheit und lebensweltliche Praxis jenseits digitaler Reizüberflutung? Die Analyse stützt sich auf ${philosophicalFramework}.`;
+    const substantiveFeedText = retrievedExcerpt && retrievedExcerpt.length >= 80
+      ? retrievedExcerpt
+      : primarySource?.feedText || primarySource?.subtitle || `Recherche zu ${query} auf Basis von ${philosophicalFramework}.`;
 
     const keyInsight = primarySource?.keyInsight && primarySource.keyInsight.length > 20
       ? primarySource.keyInsight

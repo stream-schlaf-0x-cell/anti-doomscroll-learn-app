@@ -962,10 +962,8 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
           >
             {item.externalCommunityScore && item.externalCommunityScore.points > 0
               ? `${item.externalCommunityScore.points + voteScore}`
-              : voteScore > 0
-              ? '+1'
-              : voteScore < 0
-              ? '-1'
+              : ((item.upvotesCount ?? 0) > 0 || voteScore !== 0)
+              ? `${Math.max(0, (item.upvotesCount ?? 0) + (voteScore === 1 ? 1 : voteScore === -1 ? -1 : 0))}`
               : 'Vote'}
           </Text>
 
