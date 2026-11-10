@@ -16,6 +16,13 @@ import {
 export const HIVEMIND_TRACKS_STORAGE_KEY = '@atem:hivemind_tracks:v1';
 export const DELETED_HIVEMIND_TRACK_IDS_KEY = '@atem:deleted_hivemind_tracks:v1';
 
+export interface HivemindChapterSpec {
+  chapterIndex: number;
+  title: string;
+  focusPromptOrChunk: string;
+  isGenerated: boolean;
+}
+
 export interface HivemindLearningTrack {
   id: string;
   title: string;
@@ -30,6 +37,8 @@ export interface HivemindLearningTrack {
   totalItemsCount: number;
   progressPercent: number; // 0 to 100
   items: FeedItem[];
+  chapters?: HivemindChapterSpec[];
+  currentChapterIndex?: number;
 }
 
 export interface GenerateHivemindTrackOptions {
@@ -1017,7 +1026,34 @@ export function buildShowcaseStarterTracks(): HivemindLearningTrack[] {
       completedItemIds: [],
       totalItemsCount: romanItems.length,
       progressPercent: 0,
-      items: romanItems
+      items: romanItems,
+      currentChapterIndex: 1,
+      chapters: [
+        {
+          chapterIndex: 1,
+          title: 'Kapitel 1: Von den Gracchen bis Augustus (Krise der Republik)',
+          focusPromptOrChunk: 'Agrarkrise der Gracchen, Heeresreform des Marius, Sullas Diktatur, Caesar am Rubikon und der Prinzipat des Augustus.',
+          isGenerated: true
+        },
+        {
+          chapterIndex: 2,
+          title: 'Kapitel 2: Pax Romana, Julisch-Claudische Dynastie & Stoische Staatsethik',
+          focusPromptOrChunk: 'Tiberius bis Nero, Senatsopposition, Seneca und Marc Aurel, Reichsverwaltung, Limes und Urbanisierung der Provinzen.',
+          isGenerated: false
+        },
+        {
+          chapterIndex: 3,
+          title: 'Kapitel 3: Soldatenkaiser, Spätantike & Erbe des Römischen Rechts',
+          focusPromptOrChunk: 'Reichskrise des 3. Jahrhunderts, Diokletians Tetrarchie, Konstantinische Wende, Corpus Iuris Civilis und republikanisches Erbe in der Moderne.',
+          isGenerated: false
+        },
+        {
+          chapterIndex: 4,
+          title: 'Kapitel 4: Verfassungsvergleich — Rom, Weimar & moderne Gewaltenteilung',
+          focusPromptOrChunk: 'Polybius’ Mischverfassung, Notstandsrecht, Populismus, Institutionenerosion und Lehren für demokratische Resilienz.',
+          isGenerated: false
+        }
+      ]
     },
     {
       id: quantumTrackId,
@@ -1032,7 +1068,34 @@ export function buildShowcaseStarterTracks(): HivemindLearningTrack[] {
       completedItemIds: [],
       totalItemsCount: quantumItems.length,
       progressPercent: 0,
-      items: quantumItems
+      items: quantumItems,
+      currentChapterIndex: 1,
+      chapters: [
+        {
+          chapterIndex: 1,
+          title: 'Kapitel 1: Von Plancks Wirkungsquantum bis zu Bells Theorem',
+          focusPromptOrChunk: 'Welle-Teilchen-Dualismus, Doppelspalt, Heisenbergs Unschärferelation, Schrödingers Katze, Dekohärenz und Verletzung der Bellschen Ungleichung.',
+          isGenerated: true
+        },
+        {
+          chapterIndex: 2,
+          title: 'Kapitel 2: Quantenfeldtheorie, Standardmodell & Symmetriebrechung',
+          focusPromptOrChunk: 'Dirac-Gleichung, Antimaterie, Quantenelektrodynamik (Feynman-Pfadintegrale), Eichsymmetrien und Higgs-Mechanismus.',
+          isGenerated: false
+        },
+        {
+          chapterIndex: 3,
+          title: 'Kapitel 3: Quanteninformation, Fehlerkorrektur & Topologische Qubits',
+          focusPromptOrChunk: 'Bloch-Kugel, Quantengatter, Shor- und Grover-Algorithmus, Oberflächen-Codes zur Quantenfehlerkorrektur und Quantenkryptographie.',
+          isGenerated: false
+        },
+        {
+          chapterIndex: 4,
+          title: 'Kapitel 4: Interpretationen der Quantenmechanik & Naturphilosophie',
+          focusPromptOrChunk: 'Kopenhagener Deutung vs. Everett-Viele-Welten, De-Broglie-Bohm-Führungswellen, QBismus und das Messproblem aus erkenntnistheoretischer Sicht.',
+          isGenerated: false
+        }
+      ]
     }
   ];
 }
@@ -1443,6 +1506,8 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
       ? 'Web-Quelle'
       : 'Themen-Pfad';
 
+  const chapters = buildChaptersForTrack(cleanTitle, contextText);
+
   const track: HivemindLearningTrack = {
     id: trackId,
     title: cleanTitle,
@@ -1456,12 +1521,306 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
     completedItemIds: [],
     totalItemsCount: items.length,
     progressPercent: 0,
-    items
+    items,
+    chapters,
+    currentChapterIndex: 1
   };
 
   await hivemindLearningService.saveTrack(track, options.storage);
   options.onProgress?.(100, 'Lernpfad erfolgreich erstellt!');
   return track;
+}
+
+/**
+ * Splits a document or topic into a progressive multi-chapter curriculum (4 to 8 chapters).
+ * Chapter 1 is marked `isGenerated: true`; subsequent chapters are ready for 1-tap expansion.
+ */
+export function buildChaptersForTrack(
+  title: string,
+  rawText: string = '',
+  existingChapters?: HivemindChapterSpec[]
+): HivemindChapterSpec[] {
+  if (Array.isArray(existingChapters) && existingChapters.length >= 2) {
+    return existingChapters.map((ch, idx) => ({
+      chapterIndex: Number(ch.chapterIndex) || idx + 1,
+      title: String(ch.title || `Kapitel ${idx + 1}`),
+      focusPromptOrChunk: String(ch.focusPromptOrChunk || title),
+      isGenerated: Boolean(ch.isGenerated)
+    }));
+  }
+
+  const cleanText = (rawText || '').trim();
+  const chunkSize = 6000;
+  if (cleanText.length > chunkSize * 1.2) {
+    const chunks: string[] = [];
+    for (let offset = 0; offset < cleanText.length && chunks.length < 8; offset += chunkSize) {
+      chunks.push(cleanText.slice(offset, offset + chunkSize));
+    }
+    while (chunks.length < 4) {
+      chunks.push(cleanText.slice(0, chunkSize));
+    }
+    return chunks.map((chunk, idx) => ({
+      chapterIndex: idx + 1,
+      title:
+        idx === 0
+          ? `Kapitel 1: Grundlagen & Ausgangsthesen (${title})`
+          : idx === 1
+          ? `Kapitel 2: Systematische Vertiefung & Kernmechanismen`
+          : idx === 2
+          ? `Kapitel 3: Kontroversen, Gegenargumente & Grenzfälle`
+          : `Kapitel ${idx + 1}: Synthese & Transfer in die Praxis`,
+      focusPromptOrChunk: chunk,
+      isGenerated: idx === 0
+    }));
+  }
+
+  return [
+    {
+      chapterIndex: 1,
+      title: `Kapitel 1: Fundament, Begriffe & Ausgangsproblem`,
+      focusPromptOrChunk: `${title} — Grundbegriffe, historischer Ursprung, zentrale Fragestellung und Schlüsselbeispiele. ${cleanText.slice(0, 2000)}`.trim(),
+      isGenerated: true
+    },
+    {
+      chapterIndex: 2,
+      title: `Kapitel 2: Strukturmechanik, Methodik & Vertiefung`,
+      focusPromptOrChunk: `${title} — Vertiefte Kausalketten, theoretische Modelle, formale Struktur und empirische Befunde.`,
+      isGenerated: false
+    },
+    {
+      chapterIndex: 3,
+      title: `Kapitel 3: Dialektik, Einwände & Paradigmenwechsel`,
+      focusPromptOrChunk: `${title} — Stärkste wissenschaftliche und philosophische Gegenpositionen, blinde Flecken und offene Streitfragen.`,
+      isGenerated: false
+    },
+    {
+      chapterIndex: 4,
+      title: `Kapitel 4: Meister-Synthese & Praktischer Transfer`,
+      focusPromptOrChunk: `${title} — Interdisziplinäre Verknüpfung, Gegenwartsbedeutung, didaktischer Transfer und Anwendungsfälle.`,
+      isGenerated: false
+    }
+  ];
+}
+
+/**
+ * Generates and appends the next 12-card chapter for an existing Hivemind learning track.
+ */
+export async function generateNextHivemindChapter(
+  trackId: string,
+  options: {
+    credentials?: AiCredentials;
+    storage?: AtemStorage;
+    skipNetworkFetch?: boolean;
+    onProgress?: (percent: number, stageLabel: string) => void;
+  } = {}
+): Promise<HivemindLearningTrack> {
+  const storage = options.storage ?? appStorage;
+  const track = await hivemindLearningService.getTrackById(trackId, storage);
+  if (!track) {
+    throw new Error(`Lernpfad "${trackId}" wurde nicht gefunden.`);
+  }
+
+  const chapters = buildChaptersForTrack(track.title, '', track.chapters);
+  let targetChapter = chapters.find(ch => !ch.isGenerated);
+  if (!targetChapter) {
+    const nextIdx = chapters.length + 1;
+    targetChapter = {
+      chapterIndex: nextIdx,
+      title: `Kapitel ${nextIdx}: Weiterführende Vertiefung & Spezialfragen`,
+      focusPromptOrChunk: `${track.title} — Fortgeschrittene Vertiefung (Kapitel ${nextIdx}), neue Perspektiven, Fallstudien und Synthese.`,
+      isGenerated: false
+    };
+    chapters.push(targetChapter);
+  }
+
+  options.onProgress?.(20, `Generiere ${targetChapter.title} (+12 Karten)…`);
+
+  const { topic } = inferTrackTopicAndEmoji(track.title);
+  const targetCardCount = 12;
+  const previousTotal = track.items.length;
+  const newTotalSteps = previousTotal + targetCardCount;
+
+  let creds = options.credentials;
+  if (!creds) {
+    try {
+      creds = await loadAiCredentials(storage);
+    } catch {
+      creds = undefined;
+    }
+  }
+
+  let blueprints: HivemindCardBlueprint[] = [];
+  let usedAi = false;
+
+  if (creds && hasAiConfiguration(creds) && !options.skipNetworkFetch) {
+    try {
+      options.onProgress?.(45, `KI-Curriculum für ${targetChapter.title} wird synthetisiert…`);
+      const prompt = `Du bist der „Atmen Hivemind“-Lernarchitekt.
+Erstelle das nächste aufbauende Kapitel (${targetChapter.title}) für den Lernpfad „${track.title}“ mit exakt ${targetCardCount} Karten (Schritte ${previousTotal + 1} bis ${newTotalSteps}).
+
+FOKUS DIESES KAPITELS:
+${targetChapter.title}
+${targetChapter.focusPromptOrChunk}
+
+BEREITS BEHANDELTE KARTEN (NICHT WIEDERHOLEN!):
+${track.items.slice(-6).map(i => `- ${i.title}`).join('\n')}
+
+Wechsle die 4 Archetypen ab:
+- "story_thread"
+- "expanding_brain_meme" (mit 4 "escalationStages")
+- "discourse_replies" (mit 3 "simulatedReplies")
+- "milestone_quiz" (mit 4-Optionen "quiz")
+
+Antworte ausschließlich als valides JSON-Objekt:
+{
+  "cards": [
+    {
+      "cardArchetype": "story_thread | expanding_brain_meme | discourse_replies | milestone_quiz",
+      "title": "Prägnanter Titel",
+      "subtitle": "Kapitel ${targetChapter.chapterIndex} · Schritt-Einordnung",
+      "feedText": "3-5 dichte, lehrreiche Sätze für den Feed.",
+      "body": "Vertiefende Erklärung (2-3 Absätze) für den Reader.",
+      "keyInsight": "1-Satz Kernerkenntnis",
+      "escalationStages": [
+        { "stageLabel": "Stufe 1: Alltags-Intuition", "caption": "...", "visualLevel": 1 },
+        { "stageLabel": "Stufe 2: Struktur-Mechanik", "caption": "...", "visualLevel": 2 },
+        { "stageLabel": "Stufe 3: Systemischer Hebel", "caption": "...", "visualLevel": 3 },
+        { "stageLabel": "Stufe 4: Meister-Synthese", "caption": "...", "visualLevel": 4 }
+      ],
+      "simulatedReplies": [
+        { "handle": "u/skeptiker", "roleBadge": "⚡ Gegenrede", "text": "...", "upvotes": 42 },
+        { "handle": "u/historiker", "roleBadge": "🔍 Kontext", "text": "...", "upvotes": 68 },
+        { "handle": "u/praxis_impuls", "roleBadge": "💡 Synthese", "text": "...", "upvotes": 51 }
+      ],
+      "quiz": {
+        "question": "Präzise Verständnisfrage?",
+        "options": ["Richtige Antwort", "Plausible Falschantwort 1", "Plausible Falschantwort 2", "Plausible Falschantwort 3"],
+        "correctIndex": 0,
+        "explanation": "Warum Option A stimmt."
+      }
+    }
+  ]
+}`;
+
+      const aiRes = await callAiModel(prompt, {
+        credentials: creds,
+        jsonMode: true,
+        maxTokens: 4000,
+        bypassBudgetCeiling: true
+      });
+
+      const cleanedJson = aiRes.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+      const parsed = JSON.parse(cleanedJson);
+      if (parsed && Array.isArray(parsed.cards) && parsed.cards.length >= 6) {
+        blueprints = parsed.cards.slice(0, targetCardCount).map((c: any, idx: number): HivemindCardBlueprint => {
+          const fallbackArch: HivemindCardArchetype = (
+            ['story_thread', 'expanding_brain_meme', 'discourse_replies', 'milestone_quiz'] as const
+          )[idx % 4];
+          const arch: HivemindCardArchetype = c.cardArchetype || fallbackArch;
+          return {
+            cardArchetype: arch,
+            title: String(c.title || `${targetChapter!.title} · Impuls ${idx + 1}`).trim(),
+            subtitle: String(c.subtitle || `${targetChapter!.title} · Schritt ${previousTotal + idx + 1}`).trim(),
+            feedText: String(c.feedText || c.body || '').trim(),
+            body: String(c.body || c.feedText || '').trim(),
+            keyInsight: String(c.keyInsight || c.title || track.title).trim(),
+            escalationStages:
+              Array.isArray(c.escalationStages) && c.escalationStages.length >= 3
+                ? c.escalationStages.slice(0, 4).map((st: any, sIdx: number) => ({
+                    stageLabel: String(st.stageLabel || `Stufe ${sIdx + 1}`),
+                    caption: String(st.caption || ''),
+                    visualLevel: Math.min(4, Math.max(1, sIdx + 1)) as 1 | 2 | 3 | 4
+                  }))
+                : undefined,
+            simulatedReplies:
+              Array.isArray(c.simulatedReplies) && c.simulatedReplies.length >= 2
+                ? c.simulatedReplies.slice(0, 3).map((rep: any) => ({
+                    handle: String(rep.handle || 'u/seminar_salon'),
+                    roleBadge: String(rep.roleBadge || '🔍 Impuls'),
+                    text: String(rep.text || ''),
+                    upvotes: Number(rep.upvotes) || 28
+                  }))
+                : undefined,
+            quiz:
+              c.quiz && typeof c.quiz.question === 'string' && Array.isArray(c.quiz.options)
+                ? {
+                    question: String(c.quiz.question),
+                    options: c.quiz.options.map(String),
+                    correctIndex: Number(c.quiz.correctIndex) || 0,
+                    explanation: String(c.quiz.explanation || '')
+                  }
+                : undefined
+          };
+        });
+        usedAi = true;
+      }
+    } catch {
+      // Fallback to deterministic synthesis below
+    }
+  }
+
+  if (blueprints.length < targetCardCount) {
+    const detBlueprints = buildDeterministicBlueprintsFromSubject(
+      `${track.title} — ${targetChapter.title}`,
+      targetChapter.focusPromptOrChunk,
+      targetCardCount
+    );
+    while (blueprints.length < targetCardCount) {
+      const idx = blueprints.length;
+      const baseBp = detBlueprints[idx % detBlueprints.length];
+      blueprints.push({
+        ...baseBp,
+        title: `${targetChapter.title.replace(/^Kapitel\s*\d+:\s*/i, '')} · ${baseBp.title}`,
+        subtitle: `${targetChapter.title} · Schritt ${previousTotal + idx + 1} von ${newTotalSteps}`
+      });
+    }
+  }
+
+  // Update totalSteps on existing items so step badges reflect the expanded track
+  const updatedExistingItems: FeedItem[] = track.items.map((item, idx) => ({
+    ...item,
+    hivemindMeta: item.hivemindMeta
+      ? {
+          ...item.hivemindMeta,
+          stepIndex: idx + 1,
+          totalSteps: newTotalSteps
+        }
+      : undefined
+  }));
+
+  const newChapterItems: FeedItem[] = blueprints.slice(0, targetCardCount).map((bp, idx) =>
+    buildHivemindFeedItem({
+      trackId: track.id,
+      trackTitle: track.title,
+      stepIndex: previousTotal + idx + 1,
+      totalSteps: newTotalSteps,
+      topic,
+      sourceLabel: `${track.sourceLabel} · ${targetChapter!.title}`,
+      blueprint: bp,
+      aiAssisted: usedAi
+    })
+  );
+
+  const combinedItems = [...updatedExistingItems, ...newChapterItems];
+  const updatedChapters = chapters.map(ch =>
+    ch.chapterIndex === targetChapter!.chapterIndex ? { ...ch, isGenerated: true } : ch
+  );
+  const generatedChaptersCount = updatedChapters.filter(ch => ch.isGenerated).length;
+
+  const updatedTrack: HivemindLearningTrack = {
+    ...track,
+    subtitle: `${combinedItems.length} Karten · ${generatedChaptersCount}/${updatedChapters.length} Kapitel`,
+    items: combinedItems,
+    totalItemsCount: combinedItems.length,
+    progressPercent: calculateTrackProgressPercent(track.completedItemIds, combinedItems.length),
+    chapters: updatedChapters,
+    currentChapterIndex: targetChapter.chapterIndex,
+    updatedAt: new Date().toISOString()
+  };
+
+  const saved = await hivemindLearningService.saveTrack(updatedTrack, storage);
+  options.onProgress?.(100, `${targetChapter.title} (+${targetCardCount} Karten) geladen!`);
+  return saved;
 }
 
 // ---------------------------------------------------------------------------
@@ -1548,9 +1907,16 @@ export class HivemindLearningService {
             : [];
           const progressPercent = calculateTrackProgressPercent(completedItemIds, totalItemsCount);
 
+          const titleStr = String(t.title || 'Lernpfad');
+          const chapters = buildChaptersForTrack(titleStr, '', t.chapters);
+          const currentChapterIndex =
+            typeof t.currentChapterIndex === 'number' && t.currentChapterIndex >= 1
+              ? t.currentChapterIndex
+              : Math.max(1, chapters.filter(c => c.isGenerated).length);
+
           return {
             id: String(t.id),
-            title: String(t.title || 'Lernpfad'),
+            title: titleStr,
             subtitle: String(t.subtitle || `${totalItemsCount} Karten`),
             iconEmoji: String(t.iconEmoji || '🧠'),
             sourceType: t.sourceType || 'topic',
@@ -1561,7 +1927,9 @@ export class HivemindLearningService {
             completedItemIds,
             totalItemsCount,
             progressPercent,
-            items
+            items,
+            chapters,
+            currentChapterIndex
           };
         });
 
@@ -1694,6 +2062,18 @@ export class HivemindLearningService {
       },
       storage
     );
+  }
+
+  public async generateNextChapter(
+    trackId: string,
+    options: {
+      credentials?: AiCredentials;
+      storage?: AtemStorage;
+      skipNetworkFetch?: boolean;
+      onProgress?: (percent: number, stageLabel: string) => void;
+    } = {}
+  ): Promise<HivemindLearningTrack> {
+    return generateNextHivemindChapter(trackId, options);
   }
 
   /**

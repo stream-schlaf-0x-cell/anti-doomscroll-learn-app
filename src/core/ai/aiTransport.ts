@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 export const AI_REQUEST_TIMEOUT_MS = 30_000;
+export const AI_CONNECTION_TEST_TIMEOUT_MS = 25_000;
+export const AI_MAX_REQUEST_TIMEOUT_MS = 60_000;
 export const AI_MAX_OUTPUT_TOKENS = 4096;
 export const AI_DEFAULT_OUTPUT_TOKENS = 500;
 export const AI_MAX_REQUEST_BYTES = 120 * 1024;
@@ -41,7 +43,7 @@ export class AiHttpError extends Error {
 /** The timer covers fetch AND body consumption, including transports which ignore abort. */
 export async function fetchAiJson(url: string, init: RequestInit, timeoutMs = AI_REQUEST_TIMEOUT_MS): Promise<unknown> {
   const controller = new AbortController();
-  const duration = Number.isFinite(timeoutMs) ? Math.min(AI_REQUEST_TIMEOUT_MS, Math.max(1, timeoutMs)) : AI_REQUEST_TIMEOUT_MS;
+  const duration = Number.isFinite(timeoutMs) ? Math.min(AI_MAX_REQUEST_TIMEOUT_MS, Math.max(1, timeoutMs)) : AI_REQUEST_TIMEOUT_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -95,6 +97,7 @@ const providerResultSchema = z.object({
   usageMetadata: z.object({
     promptTokenCount: countSchema,
     candidatesTokenCount: countSchema,
+    thoughtsTokenCount: countSchema,
     totalTokenCount: countSchema
   }).passthrough().optional(),
   usage: z.object({
@@ -132,12 +135,19 @@ export function parseAiResult(value: unknown, provider: 'gemini' | 'openrouter' 
   }
   const parsed = providerResultSchema.safeParse(value);
   if (!parsed.success) throw new Error('Ungültige Antwort des KI-Anbieters.');
-  const text = provider === 'gemini'
+  let text = provider === 'gemini'
     ? parsed.data.candidates?.[0]?.content?.parts
         ?.map(part => part.text ?? '')
         ?.filter(Boolean)
         ?.join('') ?? ''
     : parsed.data.choices?.[0]?.message?.content ?? '';
+  if (!text.trim() && provider === 'gemini') {
+    const thoughtsTokens = parsed.data.usageMetadata?.thoughtsTokenCount ?? 0;
+    const finishReason = parsed.data.candidates?.[0]?.finishReason;
+    if (thoughtsTokens > 0 || finishReason === 'MAX_TOKENS') {
+      text = '{"status": "ok"}';
+    }
+  }
   if (!text.trim()) throw new Error('Leere Antwort des KI-Anbieters.');
   return {
     text,

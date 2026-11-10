@@ -47,7 +47,12 @@ import { defaultGraphRepository } from '../graph/graphRepository';
 import { BoundedIdSet } from '../feed/boundedIdSet';
 import { defaultFeedOperationManager } from '../feed/FeedOperationManager';
 import { runInPlaceDataMigration } from '../data/migrationService';
-import { satisfiesDefaultCuratedStandard, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
+import {
+  satisfiesDefaultCuratedStandard,
+  sanitizeCuratedFeedItem,
+  runBackgroundEditorialNewsroomBatch
+} from '../enrichment/batchEnricher';
+import { hasAiConfiguration, loadAiCredentials } from '../ai/atmenAiClient';
 import { harvestRabbitHoleForItem } from '../synthesis/rabbitHoleService';
 import { seenImpressionsService } from '../data/seenImpressionsService';
 import { hivemindLearningService } from '../learning/hivemindLearningService';
@@ -811,41 +816,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.warn('In-place auto-migration skipped:', migErr);
       }
 
-      // 1. Instant reveal: Calculate local feed in < 5ms and unlock the UI immediately!
+      // 1. Atomic Boot Hydration: Pre-warm seenImpressionsService and public snapshot (bounded 180ms)
+      // before computing the initial feed ONCE so the top viewport never reloads 3x on startup!
+      try {
+        await Promise.race([
+          Promise.all([
+            seenImpressionsService.getSeenIds().catch(() => new Set<string>()),
+            (async () => {
+              const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(currentSnapshotUrl);
+              if (res?.success) {
+                const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+                setSnapshotSyncInfo(syncText);
+              }
+            })().catch(() => {})
+          ]),
+          new Promise<void>(resolve => setTimeout(resolve, 180))
+        ]);
+      } catch {
+        // Non-blocking fallback
+      }
+
+      // 2. Single atomic feed computation & UI unlock
       await scheduleFeedRecompute(loadedProfile, loadedInteractions, initialEdition);
       setStartupState({ status: 'ready' });
       setIsHydrated(true);
 
-      // 2. Non-blocking background sync from public snapshot + live CORS-safe harvesters
-      void (async () => {
-        try {
-          const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(currentSnapshotUrl);
-          if (res?.success) {
-            const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
-            setSnapshotSyncInfo(syncText);
-          }
-        } catch {
-          // Non-blocking fallback
-        }
-        try {
-          const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
-          const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
-          const seenIds = await seenImpressionsService.getSeenIds();
-          const safeLive = curatedLive.map(item => {
-            if (item.isStaticFallback || seenIds.has(item.id)) {
-              const { pinnedManualRunAt, ...rest } = item;
-              return rest;
+      // 3. Autonomous AI Editorial Newsroom Worker (3s after boot hydration when user API key is configured)
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const creds = await loadAiCredentials();
+            if (!hasAiConfiguration(creds)) return;
+            const repoItems: FeedItem[] = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+            const batchRes = await runBackgroundEditorialNewsroomBatch(repoItems, {
+              batchSize: 4,
+              credentials: creds
+            });
+            if (batchRes.enrichedItems.length > 0 && (feedRepository as any).addItems) {
+              (feedRepository as any).addItems(batchRes.enrichedItems);
+              await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, initialEdition);
             }
-            return item;
-          });
-          if (safeLive.length > 0 && (feedRepository as any).addItems) {
-            (feedRepository as any).addItems(safeLive);
+          } catch {
+            // Silent background newsroom worker fallback
           }
-        } catch {
-          // Non-blocking fallback
-        }
-        void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, initialEdition);
-      })();
+        })();
+      }, 3000);
+
+      // 4. Delayed background live harvest (8000ms after mount; routed to pendingStreamArrivals via viewport lock)
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
+            const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+            const seenIds = await seenImpressionsService.getSeenIds();
+            const safeLive = curatedLive.map(item => {
+              if (item.isStaticFallback || seenIds.has(item.id)) {
+                const { pinnedManualRunAt, ...rest } = item;
+                return rest;
+              }
+              return item;
+            });
+            if (safeLive.length > 0 && (feedRepository as any).addItems) {
+              (feedRepository as any).addItems(safeLive);
+              void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, initialEdition);
+            }
+          } catch {
+            // Non-blocking fallback
+          }
+        })();
+      }, 8000);
 
       // On Web: check initial URL query for ?article=<id>
       if (Platform.OS === 'web' && typeof window !== 'undefined') {

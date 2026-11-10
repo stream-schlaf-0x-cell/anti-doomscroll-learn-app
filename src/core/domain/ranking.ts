@@ -784,9 +784,29 @@ export function rankBloomScrollFeed(
     let bestIdx = 0;
     let bestWindowScore = -Infinity;
 
-    // Evaluate top candidates in remaining pool (up to 90 for speed & breadth)
-    const evalLimit = Math.min(remaining.length, 90);
+    // Evaluate top candidates in remaining pool (plus top challenging/teaching candidates if under target)
+    const evalLimit = Math.min(remaining.length, 120);
+    const candidateIndices: number[] = [];
     for (let i = 0; i < evalLimit; i++) {
+      candidateIndices.push(i);
+    }
+    if (challengingCount30 < 2 || teachingCount30 < 2) {
+      let extraChall = 0;
+      let extraTeach = 0;
+      for (let i = evalLimit; i < remaining.length; i++) {
+        const c = remaining[i];
+        if (challengingCount30 < 2 && c.isChallengingPerspective && extraChall < 10) {
+          candidateIndices.push(i);
+          extraChall++;
+        } else if (teachingCount30 < 2 && (c.isTeachingRelated || c.primaryTopic === 'german_didactics') && extraTeach < 10) {
+          candidateIndices.push(i);
+          extraTeach++;
+        }
+        if (extraChall >= 10 && extraTeach >= 10) break;
+      }
+    }
+
+    for (const i of candidateIndices) {
       const cand = remaining[i];
       const pubKey = getNormalizedPublisherKey(cand);
       const domKey = getDomainDiversityKey(cand);
@@ -909,8 +929,8 @@ export function rankBloomScrollFeed(
       const targetChallCount = Math.max(1, Math.round((window30.length + 1) * 0.10));
 
       if (isTeach) {
-        if (teachingCount30 < targetTeachCount && (pos % 9 === 3 || pos % 9 === 4)) {
-          utility += 0.85;
+        if (teachingCount30 < targetTeachCount && (pos % 9 === 3 || pos % 9 === 4 || (pos >= 14 && teachingCount30 < 2))) {
+          utility += 2.4;
         } else if (teachingCount30 > targetTeachCount + 1) {
           utility -= 1.1;
         }
@@ -922,7 +942,7 @@ export function rankBloomScrollFeed(
           challengingCount30 < targetChallCount &&
           (pos % 6 === 4 || pos % 6 === 5 || (pos >= 12 && challengingCount30 < 2))
         ) {
-          utility += 0.85;
+          utility += 2.4;
         } else if (challengingCount30 > targetChallCount + 2) {
           utility -= 0.75;
         }

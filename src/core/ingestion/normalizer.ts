@@ -380,7 +380,7 @@ export function normalizeFeedEntry(
     ? rawBodyText
     : entry.imageAltText
     ? entry.imageAltText.replace(ZERO_WIDTH_REGEX, '').trim()
-    : `${cleanTitle}. Originalbeitrag veröffentlicht bei ${source.name}.`;
+    : cleanTitle;
 
   const words = effectiveText.split(/\s+/).filter(Boolean);
   const wordCount = Math.max(12, words.length);

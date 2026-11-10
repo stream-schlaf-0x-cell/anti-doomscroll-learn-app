@@ -1792,3 +1792,203 @@ function generateDeterministicSocraticSalon(
     generatedAt: new Date().toISOString()
   };
 }
+
+// ---------------------------------------------------------------------------
+// Autonomous AI Editorial Newsroom Worker (Work Package 4)
+// ---------------------------------------------------------------------------
+
+export interface EditorialNewsroomBatchResult {
+  enrichedItems: FeedItem[];
+  processedCount: number;
+  usedAI: boolean;
+  modelUsed?: string;
+}
+
+/**
+ * Enriches up to `batchSize` (default 4) un-enriched feed items in a single structured Gemini call.
+ * Synthesizes:
+ * - `feedText`: 4–6 sentences of concrete, standalone German editorial summary (zero meta-phrases).
+ * - `body`: 3–5 paragraphs of structured Markdown deep-dive analysis.
+ * - `keyInsight`: 1–2 sentence core insight.
+ * - `quiz`: 4-option multiple-choice comprehension question.
+ * Marks enriched items with `aiAssisted: true` and `contentOrigin: 'enriched_ai'`.
+ */
+export async function runBackgroundEditorialNewsroomBatch(
+  candidates: FeedItem[],
+  options: {
+    batchSize?: number;
+    credentials?: AiCredentials;
+  } = {}
+): Promise<EditorialNewsroomBatchResult> {
+  const batchSize = Math.max(1, Math.min(8, options.batchSize ?? 4));
+  let creds = options.credentials;
+  if (!creds) {
+    try {
+      creds = await loadAiCredentials();
+    } catch {
+      creds = undefined;
+    }
+  }
+
+  if (!creds || !hasAiConfiguration(creds)) {
+    return {
+      enrichedItems: [],
+      processedCount: 0,
+      usedAI: false
+    };
+  }
+
+  const eligible = candidates
+    .filter(
+      item =>
+        !item.aiAssisted &&
+        item.format !== 'meme' &&
+        item.format !== 'art_showcase' &&
+        !item.hivemindMeta &&
+        (item.feedText || '').length < 420
+    )
+    .slice(0, batchSize);
+
+  if (eligible.length === 0) {
+    return {
+      enrichedItems: [],
+      processedCount: 0,
+      usedAI: false
+    };
+  }
+
+  const promptItems = eligible.map(item => ({
+    id: item.id,
+    title: item.title,
+    subtitle: item.subtitle || '',
+    publisher: item.sourceReferences?.[0]?.publisher || item.sourceDomain || 'Fachquelle',
+    topic: item.primaryTopic,
+    excerpt: stripSyntheticFillerSentences(item.articleBody || item.body || item.feedText || '').slice(0, 1400)
+  }));
+
+  const prompt = `Du bist die Chefredaktion von ATMEN (intellektuelles Magazin im Stil von ZEIT Wissen, Quanta Magazine und Stanford Encyclopedia).
+Verwandle die folgenden ${promptItems.length} Roh-Artikel in tiefgründige, eigenständig lesbare deutsche Magazin-Beiträge.
+
+STRIKTE QUALITÄTSREGELN:
+1. KEINE Meta-Floskeln („In diesem Beitrag wird…“, „Der Artikel beleuchtet…“, „Die detaillierten Analysen stehen…“). Starte sofort mit den konkreten Fakten, Befunden, Personen und Thesen!
+2. "feedText": 4 bis 6 präzise, informationsdichte Sätze auf Deutsch für die Feed-Karte (mindestens 260 Zeichen).
+3. "body": 3 bis 5 substanzielle Absätze im Markdown-Format (mit Zwischenüberschriften wie "### Kernaussage & Befund", "### Wissenschaftliche & gesellschaftliche Einordnung", "### Kritische Perspektive") für den Reader.
+4. "keyInsight": 1 bis 2 prägnante Sätze als Kernerkenntnis.
+5. "quiz": Eine konkrete Verständnisfrage zum Inhalt mit genau 4 Antwortoptionen ("options"), "correctIndex" (0-3) und "explanation".
+
+Eingabe-Artikel:
+${JSON.stringify(promptItems, null, 2)}
+
+Antworte ausschließlich als valides JSON-Objekt:
+{
+  "articles": [
+    {
+      "id": "...",
+      "feedText": "4-6 substanzielle Sätze...",
+      "body": "### Kernaussage & Befund\\n\\nAbsatz 1...\\n\\n### Einordnung & Hintergründe\\n\\nAbsatz 2...\\n\\n### Kritische Perspektive\\n\\nAbsatz 3...",
+      "keyInsight": "Kernerkenntnis...",
+      "quiz": {
+        "question": "Präzise Frage zum Artikel?",
+        "options": ["Option A", "Option B", "Option C", "Option D"],
+        "correctIndex": 0,
+        "explanation": "Begründung der richtigen Antwort."
+      }
+    }
+  ]
+}`;
+
+  try {
+    const aiRes = await callAiModel(prompt, {
+      credentials: creds,
+      jsonMode: true,
+      maxTokens: 3600,
+      bypassBudgetCeiling: true,
+      itemId: `newsroom-batch-${Date.now()}`
+    });
+
+    const cleanedJson = aiRes.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    const parsed = JSON.parse(cleanedJson);
+    const articlesArr: any[] = Array.isArray(parsed?.articles)
+      ? parsed.articles
+      : Array.isArray(parsed)
+      ? parsed
+      : [];
+
+    if (articlesArr.length === 0) {
+      return {
+        enrichedItems: [],
+        processedCount: 0,
+        usedAI: false
+      };
+    }
+
+    const byId = new Map<string, any>();
+    for (const entry of articlesArr) {
+      if (entry && typeof entry.id === 'string') {
+        byId.set(entry.id, entry);
+      }
+    }
+
+    const enrichedItems: FeedItem[] = [];
+    for (const original of eligible) {
+      const gen = byId.get(original.id);
+      if (!gen) continue;
+
+      const nextFeedText = stripSyntheticFillerSentences(String(gen.feedText || '').trim());
+      const nextBody = stripSyntheticFillerSentences(String(gen.body || '').trim());
+      if (nextFeedText.length < 100 || nextBody.length < 180) continue;
+
+      const nextKeyInsight = stripSyntheticFillerSentences(String(gen.keyInsight || original.keyInsight || '').trim());
+      const rawQuiz = gen.quiz;
+      const validQuiz =
+        rawQuiz &&
+        typeof rawQuiz.question === 'string' &&
+        Array.isArray(rawQuiz.options) &&
+        rawQuiz.options.length >= 2
+          ? {
+              id: `quiz-${original.id}`,
+              question: String(rawQuiz.question).trim(),
+              options: rawQuiz.options.slice(0, 4).map((o: unknown) => String(o).trim()),
+              correctIndex: Math.min(
+                Math.max(0, Number(rawQuiz.correctIndex) || 0),
+                Math.min(3, rawQuiz.options.length - 1)
+              ),
+              explanation: String(rawQuiz.explanation || '').trim(),
+              sourceArticleId: original.id,
+              sourceArticleTitle: original.title
+            }
+          : original.quiz;
+
+      const wordCount = Math.max(original.wordCount || 60, nextBody.split(/\s+/).filter(Boolean).length);
+      enrichedItems.push({
+        ...original,
+        feedText: nextFeedText,
+        body: nextBody,
+        articleBody: nextBody,
+        keyInsight: nextKeyInsight || original.keyInsight,
+        quiz: validQuiz,
+        aiAssisted: true,
+        contentOrigin: 'enriched_ai',
+        wordCount,
+        estimatedReadingMinutes: Math.max(2, Math.ceil(wordCount / 180)),
+        provenanceSummary: `✦ KI-Redaktion (${aiRes.modelUsed || creds.model || 'Gemini'}) · Quelle: ${
+          original.sourceReferences?.[0]?.publisher || original.sourceDomain || 'Fachquelle'
+        }`
+      });
+    }
+
+    return {
+      enrichedItems,
+      processedCount: enrichedItems.length,
+      usedAI: enrichedItems.length > 0,
+      modelUsed: aiRes.modelUsed
+    };
+  } catch {
+    return {
+      enrichedItems: [],
+      processedCount: 0,
+      usedAI: false
+    };
+  }
+}
+

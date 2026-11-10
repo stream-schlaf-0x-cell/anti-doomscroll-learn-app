@@ -1,5 +1,15 @@
 import { appStorage, AtemStorage } from '../data/storage';
-import { AiHttpError, boundedOutputTokens, fetchAiJson, normalizeAiProxyUrl, parseAiResult, ParsedAiResult } from './aiTransport';
+import {
+  AI_CONNECTION_TEST_TIMEOUT_MS,
+  AI_MAX_REQUEST_TIMEOUT_MS,
+  AI_REQUEST_TIMEOUT_MS,
+  AiHttpError,
+  boundedOutputTokens,
+  fetchAiJson,
+  normalizeAiProxyUrl,
+  parseAiResult,
+  ParsedAiResult
+} from './aiTransport';
 import {
   EnrichmentUsageLedger,
   defaultUsageLedger,
@@ -11,7 +21,13 @@ import {
   ModelCategory,
   ModelStatus,
   GEMINI_MODEL_CATALOG,
-  validateModelChoice
+  validateModelChoice,
+  findGeminiModel,
+  isProOrReasoningModelId,
+  isGeminiCodenameAlias,
+  mapGeminiModelIdToAvailable,
+  resolveEffectiveGoogleApiModelId,
+  clearResolvedGeminiModelCache
 } from './geminiModelRegistry';
 
 export * from './geminiModelRegistry';
@@ -127,12 +143,13 @@ export class AiCredentialsMissingError extends Error {
 
 // Keys are scoped to this application session. Metadata remains in local storage.
 const sessionApiKeys = new WeakMap<AtemStorage, string>();
-let sessionEffectiveGeminiModel: string | null = null;
+const sessionEffectiveGeminiModelBySelected = new Map<string, string>();
 let sessionEffectiveOpenRouterModel: string | null = null;
 
 export function resetSessionEffectiveModels(): void {
-  sessionEffectiveGeminiModel = null;
+  sessionEffectiveGeminiModelBySelected.clear();
   sessionEffectiveOpenRouterModel = null;
+  clearResolvedGeminiModelCache();
 }
 
 export function hasAiConfiguration(credentials: AiCredentials): boolean {
@@ -279,58 +296,78 @@ export interface AiCallOptions {
   systemInstruction?: string;
   jsonMode?: boolean;
   maxTokens?: number;
+  temperature?: number;
   credentials?: AiCredentials;
   ledger?: EnrichmentUsageLedger;
   itemId?: string;
-  /** May shorten the 15-second transport deadline, but cannot extend it. */
+  /** Custom deadline in milliseconds (up to 60s for Pro/Reasoning models). */
   timeoutMs?: number;
   bypassBudgetCeiling?: boolean;
 }
 
+export interface AiConnectionTestResult {
+  ok: boolean;
+  message: string;
+  latencyMs?: number;
+  selectedModel?: string;
+  resolvedModel?: string;
+}
+
 /**
- * Tests connection to configured provider with a minimal request.
+ * Tests connection to configured provider with a 25s reasoning-safe deadline and 256 maxOutputTokens
+ * so Gemini Pro / Argon / Carbon / Thinking models never exhaust tokens during internal reasoning.
  */
 export async function testAiConnection(
   credentials: AiCredentials
-): Promise<{ ok: boolean; message: string; latencyMs?: number }> {
+): Promise<AiConnectionTestResult> {
   if (!hasAiConfiguration(credentials)) {
     return { ok: false, message: 'Bitte gib einen API-Schlüssel oder eine eigene HTTPS-Proxy-Adresse ein.' };
   }
 
+  const selectedModel = credentials.model?.trim() || (
+    credentials.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL
+  );
+  const selectedLabel = credentials.provider === 'gemini'
+    ? (findGeminiModel(selectedModel)?.label || selectedModel)
+    : selectedModel;
+
   const start = Date.now();
   try {
     const res = await callAiModel('Antworte nur mit: {"status": "ok"}', {
-      jsonMode: true,
+      jsonMode: false,
+      temperature: 0.2,
       credentials,
       itemId: 'connection-test',
-      maxTokens: 128,
+      maxTokens: 256,
+      timeoutMs: AI_CONNECTION_TEST_TIMEOUT_MS,
+      bypassBudgetCeiling: true,
       // We pass an isolated in-memory ledger for connection testing so test calls don't block
       ledger: new EnrichmentUsageLedger('', false)
     });
 
     const latencyMs = Date.now() - start;
-    const textLower = res.text.toLowerCase();
-    if (textLower.includes('ok') || textLower.includes('status')) {
-      const providerName = credentials.provider === 'openrouter' ? 'OpenRouter' : 'Gemini';
-      return {
-        ok: true,
-        message: `🟢 Verbunden mit ${providerName} (Antwort in ${latencyMs}ms)`,
-        latencyMs
-      };
-    }
+    const resolvedModel = res.modelUsed || selectedModel;
+    const secondsStr = `${(latencyMs / 1000).toFixed(1)}s`;
+    const providerName = credentials.provider === 'openrouter' ? 'OpenRouter' : 'Gemini';
+
     return {
       ok: true,
-      message: `🟢 Antwort erhalten (${latencyMs}ms)`,
-      latencyMs
+      message: `✓ Verbunden mit ${providerName}: ${selectedLabel} (via ${resolvedModel} · ${secondsStr})`,
+      latencyMs,
+      selectedModel,
+      resolvedModel
     };
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
-      message: `🔴 Verbindungsfehler: ${errorMsg}`
+      message: `🔴 Verbindungsfehler: ${errorMsg}`,
+      selectedModel
     };
   }
 }
+
+export const testConnection = testAiConnection;
 
 /**
  * Unified AI call method strictly governed by EnrichmentUsageLedger.
@@ -401,47 +438,85 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
 
     if (!proxySucceeded) {
       if (credentials.provider === 'gemini') {
-      const body = JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        ...(options.systemInstruction ? { systemInstruction: { parts: [{ text: options.systemInstruction }] } } : {}),
-        generationConfig: { maxOutputTokens: maxTokens, ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}) }
-      });
-      const sendGemini = (chosenModel: string) => fetchAiJson(
-        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(chosenModel)}:generateContent`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey! }, body },
-        options.timeoutMs
-      );
-      let json: unknown;
-      const geminiCandidateModels = Array.from(new Set([
-        ...(sessionEffectiveGeminiModel ? [sessionEffectiveGeminiModel] : []),
-        model,
-        'gemini-2.5-flash',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash'
-      ]));
+        const isProTier = isProOrReasoningModelId(model);
+        const effectiveTimeoutMs = options.timeoutMs ?? (
+          isProTier ? AI_MAX_REQUEST_TIMEOUT_MS : AI_REQUEST_TIMEOUT_MS
+        );
 
-      let lastError: unknown;
-      let callSuccess = false;
-      for (const candidate of geminiCandidateModels) {
-        try {
-          json = await sendGemini(candidate);
-          effectiveModel = candidate;
-          sessionEffectiveGeminiModel = candidate;
-          callSuccess = true;
-          break;
-        } catch (error) {
-          lastError = error;
-          if (error instanceof AiHttpError && error.status === 404) {
-            continue;
+        const body = JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          ...(options.systemInstruction ? { systemInstruction: { parts: [{ text: options.systemInstruction }] } } : {}),
+          generationConfig: {
+            maxOutputTokens: maxTokens,
+            ...(typeof options.temperature === 'number' ? { temperature: options.temperature } : {}),
+            ...(options.jsonMode ? { responseMimeType: 'application/json' } : {})
           }
-          throw error;
+        });
+        const sendGemini = (chosenModel: string) => fetchAiJson(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(chosenModel)}:generateContent`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey! }, body },
+          effectiveTimeoutMs
+        );
+
+        // Pre-resolve codename aliases (e.g. gemini-4-argon, gemini-4-carbon, gemini-3.8-pro, gemini-3.8-flash)
+        // against the user's live /v1beta/models list (cached in memory per API key).
+        let primaryCandidate = sessionEffectiveGeminiModelBySelected.get(model) || model;
+        if (!sessionEffectiveGeminiModelBySelected.has(model) && isGeminiCodenameAlias(model)) {
+          if (effectiveTimeoutMs >= 500) {
+            primaryCandidate = await resolveEffectiveGoogleApiModelId(
+              model,
+              apiKey,
+              Math.min(3000, effectiveTimeoutMs)
+            );
+          } else {
+            primaryCandidate = mapGeminiModelIdToAvailable(model, []);
+          }
         }
-      }
-      if (!callSuccess) {
-        throw (lastError || new Error(`Kein kompatibles Gemini-Modell erreichbar.`));
-      }
-      result = parseAiResult(json, 'gemini');
-    } else {
+
+        const tierFallbacks = isProTier
+          ? ['gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-2.5-flash']
+          : ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'];
+
+        const geminiCandidateModels = Array.from(new Set([
+          primaryCandidate,
+          ...tierFallbacks
+        ]));
+
+        let json: unknown;
+        let lastError: unknown;
+        let callSuccess = false;
+        for (let idx = 0; idx < geminiCandidateModels.length; idx++) {
+          const candidate = geminiCandidateModels[idx];
+          try {
+            json = await sendGemini(candidate);
+            effectiveModel = candidate;
+            sessionEffectiveGeminiModelBySelected.set(model, candidate);
+            callSuccess = true;
+            break;
+          } catch (error) {
+            lastError = error;
+            // Fast-fail on HTTP 404 or 400: resolve via /v1beta/models and immediately try the resolved endpoint
+            if (error instanceof AiHttpError && (error.status === 404 || error.status === 400)) {
+              if (idx === 0 && effectiveTimeoutMs >= 500) {
+                const dynamicallyResolved = await resolveEffectiveGoogleApiModelId(
+                  model,
+                  apiKey,
+                  Math.min(3000, effectiveTimeoutMs)
+                );
+                if (dynamicallyResolved && !geminiCandidateModels.includes(dynamicallyResolved)) {
+                  geminiCandidateModels.splice(idx + 1, 0, dynamicallyResolved);
+                }
+              }
+              continue;
+            }
+            throw error;
+          }
+        }
+        if (!callSuccess) {
+          throw (lastError || new Error(`Kein kompatibles Gemini-Modell erreichbar.`));
+        }
+        result = parseAiResult(json, 'gemini');
+      } else {
       const messages = [
         ...(options.systemInstruction ? [{ role: 'system', content: options.systemInstruction }] : []),
         { role: 'user', content: prompt }

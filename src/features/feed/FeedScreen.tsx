@@ -62,7 +62,8 @@ import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/new
 import { NewsroomPipelineModal } from '../../ui/components/NewsroomPipelineModal';
 import {
   HivemindLearningTrack,
-  hivemindLearningService
+  hivemindLearningService,
+  generateNextHivemindChapter
 } from '../../core/learning/hivemindLearningService';
 
 function useReadingStableFeed(items: ScoredFeedItem[], reading: boolean, scope: string): ScoredFeedItem[] {
@@ -156,6 +157,7 @@ export const FeedScreen: React.FC = () => {
   const sessionStartedAt = React.useRef<number>(Date.now());
   const surfacedArrivalIdsRef = React.useRef<Set<string>>(new Set());
   const lockedTopItemIdsRef = React.useRef<string[] | null>(null);
+  const hasCommittedInitialViewportRef = React.useRef<boolean>(false);
   const previousScopeRef = React.useRef<string>('');
   const [pendingStreamArrivals, setPendingStreamArrivals] = useState<ScoredFeedItem[]>([]);
   const [showPipelineModal, setShowPipelineModal] = useState<boolean>(false);
@@ -180,6 +182,7 @@ export const FeedScreen: React.FC = () => {
     defaultFeedOperationManager.clearAutomaticPins();
     setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
     lockedTopItemIdsRef.current = null;
+    hasCommittedInitialViewportRef.current = false;
     setPendingStreamArrivals([]);
     setVisibleInfiniteCount(12);
     setSortMode(mode);
@@ -203,6 +206,7 @@ export const FeedScreen: React.FC = () => {
     // Immediately reset lockedTopItemIdsRef and prepend new arrival IDs
     const newArrivalIds = stampedArrivals.map(i => i.id);
     lockedTopItemIdsRef.current = newArrivalIds;
+    hasCommittedInitialViewportRef.current = true;
 
     for (const item of stampedArrivals) {
       defaultFeedOperationManager.pinItem(item.id);
@@ -249,6 +253,7 @@ export const FeedScreen: React.FC = () => {
   const [showHivemindModal, setShowHivemindModal] = useState<boolean>(false);
   const [hivemindTracks, setHivemindTracks] = useState<HivemindLearningTrack[]>([]);
   const [activeHivemindTrackId, setActiveHivemindTrackId] = useState<string | null>(null);
+  const [isLoadingNextHivemindChapter, setIsLoadingNextHivemindChapter] = useState<boolean>(false);
 
   React.useEffect(() => {
     void hivemindLearningService.getTracks().then(loaded => {
@@ -287,6 +292,23 @@ export const FeedScreen: React.FC = () => {
     await hivemindLearningService.markItemCompleted(trackId, itemId);
     scheduleCloudSyncPush();
   }, [scheduleCloudSyncPush]);
+
+  const handleLoadNextHivemindChapter = useCallback(async (trackId: string) => {
+    if (isLoadingNextHivemindChapter) return;
+    setIsLoadingNextHivemindChapter(true);
+    try {
+      const creds = await loadAiCredentials();
+      const updated = await generateNextHivemindChapter(trackId, { credentials: creds });
+      if (updated.items.length > 0 && (feedRepository as any).addItems) {
+        (feedRepository as any).addItems(updated.items);
+      }
+      scheduleCloudSyncPush();
+    } catch (e) {
+      console.warn('Fehler beim Laden des nächsten Hivemind-Kapitels:', e);
+    } finally {
+      setIsLoadingNextHivemindChapter(false);
+    }
+  }, [isLoadingNextHivemindChapter, scheduleCloudSyncPush]);
 
   // Live News Hub & Classics State
   const [liveNewsCategory, setLiveNewsCategory] = useState<NewsHubFilterCategory>('all');
@@ -478,6 +500,7 @@ export const FeedScreen: React.FC = () => {
   const onRefresh = async () => {
     setRefreshing(true);
     lockedTopItemIdsRef.current = null;
+    hasCommittedInitialViewportRef.current = false;
     setPendingStreamArrivals([]);
     await refreshLiveFeed();
     await loadSubchannels();
@@ -540,6 +563,7 @@ export const FeedScreen: React.FC = () => {
     setSelectedFilter(filter);
     setVisibleInfiniteCount(12);
     lockedTopItemIdsRef.current = null;
+    hasCommittedInitialViewportRef.current = false;
     setPendingStreamArrivals([]);
     scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     if (filter !== 'all' && (activeFeedOption === 'live_news' || activeFeedOption === 'classics')) {
@@ -777,24 +801,32 @@ export const FeedScreen: React.FC = () => {
   }, [preSanitizedMasterPool, selectedSpaceContext, matchesSelectedSpace, filterByQuery, profile, selectedFilter, searchQuery, activeHivemindTrackId, sortMode, pinnedIds, seenIds, seenRecordMap, hivemindTracks]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
-  // Viewport Top-Lock (WP 1 & WP 3): Lock the visible top 12 cards for active session/scope
-  // Incoming background items are kept in pendingStreamArrivals instead of jumping the screen!
+  // Viewport Top-Lock (Zero-Flicker Boot): Lock the visible top 12 cards immediately on frame 1
+  // (EVEN when scrollOffsetYRef.current === 0). Incoming background items are kept in
+  // pendingStreamArrivals instead of replacing or jumping the screen!
   const lockedInfiniteBase = useMemo(() => {
     if (previousScopeRef.current !== presentationScope) {
       previousScopeRef.current = presentationScope;
-      lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
+      if (infiniteInterleavedBase.length > 0) {
+        lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
+        hasCommittedInitialViewportRef.current = true;
+      } else {
+        lockedTopItemIdsRef.current = null;
+        hasCommittedInitialViewportRef.current = false;
+      }
       setPendingStreamArrivals([]);
       return infiniteInterleavedBase;
     }
 
-    if (!lockedTopItemIdsRef.current || lockedTopItemIdsRef.current.length === 0) {
-      lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
-      return infiniteInterleavedBase;
-    }
-
-    // Work Package 3: During the first 15 seconds after app boot, merge silently without populating banner
-    if (Date.now() - appMountedAtRef.current < 15_000) {
-      lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
+    if (
+      !hasCommittedInitialViewportRef.current ||
+      !lockedTopItemIdsRef.current ||
+      lockedTopItemIdsRef.current.length === 0
+    ) {
+      if (infiniteInterleavedBase.length > 0) {
+        lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
+        hasCommittedInitialViewportRef.current = true;
+      }
       return infiniteInterleavedBase;
     }
 
@@ -819,7 +851,7 @@ export const FeedScreen: React.FC = () => {
         return true;
       });
 
-      if (validIncoming.length > 0) {
+      if (validIncoming.length > 0 && Date.now() - appMountedAtRef.current >= 2500) {
         for (const it of validIncoming) {
           surfacedArrivalIdsRef.current.add(it.id);
         }
@@ -2150,6 +2182,66 @@ export const FeedScreen: React.FC = () => {
                         </View>
                       );
                     })}
+
+                    {/* Multi-Chapter Progressive Expansion Button at bottom of Hivemind Focus Stream */}
+                    {(() => {
+                      const nextPendingChapter = (activeHivemindTrack.chapters || []).find(ch => !ch.isGenerated);
+                      const nextChapterTitle = nextPendingChapter
+                        ? nextPendingChapter.title
+                        : `Kapitel ${(activeHivemindTrack.chapters?.length || 1) + 1}: Weiterführende Vertiefung`;
+                      return (
+                        <View
+                          style={{
+                            marginHorizontal: spacing.md,
+                            marginTop: spacing.sm,
+                            marginBottom: spacing.xl,
+                            padding: spacing.md,
+                            borderRadius: radius.lg,
+                            backgroundColor: colors.surface,
+                            borderWidth: 1,
+                            borderColor: colors.borderSubtle
+                          }}
+                        >
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 }}>
+                            Bereit für die nächste Vertiefungsstufe?
+                          </Text>
+                          <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 12 }}>
+                            Erweitere „{activeHivemindTrack.title}“ nahtlos um das nächste aufbauende Kapitel mit 12 neuen Lernkarten.
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => void handleLoadNextHivemindChapter(activeHivemindTrack.id)}
+                            disabled={isLoadingNextHivemindChapter}
+                            style={{
+                              paddingVertical: 11,
+                              paddingHorizontal: 14,
+                              borderRadius: radius.md,
+                              backgroundColor: colors.accent,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Nächstes Kapitel laden für ${activeHivemindTrack.title}`}
+                          >
+                            {isLoadingNextHivemindChapter ? (
+                              <>
+                                <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                                <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                                  Generiere {nextChapterTitle} (+12 Karten)…
+                                </Text>
+                              </>
+                            ) : (
+                              <>
+                                <Ionicons name="add-circle-outline" size={16} color="#FFFFFF" style={{ marginRight: 7 }} />
+                                <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                                  + Nächstes Kapitel laden ({nextChapterTitle} · +12 Karten)
+                                </Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })()}
                   </>
                 ) : curatedSelection && curatedSelection.items.length > 0 ? (
                   <>

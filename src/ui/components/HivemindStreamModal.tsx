@@ -21,6 +21,7 @@ import {
   HivemindLearningTrack,
   hivemindLearningService,
   generateHivemindLearningTrack,
+  generateNextHivemindChapter,
   extractTextFromUploadedFile
 } from '../../core/learning/hivemindLearningService';
 
@@ -57,6 +58,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
   const [mixNewTrackIntoMainFeed, setMixNewTrackIntoMainFeed] = useState<boolean>(true);
 
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [expandingTrackId, setExpandingTrackId] = useState<string | null>(null);
   const [progressStage, setProgressStage] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [tracks, setTracks] = useState<HivemindLearningTrack[]>(() =>
@@ -179,6 +181,25 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
   const handleDeleteTrack = async (trackId: string) => {
     await hivemindLearningService.deleteTrack(trackId);
     scheduleCloudSyncPush();
+  };
+
+  const handleGenerateNextChapter = async (trackId: string) => {
+    if (expandingTrackId) return;
+    setExpandingTrackId(trackId);
+    setError(null);
+    try {
+      const creds = await loadAiCredentials();
+      const updated = await generateNextHivemindChapter(trackId, { credentials: creds });
+      if (updated.items.length > 0) {
+        feedRepository.addItems(updated.items);
+      }
+      await recomputeFeed();
+      scheduleCloudSyncPush();
+    } catch (e: any) {
+      setError(e?.message || 'Nächstes Kapitel konnte nicht geladen werden.');
+    } finally {
+      setExpandingTrackId(null);
+    }
   };
 
   const handleOpenFocusMode = (track: HivemindLearningTrack) => {
@@ -591,6 +612,52 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                       </Text>
                     </TouchableOpacity>
                   </View>
+
+                  {/* Multi-Chapter Progressive Expansion Button */}
+                  {(() => {
+                    const nextPendingChapter = (track.chapters || []).find(ch => !ch.isGenerated);
+                    const nextChapterLabel = nextPendingChapter
+                      ? nextPendingChapter.title
+                      : `Kapitel ${(track.chapters?.length || 1) + 1}: Weiterführende Vertiefung`;
+                    const isExpandingThis = expandingTrackId === track.id;
+
+                    return (
+                      <TouchableOpacity
+                        onPress={() => void handleGenerateNextChapter(track.id)}
+                        disabled={Boolean(expandingTrackId)}
+                        style={{
+                          marginTop: 10,
+                          paddingVertical: 9,
+                          paddingHorizontal: 12,
+                          borderRadius: radius.md,
+                          borderWidth: 1,
+                          borderColor: colors.borderSubtle,
+                          backgroundColor: colors.surfaceSecondary,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Nächstes Kapitel laden für ${track.title}`}
+                      >
+                        {isExpandingThis ? (
+                          <>
+                            <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 8 }} />
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textPrimary }}>
+                              Generiere nächstes Kapitel (+12 Karten)…
+                            </Text>
+                          </>
+                        ) : (
+                          <>
+                            <Ionicons name="add-circle-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textPrimary }} numberOfLines={1}>
+                              Nächstes Kapitel laden ({nextChapterLabel} · +12 Karten)
+                            </Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })()}
                 </View>
               );
             })}

@@ -335,7 +335,12 @@ export class LocalFeedRepository implements IFeedRepository {
       remainingItems = [...remainingItems, ...backfill];
     }
     const ranked = rankAndInterleaveFeed(remainingItems, profile, interactions);
-    return this.applyPinnedItems(ranked, profile, interactions, excludeSet);
+    const rankedIds = new Set(ranked.map(r => r.id));
+    const missingNonArdTail = remainingItems
+      .filter(item => !rankedIds.has(item.id))
+      .map(item => scoreFeedItem(item, profile, interactions));
+    const completeRanked = missingNonArdTail.length > 0 ? [...ranked, ...missingNonArdTail] : ranked;
+    return this.applyPinnedItems(completeRanked, profile, interactions, excludeSet);
   }
 
   async getItemById(id: string): Promise<FeedItem | null> {

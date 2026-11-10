@@ -2,26 +2,31 @@ import { IContentEnricher, EnrichmentRequest, EnrichmentResult } from './types';
 import { EnrichmentUsageLedger, defaultUsageLedger, calculateCostEur } from './ledger';
 import { EnrichmentCache, defaultEnrichmentCache } from './cache';
 import { synthesizeDidacticTransfer } from '../synthesis/backgroundResearchPipeline';
+import { cleanArticleBodyFormatting, stripSyntheticFillerSentences } from './batchEnricher';
 
 export const CURRENT_PROMPT_VERSION = 'v2-oct2026-de';
 
 /**
  * Heuristic zero-cost synthesizer.
  * Does not make external network requests or spend tokens.
- * Produces structured German content directly from source facts and metadata.
+ * Produces structured German content directly from authentic source paragraphs without fake templates.
  */
 export class SourceOnlyEnricher implements IContentEnricher {
   async enrich(request: EnrichmentRequest): Promise<EnrichmentResult> {
     const { item } = request;
-    const paragraphs = item.body.split('\n\n').filter(p => p.trim().length > 0);
+    const rawBody = stripSyntheticFillerSentences(cleanArticleBodyFormatting(item.body || item.articleBody || '', item.title));
+    const paragraphs = rawBody.split('\n\n').filter(p => p.trim().length > 0);
 
-    // Standalone reading substance for the feed card: first two substantial paragraphs
-    let feedText = paragraphs.slice(0, 2).join('\n\n');
+    // Standalone reading substance for the feed card: first two substantial authentic paragraphs
+    let feedText = paragraphs.slice(0, 2).join('\n\n').trim();
     if (feedText.length < 80 && item.subtitle) {
-      feedText = `${item.subtitle}\n\n${feedText}`;
+      const cleanSub = stripSyntheticFillerSentences(item.subtitle.trim());
+      if (cleanSub && !feedText.includes(cleanSub)) {
+        feedText = feedText ? `${cleanSub}\n\n${feedText}` : cleanSub;
+      }
     }
-    if (!feedText || feedText.length < 30) {
-      feedText = `${item.title}: Ein neuer Beitrag aus ${item.sourceReferences[0]?.publisher || 'der Fachquelle'}.`;
+    if (!feedText) {
+      feedText = stripSyntheticFillerSentences(item.feedText || item.subtitle || item.title).trim();
     }
 
     const publisher = item.sourceReferences[0]?.publisher || 'der Fachquelle';

@@ -1,5 +1,6 @@
 import { FeedItem, FeedItemSchema } from '../domain/types';
 import { AtemStorage, appStorage } from '../data/storage';
+import { stripSyntheticFillerSentences } from '../enrichment/batchEnricher';
 
 const STORAGE_KEY_ARTICLES = '@atem:persisted_articles:v2';
 const STORAGE_KEY_META = '@atem:persisted_articles_meta:v2';
@@ -23,7 +24,7 @@ export class PersistentArticleStore {
 
   /**
    * Loads all cached articles from persistent storage.
-   * Silently recovers from malformed or corrupted cache entries without throwing.
+   * Strips any legacy synthetic filler sentences and filters out un-enriched stubs (< 80 chars).
    */
   public async loadArticles(): Promise<FeedItem[]> {
     try {
@@ -37,7 +38,30 @@ export class PersistentArticleStore {
       for (const entry of parsed) {
         const validated = FeedItemSchema.safeParse(entry);
         if (validated.success) {
-          validItems.push(validated.data);
+          const item = validated.data;
+          const cleanedFeedText = stripSyntheticFillerSentences(item.feedText || '').trim();
+          const cleanedBody = stripSyntheticFillerSentences(item.body || item.articleBody || '').trim();
+          const cleanedArticleBody = item.articleBody
+            ? stripSyntheticFillerSentences(item.articleBody).trim()
+            : cleanedBody;
+
+          const isVisualOrTrackCard =
+            item.format === 'meme' ||
+            item.format === 'art_showcase' ||
+            Boolean(item.hivemindMeta) ||
+            Boolean(item.aiAssisted);
+
+          // Substance gate: drop un-enriched scraped stubs whose cleaned feedText is < 80 chars
+          if (!isVisualOrTrackCard && cleanedFeedText.length < 80 && cleanedBody.length < 80) {
+            continue;
+          }
+
+          validItems.push({
+            ...item,
+            feedText: cleanedFeedText || item.feedText,
+            body: cleanedBody || item.body,
+            articleBody: cleanedArticleBody || item.articleBody
+          });
         }
       }
       return validItems;

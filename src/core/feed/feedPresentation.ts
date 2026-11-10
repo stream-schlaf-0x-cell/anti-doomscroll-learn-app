@@ -78,3 +78,75 @@ export function applyScrollFreeze<T extends { id: string }>(
     queuedArrivals: [...existingQueuedArrivals, ...newlyQueued]
   };
 }
+
+export interface InitialViewportLockResult<T extends { id: string }> {
+  lockedOrderIds: string[];
+  hasCommittedInitialViewport: boolean;
+  orderedItems: T[];
+  queuedArrivals: T[];
+}
+
+/**
+ * Initial Viewport Lock (Zero-Flicker Boot):
+ * Commits `lockedOrderIds` immediately on the very first non-empty render (`incomingItems.length > 0`)
+ * EVEN when `scrollOffsetY === 0` at the top of the screen.
+ * Subsequent background arrivals are queued into `queuedArrivals` instead of replacing or reordering
+ * the user's visible top viewport cards.
+ */
+export function applyInitialViewportLock<T extends { id: string }>(
+  currentLockedOrderIds: string[],
+  hasCommittedInitialViewport: boolean,
+  incomingItems: T[],
+  existingQueuedArrivals: T[] = [],
+  lockCount: number = 12
+): InitialViewportLockResult<T> {
+  if (incomingItems.length === 0) {
+    return {
+      lockedOrderIds: currentLockedOrderIds,
+      hasCommittedInitialViewport,
+      orderedItems: [],
+      queuedArrivals: existingQueuedArrivals
+    };
+  }
+
+  // First non-empty render in this scope: commit initial viewport order immediately at scrollOffsetY >= 0
+  if (!hasCommittedInitialViewport || currentLockedOrderIds.length === 0) {
+    const initialIds = incomingItems.slice(0, lockCount).map(item => item.id);
+    return {
+      lockedOrderIds: initialIds,
+      hasCommittedInitialViewport: true,
+      orderedItems: incomingItems,
+      queuedArrivals: existingQueuedArrivals
+    };
+  }
+
+  const lockedSet = new Set(currentLockedOrderIds);
+  const incomingMap = new Map(incomingItems.map(item => [item.id, item]));
+
+  // Keep locked top cards in their exact committed order (allowing in-place enrichment updates)
+  const lockedTopCards: T[] = [];
+  for (const id of currentLockedOrderIds) {
+    const match = incomingMap.get(id);
+    if (match) {
+      lockedTopCards.push(match);
+    }
+  }
+
+  // Any new items that tried to enter the top `lockCount` slots are queued into `queuedArrivals`
+  const incomingTopNew = incomingItems.slice(0, lockCount).filter(item => !lockedSet.has(item.id));
+  const existingQueuedIds = new Set(existingQueuedArrivals.map(item => item.id));
+  const newlyQueued = incomingTopNew.filter(item => !existingQueuedIds.has(item.id));
+  const nextQueued = [...existingQueuedArrivals, ...newlyQueued];
+  const queuedIdSet = new Set(nextQueued.map(item => item.id));
+
+  // Remaining tail items follow after the locked top viewport
+  const tailCards = incomingItems.filter(item => !lockedSet.has(item.id) && !queuedIdSet.has(item.id));
+
+  return {
+    lockedOrderIds: currentLockedOrderIds,
+    hasCommittedInitialViewport: true,
+    orderedItems: [...lockedTopCards, ...tailCards],
+    queuedArrivals: nextQueued
+  };
+}
+

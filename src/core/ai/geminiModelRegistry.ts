@@ -773,3 +773,243 @@ export async function discoverLiveGeminiModels(
     };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic Google /v1beta/models Resolution & Alias Mapping (Hotfix)
+// ---------------------------------------------------------------------------
+
+interface ResolvedModelsCacheEntry {
+  timestamp: number;
+  availableModelIds: string[];
+}
+
+const resolvedModelsCacheByKey = new Map<string, ResolvedModelsCacheEntry>();
+const RESOLVED_MODELS_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+const PREFERRED_PRO_MODELS = [
+  'gemini-3.8-pro',
+  'gemini-3.1-pro-preview',
+  'gemini-2.5-pro',
+  'gemini-pro-latest',
+  'gemini-1.5-pro-002',
+  'gemini-1.5-pro'
+];
+
+const PREFERRED_FLASH_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.1-flash',
+  'gemini-2.5-flash',
+  'gemini-flash-latest',
+  'gemini-1.5-flash',
+  'gemini-2.0-flash'
+];
+
+/**
+ * Clears the in-memory `/v1beta/models` resolution cache (useful for unit tests or key changes).
+ */
+export function clearResolvedGeminiModelCache(): void {
+  resolvedModelsCacheByKey.clear();
+}
+
+/**
+ * Returns true if the given model ID is a Pro, Argon, Carbon, Ultra, or Thinking reasoning model.
+ */
+export function isProOrReasoningModelId(modelId: string): boolean {
+  const lower = (modelId || '').toLowerCase();
+  return (
+    lower.includes('argon') ||
+    lower.includes('carbon') ||
+    lower.includes('pro') ||
+    lower.includes('ultra') ||
+    lower.includes('thinking') ||
+    lower.includes('deep-research') ||
+    lower.includes('antigravity')
+  );
+}
+
+/**
+ * Returns true if `modelId` is an internal/future codename alias that should be resolved
+ * against `/v1beta/models` before hitting `:generateContent`.
+ */
+export function isGeminiCodenameAlias(modelId: string): boolean {
+  const clean = (modelId || '').replace(/^models\//, '').trim().toLowerCase();
+  return (
+    clean.includes('argon') ||
+    clean.includes('carbon') ||
+    clean.startsWith('gemini-4') ||
+    clean.startsWith('gemini-3.8') ||
+    clean.startsWith('gemini-3.1') ||
+    clean.startsWith('antigravity') ||
+    clean.startsWith('deep-research')
+  );
+}
+
+/**
+ * Deterministically resolves a selected Gemini model ID or codename (`gemini-4-argon`,
+ * `gemini-4-carbon`, `gemini-3.8-pro`, `gemini-3.8-flash`, etc.) against a list of
+ * available Google API model IDs (or offline defaults if none provided).
+ */
+export function mapGeminiModelIdToAvailable(
+  selectedModelId: string,
+  availableModelIds: string[] = []
+): string {
+  const cleanSelected = (selectedModelId || DEFAULT_GEMINI_TEXT_MODEL)
+    .replace(/^models\//, '')
+    .trim();
+
+  const availableSet = new Set(
+    availableModelIds
+      .map(id => id.replace(/^models\//, '').trim())
+      .filter(Boolean)
+  );
+
+  // 1. If the user's available models explicitly include the exact selected model, return it as-is
+  if (availableSet.size > 0 && availableSet.has(cleanSelected) && !DISCONTINUED_MODEL_IDS.has(cleanSelected)) {
+    return cleanSelected;
+  }
+
+  // 2. High-tier Pro / Reasoning / Argon / Carbon mapping
+  if (isProOrReasoningModelId(cleanSelected)) {
+    if (availableSet.size > 0) {
+      for (const candidate of PREFERRED_PRO_MODELS) {
+        if (availableSet.has(candidate)) {
+          return candidate;
+        }
+      }
+      // Check any other available -pro text model on the user's key
+      const dynamicPro = Array.from(availableSet).find(
+        id =>
+          id.includes('-pro') &&
+          !id.includes('tts') &&
+          !id.includes('audio') &&
+          !id.includes('image') &&
+          !id.includes('vision') &&
+          !DISCONTINUED_MODEL_IDS.has(id)
+      );
+      if (dynamicPro) return dynamicPro;
+    }
+    return 'gemini-2.5-pro';
+  }
+
+  // 3. Flash-Lite / Flash mapping
+  if (cleanSelected.includes('lite')) {
+    if (availableSet.size > 0) {
+      if (availableSet.has('gemini-3.8-flash-lite')) return 'gemini-3.8-flash-lite';
+      if (availableSet.has('gemini-2.5-flash-lite')) return 'gemini-2.5-flash-lite';
+    }
+  }
+
+  if (availableSet.size > 0) {
+    for (const candidate of PREFERRED_FLASH_MODELS) {
+      if (availableSet.has(candidate)) {
+        return candidate;
+      }
+    }
+    const dynamicFlash = Array.from(availableSet).find(
+      id =>
+        id.includes('flash') &&
+        !id.includes('tts') &&
+        !id.includes('audio') &&
+        !id.includes('image') &&
+        !id.includes('live')
+    );
+    if (dynamicFlash) return dynamicFlash;
+  }
+
+  // If cleanSelected is already a standard 2.5/1.5 model and no list was returned, preserve it
+  if (
+    cleanSelected === 'gemini-2.5-flash' ||
+    cleanSelected === 'gemini-2.5-flash-lite' ||
+    cleanSelected === 'gemini-1.5-flash'
+  ) {
+    return cleanSelected;
+  }
+
+  return 'gemini-2.5-flash';
+}
+
+/**
+ * Queries `https://generativelanguage.googleapis.com/v1beta/models` once (3s timeout, cached in memory
+ * per API key) to inspect which models are enabled on the user's key, and maps codenames like
+ * `gemini-4-argon`, `gemini-4-carbon`, `gemini-3.8-pro`, or `gemini-3.8-flash` to the highest
+ * available `-pro` or `-flash` endpoint on the user's account.
+ */
+export async function resolveEffectiveGoogleApiModelId(
+  selectedModelId: string,
+  apiKey?: string,
+  timeoutMs: number = 3000
+): Promise<string> {
+  const cleanKey = (apiKey || '').trim();
+  const cleanSelected = (selectedModelId || DEFAULT_GEMINI_TEXT_MODEL)
+    .replace(/^models\//, '')
+    .trim();
+
+  if (!cleanKey) {
+    return mapGeminiModelIdToAvailable(cleanSelected, []);
+  }
+
+  const cached = resolvedModelsCacheByKey.get(cleanKey);
+  if (cached && Date.now() - cached.timestamp < RESOLVED_MODELS_CACHE_TTL_MS && cached.availableModelIds.length > 0) {
+    return mapGeminiModelIdToAvailable(cleanSelected, cached.availableModelIds);
+  }
+
+  const controller = new AbortController();
+  const effectiveTimeout = Math.max(50, Math.min(3000, timeoutMs));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error('Model discovery timeout'));
+      }, effectiveTimeout);
+    });
+
+    const response = await Promise.race([
+      fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=100', {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          'x-goog-api-key': cleanKey
+        },
+        signal: controller.signal
+      }),
+      timeoutPromise
+    ]);
+
+    if (response && response.ok) {
+      const data = (await response.json()) as {
+        models?: {
+          name?: string;
+          supportedGenerationMethods?: string[];
+        }[];
+      };
+
+      if (Array.isArray(data?.models) && data.models.length > 0) {
+        const availableIds: string[] = [];
+        for (const item of data.models) {
+          const rawId = (item?.name || '').replace(/^models\//, '').trim();
+          if (!rawId) continue;
+          const methods = item?.supportedGenerationMethods;
+          if (!Array.isArray(methods) || methods.length === 0 || methods.includes('generateContent')) {
+            availableIds.push(rawId);
+          }
+        }
+        if (availableIds.length > 0) {
+          resolvedModelsCacheByKey.set(cleanKey, {
+            timestamp: Date.now(),
+            availableModelIds: availableIds
+          });
+          return mapGeminiModelIdToAvailable(cleanSelected, availableIds);
+        }
+      }
+    }
+  } catch {
+    // Graceful fallback to deterministic offline alias mapping when /v1beta/models is unreachable
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+
+  return mapGeminiModelIdToAvailable(cleanSelected, []);
+}
+

@@ -8,8 +8,15 @@ import { appStorage, AtemStorage, KeyLockManager, CorruptedDataError } from '../
 export const EUR_PER_INPUT_TOKEN = 0.000000095;
 export const EUR_PER_OUTPUT_TOKEN = 0.00000038;
 
-// Hard monthly budget ceiling for one personal user
+// Hard monthly budget ceiling for default shared mode (€5.00) and BYOK active user key mode (€20.00)
 export const MONTHLY_BUDGET_CEILING_EUR = 5.00;
+export const ACTIVE_KEY_MONTHLY_BUDGET_CEILING_EUR = 20.00;
+export const MAX_DAILY_AI_CALLS = 2000;
+export const MAX_ITEMS_PER_AI_RUN = 25;
+
+export function getEffectiveBudgetCeilingEur(hasActiveUserKey: boolean = false): number {
+  return hasActiveUserKey ? ACTIVE_KEY_MONTHLY_BUDGET_CEILING_EUR : MONTHLY_BUDGET_CEILING_EUR;
+}
 
 export function calculateCostEur(inputTokens: number, outputTokens: number): number {
   const cost = inputTokens * EUR_PER_INPUT_TOKEN + outputTokens * EUR_PER_OUTPUT_TOKEN;
