@@ -12,6 +12,10 @@ import {
   hasAiConfiguration,
   loadAiCredentials
 } from '../ai/atmenAiClient';
+import {
+  defaultUsageLedger,
+  getEffectiveBudgetCeilingEur
+} from '../enrichment/ledger';
 
 export const HIVEMIND_TRACKS_STORAGE_KEY = '@atem:hivemind_tracks:v1';
 export const DELETED_HIVEMIND_TRACK_IDS_KEY = '@atem:deleted_hivemind_tracks:v1';
@@ -39,6 +43,8 @@ export interface HivemindLearningTrack {
   items: FeedItem[];
   chapters?: HivemindChapterSpec[];
   currentChapterIndex?: number;
+  usedAi?: boolean;
+  fallbackReason?: string;
 }
 
 export interface GenerateHivemindTrackOptions {
@@ -133,21 +139,187 @@ function decodePdfHexString(hex: string): string {
   return out;
 }
 
+function bytesToLatin1(bytes: Uint8Array, maxBytes = 12_000_000): string {
+  const len = Math.min(bytes.length, maxBytes);
+  let out = '';
+  // Process in 16KB chunks to avoid slow character concatenation and argument overflow
+  for (let i = 0; i < len; i += 16384) {
+    const end = Math.min(len, i + 16384);
+    out += String.fromCharCode(...bytes.subarray(i, end));
+  }
+  return out;
+}
+
+function decodeHexToCodePoints(hex: string): string {
+  const clean = hex.replace(/[^0-9A-Fa-f]/g, '');
+  if (!clean) return '';
+  if (clean.length === 4 || (clean.length % 4 === 0 && clean.length >= 4)) {
+    let out = '';
+    for (let i = 0; i + 3 < clean.length; i += 4) {
+      const cp = parseInt(clean.slice(i, i + 4), 16);
+      if (cp >= 32) out += String.fromCodePoint(cp);
+    }
+    return out;
+  }
+  const val = parseInt(clean, 16);
+  return val >= 32 ? String.fromCodePoint(val) : '';
+}
+
+function buildToUnicodeCMap(streamsText: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const bfCharRegex = /beginbfchar([\s\S]*?)endbfchar/g;
+  let m: RegExpExecArray | null;
+  while ((m = bfCharRegex.exec(streamsText)) !== null) {
+    const pairRegex = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g;
+    let p: RegExpExecArray | null;
+    while ((p = pairRegex.exec(m[1])) !== null) {
+      const unicode = decodeHexToCodePoints(p[2]);
+      if (unicode) map.set(p[1].toUpperCase(), unicode);
+    }
+  }
+  const bfRangeRegex = /beginbfrange([\s\S]*?)endbfrange/g;
+  while ((m = bfRangeRegex.exec(streamsText)) !== null) {
+    const rangeRegex = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g;
+    let r: RegExpExecArray | null;
+    while ((r = rangeRegex.exec(m[1])) !== null) {
+      const start = parseInt(r[1], 16);
+      const end = parseInt(r[2], 16);
+      let dst = parseInt(r[3], 16);
+      const width = r[1].length;
+      if (end >= start && end - start <= 256) {
+        for (let code = start; code <= end; code++) {
+          const hexKey = code.toString(16).toUpperCase().padStart(width, '0');
+          if (dst >= 32) map.set(hexKey, String.fromCodePoint(dst));
+          dst++;
+        }
+      }
+    }
+  }
+  return map;
+}
+
+function decodePdfHexWithCMap(hex: string, cmap?: Map<string, string>): string {
+  const clean = hex.replace(/[^0-9A-Fa-f]/g, '');
+  if (!clean) return '';
+  if (cmap && cmap.size > 0) {
+    if (clean.length >= 4 && clean.length % 4 === 0) {
+      let out = '';
+      let matched = 0;
+      for (let i = 0; i + 3 < clean.length; i += 4) {
+        const key4 = clean.slice(i, i + 4).toUpperCase();
+        const mapped = cmap.get(key4);
+        if (mapped) {
+          out += mapped;
+          matched++;
+        }
+      }
+      if (matched > 0) return out;
+    }
+    if (clean.length % 2 === 0) {
+      let out = '';
+      let matched = 0;
+      for (let i = 0; i + 1 < clean.length; i += 2) {
+        const key2 = clean.slice(i, i + 2).toUpperCase();
+        const mapped = cmap.get(key2);
+        if (mapped) {
+          out += mapped;
+          matched++;
+        }
+      }
+      if (matched > 0) return out;
+    }
+  }
+  return decodePdfHexString(clean);
+}
+
+async function runDecompressionStream(
+  compressed: Uint8Array,
+  format: 'deflate' | 'deflate-raw'
+): Promise<Uint8Array | null> {
+  if (typeof DecompressionStream === 'undefined' || typeof Response === 'undefined') {
+    return null;
+  }
+  try {
+    const ds = new DecompressionStream(format);
+    const readPromise = new Response(ds.readable).arrayBuffer();
+    const writer = ds.writable.getWriter();
+    const copy = compressed.slice();
+    await writer.write(copy);
+    await writer.close();
+    const buf = await readPromise;
+    return new Uint8Array(buf);
+  } catch {
+    return null;
+  }
+}
+
+async function extractFlateDecodePdfText(bytes: Uint8Array): Promise<{
+  text: string;
+  sawCompressedStreams: boolean;
+}> {
+  const rawLatin1 = bytesToLatin1(bytes);
+  const decompressedParts: string[] = [];
+  let sawCompressedStreams = false;
+
+  const streamHeaderRegex = /stream(?:\r\n|\n|\r)/g;
+  let streamMatch: RegExpExecArray | null;
+  while ((streamMatch = streamHeaderRegex.exec(rawLatin1)) !== null) {
+    const dataStart = streamMatch.index + streamMatch[0].length;
+    const endIdx = rawLatin1.indexOf('endstream', dataStart);
+    if (endIdx < 0 || endIdx <= dataStart) continue;
+
+    // Trim single trailing CR/LF before endstream per PDF spec
+    let dataEnd = endIdx;
+    if (dataEnd > dataStart && rawLatin1[dataEnd - 1] === '\n') dataEnd--;
+    if (dataEnd > dataStart && rawLatin1[dataEnd - 1] === '\r') dataEnd--;
+    if (dataEnd - dataStart <= 2 || dataEnd - dataStart > 4_000_000) continue;
+
+    const dictWindow = rawLatin1.slice(Math.max(0, streamMatch.index - 400), streamMatch.index);
+    const hasFlateFilter = /\/FlateDecode\b/.test(dictWindow);
+    const firstByte = bytes[dataStart];
+    const secondByte = bytes[dataStart + 1];
+    const looksLikeZlib = firstByte === 0x78 && (secondByte === 0x01 || secondByte === 0x5e || secondByte === 0x9c || secondByte === 0xda);
+
+    if (!hasFlateFilter && !looksLikeZlib) continue;
+    sawCompressedStreams = true;
+
+    const slice = bytes.subarray(dataStart, dataEnd);
+    const inflated =
+      (await runDecompressionStream(slice, 'deflate')) ||
+      (await runDecompressionStream(slice, 'deflate-raw'));
+
+    if (inflated && inflated.length > 0) {
+      const decoded = bytesToLatin1(inflated, 2_000_000);
+      if (/\bBT\b/.test(decoded) || /beginbfchar|beginbfrange/.test(decoded) || /[A-Za-z0-9]{4,}/.test(decoded)) {
+        decompressedParts.push(decoded);
+      }
+    }
+  }
+
+  const combinedCorpus = [rawLatin1, ...decompressedParts].join('\n');
+  const cmap = decompressedParts.length > 0 ? buildToUnicodeCMap(decompressedParts.join('\n')) : undefined;
+  const parsed = parsePdfBufferTextFallback(combinedCorpus, cmap);
+  return {
+    text: parsed,
+    sawCompressedStreams
+  };
+}
+
 /**
  * Pure TypeScript PDF text-operator parser fallback:
  * Extracts readable text from PDF `BT ... ET` blocks, `(literal) Tj`, `[(...) ...] TJ`,
- * hex strings, and readable text runs without any native binary dependency.
+ * hex strings (with optional ToUnicode CMap), and readable text runs without any native binary dependency.
  */
-export function parsePdfBufferTextFallback(input: string | Uint8Array | ArrayBuffer): string {
+export function parsePdfBufferTextFallback(
+  input: string | Uint8Array | ArrayBuffer,
+  cmap?: Map<string, string>
+): string {
   let rawLatin1 = '';
   if (typeof input === 'string') {
     rawLatin1 = input;
   } else {
     const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-    const maxBytes = Math.min(bytes.length, 2_000_000);
-    for (let i = 0; i < maxBytes; i++) {
-      rawLatin1 += String.fromCharCode(bytes[i]);
-    }
+    rawLatin1 = bytesToLatin1(bytes);
   }
   const chunks: string[] = [];
 
@@ -171,7 +343,7 @@ export function parsePdfBufferTextFallback(input: string | Uint8Array | ArrayBuf
         if (t.startsWith('(') && t.endsWith(')')) {
           wordBuf += decodePdfLiteralEscapes(t.slice(1, -1));
         } else if (t.startsWith('<') && t.endsWith('>')) {
-          wordBuf += decodePdfHexString(t.slice(1, -1));
+          wordBuf += decodePdfHexWithCMap(t.slice(1, -1), cmap);
         }
       }
       if (wordBuf.trim()) lineParts.push(wordBuf.trim());
@@ -182,6 +354,14 @@ export function parsePdfBufferTextFallback(input: string | Uint8Array | ArrayBuf
     let singleMatch: RegExpExecArray | null;
     while ((singleMatch = singleTjRegex.exec(block)) !== null) {
       const decoded = decodePdfLiteralEscapes(singleMatch[1]).trim();
+      if (decoded) lineParts.push(decoded);
+    }
+
+    // Match single <hex> Tj
+    const singleHexTjRegex = /<([0-9A-Fa-f\s]+)>\s*(?:Tj|'|")/g;
+    let hexMatch: RegExpExecArray | null;
+    while ((hexMatch = singleHexTjRegex.exec(block)) !== null) {
+      const decoded = decodePdfHexWithCMap(hexMatch[1], cmap).trim();
       if (decoded) lineParts.push(decoded);
     }
 
@@ -284,14 +464,21 @@ export async function extractTextFromUploadedFile(
       }
     }
 
-    // Pure TypeScript PDF parser fallback
-    let latin1 = '';
-    const maxBytes = Math.min(bytes.length, 2_000_000);
-    for (let i = 0; i < maxBytes; i++) {
-      latin1 += String.fromCharCode(bytes[i]);
-    }
-    const parsed = parsePdfBufferTextFallback(latin1);
-    if (parsed.length > 0) return parsed;
+    // Pure TypeScript PDF parser + FlateDecode stream decompression
+    const extractedFlate = await extractFlateDecodePdfText(bytes);
+    if (extractedFlate.text.length >= 40) return extractedFlate.text;
+
+    const rawParsed = parsePdfBufferTextFallback(bytes);
+    if (rawParsed.length >= 40) return rawParsed;
+
+    if (extractedFlate.text.length > 0) return extractedFlate.text;
+    if (rawParsed.length > 0) return rawParsed;
+
+    throw new Error(
+      extractedFlate.sawCompressedStreams
+        ? 'Aus diesem PDF konnte kein auslesbarer Text extrahiert werden (vermutlich ein gescanntes Bild-PDF ohne Textebene oder geschützte Schriftkodierung). Bitte füge den Text manuell unten ein.'
+        : 'Dieses PDF enthält keinen auslesbaren Text. Bitte kopiere den gewünschten Abschnitt direkt in das Textfeld.'
+    );
   }
 
   // Plain UTF-8 text decode
@@ -1363,11 +1550,21 @@ export async function generateHivemindLearningTrack(
   }
 
   const creds = options.credentials ?? (await loadAiCredentials(options.storage).catch(() => undefined));
-  const canUseAi = Boolean(creds && hasAiConfiguration(creds));
+  const hasCreds = Boolean(creds && hasAiConfiguration(creds));
+  const budgetCeilingEur = getEffectiveBudgetCeilingEur(Boolean(creds?.apiKey?.trim()));
+  const canSpend = hasCreds
+    ? await defaultUsageLedger.canSpend(0.01, undefined, budgetCeilingEur).catch(() => true)
+    : false;
+  const canUseAi = hasCreds && canSpend;
 
   const trackId = `track-${cleanTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 28) || 'custom'}-${Date.now()}`;
   let blueprints: HivemindCardBlueprint[] = [];
   let usedAi = false;
+  let fallbackReason: string | undefined = !hasCreds
+    ? 'Kein aktiver KI-Schlüssel konfiguriert (lokaler Lernpfad erstellt).'
+    : !canSpend
+    ? `Monatliches KI-Budgetlimit (${budgetCeilingEur.toFixed(2)} €) erreicht (lokaler Lernpfad erstellt).`
+    : undefined;
 
   if (canUseAi && creds) {
     options.onProgress?.(55, 'KI strukturiert 12-teiligen Lern-Feed (Story, 4-Stufen-Memes & Quiz)…');
@@ -1419,7 +1616,9 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
       const aiRes = await callAiModel(prompt, {
         credentials: creds,
         jsonMode: true,
-        maxTokens: 4000
+        maxTokens: 4000,
+        timeoutMs: 45_000,
+        itemId: `hivemind-track-${trackId}`
       });
 
       const cleanedJson = aiRes.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
@@ -1461,9 +1660,19 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
           };
         });
         usedAi = true;
+        fallbackReason = undefined;
+      } else {
+        fallbackReason = 'KI-Antwort war unvollständig; strukturiertes lokales Grundgerüst genutzt.';
       }
-    } catch {
-      // Fallback to deterministic synthesis below
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.toLowerCase().includes('zeitüberschreitung')) {
+        fallbackReason = 'KI-Zeitüberschreitung nach 45 s; lokales Lern-Gerüst genutzt.';
+      } else if (msg.toLowerCase().includes('budget')) {
+        fallbackReason = msg;
+      } else {
+        fallbackReason = `KI nicht erreichbar (${msg}); lokales Lern-Gerüst genutzt.`;
+      }
     }
   }
 
@@ -1523,7 +1732,9 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
     progressPercent: 0,
     items,
     chapters,
-    currentChapterIndex: 1
+    currentChapterIndex: 1,
+    usedAi,
+    ...(fallbackReason ? { fallbackReason } : {})
   };
 
   await hivemindLearningService.saveTrack(track, options.storage);
@@ -1651,8 +1862,20 @@ export async function generateNextHivemindChapter(
 
   let blueprints: HivemindCardBlueprint[] = [];
   let usedAi = false;
+  let fallbackReason: string | undefined;
 
-  if (creds && hasAiConfiguration(creds) && !options.skipNetworkFetch) {
+  const hasChapterAiCreds = Boolean(creds && hasAiConfiguration(creds));
+  const chapterBudgetCeiling = getEffectiveBudgetCeilingEur(Boolean(creds?.apiKey?.trim()));
+  const chapterCanSpend = hasChapterAiCreds
+    ? await defaultUsageLedger.canSpend(0.01, undefined, chapterBudgetCeiling).catch(() => true)
+    : false;
+  if (!hasChapterAiCreds) {
+    fallbackReason = 'Kein aktiver KI-Schlüssel konfiguriert; Kapitel wurde lokal strukturiert.';
+  } else if (!chapterCanSpend) {
+    fallbackReason = `Monatliches KI-Budgetlimit (${chapterBudgetCeiling.toFixed(2)} €) erreicht; Kapitel wurde lokal strukturiert.`;
+  }
+
+  if (hasChapterAiCreds && chapterCanSpend && creds && !options.skipNetworkFetch) {
     try {
       options.onProgress?.(45, `KI-Curriculum für ${targetChapter.title} wird synthetisiert…`);
       const prompt = `Du bist der „Atmen Hivemind“-Lernarchitekt.
@@ -1706,7 +1929,8 @@ Antworte ausschließlich als valides JSON-Objekt:
         credentials: creds,
         jsonMode: true,
         maxTokens: 4000,
-        bypassBudgetCeiling: true
+        timeoutMs: 45_000,
+        itemId: `hivemind-chapter-${track.id}-${targetChapter.chapterIndex}`
       });
 
       const cleanedJson = aiRes.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
@@ -1753,9 +1977,15 @@ Antworte ausschließlich als valides JSON-Objekt:
           };
         });
         usedAi = true;
+        fallbackReason = undefined;
+      } else {
+        fallbackReason = 'KI-Antwort war unvollständig; Kapitel wurde lokal ergänzt.';
       }
-    } catch {
-      // Fallback to deterministic synthesis below
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      fallbackReason = msg.toLowerCase().includes('zeitüberschreitung')
+        ? 'KI-Zeitüberschreitung nach 45 s; Kapitel wurde lokal ergänzt.'
+        : `KI-Erweiterung nicht verfügbar (${msg}); Kapitel wurde lokal ergänzt.`;
     }
   }
 
@@ -1815,7 +2045,9 @@ Antworte ausschließlich als valides JSON-Objekt:
     progressPercent: calculateTrackProgressPercent(track.completedItemIds, combinedItems.length),
     chapters: updatedChapters,
     currentChapterIndex: targetChapter.chapterIndex,
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    usedAi,
+    ...(fallbackReason ? { fallbackReason } : { fallbackReason: undefined })
   };
 
   const saved = await hivemindLearningService.saveTrack(updatedTrack, storage);
@@ -1871,6 +2103,10 @@ export class HivemindLearningService {
     } catch {
       return [];
     }
+  }
+
+  public getTracksSync(): HivemindLearningTrack[] {
+    return this.cachedTracks ? [...this.cachedTracks] : [];
   }
 
   public async getTracks(storage: AtemStorage = appStorage): Promise<HivemindLearningTrack[]> {
@@ -1929,7 +2165,11 @@ export class HivemindLearningService {
             progressPercent,
             items,
             chapters,
-            currentChapterIndex
+            currentChapterIndex,
+            ...(typeof t.usedAi === 'boolean' ? { usedAi: t.usedAi } : {}),
+            ...(typeof t.fallbackReason === 'string' && t.fallbackReason.trim()
+              ? { fallbackReason: t.fallbackReason }
+              : {})
           };
         });
 

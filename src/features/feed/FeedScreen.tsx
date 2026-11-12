@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  FlatList,
   RefreshControl,
   TouchableOpacity,
   NativeSyntheticEvent,
@@ -36,8 +37,6 @@ import { UltraMasterModal, MasterTab } from '../../ui/components/UltraMasterModa
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
 import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerationProgressModal';
 import { AtmenBreathingPortal } from '../breathing/AtmenBreathingPortal';
-import { QuizCheckpointCard } from '../../ui/components/QuizCheckpointCard';
-import { generateQuizForArticle } from '../../core/quiz/quizGenerator';
 import { HivemindStreamModal } from '../../ui/components/HivemindStreamModal';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { ContinuousLiveNewsService, NewsHubFilterCategory } from '../../core/data/continuousLiveNewsService';
@@ -88,9 +87,23 @@ function formatCuratedAge(isoString: string): string {
   }
 }
 
-// Inline feed quiz checkpoints disabled by default: reading starts immediately with clean article cards,
-// while deep quizzes remain accessible on click inside ReaderScreen.
-const ENABLE_INLINE_FEED_QUIZZES = false;
+type FeedFlatListRow =
+  | {
+      kind: 'card';
+      key: string;
+      item: ScoredFeedItem;
+      isHero: boolean;
+      isFocused: boolean;
+      trackProgressPercent?: number;
+      isTrackStepCompleted?: boolean;
+      historyBadgeText?: string;
+      allowDismiss?: boolean;
+      enableHivemindActions?: boolean;
+    }
+  | {
+      kind: 'evergreen_divider';
+      key: string;
+    };
 
 export const FeedScreen: React.FC = () => {
   const {
@@ -104,6 +117,7 @@ export const FeedScreen: React.FC = () => {
     recordCardAppearances,
     colors,
     isDark,
+    palette,
     refreshFeed,
     recomputeFeed,
     refreshLiveFeed,
@@ -128,19 +142,24 @@ export const FeedScreen: React.FC = () => {
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
+  const soundGroundingEnabled = isFeatureEnabled(profile, 'sound_grounding');
 
   const [sortMode, setSortMode] = useState<FeedSortMode>('for_you');
-  const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
-  const [seenRecordMap, setSeenRecordMap] = useState<Map<string, SeenImpressionRecord>>(new Map());
+  const [seenIds, setSeenIds] = useState<Set<string>>(() => seenImpressionsService.getSeenIdsSync());
+  const [seenRecordMap, setSeenRecordMap] = useState<Map<string, SeenImpressionRecord>>(() => seenImpressionsService.getSeenRecordMapSync());
 
   React.useEffect(() => {
     void seenImpressionsService.getSeenIds().then(setSeenIds);
     void seenImpressionsService.getSeenRecordMap().then(setSeenRecordMap);
   }, []);
   const [isScrolledDown, setIsScrolledDown] = useState<boolean>(false);
+  const isScrolledDownRef = React.useRef<boolean>(false);
   const scrollYRef = React.useRef<number>(0);
   const scrollOffsetYRef = React.useRef<number>(0);
-  const scrollViewRef = React.useRef<ScrollView>(null);
+  const flatListRef = React.useRef<FlatList<FeedFlatListRow>>(null);
+  const scrollToFeedTop = useCallback((animated = true) => {
+    flatListRef.current?.scrollToOffset({ offset: 0, animated });
+  }, []);
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => defaultFeedOperationManager.getPinnedItemIds());
 
   // Explicit user tap scroll-to-top signal (e.g. tapping active Stream tab or Home brand logo)
@@ -148,9 +167,9 @@ export const FeedScreen: React.FC = () => {
   React.useEffect(() => {
     if (feedScrollToTopSignal > lastScrollSignalRef.current) {
       lastScrollSignalRef.current = feedScrollToTopSignal;
-      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      scrollToFeedTop(true);
     }
-  }, [feedScrollToTopSignal]);
+  }, [feedScrollToTopSignal, scrollToFeedTop]);
 
   // Viewport Top-Lock & Background Arrivals (WP 1, WP 3 & WP 5)
   const appMountedAtRef = React.useRef<number>(Date.now());
@@ -187,8 +206,8 @@ export const FeedScreen: React.FC = () => {
     setVisibleInfiniteCount(12);
     setSortMode(mode);
     setActiveCardIndex(0);
-    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-  }, []);
+    scrollToFeedTop(true);
+  }, [scrollToFeedTop]);
 
   const handleRevealPendingArrivals = useCallback(() => {
     if (pendingStreamArrivals.length === 0) return;
@@ -214,8 +233,8 @@ export const FeedScreen: React.FC = () => {
     setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
     setPendingStreamArrivals([]);
 
-    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-  }, [pendingStreamArrivals]);
+    scrollToFeedTop(true);
+  }, [pendingStreamArrivals, scrollToFeedTop]);
 
   const [pendingNewItemIds, setPendingNewItemIds] = useState<string[]>([]);
   const [revealedNewItems, setRevealedNewItems] = useState<FeedItem[]>([]);
@@ -251,7 +270,7 @@ export const FeedScreen: React.FC = () => {
   const [streamFinished, setStreamFinished] = useState<boolean>(false);
   const [showBreathingModal, setShowBreathingModal] = useState<boolean>(false);
   const [showHivemindModal, setShowHivemindModal] = useState<boolean>(false);
-  const [hivemindTracks, setHivemindTracks] = useState<HivemindLearningTrack[]>([]);
+  const [hivemindTracks, setHivemindTracks] = useState<HivemindLearningTrack[]>(() => hivemindLearningService.getTracksSync());
   const [activeHivemindTrackId, setActiveHivemindTrackId] = useState<string | null>(null);
   const [isLoadingNextHivemindChapter, setIsLoadingNextHivemindChapter] = useState<boolean>(false);
 
@@ -285,8 +304,8 @@ export const FeedScreen: React.FC = () => {
     setActiveHivemindTrackId(trackId);
     setCuratedSelection(null);
     setActiveFeedOption('infinite');
-    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-  }, [setActiveFeedOption]);
+    scrollToFeedTop(true);
+  }, [setActiveFeedOption, scrollToFeedTop]);
 
   const handleCompleteHivemindStep = useCallback(async (trackId: string, itemId: string) => {
     await hivemindLearningService.markItemCompleted(trackId, itemId);
@@ -489,9 +508,10 @@ export const FeedScreen: React.FC = () => {
       }
     }
     setPendingNewItemIds([]);
+    isScrolledDownRef.current = false;
     setIsScrolledDown(false);
-    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
-  }, [pendingNewItemIds]);
+    scrollToFeedTop(false);
+  }, [pendingNewItemIds, scrollToFeedTop]);
 
   const loadSubchannels = useCallback(async () => {
     await defaultSpaceRepository.notify();
@@ -565,11 +585,11 @@ export const FeedScreen: React.FC = () => {
     lockedTopItemIdsRef.current = null;
     hasCommittedInitialViewportRef.current = false;
     setPendingStreamArrivals([]);
-    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    scrollToFeedTop(true);
     if (filter !== 'all' && (activeFeedOption === 'live_news' || activeFeedOption === 'classics')) {
       setActiveFeedOption('infinite');
     }
-  }, [activeFeedOption, setActiveFeedOption, setSelectedFilter]);
+  }, [activeFeedOption, setActiveFeedOption, setSelectedFilter, scrollToFeedTop]);
 
   const handleInvestigateTopic = useCallback((topic: TopicTag) => {
     setSelectedFilter(`c/${topic}`);
@@ -579,8 +599,9 @@ export const FeedScreen: React.FC = () => {
   const interactionsRef = React.useRef(interactions);
   interactionsRef.current = interactions;
 
-  // Persistent O(1) cache of sanitized feed items so regex cleaners run at most ONCE per unique article ID
+  // Persistent O(1) cache of sanitized feed items keyed by ID + content/tier signature
   const sanitizedItemCacheRef = React.useRef<Map<string, {
+    signature: string;
     item: FeedItem;
     strictStandardOk: boolean;
     bodyContractOk: boolean;
@@ -588,10 +609,12 @@ export const FeedScreen: React.FC = () => {
   }>>(new Map());
 
   const getCachedSanitizedEntry = useCallback((rawItem: FeedItem) => {
+    const signature = `${rawItem.feedText?.length ?? 0}:${rawItem.body?.length ?? 0}:${rawItem.aiAssisted ? 1 : 0}:${rawItem.enrichmentTier || ''}:${rawItem.didacticTransfer?.length ?? 0}`;
     const existing = sanitizedItemCacheRef.current.get(rawItem.id);
-    if (existing) return existing;
+    if (existing && existing.signature === signature) return existing;
     const cleaned = sanitizeCuratedFeedItem(rawItem);
     const entry = {
+      signature,
       item: cleaned,
       strictStandardOk: satisfiesDefaultCuratedStandard(cleaned),
       bodyContractOk: satisfiesCuratedBodyContract(cleaned),
@@ -803,8 +826,8 @@ export const FeedScreen: React.FC = () => {
 
   // Viewport Top-Lock (Zero-Flicker Boot): Lock the visible top 12 cards immediately on frame 1
   // (EVEN when scrollOffsetYRef.current === 0). Incoming background items are kept in
-  // pendingStreamArrivals instead of replacing or jumping the screen!
-  const lockedInfiniteBase = useMemo(() => {
+  // pendingStreamArrivals via useEffect instead of replacing or jumping the screen!
+  const lockedInfiniteResult = useMemo(() => {
     if (previousScopeRef.current !== presentationScope) {
       previousScopeRef.current = presentationScope;
       if (infiniteInterleavedBase.length > 0) {
@@ -814,8 +837,11 @@ export const FeedScreen: React.FC = () => {
         lockedTopItemIdsRef.current = null;
         hasCommittedInitialViewportRef.current = false;
       }
-      setPendingStreamArrivals([]);
-      return infiniteInterleavedBase;
+      return {
+        items: infiniteInterleavedBase,
+        resetArrivals: true,
+        validIncoming: [] as ScoredFeedItem[]
+      };
     }
 
     if (
@@ -827,7 +853,11 @@ export const FeedScreen: React.FC = () => {
         lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
         hasCommittedInitialViewportRef.current = true;
       }
-      return infiniteInterleavedBase;
+      return {
+        items: infiniteInterleavedBase,
+        resetArrivals: false,
+        validIncoming: [] as ScoredFeedItem[]
+      };
     }
 
     const lockedIds = lockedTopItemIdsRef.current;
@@ -836,13 +866,14 @@ export const FeedScreen: React.FC = () => {
 
     // Identify new items arriving in the top 12 of infiniteInterleavedBase that were not in lockedSet
     const incomingTop12New = infiniteInterleavedBase.slice(0, 12).filter(i => !lockedSet.has(i.id));
-    if (incomingTop12New.length > 0) {
+    let validIncoming: ScoredFeedItem[] = [];
+    if (incomingTop12New.length > 0 && Date.now() >= appMountedAtRef.current) {
       const existingTitlesNormalized = new Set(
         infiniteInterleavedBase
           .filter(i => lockedSet.has(i.id))
           .map(c => c.title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''))
       );
-      const validIncoming = incomingTop12New.filter(item => {
+      validIncoming = incomingTop12New.filter(item => {
         if (lockedSet.has(item.id)) return false;
         const normTitle = item.title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
         if (existingTitlesNormalized.has(normTitle)) return false;
@@ -850,22 +881,6 @@ export const FeedScreen: React.FC = () => {
         if (surfacedArrivalIdsRef.current.has(item.id)) return false;
         return true;
       });
-
-      if (validIncoming.length > 0 && Date.now() >= appMountedAtRef.current) {
-        for (const it of validIncoming) {
-          surfacedArrivalIdsRef.current.add(it.id);
-        }
-        void appStorage.setItem(
-          '@atem:surfaced_arrival_ids:v1',
-          JSON.stringify(Array.from(surfacedArrivalIdsRef.current).slice(-200))
-        );
-
-        setPendingStreamArrivals(prev => {
-          const existingIds = new Set(prev.map(p => p.id));
-          const added = validIncoming.filter(n => !existingIds.has(n.id));
-          return added.length > 0 ? [...prev, ...added] : prev;
-        });
-      }
     }
 
     const lockedCards: ScoredFeedItem[] = [];
@@ -874,8 +889,36 @@ export const FeedScreen: React.FC = () => {
       if (item) lockedCards.push(item);
     }
     const remainingCards = infiniteInterleavedBase.filter(i => !lockedSet.has(i.id));
-    return [...lockedCards, ...remainingCards];
+    return {
+      items: [...lockedCards, ...remainingCards],
+      resetArrivals: false,
+      validIncoming
+    };
   }, [infiniteInterleavedBase, presentationScope, seenIds]);
+
+  const lockedInfiniteBase = lockedInfiniteResult.items;
+
+  React.useEffect(() => {
+    if (lockedInfiniteResult.resetArrivals) {
+      setPendingStreamArrivals([]);
+    }
+    const validIncoming = lockedInfiniteResult.validIncoming;
+    if (validIncoming.length > 0) {
+      for (const it of validIncoming) {
+        surfacedArrivalIdsRef.current.add(it.id);
+      }
+      void appStorage.setItem(
+        '@atem:surfaced_arrival_ids:v1',
+        JSON.stringify(Array.from(surfacedArrivalIdsRef.current).slice(-200))
+      );
+
+      setPendingStreamArrivals(prev => {
+        const existingIds = new Set(prev.map(p => p.id));
+        const added = validIncoming.filter(n => !existingIds.has(n.id));
+        return added.length > 0 ? [...prev, ...added] : prev;
+      });
+    }
+  }, [lockedInfiniteResult]);
 
   // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
   const evergreenFallbackItems = useMemo(() => {
@@ -1007,7 +1050,6 @@ export const FeedScreen: React.FC = () => {
       if (res.items.length > 0) {
         feedRepository.addItems(res.items);
         await recomputeFeed();
-        await refreshFeed();
         if (!silent) {
           setSimToast(`⚡ ${res.items.length} neue Fundstücke für ${selectedFilter} kuratiert (${res.mode === 'ai' ? 'KI-Synthese' : 'Primärquellen'})`);
           setTimeout(() => setSimToast(null), 3500);
@@ -1019,7 +1061,7 @@ export const FeedScreen: React.FC = () => {
       setIsFlourishingChannel(false);
       setFlourishStageText('');
     }
-  }, [selectedFilter, isFlourishingChannel, subchannels, recomputeFeed, refreshFeed]);
+  }, [selectedFilter, isFlourishingChannel, subchannels, recomputeFeed]);
 
   // Automatic subchannel flourishing during reading disabled (Task 2: manual on-demand flourish only)
   // to prevent unprompted background network requests and UI reordering.
@@ -1077,8 +1119,7 @@ export const FeedScreen: React.FC = () => {
         setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
         setPendingStreamArrivals([]);
         await recomputeFeed();
-        await refreshFeed();
-        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+        scrollToFeedTop(true);
       }
 
       const modeText = discoveryResult.usedAI ? `KI (${discoveryResult.modelUsed || 'Gemini'})` : 'Lokal';
@@ -1093,7 +1134,7 @@ export const FeedScreen: React.FC = () => {
       setIsRunningManualPipeline(false);
       setManualPipelineStageLabel('');
     }
-  }, [isRunningManualPipeline, recomputeFeed, refreshFeed]);
+  }, [isRunningManualPipeline, recomputeFeed, scrollToFeedTop]);
 
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
@@ -1145,6 +1186,15 @@ export const FeedScreen: React.FC = () => {
 
   // Automatic harvest on today switch disabled to prevent background reorders (Task 2: manual refresh only)
 
+  const chronikFlushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => {
+    return () => {
+      if (chronikFlushTimerRef.current) {
+        clearTimeout(chronikFlushTimerRef.current);
+      }
+    };
+  }, []);
+
   const flushVisibleCardsToChronik = useCallback(() => {
     if (activeFeedOption === 'history') return;
     const vTop = scrollYRef.current;
@@ -1171,10 +1221,20 @@ export const FeedScreen: React.FC = () => {
     }
   }, [activeFeedOption, currentFeedItems, recordCardAppearances, scheduleCloudSyncPush]);
 
+  const scheduleChronikFlush = useCallback(() => {
+    if (chronikFlushTimerRef.current) {
+      clearTimeout(chronikFlushTimerRef.current);
+    }
+    chronikFlushTimerRef.current = setTimeout(() => {
+      chronikFlushTimerRef.current = null;
+      flushVisibleCardsToChronik();
+    }, 250);
+  }, [flushVisibleCardsToChronik]);
+
   const handleCardLayout = useCallback((itemId: string, y: number, height: number) => {
     cardLayoutsRef.current[itemId] = { y, height };
-    flushVisibleCardsToChronik();
-  }, [flushVisibleCardsToChronik]);
+    scheduleChronikFlush();
+  }, [scheduleChronikFlush]);
 
   const totalInfiniteAvailable = infiniteInterleavedBase.length + evergreenFallbackItems.length;
 
@@ -1188,9 +1248,12 @@ export const FeedScreen: React.FC = () => {
     }
 
     const isDown = contentOffset.y > 80;
-    setIsScrolledDown(isDown);
+    if (isScrolledDownRef.current !== isDown) {
+      isScrolledDownRef.current = isDown;
+      setIsScrolledDown(isDown);
+    }
 
-    flushVisibleCardsToChronik();
+    scheduleChronikFlush();
 
     const scrollBottom = layoutMeasurement.height + contentOffset.y;
     const reachedThreshold = contentSize.height > 0 && (
@@ -1207,7 +1270,7 @@ export const FeedScreen: React.FC = () => {
         return next;
       });
     }
-  }, [flushVisibleCardsToChronik, totalInfiniteAvailable, curateNextStreamBatch]);
+  }, [scheduleChronikFlush, totalInfiniteAvailable, curateNextStreamBatch]);
 
   const [isCuratingLiveAi, setIsCuratingLiveAi] = useState<boolean>(false);
 
@@ -1295,8 +1358,7 @@ export const FeedScreen: React.FC = () => {
       }
 
       await recomputeFeed();
-      await refreshFeed();
-      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      scrollToFeedTop(true);
     } catch (e: any) {
       console.warn('Live AI Curation failed:', e);
       defaultFeedOperationManager.failOperation(e?.message || 'Fehler bei der Live-KI-Kuration.');
@@ -1561,6 +1623,220 @@ export const FeedScreen: React.FC = () => {
     </View>
   );
 
+  const handleToggleKurzCheck = useCallback((id: string) => {
+    setExpandedCardIds(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
+  }, []);
+
+  const flatListData = useMemo<FeedFlatListRow[]>(() => {
+    if (activeFeedOption === 'live_news') {
+      if (liveNewsLoading && liveNewsItems.length === 0) return [];
+      return scoredLiveItems.map((item, index) => ({
+        kind: 'card',
+        key: item.id,
+        item,
+        isHero: index === 0 && !searchQuery,
+        isFocused: index === activeCardIndex
+      }));
+    }
+
+    if (activeFeedOption === 'classics') {
+      return scoredClassicsItems.map((item, index) => ({
+        kind: 'card',
+        key: item.id,
+        item,
+        isHero: index === 0,
+        isFocused: index === activeCardIndex
+      }));
+    }
+
+    if (activeFeedOption === 'history') {
+      return historyItems.map(({ item, record }, index) => {
+        const seenDate = new Date(record.lastSeenAt || record.firstSeenAt);
+        const formattedDate = seenDate.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const formattedTime = seenDate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+        const scoredItem = scoreFeedItem(item, profile, interactions);
+        return {
+          kind: 'card',
+          key: `${item.id}-hist-${index}`,
+          item: scoredItem,
+          isHero: false,
+          isFocused: index === activeCardIndex,
+          historyBadgeText: `Gesehen ${formattedDate}, ${formattedTime} Uhr • #${record.sequenceNumber} deiner Lesereise`
+        };
+      });
+    }
+
+    if (activeHivemindTrack) {
+      return activeHivemindTrack.items.map((rawItem, index) => {
+        const item = scoreFeedItem(rawItem, profile, interactions);
+        const isDone = activeHivemindTrack.completedItemIds.includes(item.id);
+        return {
+          kind: 'card',
+          key: item.id,
+          item,
+          isHero: index === 0,
+          isFocused: index === activeCardIndex,
+          trackProgressPercent: activeHivemindTrack.progressPercent,
+          isTrackStepCompleted: isDone,
+          allowDismiss: true,
+          enableHivemindActions: true
+        };
+      });
+    }
+
+    if (curatedSelection && curatedSelection.items.length > 0) {
+      return curatedSelection.items.map((rawItem, index) => ({
+        kind: 'card',
+        key: rawItem.id,
+        item: scoreFeedItem(rawItem, profile, interactionsRef.current),
+        isHero: index === 0,
+        isFocused: index === activeCardIndex,
+        allowDismiss: true
+      }));
+    }
+
+    const freshAndRevealed = prependRevealedItems(renderedInfiniteFreshItems, scoredRevealedItems);
+    const rows: FeedFlatListRow[] = freshAndRevealed.map((item, index) => {
+      const itemTrackId = item.hivemindMeta?.trackId || item.memeMeta?.trackId;
+      const itemTrack = itemTrackId ? trackByIdMap.get(itemTrackId) : undefined;
+      return {
+        kind: 'card',
+        key: item.id,
+        item,
+        isHero: index === 0 && selectedFilter === 'all' && !searchQuery,
+        isFocused: index === activeCardIndex,
+        trackProgressPercent: itemTrack?.progressPercent,
+        isTrackStepCompleted: itemTrack ? itemTrack.completedItemIds.includes(item.id) : false,
+        allowDismiss: true,
+        enableHivemindActions: true
+      };
+    });
+
+    if (renderedInfiniteEvergreenItems.length > 0) {
+      rows.push({ kind: 'evergreen_divider', key: 'evergreen-divider' });
+      renderedInfiniteEvergreenItems.forEach((item, idx) => {
+        rows.push({
+          kind: 'card',
+          key: item.id,
+          item,
+          isHero: false,
+          isFocused: freshAndRevealed.length + idx === activeCardIndex,
+          allowDismiss: true
+        });
+      });
+    }
+
+    return rows;
+  }, [
+    activeFeedOption,
+    liveNewsLoading,
+    liveNewsItems.length,
+    scoredLiveItems,
+    scoredClassicsItems,
+    historyItems,
+    activeHivemindTrack,
+    curatedSelection,
+    renderedInfiniteFreshItems,
+    scoredRevealedItems,
+    renderedInfiniteEvergreenItems,
+    trackByIdMap,
+    selectedFilter,
+    searchQuery,
+    activeCardIndex,
+    profile,
+    interactions
+  ]);
+
+  const renderFlatListItem = useCallback(
+    ({ item: row }: { item: FeedFlatListRow }) => {
+      if (row.kind === 'evergreen_divider') {
+        return (
+          <View style={[styles.streamDividerCard, { backgroundColor: colors.surface, borderColor: '#D97706' }]}>
+            <View style={[styles.sparkleIconBox, { backgroundColor: 'rgba(217, 119, 6, 0.14)' }]}>
+              <Ionicons name="library" size={20} color="#D97706" />
+            </View>
+            <Text style={[styles.streamDividerTitle, { color: colors.textPrimary }]}>
+              Frische Beiträge gelesen • Zeitlose Klassiker & Archiv
+            </Text>
+            <Text style={[styles.streamDividerText, { color: colors.textSecondary }]}>
+              Kein künstliches Recycling bereits gezeigter Karten: Hier geht es nahtlos weiter mit zeitlosen Ur-Essays und Archiv-Schätzen.
+            </Text>
+          </View>
+        );
+      }
+
+      if (row.historyBadgeText) {
+        return (
+          <View style={styles.historyItemWrapper}>
+            <View style={[styles.historyItemBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+              <Ionicons name="checkmark-circle-outline" size={12} color={colors.accent} style={{ marginRight: 5 }} />
+              <Text style={[styles.historyItemBadgeText, { color: colors.textMuted }]}>
+                {row.historyBadgeText}
+              </Text>
+            </View>
+            <FeedCard
+              item={row.item}
+              interaction={interactions[row.item.id]}
+              isDark={isDark}
+              palette={palette}
+              enableSoundGrounding={soundGroundingEnabled}
+              isHero={row.isHero}
+              isFocused={row.isFocused}
+              isExpanded={Boolean(expandedCardIds[row.item.id])}
+              onToggleKurzCheck={() => handleToggleKurzCheck(row.item.id)}
+              onInvestigateTopic={handleInvestigateTopic}
+            />
+          </View>
+        );
+      }
+
+      return (
+        <View onLayout={(e) => handleCardLayout(row.item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}>
+          <FeedCard
+            item={row.item}
+            interaction={interactions[row.item.id]}
+            isDark={isDark}
+            palette={palette}
+            enableSoundGrounding={soundGroundingEnabled}
+            isHero={row.isHero}
+            isFocused={row.isFocused}
+            isExpanded={Boolean(expandedCardIds[row.item.id])}
+            onToggleKurzCheck={() => handleToggleKurzCheck(row.item.id)}
+            onInvestigateTopic={handleInvestigateTopic}
+            onDismissItem={row.allowDismiss ? handleDismissCard : undefined}
+            onOpenHivemindTrack={row.enableHivemindActions ? handleStartFocusTrack : undefined}
+            onCompleteHivemindStep={row.enableHivemindActions ? handleCompleteHivemindStep : undefined}
+            hivemindTrackProgressPercent={row.trackProgressPercent}
+            isHivemindStepCompleted={row.isTrackStepCompleted}
+          />
+        </View>
+      );
+    },
+    [
+      colors.surface,
+      colors.surfaceSecondary,
+      colors.borderSubtle,
+      colors.accent,
+      colors.textPrimary,
+      colors.textSecondary,
+      colors.textMuted,
+      interactions,
+      isDark,
+      palette,
+      soundGroundingEnabled,
+      expandedCardIds,
+      handleToggleKurzCheck,
+      handleInvestigateTopic,
+      handleDismissCard,
+      handleStartFocusTrack,
+      handleCompleteHivemindStep,
+      handleCardLayout
+    ]
+  );
+
   if (!isHydrated) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
@@ -1610,25 +1886,38 @@ export const FeedScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Main Feed Scroll (Desktop Centered & Two-Column Layout) */}
-      <ScrollView
-        ref={scrollViewRef}
-        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={colors.accent}
-          />
-        }
-      >
-        <View style={[styles.mainLayoutWrapper, isDesktop && styles.desktopLayoutWrapper]}>
-          {/* Feed Column (Center) */}
-          <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn]}>
+      {/* Main Virtualized Feed Scroll (Desktop Centered & Two-Column Layout) */}
+      <View style={[styles.mainLayoutWrapper, isDesktop && styles.desktopLayoutWrapper, { flex: 1 }, isDesktop && { paddingHorizontal: spacing.pageHorizontal }]}>
+        {/* Feed Column (Center) */}
+        <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn, { flex: 1 }]}>
+          <FlatList
+            ref={flatListRef}
+            data={flatListData}
+            keyExtractor={(row) => row.key}
+            renderItem={renderFlatListItem}
+            contentContainerStyle={[
+              styles.scrollContent,
+              isDesktop && { paddingHorizontal: 0 }
+            ]}
+            style={{ flex: 1 }}
+            showsVerticalScrollIndicator={false}
+            onScroll={handleScroll}
+            scrollEventThrottle={32}
+            keyboardShouldPersistTaps="handled"
+            initialNumToRender={6}
+            maxToRenderPerBatch={6}
+            windowSize={7}
+            removeClippedSubviews={Platform.OS !== 'web'}
+            maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={colors.accent}
+              />
+            }
+            ListHeaderComponent={(
+              <>
             {/* Global Active Space / Channel Header (Clean Subchannel Header + Single Flourish Button) */}
             {selectedFilter !== 'all' && (
               <View
@@ -2008,9 +2297,8 @@ export const FeedScreen: React.FC = () => {
                   </View>
                 )}
 
-                {/* MODE 1: HIVEMIND FOCUS TRACK VIEW (Sticky Progress Banner + Sequential Learning Stream) */}
-                {activeHivemindTrack ? (
-                  <>
+                {/* MODE 1: HIVEMIND FOCUS TRACK VIEW (Sticky Progress Banner) */}
+                {activeHivemindTrack && (
                     <View
                       style={[
                         styles.curatedSelectionBanner,
@@ -2035,7 +2323,19 @@ export const FeedScreen: React.FC = () => {
                               marginRight: 10
                             }}
                           >
-                            <Text style={{ fontSize: 20 }}>{activeHivemindTrack.iconEmoji || '🧠'}</Text>
+                            <Ionicons
+                              name={
+                                activeHivemindTrack.sourceType === 'pdf_document'
+                                  ? 'document-text-outline'
+                                  : activeHivemindTrack.sourceType === 'book'
+                                  ? 'book-outline'
+                                  : activeHivemindTrack.sourceType === 'url'
+                                  ? 'globe-outline'
+                                  : 'school-outline'
+                              }
+                              size={20}
+                              color="#8B5CF6"
+                            />
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={[styles.curatedSelectionTitle, { color: colors.textPrimary }]}>
@@ -2128,299 +2428,6 @@ export const FeedScreen: React.FC = () => {
                         />
                       </View>
                     </View>
-
-                    {activeHivemindTrack.items.map((rawItem, index) => {
-                      const item = scoreFeedItem(rawItem, profile, interactions);
-                      const isDone = activeHivemindTrack.completedItemIds.includes(item.id);
-                      return (
-                        <View
-                          key={item.id}
-                          onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
-                        >
-                          <FeedCard
-                            item={item}
-                            interaction={interactions[item.id]}
-                            isDark={isDark}
-                            isHero={index === 0}
-                            isFocused={index === activeCardIndex}
-                            isExpanded={Boolean(expandedCardIds[item.id])}
-                            onToggleKurzCheck={() => {
-                              setExpandedCardIds(prev => ({
-                                ...prev,
-                                [item.id]: !prev[item.id]
-                              }));
-                            }}
-                            onInvestigateTopic={handleInvestigateTopic}
-                            onDismissItem={handleDismissCard}
-                            onOpenHivemindTrack={handleStartFocusTrack}
-                            onCompleteHivemindStep={handleCompleteHivemindStep}
-                            hivemindTrackProgressPercent={activeHivemindTrack.progressPercent}
-                            isHivemindStepCompleted={isDone}
-                          />
-                        </View>
-                      );
-                    })}
-
-                    {/* Multi-Chapter Progressive Expansion Button at bottom of Hivemind Focus Stream */}
-                    {(() => {
-                      const nextPendingChapter = (activeHivemindTrack.chapters || []).find(ch => !ch.isGenerated);
-                      const nextChapterTitle = nextPendingChapter
-                        ? nextPendingChapter.title
-                        : `Kapitel ${(activeHivemindTrack.chapters?.length || 1) + 1}: Weiterführende Vertiefung`;
-                      return (
-                        <View
-                          style={{
-                            marginHorizontal: spacing.md,
-                            marginTop: spacing.sm,
-                            marginBottom: spacing.xl,
-                            padding: spacing.md,
-                            borderRadius: radius.lg,
-                            backgroundColor: colors.surface,
-                            borderWidth: 1,
-                            borderColor: colors.borderSubtle
-                          }}
-                        >
-                          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 }}>
-                            Bereit für die nächste Vertiefungsstufe?
-                          </Text>
-                          <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 12 }}>
-                            Erweitere „{activeHivemindTrack.title}“ nahtlos um das nächste aufbauende Kapitel mit 12 neuen Lernkarten.
-                          </Text>
-                          <TouchableOpacity
-                            onPress={() => void handleLoadNextHivemindChapter(activeHivemindTrack.id)}
-                            disabled={isLoadingNextHivemindChapter}
-                            style={{
-                              paddingVertical: 11,
-                              paddingHorizontal: 14,
-                              borderRadius: radius.md,
-                              backgroundColor: colors.accent,
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              justifyContent: 'center'
-                            }}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Nächstes Kapitel laden für ${activeHivemindTrack.title}`}
-                          >
-                            {isLoadingNextHivemindChapter ? (
-                              <>
-                                <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
-                                <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
-                                  Generiere {nextChapterTitle} (+12 Karten)…
-                                </Text>
-                              </>
-                            ) : (
-                              <>
-                                <Ionicons name="add-circle-outline" size={16} color="#FFFFFF" style={{ marginRight: 7 }} />
-                                <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
-                                  + Nächstes Kapitel laden ({nextChapterTitle} · +12 Karten)
-                                </Text>
-                              </>
-                            )}
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    })()}
-                  </>
-                ) : curatedSelection && curatedSelection.items.length > 0 ? (
-                  <>
-                    {curatedSelection.items.map((rawItem, index) => {
-                      const item = scoreFeedItem(rawItem, profile, interactionsRef.current);
-                      return (
-                        <View
-                          key={item.id}
-                          onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
-                        >
-                          <FeedCard
-                            item={item}
-                            interaction={interactions[item.id]}
-                            isDark={isDark}
-                            isHero={index === 0}
-                            isFocused={index === activeCardIndex}
-                            isExpanded={Boolean(expandedCardIds[item.id])}
-                            onToggleKurzCheck={() => {
-                              setExpandedCardIds(prev => ({
-                                ...prev,
-                                [item.id]: !prev[item.id]
-                              }));
-                            }}
-                            onInvestigateTopic={handleInvestigateTopic}
-                            onDismissItem={handleDismissCard}
-                          />
-                        </View>
-                      );
-                    })}
-                  </>
-                ) : renderedInfiniteItems.length === 0 ? (
-                  subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom) ? (
-                    renderEmptyCustomSpaceCard(subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom)!)
-                  ) : (
-                  <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                    <View style={[styles.emptyPocketBadge, { backgroundColor: colors.accentSubtle }]}>
-                      <Ionicons name="sparkles" size={15} color={colors.accent} />
-                      <Text style={[styles.emptyPocketBadgeText, { color: colors.accent }]}>
-                        Epistemischer Raum • On-the-Fly Entdeckung
-                      </Text>
-                    </View>
-
-                    <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-                      {selectedFilter !== 'all'
-                        ? `Raum ${selectedFilter} erschließen`
-                        : (searchQuery ? `Erkenntnis-Stream zu „${searchQuery}“ generieren` : 'Neuen Erkenntnis-Stream generieren')}
-                    </Text>
-
-                    <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-                      Dieser Wissensraum enthält noch keine kuratierten Beiträge. Du kannst hier auf Knopfdruck eine fundierte Recherche aus offenen Primärquellen (Wikipedia REST, OpenAlex & arXiv) generieren.
-                    </Text>
-
-                    <View style={styles.pocketActionsRow}>
-                      <TouchableOpacity
-                        onPress={handleGenerateEmptyPocket}
-                        disabled={isGeneratingPocket}
-                        style={[styles.generatePocketButton, { backgroundColor: colors.accent, opacity: isGeneratingPocket ? 0.6 : 1 }]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Stream jetzt generieren"
-                      >
-                        <Ionicons name="sparkles" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                        <Text style={styles.generatePocketButtonText}>
-                          {isGeneratingPocket ? 'Erschließe Primärquellen…' : 'Raum mit Live-Forschung erschließen'}
-                        </Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => {
-                          handleFilterChange('all');
-                          setSearchQuery('');
-                        }}
-                        style={[styles.resetFilterButton, { borderColor: colors.borderSubtle }]}
-                      >
-                        <Text style={[styles.resetFilterButtonText, { color: colors.textMuted }]}>
-                          Filter zurücksetzen
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  )
-                ) : (
-                  <>
-                    {renderedInfiniteFreshItems.map((item, index) => {
-                      const itemTrackId = item.hivemindMeta?.trackId || item.memeMeta?.trackId;
-                      const itemTrack = itemTrackId ? trackByIdMap.get(itemTrackId) : undefined;
-                      return (
-                      <View
-                        key={item.id}
-                        onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
-                      >
-                        <FeedCard
-                          item={item}
-                          interaction={interactions[item.id]}
-                          isDark={isDark}
-                          isHero={index === 0 && selectedFilter === 'all' && !searchQuery}
-                          isFocused={index === activeCardIndex}
-                          isExpanded={Boolean(expandedCardIds[item.id])}
-                          onToggleKurzCheck={() => {
-                            setExpandedCardIds(prev => ({
-                              ...prev,
-                              [item.id]: !prev[item.id]
-                            }));
-                          }}
-                          onInvestigateTopic={handleInvestigateTopic}
-                          onDismissItem={handleDismissCard}
-                          onOpenHivemindTrack={handleStartFocusTrack}
-                          onCompleteHivemindStep={handleCompleteHivemindStep}
-                          hivemindTrackProgressPercent={itemTrack?.progressPercent}
-                          isHivemindStepCompleted={itemTrack ? itemTrack.completedItemIds.includes(item.id) : false}
-                        />
-
-                        {/* Gentle Bloomscrolling Quiz Checkpoint every 9 cards (Off by default in feed, available in Reader) */}
-                        {ENABLE_INLINE_FEED_QUIZZES && (index + 1) % 9 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
-                          <View style={{ marginVertical: spacing.md }}>
-                            <QuizCheckpointCard
-                              questions={renderedInfiniteFreshItems
-                                .slice(Math.max(0, index - 2), index + 1)
-                                .map(a => a.quiz || generateQuizForArticle(a))}
-                              title={`Wissens-Checkpoint #${Math.floor((index + 1) / 9)}`}
-                              subtitle="Überprüfe deine Erkenntnis aus den letzten Beiträgen"
-                            />
-                          </View>
-                        )}
-                      </View>
-                      );
-                    })}
-
-                    {/* Clean Transition to Evergreen / Archive when fresh pool is exhausted */}
-                    {renderedInfiniteEvergreenItems.length > 0 && (
-                      <>
-                        <View style={[styles.streamDividerCard, { backgroundColor: colors.surface, borderColor: '#D97706' }]}>
-                          <View style={[styles.sparkleIconBox, { backgroundColor: 'rgba(217, 119, 6, 0.14)' }]}>
-                            <Ionicons name="library" size={20} color="#D97706" />
-                          </View>
-                          <Text style={[styles.streamDividerTitle, { color: colors.textPrimary }]}>
-                            Frische Beiträge gelesen • Zeitlose Klassiker & Archiv
-                          </Text>
-                          <Text style={[styles.streamDividerText, { color: colors.textSecondary }]}>
-                            Kein künstliches Recycling bereits gezeigter Karten: Hier geht es nahtlos weiter mit zeitlosen Ur-Essays und Archiv-Schätzen.
-                          </Text>
-                        </View>
-
-                        {renderedInfiniteEvergreenItems.map((item, idx) => {
-                          const globalIdx = renderedInfiniteFreshItems.length + idx;
-                          return (
-                            <View
-                              key={item.id}
-                              onLayout={(e) => handleCardLayout(item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
-                            >
-                              <FeedCard
-                                item={item}
-                                interaction={interactions[item.id]}
-                                isDark={isDark}
-                                isHero={false}
-                                isFocused={globalIdx === activeCardIndex}
-                                isExpanded={Boolean(expandedCardIds[item.id])}
-                                onToggleKurzCheck={() => {
-                                  setExpandedCardIds(prev => ({
-                                    ...prev,
-                                    [item.id]: !prev[item.id]
-                                  }));
-                                }}
-                                onInvestigateTopic={handleInvestigateTopic}
-                                onDismissItem={handleDismissCard}
-                              />
-
-                              {/* Gentle Bloomscrolling Quiz Checkpoint every 9 cards (Off by default in feed, available in Reader) */}
-                              {ENABLE_INLINE_FEED_QUIZZES && (idx + 1) % 9 === 0 && isFeatureEnabled(profile, 'bloomscroll_quizzes') && (
-                                <View style={{ marginVertical: spacing.md }}>
-                                  <QuizCheckpointCard
-                                    questions={renderedInfiniteEvergreenItems
-                                      .slice(Math.max(0, idx - 2), idx + 1)
-                                      .map(a => a.quiz || generateQuizForArticle(a))}
-                                    title={`Wissens-Checkpoint #${Math.floor((globalIdx + 1) / 9)}`}
-                                    subtitle="Überprüfe deine Erkenntnis aus den letzten Beiträgen"
-                                  />
-                                </View>
-                              )}
-                            </View>
-                          );
-                        })}
-                      </>
-                    )}
-
-                    {/* End-of-Edition Reflection Gate: Inline Atmen Breathing Portal */}
-                    {isFeatureEnabled(profile, 'breathing_portal') && (
-                      <View style={{ marginVertical: spacing.lg }}>
-                        <AtmenBreathingPortal mode="inline" height={380} />
-                      </View>
-                    )}
-
-                    {/* Seamless Infinite Auto-Replenishment Status */}
-                    {isReplenishingStream && (
-                      <View style={[styles.loadingBox, { backgroundColor: colors.surface, paddingVertical: spacing.md }]}>
-                        <ActivityIndicator size="small" color={colors.accent} />
-                        <Text style={[styles.loadingText, { color: colors.textSecondary, marginTop: 6 }]}>
-                          Kuratiere weitere hochrelevante Beiträge im Hintergrund…
-                        </Text>
-                      </View>
-                    )}
-                  </>
                 )}
               </>
             )}
@@ -2599,86 +2606,6 @@ export const FeedScreen: React.FC = () => {
                     </View>
                   )}
                 </View>
-
-                {/* Live News Items */}
-                {liveNewsLoading && liveNewsItems.length === 0 ? (
-                  <View style={[styles.loadingBox, { backgroundColor: colors.surface }]}>
-                    <ActivityIndicator size="large" color={colors.accent} />
-                    <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-                      Lade verifizierte Echtzeit-Feeds…
-                    </Text>
-                  </View>
-                ) : scoredLiveItems.length === 0 ? (
-                  <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: 12 }]}>
-                    <Ionicons name="radio-outline" size={32} color={colors.accent} style={{ marginBottom: 8 }} />
-                    <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-                      {selectedFilter !== 'all'
-                        ? `Keine aktuellen Ticker-Meldungen in ${activeSpaceName}`
-                        : 'Keine Live-Meldungen gefunden'}
-                    </Text>
-                    <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
-                      {selectedFilter !== 'all'
-                        ? `Im Echtzeit-Nachrichtenticker liegen gerade keine Meldungen für ${activeSpaceName} vor. Im Wissens-Stream findest du zeitlose Primärtexte und Analysen.`
-                        : 'Setze die Filter zurück oder aktualisiere die Live-Feeds.'}
-                    </Text>
-
-                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
-                      {selectedFilter !== 'all' && (
-                        <TouchableOpacity
-                          onPress={() => setActiveFeedOption('infinite')}
-                          style={[styles.emptyActionBtn, { backgroundColor: colors.accent }]}
-                        >
-                          <Ionicons name="infinite" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                          <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
-                            Zu {activeSpaceName} im Stream
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-
-                      <TouchableOpacity
-                        onPress={() => handleFilterChange('all')}
-                        style={[styles.emptyActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
-                      >
-                        <Ionicons name="refresh" size={14} color={colors.textPrimary} style={{ marginRight: 6 }} />
-                        <Text style={{ color: colors.textPrimary, fontWeight: '600', fontSize: 13 }}>
-                          Alle Live-Nachrichten zeigen
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ) : (
-                  <>
-                    {scoredLiveItems.map((item, index) => (
-                      <FeedCard
-                        key={item.id}
-                        item={item}
-                        interaction={interactions[item.id]}
-                        isDark={isDark}
-                        isHero={index === 0 && !searchQuery}
-                        isFocused={index === activeCardIndex}
-                        isExpanded={Boolean(expandedCardIds[item.id])}
-                        onToggleKurzCheck={() => {
-                          setExpandedCardIds(prev => ({
-                            ...prev,
-                            [item.id]: !prev[item.id]
-                          }));
-                        }}
-                        onInvestigateTopic={handleInvestigateTopic}
-                      />
-                    ))}
-
-                    <TouchableOpacity
-                      onPress={() => setLiveNewsLimit(prev => prev + 20)}
-                      disabled={liveNewsLoading}
-                      style={[styles.loadMoreLiveBtn, { backgroundColor: colors.surface, borderColor: colors.accent }]}
-                    >
-                      <Ionicons name="arrow-down-circle-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
-                      <Text style={[styles.loadMoreLiveText, { color: colors.accent }]}>
-                        {liveNewsLoading ? 'Lade weitere Meldungen…' : 'Weitere Live-Meldungen laden (+20)'}
-                      </Text>
-                    </TouchableOpacity>
-                  </>
-                )}
               </View>
             )}
 
@@ -2696,25 +2623,6 @@ export const FeedScreen: React.FC = () => {
                     Gedanken, die auch in 50 Jahren noch Bestand haben. Von Vannevar Bushs Memex (1945) über Claude Shannons Informationstheorie (1948) bis zu Ted Chiangs scharfsinniger KI-Kritik (2023).
                   </Text>
                 </View>
-
-                {scoredClassicsItems.map((item, index) => (
-                  <FeedCard
-                    key={item.id}
-                    item={item}
-                    interaction={interactions[item.id]}
-                    isDark={isDark}
-                    isHero={index === 0}
-                    isFocused={index === activeCardIndex}
-                    isExpanded={Boolean(expandedCardIds[item.id])}
-                    onToggleKurzCheck={() => {
-                      setExpandedCardIds(prev => ({
-                        ...prev,
-                        [item.id]: !prev[item.id]
-                      }));
-                    }}
-                    onInvestigateTopic={handleInvestigateTopic}
-                  />
-                ))}
               </View>
             )}
 
@@ -2768,8 +2676,62 @@ export const FeedScreen: React.FC = () => {
                     Jeder Beitrag, den du je gesehen hast, bleibt hier dauerhaft erhalten – ohne algorithmische Manipulation ({historyItems.length} gespeicherte Wegmarken).
                   </Text>
                 </View>
+              </View>
+            )}
+              </>
+            )}
+            ListEmptyComponent={(
+              <>
+                {activeFeedOption === 'live_news' && (
+                  liveNewsLoading && liveNewsItems.length === 0 ? (
+                    <View style={[styles.loadingBox, { backgroundColor: colors.surface }]}>
+                      <ActivityIndicator size="large" color={colors.accent} />
+                      <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+                        Lade verifizierte Echtzeit-Feeds…
+                      </Text>
+                    </View>
+                  ) : scoredLiveItems.length === 0 ? (
+                    <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: 12 }]}>
+                      <Ionicons name="radio-outline" size={32} color={colors.accent} style={{ marginBottom: 8 }} />
+                      <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                        {selectedFilter !== 'all'
+                          ? `Keine aktuellen Ticker-Meldungen in ${activeSpaceName}`
+                          : 'Keine Live-Meldungen gefunden'}
+                      </Text>
+                      <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+                        {selectedFilter !== 'all'
+                          ? `Im Echtzeit-Nachrichtenticker liegen gerade keine Meldungen für ${activeSpaceName} vor. Im Wissens-Stream findest du zeitlose Primärtexte und Analysen.`
+                          : 'Setze die Filter zurück oder aktualisiere die Live-Feeds.'}
+                      </Text>
 
-                {historyItems.length === 0 ? (
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
+                        {selectedFilter !== 'all' && (
+                          <TouchableOpacity
+                            onPress={() => setActiveFeedOption('infinite')}
+                            style={[styles.emptyActionBtn, { backgroundColor: colors.accent }]}
+                          >
+                            <Ionicons name="infinite" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                            <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>
+                              Zu {activeSpaceName} im Stream
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+
+                        <TouchableOpacity
+                          onPress={() => handleFilterChange('all')}
+                          style={[styles.emptyActionBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+                        >
+                          <Ionicons name="refresh" size={14} color={colors.textPrimary} style={{ marginRight: 6 }} />
+                          <Text style={{ color: colors.textPrimary, fontWeight: '600', fontSize: 13 }}>
+                            Alle Live-Nachrichten zeigen
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : null
+                )}
+
+                {activeFeedOption === 'history' && historyItems.length === 0 && (
                   <View style={[styles.emptyBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                     <Ionicons name="compass-outline" size={36} color={colors.textMuted} style={{ marginBottom: 12 }} />
                     <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
@@ -2786,55 +2748,184 @@ export const FeedScreen: React.FC = () => {
                       <Text style={styles.generatePocketButtonText}>Zum Endlos-Stream</Text>
                     </TouchableOpacity>
                   </View>
-                ) : (
-                  historyItems.map(({ item, record }, index) => {
-                    const seenDate = new Date(record.lastSeenAt || record.firstSeenAt);
-                    const formattedDate = seenDate.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
-                    const formattedTime = seenDate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-                    const scoredItem = scoreFeedItem(item, profile, interactions);
-                    return (
-                      <View key={`${item.id}-hist-${index}`} style={styles.historyItemWrapper}>
-                        <View style={[styles.historyItemBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                          <Ionicons name="checkmark-circle-outline" size={12} color={colors.accent} style={{ marginRight: 5 }} />
-                          <Text style={[styles.historyItemBadgeText, { color: colors.textMuted }]}>
-                            Gesehen {formattedDate}, {formattedTime} Uhr • #{record.sequenceNumber} deiner Lesereise
+                )}
+
+                {activeFeedOption !== 'live_news' &&
+                  activeFeedOption !== 'classics' &&
+                  activeFeedOption !== 'history' &&
+                  !activeHivemindTrack &&
+                  !(curatedSelection && curatedSelection.items.length > 0) &&
+                  renderedInfiniteItems.length === 0 && (
+                    subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom) ? (
+                      renderEmptyCustomSpaceCard(subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom)!)
+                    ) : (
+                      <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                        <View style={[styles.emptyPocketBadge, { backgroundColor: colors.accentSubtle }]}>
+                          <Ionicons name="sparkles" size={15} color={colors.accent} />
+                          <Text style={[styles.emptyPocketBadgeText, { color: colors.accent }]}>
+                            Epistemischer Raum • On-the-Fly Entdeckung
                           </Text>
                         </View>
-                        <FeedCard
-                          item={scoredItem}
-                          interaction={interactions[item.id]}
-                          isDark={isDark}
-                          isHero={false}
-                          isFocused={index === activeCardIndex}
-                          isExpanded={Boolean(expandedCardIds[item.id])}
-                          onToggleKurzCheck={() => {
-                            setExpandedCardIds(prev => ({
-                              ...prev,
-                              [item.id]: !prev[item.id]
-                            }));
+
+                        <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                          {selectedFilter !== 'all'
+                            ? `Raum ${selectedFilter} erschließen`
+                            : (searchQuery ? `Erkenntnis-Stream zu „${searchQuery}“ generieren` : 'Neuen Erkenntnis-Stream generieren')}
+                        </Text>
+
+                        <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+                          Dieser Wissensraum enthält noch keine kuratierten Beiträge. Du kannst hier auf Knopfdruck eine fundierte Recherche aus offenen Primärquellen (Wikipedia REST, OpenAlex & arXiv) generieren.
+                        </Text>
+
+                        <View style={styles.pocketActionsRow}>
+                          <TouchableOpacity
+                            onPress={handleGenerateEmptyPocket}
+                            disabled={isGeneratingPocket}
+                            style={[styles.generatePocketButton, { backgroundColor: colors.accent, opacity: isGeneratingPocket ? 0.6 : 1 }]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Stream jetzt generieren"
+                          >
+                            <Ionicons name="sparkles" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                            <Text style={styles.generatePocketButtonText}>
+                              {isGeneratingPocket ? 'Erschließe Primärquellen…' : 'Raum mit Live-Forschung erschließen'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            onPress={() => {
+                              handleFilterChange('all');
+                              setSearchQuery('');
+                            }}
+                            style={[styles.resetFilterButton, { borderColor: colors.borderSubtle }]}
+                          >
+                            <Text style={[styles.resetFilterButtonText, { color: colors.textMuted }]}>
+                              Filter zurücksetzen
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )
+                  )}
+              </>
+            )}
+            ListFooterComponent={(
+              <>
+                {activeFeedOption !== 'live_news' &&
+                  activeFeedOption !== 'classics' &&
+                  activeFeedOption !== 'history' &&
+                  activeHivemindTrack && (() => {
+                    const nextPendingChapter = (activeHivemindTrack.chapters || []).find(ch => !ch.isGenerated);
+                    const nextChapterTitle = nextPendingChapter
+                      ? nextPendingChapter.title
+                      : `Kapitel ${(activeHivemindTrack.chapters?.length || 1) + 1}: Weiterführende Vertiefung`;
+                    return (
+                      <View
+                        style={{
+                          marginHorizontal: spacing.md,
+                          marginTop: spacing.sm,
+                          marginBottom: spacing.xl,
+                          padding: spacing.md,
+                          borderRadius: radius.lg,
+                          backgroundColor: colors.surface,
+                          borderWidth: 1,
+                          borderColor: colors.borderSubtle
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 }}>
+                          Bereit für die nächste Vertiefungsstufe?
+                        </Text>
+                        <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 12 }}>
+                          Erweitere „{activeHivemindTrack.title}“ nahtlos um das nächste aufbauende Kapitel mit 12 neuen Lernkarten.
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => void handleLoadNextHivemindChapter(activeHivemindTrack.id)}
+                          disabled={isLoadingNextHivemindChapter}
+                          style={{
+                            paddingVertical: 11,
+                            paddingHorizontal: 14,
+                            borderRadius: radius.md,
+                            backgroundColor: colors.accent,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            justifyContent: 'center'
                           }}
-                          onInvestigateTopic={handleInvestigateTopic}
-                        />
+                          accessibilityRole="button"
+                          accessibilityLabel={`Nächstes Kapitel laden für ${activeHivemindTrack.title}`}
+                        >
+                          {isLoadingNextHivemindChapter ? (
+                            <>
+                              <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                                Generiere {nextChapterTitle} (+12 Karten)…
+                              </Text>
+                            </>
+                          ) : (
+                            <>
+                              <Ionicons name="add-circle-outline" size={16} color="#FFFFFF" style={{ marginRight: 7 }} />
+                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF' }}>
+                                + Nächstes Kapitel laden ({nextChapterTitle} · +12 Karten)
+                              </Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
                       </View>
                     );
-                  })
-                )}
-              </View>
-            )}
-          </View>
+                  })()}
 
-          {/* Right Column: Sticky Desktop Community Sidebar */}
-          {isDesktop && (
-            <View style={styles.desktopSidebarColumn}>
+                {activeFeedOption !== 'live_news' &&
+                  activeFeedOption !== 'classics' &&
+                  activeFeedOption !== 'history' &&
+                  !activeHivemindTrack &&
+                  !(curatedSelection && curatedSelection.items.length > 0) &&
+                  renderedInfiniteItems.length > 0 && (
+                    <>
+                      {isFeatureEnabled(profile, 'breathing_portal') && (
+                        <View style={{ marginVertical: spacing.lg }}>
+                          <AtmenBreathingPortal mode="inline" height={380} />
+                        </View>
+                      )}
+
+                      {isReplenishingStream && (
+                        <View style={[styles.loadingBox, { backgroundColor: colors.surface, paddingVertical: spacing.md }]}>
+                          <ActivityIndicator size="small" color={colors.accent} />
+                          <Text style={[styles.loadingText, { color: colors.textSecondary, marginTop: 6 }]}>
+                            Kuratiere weitere hochrelevante Beiträge im Hintergrund…
+                          </Text>
+                        </View>
+                      )}
+                    </>
+                  )}
+
+                {activeFeedOption === 'live_news' && !(liveNewsLoading && liveNewsItems.length === 0) && scoredLiveItems.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => setLiveNewsLimit(prev => prev + 20)}
+                    disabled={liveNewsLoading}
+                    style={[styles.loadMoreLiveBtn, { backgroundColor: colors.surface, borderColor: colors.accent }]}
+                  >
+                    <Ionicons name="arrow-down-circle-outline" size={16} color={colors.accent} style={{ marginRight: 6 }} />
+                    <Text style={[styles.loadMoreLiveText, { color: colors.accent }]}>
+                      {liveNewsLoading ? 'Lade weitere Meldungen…' : 'Weitere Live-Meldungen laden (+20)'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          />
+        </View>
+
+        {/* Right Column: Sticky Desktop Community Sidebar */}
+        {isDesktop && (
+          <View style={[styles.desktopSidebarColumn, { paddingTop: 18 }]}>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: spacing.xxl }}>
               <DesktopSidebar
                 articleCount={infiniteInterleavedBase.length}
                 selectedTopicFilter={selectedFilter}
                 onSelectTopicFilter={handleFilterChange}
               />
-            </View>
-          )}
-        </View>
-      </ScrollView>
+            </ScrollView>
+          </View>
+        )}
+      </View>
 
       {/* Ultra Master Studio Modal */}
       {showMasterModal && (

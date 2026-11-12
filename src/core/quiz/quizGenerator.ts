@@ -1,6 +1,23 @@
 import { FeedItem, FeedQuizQuestion, FeedQuizQuestionSchema } from '../domain/types';
 import { AiCredentials, callAiModel, loadAiCredentials } from '../ai/atmenAiClient';
-import { EnrichmentUsageLedger, defaultUsageLedger } from '../enrichment/ledger';
+import {
+  EnrichmentUsageLedger,
+  defaultUsageLedger,
+  getEffectiveBudgetCeilingEur
+} from '../enrichment/ledger';
+import { EnrichmentCache, StorageDriverCacheStorage } from '../enrichment/cache';
+import { appStorage } from '../data/storage';
+import { pureJsSha256 } from '../ingestion/normalizer';
+
+const defaultQuizAiCache = new EnrichmentCache<FeedQuizQuestion>(
+  undefined,
+  undefined,
+  new StorageDriverCacheStorage<FeedQuizQuestion>(appStorage, '@atem:quiz_ai_cache:v1')
+);
+
+export async function clearQuizAiCache(): Promise<void> {
+  await defaultQuizAiCache.clear();
+}
 
 const BANNED_QUIZ_PATTERNS = [
   /wer hat diesen (artikel|beitrag) veröffentlicht/i,
@@ -152,6 +169,13 @@ export async function generateSingleArticleQuizWithAi(
   credentials?: AiCredentials,
   ledger: EnrichmentUsageLedger = defaultUsageLedger
 ): Promise<FeedQuizQuestion> {
+  if (
+    item.quiz &&
+    isPlausibleNonMetadataQuiz(item.quiz) &&
+    (item.aiAssisted || item.enrichmentTier === 'ai')
+  ) {
+    return item.quiz;
+  }
   const results = await generateQuizWithAi([item], credentials, ledger);
   return results[0] || generateQuizForArticle(item);
 }
@@ -180,7 +204,27 @@ export async function generateQuizWithAi(
     return items.map(generateQuizForArticle);
   }
 
-  const canSpend = await ledger.canSpend(0.002);
+  const useSharedCache = !credentials && ledger === defaultUsageLedger;
+  const cachedSingleItem = items.length === 1 ? items[0] : null;
+  const singleCacheKey = cachedSingleItem
+    ? {
+        contentHash: pureJsSha256(
+          `${cachedSingleItem.id}|${cachedSingleItem.title}|${(cachedSingleItem.feedText || '').slice(0, 300)}`
+        ),
+        task: 'reader_quiz',
+        modelId: creds.model || 'default'
+      }
+    : null;
+
+  if (useSharedCache && singleCacheKey) {
+    const cachedQuiz = await defaultQuizAiCache.get(singleCacheKey);
+    if (cachedQuiz && isPlausibleNonMetadataQuiz(cachedQuiz)) {
+      return [cachedQuiz];
+    }
+  }
+
+  const budgetCeilingEur = getEffectiveBudgetCeilingEur(Boolean(creds.apiKey?.trim()));
+  const canSpend = await ledger.canSpend(0.002, undefined, budgetCeilingEur);
   if (!canSpend) {
     return items.map(generateQuizForArticle);
   }
@@ -220,6 +264,7 @@ Antworte AUSSCHLIESSLICH als valides JSON-Array von Objekten:
     const response = await callAiModel(prompt, {
       systemInstruction,
       jsonMode: true,
+      timeoutMs: 28_000,
       credentials: creds,
       ledger,
       itemId: `quiz-batch-${Date.now()}`
@@ -240,6 +285,9 @@ Antworte AUSSCHLIESSLICH als valides JSON-Array von Objekten:
         }
       }
       if (validated.length > 0) {
+        if (useSharedCache && singleCacheKey && items.length === 1) {
+          await defaultQuizAiCache.set(singleCacheKey, validated[0]);
+        }
         return validated;
       }
     }

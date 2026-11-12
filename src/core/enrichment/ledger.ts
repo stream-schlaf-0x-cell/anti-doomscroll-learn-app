@@ -216,7 +216,10 @@ export class EnrichmentUsageLedger {
     return Math.round(reserved * 1000000) / 1000000;
   }
 
-  async getSummary(monthKey: string = getCurrentMonthKey()): Promise<EnrichmentLedgerSummary> {
+  async getSummary(
+    monthKey: string = getCurrentMonthKey(),
+    ceilingEur: number = MONTHLY_BUDGET_CEILING_EUR
+  ): Promise<EnrichmentLedgerSummary> {
     return this.lockManager.acquire(monthKey, async () => {
       const all = await this.loadLedger();
       if (this.isStorageCorrupted || !this.storageHealthy) {
@@ -225,27 +228,38 @@ export class EnrichmentUsageLedger {
           totalCalls: 0,
           totalInputTokens: 0,
           totalOutputTokens: 0,
-          totalCostEur: MONTHLY_BUDGET_CEILING_EUR,
-          budgetLimitEur: MONTHLY_BUDGET_CEILING_EUR,
+          totalCostEur: ceilingEur,
+          budgetLimitEur: ceilingEur,
           isBudgetExceeded: true,
           entries: []
         };
       }
-      const summary = all[monthKey] ?? {
-        monthKey,
-        totalCalls: 0,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
-        totalCostEur: 0,
-        budgetLimitEur: MONTHLY_BUDGET_CEILING_EUR,
-        isBudgetExceeded: false,
-        entries: []
+      const stored = all[monthKey];
+      if (!stored) {
+        return {
+          monthKey,
+          totalCalls: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalCostEur: 0,
+          budgetLimitEur: ceilingEur,
+          isBudgetExceeded: false,
+          entries: []
+        };
+      }
+      return {
+        ...stored,
+        budgetLimitEur: ceilingEur,
+        isBudgetExceeded: stored.totalCostEur >= ceilingEur
       };
-      return summary;
     });
   }
 
-  async canSpend(estimatedEur: number = 0.001, monthKey: string = getCurrentMonthKey()): Promise<boolean> {
+  async canSpend(
+    estimatedEur: number = 0.001,
+    monthKey: string = getCurrentMonthKey(),
+    ceilingEur: number = MONTHLY_BUDGET_CEILING_EUR
+  ): Promise<boolean> {
     return this.lockManager.acquire(monthKey, async () => {
       if (this.isStorageCorrupted || !this.storageHealthy) {
         return false;
@@ -264,7 +278,7 @@ export class EnrichmentUsageLedger {
         this.storageHealthy = false;
         return false;
       }
-      return committed + reserved + estimatedEur <= MONTHLY_BUDGET_CEILING_EUR;
+      return committed + reserved + estimatedEur <= ceilingEur;
     });
   }
 
@@ -272,7 +286,11 @@ export class EnrichmentUsageLedger {
    * Atomically reserves an estimated budget chunk.
    * Prevents race conditions where concurrent calls bypass the monthly budget ceiling.
    */
-  async reserveSpend(estimatedEur: number, monthKey: string = getCurrentMonthKey()): Promise<string | null> {
+  async reserveSpend(
+    estimatedEur: number,
+    monthKey: string = getCurrentMonthKey(),
+    ceilingEur: number = MONTHLY_BUDGET_CEILING_EUR
+  ): Promise<string | null> {
     return this.lockManager.acquire(monthKey, async () => {
       if (this.isStorageCorrupted || !this.storageHealthy) {
         return null;
@@ -292,7 +310,7 @@ export class EnrichmentUsageLedger {
         return null;
       }
 
-      if (committed + reserved + estimatedEur > MONTHLY_BUDGET_CEILING_EUR) {
+      if (committed + reserved + estimatedEur > ceilingEur) {
         return null; // Budget exceeded or unknown status, reject reservation
       }
 

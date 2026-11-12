@@ -1,6 +1,8 @@
 import { appStorage, AtemStorage } from '../data/storage';
 import {
   AI_CONNECTION_TEST_TIMEOUT_MS,
+  AI_MAX_REQUEST_TIMEOUT_MS,
+  AI_REQUEST_TIMEOUT_MS,
   AiHttpError,
   boundedOutputTokens,
   fetchAiJson,
@@ -12,7 +14,8 @@ import {
   EnrichmentUsageLedger,
   defaultUsageLedger,
   calculateCostEur,
-  MONTHLY_BUDGET_CEILING_EUR
+  MONTHLY_BUDGET_CEILING_EUR,
+  getEffectiveBudgetCeilingEur
 } from '../enrichment/ledger';
 
 import {
@@ -301,6 +304,8 @@ export interface AiCallOptions {
   /** Custom deadline in milliseconds (up to 60s for Pro/Reasoning models). */
   timeoutMs?: number;
   bypassBudgetCeiling?: boolean;
+  /** Optional explicit budget ceiling override in EUR for this request. */
+  budgetCeilingEur?: number;
 }
 
 export interface AiConnectionTestResult {
@@ -384,13 +389,19 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
   }
   const ledger = options.ledger ?? defaultUsageLedger;
   const estimatedInputTokens = Math.ceil((prompt.length + (options.systemInstruction?.length ?? 0)) / 3.5);
-  const isPersonalByok = Boolean(apiKey && (credentials.persistApiKey === true || options.bypassBudgetCeiling === true));
-  let reservationId = await ledger.reserveSpend(calculateCostEur(estimatedInputTokens, maxTokens));
+  const effectiveCeilingEur = options.budgetCeilingEur ?? getEffectiveBudgetCeilingEur(Boolean(apiKey));
+  const isPersonalByok = Boolean(apiKey && credentials.persistApiKey === true) || options.bypassBudgetCeiling === true;
+  let reservationId = await ledger.reserveSpend(
+    calculateCostEur(estimatedInputTokens, maxTokens),
+    undefined,
+    effectiveCeilingEur
+  );
   if (!reservationId) {
-    // When the user has explicitly provided their own personal API key (BYOK), do not block requests.
-    // They are paying for their own quota directly; usage tracking continues in the ledger.
+    // Only persistent opt-in BYOK or explicit connection tests bypass a reached ceiling in callAiModel.
     if (!isPersonalByok) {
-      throw new AiBudgetExceededError(`Monatliches KI-Budget-Limit (${MONTHLY_BUDGET_CEILING_EUR.toFixed(2)} €) erreicht oder gesperrt.`);
+      throw new AiBudgetExceededError(
+        `Monatliches KI-Budget-Limit (${(effectiveCeilingEur || MONTHLY_BUDGET_CEILING_EUR).toFixed(2)} €) erreicht oder gesperrt.`
+      );
     }
     reservationId = `byok_${Date.now()}`;
   }
@@ -438,9 +449,10 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
       if (credentials.provider === 'gemini') {
         const isProTier = isProOrReasoningModelId(model);
         const isConnectionTest = options.itemId === 'connection-test';
-        const candidateTimeoutMs = isConnectionTest
-          ? 8000
-          : (options.timeoutMs ? Math.min(options.timeoutMs, 18000) : (isProTier ? 18000 : 15000));
+        const rawTimeoutMs = isConnectionTest
+          ? (options.timeoutMs ?? AI_CONNECTION_TEST_TIMEOUT_MS)
+          : (options.timeoutMs ?? (isProTier ? AI_REQUEST_TIMEOUT_MS : 22_000));
+        const candidateTimeoutMs = Math.min(AI_MAX_REQUEST_TIMEOUT_MS, Math.max(1, rawTimeoutMs));
 
         const body = JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],

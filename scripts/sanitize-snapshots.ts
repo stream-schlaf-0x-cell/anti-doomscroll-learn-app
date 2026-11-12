@@ -80,13 +80,34 @@ function sanitizeItem(rawItem: FeedItem): FeedItem | null {
       title: (ref.title || '').replace(ZERO_WIDTH_REGEX, '').trim()
     }));
 
+    const cleanKeyInsight = item.keyInsight
+      ? stripSyntheticFillerSentences(stripBoilerplate(item.keyInsight))
+      : undefined;
+    const rawCleanTransfer = item.didacticTransfer
+      ? stripSyntheticFillerSentences(stripBoilerplate(item.didacticTransfer))
+      : undefined;
+    // Strip legacy boilerplate didacticTransfer strings so snapshots only carry genuine impulses
+    const legacyTransferRegex =
+      /^(?:Bezug für Schule & Unterricht zu|Technologische Einordnung zu|Philosophische Einordnung zu|Klang- & Praxisbezug zu|Kontemplative Einordnung zu|Ästhetische Betrachtung zu|Spielerischer Perspektivwechsel zu|Inhaltliche Einordnung zu)\s+„/i;
+    const cleanTransfer =
+      rawCleanTransfer &&
+      rawCleanTransfer.length >= 30 &&
+      !rawCleanTransfer.endsWith(':') &&
+      !legacyTransferRegex.test(rawCleanTransfer)
+        ? rawCleanTransfer
+        : undefined;
+
+    const { didacticTransfer: _dropDt, didacticSeed: _dropDs, ...restItem } = item;
+
     const cleaned: FeedItem = {
-      ...item,
+      ...restItem,
       title: cleanTitle,
       subtitle,
       feedText: feedText || cleanBody.slice(0, 500),
       articleBody: cleanBody || feedText,
       body: cleanBody || feedText,
+      ...(cleanKeyInsight && cleanKeyInsight.length >= 15 ? { keyInsight: cleanKeyInsight } : {}),
+      ...(cleanTransfer ? { didacticTransfer: cleanTransfer, didacticSeed: cleanTransfer } : {}),
       imageUrl: cleanImg,
       hasAuthenticImage: Boolean(cleanImg),
       sourceReferences

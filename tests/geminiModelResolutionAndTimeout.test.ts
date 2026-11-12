@@ -15,7 +15,9 @@ import {
   resetSessionEffectiveModels,
   testAiConnection
 } from '../src/core/ai/atmenAiClient';
-import { EnrichmentUsageLedger } from '../src/core/enrichment/ledger';
+import { EnrichmentUsageLedger, getEffectiveBudgetCeilingEur, ACTIVE_KEY_MONTHLY_BUDGET_CEILING_EUR } from '../src/core/enrichment/ledger';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 describe('Gemini Model Resolution & Pro/Argon/Carbon Timeout Hotfix', () => {
   afterEach(() => {
@@ -167,5 +169,48 @@ describe('Gemini Model Resolution & Pro/Argon/Carbon Timeout Hotfix', () => {
     assert.equal(response.text, 'Deep pro synthesis');
     assert.equal(response.modelUsed, 'gemini-2.5-pro');
     assert.ok(calledUrls.some(u => u.includes('gemini-2.5-pro:generateContent')));
+  });
+
+  it('5. honors 20 EUR personal-key ceiling, removes 18s client cap, and persists enrichmentTier=ai for Reader cache', async () => {
+    assert.equal(getEffectiveBudgetCeilingEur(false), 5.0);
+    assert.equal(getEffectiveBudgetCeilingEur(true), ACTIVE_KEY_MONTHLY_BUDGET_CEILING_EUR);
+    assert.equal(ACTIVE_KEY_MONTHLY_BUDGET_CEILING_EUR, 20.0);
+
+    const ledger = new EnrichmentUsageLedger('', false);
+    await ledger.recordUsage({
+      itemId: 'test-personal-budget-item',
+      model: 'gemini-2.5-flash',
+      inputTokens: 1000,
+      outputTokens: 500,
+      costEur: 8.5
+    });
+    assert.equal(
+      await ledger.canSpend(0.5, undefined, getEffectiveBudgetCeilingEur(false)),
+      false,
+      'Default shared ceiling (5 EUR) must block further spend above 8.5 EUR'
+    );
+    assert.equal(
+      await ledger.canSpend(0.5, undefined, getEffectiveBudgetCeilingEur(true)),
+      true,
+      'Personal key ceiling (20 EUR) must allow spend above 5 EUR up to 20 EUR'
+    );
+
+    const aiClientSrc = fs.readFileSync(
+      path.resolve(__dirname, '../src/core/ai/atmenAiClient.ts'),
+      'utf-8'
+    );
+    const batchEnricherSrc = fs.readFileSync(
+      path.resolve(__dirname, '../src/core/enrichment/batchEnricher.ts'),
+      'utf-8'
+    );
+    const readerSrc = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/reader/ReaderScreen.tsx'),
+      'utf-8'
+    );
+
+    assert.equal(aiClientSrc.includes('Math.min(requestedTimeout, 18_000)'), false);
+    assert.equal(batchEnricherSrc.includes("enrichmentTier: 'ai'"), true);
+    assert.equal(batchEnricherSrc.includes('bypassBudgetCeiling: true'), false);
+    assert.equal(readerSrc.includes("selectedArticle.enrichmentTier === 'ai'"), true);
   });
 });

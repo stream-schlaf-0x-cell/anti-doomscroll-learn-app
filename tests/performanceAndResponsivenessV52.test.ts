@@ -182,6 +182,22 @@ describe('Performance & 60fps UI Responsiveness (v5.2)', () => {
       false,
       'areFeedCardPropsEqual must return false when Hivemind step completion changes'
     );
+    assert.equal(
+      areFeedCardPropsEqual(baseProps, {
+        ...baseProps,
+        palette: 'sepia'
+      }),
+      false,
+      'areFeedCardPropsEqual must return false when palette changes'
+    );
+    assert.equal(
+      areFeedCardPropsEqual(baseProps, {
+        ...baseProps,
+        enableSoundGrounding: false
+      }),
+      false,
+      'areFeedCardPropsEqual must return false when sound grounding toggle changes'
+    );
   });
 
   it('3. Optimistic voteItem updates interaction state and upvotesCount in 0ms without reordering the feed array', () => {
@@ -277,5 +293,30 @@ describe('Performance & 60fps UI Responsiveness (v5.2)', () => {
     assert.ok(storedRaw);
     const parsed = JSON.parse(storedRaw);
     assert.equal(parsed.length, 5);
+  });
+
+  it('5. FeedCard uses isolated useAppActions() and FeedScreen virtualizes the stream with FlatList', () => {
+    const feedCardSource = fs.readFileSync(
+      path.resolve(__dirname, '../src/ui/components/FeedCard.tsx'),
+      'utf-8'
+    );
+    const feedScreenSource = fs.readFileSync(
+      path.resolve(__dirname, '../src/features/feed/FeedScreen.tsx'),
+      'utf-8'
+    );
+
+    assert.ok(
+      feedCardSource.includes('useAppActions'),
+      'FeedCard must subscribe via stable useAppActions() instead of volatile useApp() state'
+    );
+    assert.equal(
+      /\buseApp\s*\(/.test(feedCardSource),
+      false,
+      'FeedCard must never call useApp() directly'
+    );
+    assert.ok(
+      feedScreenSource.includes('<FlatList'),
+      'FeedScreen main feed must be virtualized with FlatList'
+    );
   });
 });

@@ -20,8 +20,9 @@ import {
   TopicTag
 } from '../../core/domain/types';
 import { getCardRenderableText } from '../../core/enrichment/batchEnricher';
-import { useApp } from '../../core/context/AppContext';
-import { typography, radius, spacing } from '../theme';
+import { useAppActions } from '../../core/context/AppContext';
+import { getThemeColors, ThemePalette, typography, radius, spacing } from '../theme';
+import { stripLeadingTitleDuplicate } from '../../core/utils/textUtils';
 import { MusicTrackCard } from './MusicTrackCard';
 import { CURATED_SOUND_MASTERS, MusicTrackItem } from '../../core/music/musicRecommendationService';
 import {
@@ -31,12 +32,11 @@ import {
   isTrustedMuseumOrArtDomain
 } from '../../core/utils/imageQuality';
 import { detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
-import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { SubchannelBadge } from './SubchannelBadge';
 import { hivemindLearningService } from '../../core/learning/hivemindLearningService';
 import { QuizCheckpointCard } from './QuizCheckpointCard';
 
-export { areFeedCardPropsEqual };
+export { areFeedCardPropsEqual, stripLeadingTitleDuplicate };
 
 const ESCALATION_VISUAL_THEMES: Record<1 | 2 | 3 | 4, {
   bg: string;
@@ -89,6 +89,8 @@ export interface FeedCardProps {
   item: ScoredFeedItem;
   interaction?: ReadingInteraction;
   isDark?: boolean;
+  palette?: ThemePalette;
+  enableSoundGrounding?: boolean;
   isHero?: boolean;
   isFocused?: boolean;
   isExpanded?: boolean;
@@ -159,36 +161,6 @@ export function formatCuratedLabel(curatedAt?: string): string {
   }
 }
 
-export function stripLeadingTitleDuplicate(text: string, title: string): string {
-  if (!text || !title) return text || '';
-  const trimmedText = text.trim();
-  const trimmedTitle = title.trim();
-
-  // 1. Direct exact or case-insensitive match
-  if (trimmedText.toLowerCase().startsWith(trimmedTitle.toLowerCase())) {
-    const remainder = trimmedText.slice(trimmedTitle.length).trim();
-    return remainder.replace(/^[:\-–—.,]\s*/, '').trim();
-  }
-
-  // 2. Cleaned title match (without trailing punctuation)
-  const cleanTitle = trimmedTitle.replace(/[.:\-–—!?]+$/, '').trim();
-  if (cleanTitle.length > 8 && trimmedText.toLowerCase().startsWith(cleanTitle.toLowerCase())) {
-    const remainder = trimmedText.slice(cleanTitle.length).trim();
-    return remainder.replace(/^[:\-–—.,]\s*/, '').trim();
-  }
-
-  // 3. Match first N words if headline is long
-  const titleWords = cleanTitle.split(/\s+/).slice(0, 6).join(' ').toLowerCase();
-  if (titleWords.length > 18 && trimmedText.toLowerCase().startsWith(titleWords)) {
-    const sepMatch = trimmedText.slice(0, cleanTitle.length + 20).match(/[:\-–—]\s*/);
-    if (sepMatch && sepMatch.index !== undefined) {
-      return trimmedText.slice(sepMatch.index + sepMatch[0].length).trim();
-    }
-  }
-
-  return trimmedText;
-}
-
 function isAuthenticCardImage(item: ScoredFeedItem): boolean {
   if (!item.imageUrl || item.imageUrl.trim().length === 0) return false;
   if (item.hasAuthenticImage === false) return false;
@@ -200,6 +172,9 @@ function isAuthenticCardImage(item: ScoredFeedItem): boolean {
 const FeedCardInner: React.FC<FeedCardProps> = ({
   item,
   interaction: propInteraction,
+  isDark = false,
+  palette = 'tidalglass',
+  enableSoundGrounding = true,
   isHero = false,
   isFocused = false,
   onInvestigateTopic,
@@ -215,16 +190,14 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   const resolvedStepCompleted = isHivemindStepCompleted ?? isCompletedHivemindStep;
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
+  const colors = useMemo(() => getThemeColors(isDark ? 'dark' : 'light', palette), [isDark, palette]);
   const {
-    colors,
-    profile,
-    interactions,
     toggleSaveItem,
     openArticle,
     voteItem,
     dismissItem,
     scheduleCloudSyncPush
-  } = useApp();
+  } = useAppActions();
 
   const [imageError, setImageError] = useState(false);
   const [imageRejected, setImageRejected] = useState(false);
@@ -301,7 +274,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     }
   };
 
-  const interaction = propInteraction ?? interactions[item.id];
+  const interaction = propInteraction;
   const isSaved = interaction?.saved ?? false;
   const progress = interaction?.progressPercent ?? 0;
   const isCompleted = interaction?.completedAt !== undefined || progress >= 95;
@@ -920,7 +893,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
         </View>
       )}
 
-      {matchedMusicTrack && isFeatureEnabled(profile, 'sound_grounding') && <MusicTrackCard track={matchedMusicTrack} />}
+      {matchedMusicTrack && enableSoundGrounding && <MusicTrackCard track={matchedMusicTrack} />}
 
       {/* 8. READING PROGRESS BAR (When partially read) */}
       {progress > 0 && !isCompleted && (

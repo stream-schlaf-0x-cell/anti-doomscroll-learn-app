@@ -19,12 +19,24 @@ export function stripLeadingTitleDuplicate(text: string, title?: string): string
   }
 
   // Also check if title ending in question mark or exclamation mark is repeated
-  const titleWithoutPunct = cleanTitle.replace(/[.?!]+$/, '').trim();
+  const titleWithoutPunct = cleanTitle.replace(/[.:\-–—!?]+$/, '').trim();
   if (titleWithoutPunct.length > 10 && cleanText.toLowerCase().startsWith(titleWithoutPunct.toLowerCase())) {
     let remainder = cleanText.slice(titleWithoutPunct.length).trim();
     remainder = remainder.replace(/^[:\-–—.,?!;\s]+/, '').trim();
     if (remainder.length > 0) {
       return remainder;
+    }
+  }
+
+  // Fallback: match first 6 headline words followed by separator punctuation
+  const titleWords = titleWithoutPunct.split(/\s+/).slice(0, 6).join(' ').toLowerCase();
+  if (titleWords.length > 18 && cleanText.toLowerCase().startsWith(titleWords)) {
+    const sepMatch = cleanText.slice(0, titleWithoutPunct.length + 20).match(/[:\-–—]\s*/);
+    if (sepMatch && sepMatch.index !== undefined) {
+      const remainder = cleanText.slice(sepMatch.index + sepMatch[0].length).trim();
+      if (remainder.length > 0) {
+        return remainder;
+      }
     }
   }
 

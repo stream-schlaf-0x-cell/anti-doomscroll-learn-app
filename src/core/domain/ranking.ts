@@ -1854,9 +1854,11 @@ export function computeUpvoteSimilarityBoost(
 }
 
 export interface FeedCardMemoComparableProps {
-  item: { id: string; upvotesCount?: number };
+  item: { id: string; upvotesCount?: number; feedText?: string; aiAssisted?: boolean };
   interaction?: ReadingInteraction;
   isDark?: boolean;
+  palette?: string;
+  enableSoundGrounding?: boolean;
   isHero?: boolean;
   isFocused?: boolean;
   isExpanded?: boolean;
@@ -1873,6 +1875,8 @@ export interface FeedCardMemoComparableProps {
 export function areFeedCardPropsEqual<T extends FeedCardMemoComparableProps>(prev: T, next: T): boolean {
   if (prev.item.id !== next.item.id) return false;
   if ((prev.item.upvotesCount ?? 0) !== (next.item.upvotesCount ?? 0)) return false;
+  if ((prev.item.feedText?.length ?? 0) !== (next.item.feedText?.length ?? 0)) return false;
+  if (Boolean(prev.item.aiAssisted) !== Boolean(next.item.aiAssisted)) return false;
   const prevVote = (prev.interaction as any)?.vote ?? prev.interaction?.voteScore ?? 0;
   const nextVote = (next.interaction as any)?.vote ?? next.interaction?.voteScore ?? 0;
   if (prevVote !== nextVote) return false;
@@ -1880,6 +1884,8 @@ export function areFeedCardPropsEqual<T extends FeedCardMemoComparableProps>(pre
   if ((prev.interaction?.feedback ?? 'neutral') !== (next.interaction?.feedback ?? 'neutral')) return false;
   if ((prev.interaction?.progressPercent ?? 0) !== (next.interaction?.progressPercent ?? 0)) return false;
   if (Boolean(prev.isDark) !== Boolean(next.isDark)) return false;
+  if ((prev.palette ?? 'tidalglass') !== (next.palette ?? 'tidalglass')) return false;
+  if (Boolean(prev.enableSoundGrounding ?? true) !== Boolean(next.enableSoundGrounding ?? true)) return false;
   if (
     (prev.hivemindTrackProgressPercent ?? prev.hivemindProgressPercent) !==
     (next.hivemindTrackProgressPercent ?? next.hivemindProgressPercent)

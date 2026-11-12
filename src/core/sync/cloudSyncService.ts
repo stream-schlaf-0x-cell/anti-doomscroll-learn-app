@@ -2,10 +2,10 @@ import QRCode from 'qrcode';
 import { AtemStorage, appStorage } from '../data/storage';
 import { UserProfile, FeedItem, FeedItemSchema, ReadingInteraction, ReadingInteractionSchema } from '../domain/types';
 import { DEFAULT_USER_PROFILE } from '../data/fixtures';
-import { userProfileRepository } from '../data/userProfileRepository';
-import { defaultSpaceRepository, Subchannel } from '../spaces/spaceRepository';
+import { userProfileRepository, LocalUserProfileRepository, IUserProfileRepository } from '../data/userProfileRepository';
+import { defaultSpaceRepository, SpaceRepository, Subchannel } from '../spaces/spaceRepository';
 import { INTERACTIONS_STORAGE_KEY, SAVED_ARTICLES_STORAGE_KEY } from '../data/libraryRepository';
-import { seenImpressionsService, SeenImpressionRecord } from '../data/seenImpressionsService';
+import { seenImpressionsService, SeenImpressionsService, SeenImpressionRecord } from '../data/seenImpressionsService';
 import {
   HivemindLearningTrack,
   HIVEMIND_TRACKS_STORAGE_KEY,
@@ -31,6 +31,51 @@ export const CLOUD_SYNC_CONFIG_KEY = '@atem:cloud_sync_config:v1';
 export const SYNC_DEVICE_ID_KEY = '@atem:sync_device_id:v1';
 export const GIST_SYNC_FILENAME = 'atmen-single-instance-sync.json';
 export const DISMISSED_ITEMS_KEY = '@atem:dismissed_items:v1';
+export const DEFAULT_SYNC_PASSPHRASE = 'atmen-single-instance-default-key';
+
+export function resolveSyncSecret(passphrase?: string): string {
+  const clean = (passphrase || '').trim();
+  return clean || DEFAULT_SYNC_PASSPHRASE;
+}
+
+function stableSortValue(val: unknown): unknown {
+  if (val === null || val === undefined || typeof val !== 'object') {
+    return val;
+  }
+  if (Array.isArray(val)) {
+    return val.map(stableSortValue);
+  }
+  const obj = val as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(obj).sort()) {
+    const v = obj[key];
+    if (v !== undefined) {
+      sorted[key] = stableSortValue(v);
+    }
+  }
+  return sorted;
+}
+
+export function canonicalSnapshotFingerprint(snapshot: AtmenSyncSnapshot): string {
+  const sortById = <T extends { id: string }>(arr: T[] = []): T[] =>
+    [...arr].sort((a, b) => a.id.localeCompare(b.id));
+
+  const canonical = {
+    version: snapshot.version || 1,
+    aiCredentials: snapshot.aiCredentials || null,
+    profile: snapshot.profile || null,
+    spaces: sortById(snapshot.spaces),
+    deletedSpaceIds: [...(snapshot.deletedSpaceIds || [])].sort(),
+    interactions: snapshot.interactions || {},
+    savedArticles: sortById(snapshot.savedArticles),
+    dismissedItemIds: [...(snapshot.dismissedItemIds || [])].sort(),
+    seenImpressions: snapshot.seenImpressions || {},
+    hivemindTracks: sortById(snapshot.hivemindTracks),
+    deletedHivemindTrackIds: [...(snapshot.deletedHivemindTrackIds || [])].sort()
+  };
+
+  return JSON.stringify(stableSortValue(canonical));
+}
 
 export interface CloudSyncConfig {
   enabled: boolean;
@@ -608,7 +653,7 @@ export async function pullSnapshotFromGist(
   }
 
   const rawContent = file.content;
-  const cleanPassphrase = (secret || '').trim();
+  const effectiveSecret = resolveSyncSecret(secret);
 
   let encryptedPayload = rawContent;
   let credentialsBackupData: AtmenSyncSnapshot['aiCredentials'] | undefined = undefined;
@@ -634,11 +679,11 @@ export async function pullSnapshotFromGist(
     // rawContent is directly the encrypted payload
   }
 
-  let decrypted = await decryptSyncPayload(encryptedPayload, cleanPassphrase);
+  let decrypted = await decryptSyncPayload(encryptedPayload, effectiveSecret);
 
   // If decryption failed with user passphrase, try default fallback key
-  if (!decrypted && cleanPassphrase) {
-    decrypted = await decryptSyncPayload(encryptedPayload, 'atmen-single-instance-default-key');
+  if (!decrypted && effectiveSecret !== DEFAULT_SYNC_PASSPHRASE) {
+    decrypted = await decryptSyncPayload(encryptedPayload, DEFAULT_SYNC_PASSPHRASE);
   }
 
   let snapshot: AtmenSyncSnapshot | null = null;
@@ -682,9 +727,9 @@ export async function pushSnapshotToGist(
   secret: string,
   snapshot: AtmenSyncSnapshot
 ): Promise<void> {
-  const cleanPassphrase = (secret || '').trim();
+  const effectiveSecret = resolveSyncSecret(secret);
   const plainJson = JSON.stringify(snapshot, null, 2);
-  const encrypted = await encryptSyncPayload(plainJson, cleanPassphrase);
+  const encrypted = await encryptSyncPayload(plainJson, effectiveSecret);
 
   // Fallback base64-encoded credentials backup inside user's private secret Gist
   let credentialsBackup: string | undefined = undefined;
@@ -740,8 +785,15 @@ export class CloudSyncService {
   private configCache: CloudSyncConfig | null = null;
   private deviceIdCache: string | null = null;
   private syncInProgress = false;
+  private readonly profileRepo: IUserProfileRepository;
+  private readonly spaceRepo: SpaceRepository;
+  private readonly seenService: SeenImpressionsService;
 
-  constructor(private storage: AtemStorage = appStorage) {}
+  constructor(private storage: AtemStorage = appStorage) {
+    this.profileRepo = storage === appStorage ? userProfileRepository : new LocalUserProfileRepository(storage);
+    this.spaceRepo = storage === appStorage ? defaultSpaceRepository : new SpaceRepository(storage);
+    this.seenService = storage === appStorage ? seenImpressionsService : new SeenImpressionsService(storage);
+  }
 
   public async getConfig(): Promise<CloudSyncConfig> {
     if (this.configCache) {
@@ -797,6 +849,7 @@ export class CloudSyncService {
     const [
       profile,
       spaces,
+      deletedSpaceIds,
       rawInteractions,
       rawSavedArticles,
       seenRecordsMap,
@@ -809,11 +862,12 @@ export class CloudSyncService {
       hivemindTracks,
       deletedHivemindTrackIds
     ] = await Promise.all([
-      userProfileRepository.getProfile().catch(() => DEFAULT_USER_PROFILE),
-      defaultSpaceRepository.getAllSpaces().catch(() => []),
+      this.profileRepo.getProfile().catch(() => DEFAULT_USER_PROFILE),
+      this.spaceRepo.getAllSpaces().catch(() => []),
+      this.spaceRepo.getDeletedSpaceIds().catch(() => []),
       this.storage.getItem(INTERACTIONS_STORAGE_KEY).catch(() => null),
       this.storage.getItem(SAVED_ARTICLES_STORAGE_KEY).catch(() => null),
-      seenImpressionsService.getSeenRecordMap().catch(() => new Map<string, SeenImpressionRecord>()),
+      this.seenService.getSeenRecordMap().catch(() => new Map<string, SeenImpressionRecord>()),
       loadAiCredentials(this.storage).catch(() => DEFAULT_AI_CREDENTIALS),
       this.storage.getItem(DISMISSED_ITEMS_KEY).catch(() => null),
       getGeminiApiKey(this.storage).catch(() => ''),
@@ -890,7 +944,7 @@ export class CloudSyncService {
       },
       profile,
       spaces,
-      deletedSpaceIds: [],
+      deletedSpaceIds,
       interactions,
       savedArticles,
       dismissedItemIds,
@@ -908,7 +962,7 @@ export class CloudSyncService {
 
     // 1. Profile
     if (snapshot.profile) {
-      writes.push(userProfileRepository.saveProfile({
+      writes.push(this.profileRepo.saveProfile({
         ...snapshot.profile,
         isOnboarded: true
       }));
@@ -962,26 +1016,42 @@ export class CloudSyncService {
       writes.push(this.storage.setItem(DISMISSED_ITEMS_KEY, JSON.stringify(snapshot.dismissedItemIds)));
     }
 
-    // 6. Seen Impressions
+    // 6. Seen Impressions (preserve timestamps & counts instead of re-stamping now)
     if (snapshot.seenImpressions) {
-      const idsToRecord = Object.keys(snapshot.seenImpressions);
-      if (idsToRecord.length > 0) {
-        writes.push(seenImpressionsService.recordSeen(idsToRecord));
+      const recordsToMerge: SeenImpressionRecord[] = Object.entries(snapshot.seenImpressions).map(
+        ([itemId, rec]) => ({
+          itemId,
+          firstSeenAt: rec.firstSeenAt,
+          lastSeenAt: rec.lastSeenAt,
+          count: rec.count
+        })
+      );
+      if (recordsToMerge.length > 0) {
+        writes.push(this.seenService.mergeSyncedRecords(recordsToMerge));
       }
     }
 
-    // 7. Custom Subchannels
+    // 7. Custom Subchannels & Deletion Tombstones
+    const deletedSpaceIds = snapshot.deletedSpaceIds || [];
+    if (deletedSpaceIds.length > 0) {
+      writes.push(this.spaceRepo.recordDeletedSpaceIds(deletedSpaceIds));
+    }
     if (snapshot.spaces) {
-      const customSpaces = snapshot.spaces.filter(s => s.isCustom);
-      const pinnedIds = snapshot.spaces.filter(s => Boolean(s.pinned)).map(s => s.id);
+      const deletedSet = new Set(deletedSpaceIds);
+      const activeSpaces = snapshot.spaces.filter(s => !deletedSet.has(s.id) && !deletedSet.has(s.handle));
+      const customSpaces = activeSpaces.filter(s => s.isCustom);
+      const pinnedIds = activeSpaces.filter(s => Boolean(s.pinned)).map(s => s.id);
       const priorities: Record<string, string> = {};
-      for (const s of snapshot.spaces) {
-        if (s.feedPriority) priorities[s.id] = s.feedPriority;
+      for (const s of activeSpaces) {
+        if (s.feedPriority) {
+          priorities[s.id] = s.feedPriority;
+          priorities[s.handle] = s.feedPriority;
+        }
       }
 
       writes.push(this.storage.setItem('@atem:custom_subchannels', JSON.stringify(customSpaces)));
       writes.push(this.storage.setItem('@atem:pinned_space_ids', JSON.stringify(pinnedIds)));
-      writes.push(this.storage.setItem('@atem:subchannel_priorities', JSON.stringify(priorities)));
+      writes.push(this.storage.setItem('@atem:space_feed_priorities', JSON.stringify(priorities)));
     }
 
     // 8. Hivemind Learning Tracks
@@ -996,7 +1066,7 @@ export class CloudSyncService {
 
     // Notify space and hivemind listeners so UI updates instantly
     try {
-      await defaultSpaceRepository.notify();
+      await this.spaceRepo.notify();
       await hivemindLearningService.notify(this.storage);
     } catch {
       // Non-fatal
@@ -1004,12 +1074,14 @@ export class CloudSyncService {
   }
 
   /**
-   * Main sync workflow: pulls remote, merges with local, pushes merged snapshot, saves telemetry.
+   * Main sync workflow: pulls remote, merges with local, skips no-op writes/pushes via fingerprinting, saves telemetry.
    */
   public async sync(options?: { forcePush?: boolean }): Promise<{
     success: boolean;
     error?: string;
     mergedSnapshot?: AtmenSyncSnapshot;
+    skippedApply?: boolean;
+    skippedPush?: boolean;
   }> {
     if (this.syncInProgress) {
       return { success: false, error: 'Sync bereits im Gange.' };
@@ -1024,28 +1096,34 @@ export class CloudSyncService {
     await this.saveConfig({ lastSyncStatus: 'in_progress', lastSyncError: undefined });
 
     try {
-      const secret = config.encryptionPassphrase || 'atmen-single-instance-default-key';
+      const secret = resolveSyncSecret(config.encryptionPassphrase);
       const localSnap = await this.buildLocalSnapshot();
 
       // Pull remote
       const remoteSnap = await pullSnapshotFromGist(config.githubToken, config.gistId, secret);
 
-      let finalSnap: AtmenSyncSnapshot;
-      if (!remoteSnap) {
-        // First push
-        finalSnap = localSnap;
-      } else {
-        // CRDT merge
-        finalSnap = mergeSyncSnapshots(localSnap, remoteSnap);
-      }
+      const finalSnap = remoteSnap ? mergeSyncSnapshots(localSnap, remoteSnap) : localSnap;
+      const localFp = canonicalSnapshotFingerprint(localSnap);
+      const finalFp = canonicalSnapshotFingerprint(finalSnap);
+      const remoteFp = remoteSnap ? canonicalSnapshotFingerprint(remoteSnap) : null;
 
-      // Apply locally if remote provided updates
+      // Apply locally only when merged content differs from local state
+      let skippedApply = false;
       if (remoteSnap) {
-        await this.applySnapshot(finalSnap);
+        if (finalFp !== localFp) {
+          await this.applySnapshot(finalSnap);
+        } else {
+          skippedApply = true;
+        }
       }
 
-      // Push merged back to Gist
-      await pushSnapshotToGist(config.githubToken, config.gistId, secret, finalSnap);
+      // Push back only when merged content differs from remote (or forcePush requested)
+      let skippedPush = false;
+      if (!remoteSnap || options?.forcePush || finalFp !== remoteFp) {
+        await pushSnapshotToGist(config.githubToken, config.gistId, secret, finalSnap);
+      } else {
+        skippedPush = true;
+      }
 
       const nowIso = new Date().toISOString();
       await this.saveConfig({
@@ -1055,7 +1133,7 @@ export class CloudSyncService {
       });
 
       this.syncInProgress = false;
-      return { success: true, mergedSnapshot: finalSnap };
+      return { success: true, mergedSnapshot: finalSnap, skippedApply, skippedPush };
     } catch (err: any) {
       const msg = err?.message || String(err);
       await this.saveConfig({
@@ -1155,6 +1233,7 @@ export class CloudSyncService {
   }> {
     const cleanToken = (token || '').trim();
     const cleanPassphrase = (passphrase || '').trim();
+    const effectiveSecret = resolveSyncSecret(cleanPassphrase);
     if (!cleanToken) {
       return { success: false, error: 'Token fehlt.' };
     }
@@ -1170,15 +1249,20 @@ export class CloudSyncService {
       });
 
       // Secondary device connecting: MUST PULL FIRST!
-      const remoteSnap = await pullSnapshotFromGist(cleanToken, gistId, cleanPassphrase);
+      const remoteSnap = await pullSnapshotFromGist(cleanToken, gistId, effectiveSecret);
       if (remoteSnap) {
         const localSnap = await this.buildLocalSnapshot();
         const merged = mergeSyncSnapshots(localSnap, remoteSnap);
-        await this.applySnapshot(merged);
-        await pushSnapshotToGist(cleanToken, gistId, cleanPassphrase, merged);
+        const mergedFp = canonicalSnapshotFingerprint(merged);
+        if (mergedFp !== canonicalSnapshotFingerprint(localSnap)) {
+          await this.applySnapshot(merged);
+        }
+        if (mergedFp !== canonicalSnapshotFingerprint(remoteSnap)) {
+          await pushSnapshotToGist(cleanToken, gistId, effectiveSecret, merged);
+        }
       } else {
         const localSnap = await this.buildLocalSnapshot();
-        await pushSnapshotToGist(cleanToken, gistId, cleanPassphrase, localSnap);
+        await pushSnapshotToGist(cleanToken, gistId, effectiveSecret, localSnap);
       }
 
       return { success: true, gistId };

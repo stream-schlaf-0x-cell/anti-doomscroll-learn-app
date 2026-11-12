@@ -216,7 +216,9 @@ test('Bloomscroll Polish V4.1 — Eliminate the 8 Live iPhone Stumbling Blocks',
     assert.notEqual(sanitized.primaryTopic, 'book_mastery', 'Political article must never be in book_mastery');
     assert.equal(sanitized.space, 'c/dialektik', 'Political article must be routed to c/dialektik');
     assert.equal(sanitized.primaryTopic, 'philosophy_ethics', 'Political article must be routed to philosophy_ethics');
-    assert.ok(sanitized.feedText.length >= 140, 'Must synthesize substantive analytical summary for short stub');
+    assert.ok(!sanitized.feedText.includes('Read by Sam Peter Jackson'), 'Boilerplate must be stripped from sanitized feedText');
+    assert.ok(!sanitized.feedText.includes('Support the Guardian today'), 'Support prompt must be stripped from sanitized feedText');
+    assert.ok(!sanitized.feedText.includes('Kernperspektive zu'), 'Must never inject synthetic filler templates for short stubs');
 
     // Verify snapshot file
     const snapshotPath = path.join(rootDir, 'public/feed-snapshot.json');

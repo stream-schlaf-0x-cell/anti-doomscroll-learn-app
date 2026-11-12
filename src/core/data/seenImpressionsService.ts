@@ -7,6 +7,28 @@ export interface SeenImpressionRecord {
   count: number;
 }
 
+function mergeSeenRecord(a: SeenImpressionRecord, b: SeenImpressionRecord): SeenImpressionRecord {
+  const aFirst = new Date(a.firstSeenAt).getTime() || 0;
+  const bFirst = new Date(b.firstSeenAt).getTime() || 0;
+  const aLast = new Date(a.lastSeenAt).getTime() || 0;
+  const bLast = new Date(b.lastSeenAt).getTime() || 0;
+
+  return {
+    itemId: a.itemId,
+    firstSeenAt: aFirst > 0 && (bFirst === 0 || aFirst <= bFirst) ? a.firstSeenAt : b.firstSeenAt,
+    lastSeenAt: aLast >= bLast ? a.lastSeenAt : b.lastSeenAt,
+    count: Math.max(a.count || 1, b.count || 1)
+  };
+}
+
+function areSeenRecordsEqual(a: SeenImpressionRecord, b: SeenImpressionRecord): boolean {
+  return (
+    a.firstSeenAt === b.firstSeenAt &&
+    a.lastSeenAt === b.lastSeenAt &&
+    a.count === b.count
+  );
+}
+
 /**
  * SeenImpressionsService (Upgraded to v2 with 72h Cooldown, Session Memory & Debounced Storage Persistence)
  *
@@ -157,21 +179,7 @@ export class SeenImpressionsService {
       if (!mem) {
         this.seenMap.set(stored.itemId, stored);
       } else {
-        // Merge stored + in-memory
-        const earliest =
-          new Date(stored.firstSeenAt).getTime() < new Date(mem.firstSeenAt).getTime()
-            ? stored.firstSeenAt
-            : mem.firstSeenAt;
-        const latest =
-          new Date(stored.lastSeenAt).getTime() > new Date(mem.lastSeenAt).getTime()
-            ? stored.lastSeenAt
-            : mem.lastSeenAt;
-        this.seenMap.set(stored.itemId, {
-          itemId: stored.itemId,
-          firstSeenAt: earliest,
-          lastSeenAt: latest,
-          count: Math.max(stored.count, mem.count)
-        });
+        this.seenMap.set(stored.itemId, mergeSeenRecord(stored, mem));
       }
     }
   }
@@ -213,6 +221,42 @@ export class SeenImpressionsService {
       return [];
     }
     return [];
+  }
+
+  /**
+   * Merges synced SeenImpressionRecords while preserving earliest firstSeenAt, latest lastSeenAt, and max count.
+   * Skips disk flush when the incoming records do not alter local state.
+   */
+  public async mergeSyncedRecords(records: SeenImpressionRecord[]): Promise<void> {
+    if (!Array.isArray(records) || records.length === 0) return;
+    await this.ensureHydrated();
+
+    let changed = false;
+    for (const incoming of records) {
+      if (!incoming?.itemId) continue;
+      const normalized: SeenImpressionRecord = {
+        itemId: String(incoming.itemId),
+        firstSeenAt: String(incoming.firstSeenAt || incoming.lastSeenAt || new Date().toISOString()),
+        lastSeenAt: String(incoming.lastSeenAt || incoming.firstSeenAt || new Date().toISOString()),
+        count: Math.max(1, Number(incoming.count || 1))
+      };
+
+      const existing = this.seenMap.get(normalized.itemId);
+      if (!existing) {
+        this.seenMap.set(normalized.itemId, normalized);
+        changed = true;
+      } else {
+        const merged = mergeSeenRecord(existing, normalized);
+        if (!areSeenRecordsEqual(existing, merged)) {
+          this.seenMap.set(normalized.itemId, merged);
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      await this.flush();
+    }
   }
 
   /**

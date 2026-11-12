@@ -48,7 +48,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
   onStreamGenerated,
   onStartFocusTrack
 }) => {
-  const { colors, refreshFeed, recomputeFeed, scheduleCloudSyncPush } = useApp();
+  const { colors, recomputeFeed, scheduleCloudSyncPush } = useApp();
 
   const [sourceMode, setSourceMode] = useState<CreatorSourceMode>('topic_book');
   const [titleInput, setTitleInput] = useState<string>('');
@@ -98,8 +98,12 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
         } else {
           setError('Aus der Datei konnte nur wenig Text extrahiert werden. Du kannst den Text auch direkt unten einfügen.');
         }
-      } catch {
-        setError('Datei konnte nicht gelesen werden. Bitte Text direkt einfügen.');
+      } catch (err: unknown) {
+        setError(
+          err instanceof Error && err.message
+            ? err.message
+            : 'Datei konnte nicht gelesen werden. Bitte Text direkt einfügen.'
+        );
       }
     };
     fileInput.click();
@@ -147,7 +151,6 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
       }
 
       await recomputeFeed();
-      await refreshFeed();
       scheduleCloudSyncPush();
 
       setTitleInput('');
@@ -515,7 +518,19 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                   {/* Top Row: Icon + Title + Subtitle + Delete Button */}
                   <View style={styles.trackTopRow}>
                     <View style={[styles.trackEmojiBox, { backgroundColor: colors.surfaceSecondary }]}>
-                      <Text style={{ fontSize: 22 }}>{track.iconEmoji || '🧠'}</Text>
+                      <Ionicons
+                        name={
+                          track.sourceType === 'pdf_document'
+                            ? 'document-text-outline'
+                            : track.sourceType === 'book'
+                            ? 'book-outline'
+                            : track.sourceType === 'url'
+                            ? 'globe-outline'
+                            : 'school-outline'
+                        }
+                        size={20}
+                        color={colors.accent}
+                      />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.trackTitle, { color: colors.textPrimary }]}>
@@ -534,6 +549,25 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                       <Ionicons name="trash-outline" size={15} color={colors.textMuted} />
                     </TouchableOpacity>
                   </View>
+
+                  {track.usedAi === false && Boolean(track.fallbackReason) && (
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: radius.sm,
+                        backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                        marginTop: 8
+                      }}
+                    >
+                      <Ionicons name="information-circle-outline" size={14} color="#D97706" style={{ marginRight: 6 }} />
+                      <Text style={{ flex: 1, fontSize: 11, color: colors.textSecondary }}>
+                        {track.fallbackReason}
+                      </Text>
+                    </View>
+                  )}
 
                   {/* Visual Progress Bar (0% - 100%) */}
                   <View style={styles.progressSection}>

@@ -329,7 +329,16 @@ interface AppContextValue {
 
 const DISMISSED_ITEMS_STORAGE_KEY = '@atem:dismissed_items:v1';
 
+export interface AppActionsContextValue {
+  openArticle: (id: string) => Promise<void>;
+  toggleSaveItem: (id: string) => Promise<void>;
+  voteItem: (id: string, direction: 'up' | 'down' | 'clear') => Promise<void>;
+  dismissItem: (id: string, itemOverride?: FeedItem) => Promise<{ item: FeedItem | null; domain: string; keywords: string[] }>;
+  scheduleCloudSyncPush: () => void;
+}
+
 const AppContext = createContext<AppContextValue | null>(null);
+const AppActionsContext = createContext<AppActionsContextValue | null>(null);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const systemScheme = useColorScheme();
@@ -468,8 +477,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // References to track latest committed state and prevent stale closures
   const latestProfileRef = useRef<UserProfile>(profile);
   const latestInteractionsRef = useRef<Record<string, ReadingInteraction>>(interactions);
+  const latestDailyEditionRef = useRef<ScoredFeedItem[]>(dailyEdition);
+  const latestDiscoveryItemsRef = useRef<ScoredFeedItem[]>(discoveryItems);
+  const latestSavedArticlesRef = useRef<FeedItem[]>(savedArticles);
+  const latestOpenWebItemsRef = useRef<FeedItem[]>(openWebItems);
+  const latestSelectedArticleRef = useRef<FeedItem | null>(selectedArticle);
   latestProfileRef.current = profile;
   latestInteractionsRef.current = interactions;
+  latestDailyEditionRef.current = dailyEdition;
+  latestDiscoveryItemsRef.current = discoveryItems;
+  latestSavedArticlesRef.current = savedArticles;
+  latestOpenWebItemsRef.current = openWebItems;
+  latestSelectedArticleRef.current = selectedArticle;
 
   const currentEditionType = useMemo(() => {
     return determineCurrentEditionType(new Date(), profile);
@@ -809,12 +828,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.warn('In-place auto-migration skipped:', migErr);
       }
 
-      // 1. Atomic Boot Hydration: Pre-warm seenImpressionsService and public snapshot (bounded 1200ms)
+      // 1. Atomic Boot Hydration: Pre-warm seenImpressionsService, Hivemind tracks and public snapshot (bounded 1200ms)
       // before computing the initial feed ONCE so the top viewport never reloads on startup!
       try {
         await Promise.race([
           Promise.all([
             seenImpressionsService.getSeenIds().catch(() => new Set<string>()),
+            hivemindLearningService.getTracks().catch(() => []),
             (async () => {
               const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(currentSnapshotUrl);
               if (res?.success) {
@@ -950,72 +970,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await appStorage.setItem('@atem:remote_snapshot_url:v1', url);
   }, []);
 
-  const refreshFeed = useCallback(async () => {
-    try {
-      try {
-        const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(remoteSnapshotUrl);
-        if (res?.success) {
-          const dateText = `Ausgabe vom ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
-          setSnapshotSyncInfo(dateText);
-          await appStorage.setItem('@atem:snapshot_sync_info:v1', dateText);
-        }
-      } catch {
-        // Fallback
-      }
-
-      // Execute genuine multi-lane live network harvest across rotating sources
-      try {
-        const existingIds = new Set((feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id));
-        const seenIds = await seenImpressionsService.getSeenIds();
-        const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
-          existingIds,
-          seenIds,
-          targetNewCount: 18
-        });
-        const sanitizedDiscovery = discoveryResult.items
-          .map(sanitizeCuratedFeedItem)
-          .filter(satisfiesDefaultCuratedStandard);
-        if (sanitizedDiscovery.length > 0 && (feedRepository as any).addItems) {
-          (feedRepository as any).addItems(sanitizedDiscovery);
-        }
-      } catch {
-        // Fallback to continuous live news
-        try {
-          const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
-          const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
-          const seenIds = await seenImpressionsService.getSeenIds();
-          const safeLive = curatedLive.map(item => {
-            if (item.isStaticFallback || seenIds.has(item.id)) {
-              const { pinnedManualRunAt, ...rest } = item;
-              return rest;
-            }
-            return item;
-          });
-          if (safeLive.length > 0 && (feedRepository as any).addItems) {
-            (feedRepository as any).addItems(safeLive);
-          }
-        } catch {}
-      }
-
-      await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
-    } catch (err) {
-      console.warn('Feed-Aktualisierung fehlgeschlagen:', err);
-    }
-  }, [remoteSnapshotUrl, scheduleFeedRecompute]);
-
-  const refreshLiveFeed = useCallback(async () => {
+  const harvestSnapshotAndLiveDiscovery = useCallback(async (prefixLabel: 'Ausgabe vom' | 'Stand') => {
     let snapshotCount = 0;
-    let dateText = `Stand ${new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}`;
+    const fallbackDate = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+    let dateText = `${prefixLabel} ${fallbackDate}`;
+
     try {
       const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(remoteSnapshotUrl);
       if (res?.success) {
         snapshotCount = res.itemCount;
-        dateText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+        dateText = `${prefixLabel} ${res.snapshotDate || fallbackDate} • ${res.itemCount} Impulse`;
         setSnapshotSyncInfo(dateText);
         await appStorage.setItem('@atem:snapshot_sync_info:v1', dateText);
       }
     } catch (err) {
-      console.warn('Live Snapshot Sync failed:', err);
+      if (prefixLabel === 'Stand') {
+        console.warn('Live Snapshot Sync failed:', err);
+      }
     }
 
     try {
@@ -1033,7 +1004,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (feedRepository as any).addItems(sanitizedDiscovery);
       }
     } catch (err) {
-      console.warn('Live multi-lane harvest fallback:', err);
+      if (prefixLabel === 'Stand') {
+        console.warn('Live multi-lane harvest fallback:', err);
+      }
       try {
         const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
         const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
@@ -1055,6 +1028,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true, itemCount: snapshotCount || 24, dateText };
   }, [remoteSnapshotUrl, scheduleFeedRecompute]);
 
+  const refreshFeed = useCallback(async () => {
+    try {
+      await harvestSnapshotAndLiveDiscovery('Ausgabe vom');
+    } catch (err) {
+      console.warn('Feed-Aktualisierung fehlgeschlagen:', err);
+    }
+  }, [harvestSnapshotAndLiveDiscovery]);
+
+  const refreshLiveFeed = useCallback(async () => {
+    return harvestSnapshotAndLiveDiscovery('Stand');
+  }, [harvestSnapshotAndLiveDiscovery]);
+
   const simulateDailyGeneration = useCallback(async (daysOffset: number = 0, customDate?: string) => {
     const res = await DailyGenerationService.simulateDailyGeneration({
       profile: latestProfileRef.current,
@@ -1075,7 +1060,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       item = await libraryRepository.getSavedArticle(id);
     }
     if (!item) {
-      item = savedArticles.find(a => a.id === id) ?? null;
+      item = latestSavedArticlesRef.current.find(a => a.id === id) ?? null;
     }
     if (!item) {
       try {
@@ -1108,7 +1093,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Ignored
       }
     }
-  }, [savedArticles]);
+  }, []);
 
   const closeArticle = useCallback(() => {
     flushReadingProgress();
@@ -1230,10 +1215,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         scheduleCloudSyncPushRef.current();
       } else {
         const articleToSave: FeedItem | null =
-          dailyEdition.find(i => i.id === id) ??
-          discoveryItems.find(i => i.id === id) ??
-          openWebItems.find(i => i.id === id) ??
-          (selectedArticle?.id === id ? selectedArticle : null) ??
+          latestDailyEditionRef.current.find(i => i.id === id) ??
+          latestDiscoveryItemsRef.current.find(i => i.id === id) ??
+          latestOpenWebItemsRef.current.find(i => i.id === id) ??
+          (latestSelectedArticleRef.current?.id === id ? latestSelectedArticleRef.current : null) ??
           (await feedRepository.getItemById(id));
 
         if (articleToSave) {
@@ -1269,7 +1254,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {
       setErrorMessage('Lesezeichen konnte nicht gespeichert werden.');
     }
-  }, [dailyEdition, discoveryItems, openWebItems, selectedArticle]);
+  }, []);
 
   // Throttled reading progress write (bounds write rate to max 1 write / 800ms while scrolling)
   const updateReadingProgress = useCallback(async (id: string, percent: number) => {
@@ -1459,23 +1444,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           if (item && (direction === 'up' || direction === 'down')) {
             const isUp = direction === 'up';
-            const committed = await userProfileRepository.updateProfile(curr =>
-              applyVoteFeedbackToProfile(curr, item, direction)
-            );
+            const eventType = isUp ? 'upvote' : 'downvote';
+            const votedPreview = applyVoteFeedbackToProfile(latestProfileRef.current, item, direction);
+            const res = await RecursiveLearningEngine.recordInteractionEvent(votedPreview, item, eventType);
+
+            const committed = await userProfileRepository.updateProfile(curr => {
+              const voted = applyVoteFeedbackToProfile(curr, item!, direction);
+              return res.event
+                ? { ...voted, derivedWeights: res.updatedProfile.derivedWeights }
+                : voted;
+            });
 
             latestProfileRef.current = committed;
             setProfile(committed);
-
-            const eventType = isUp ? 'upvote' : 'downvote';
-            const res = await RecursiveLearningEngine.recordInteractionEvent(committed, item, eventType);
-            if (res.event) {
-              const updatedProfile = await userProfileRepository.updateProfile(fresh => ({
-                ...fresh,
-                derivedWeights: res.updatedProfile.derivedWeights
-              }));
-              latestProfileRef.current = updatedProfile;
-              setProfile(updatedProfile);
-            }
 
             if (isUp) {
               void harvestRabbitHoleForItem(item).catch(() => {});
@@ -1507,9 +1488,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       let item: FeedItem | null =
         itemOverride ??
-        dailyEdition.find(i => i.id === id) ??
-        discoveryItems.find(i => i.id === id) ??
-        openWebItems.find(i => i.id === id) ??
+        latestDailyEditionRef.current.find(i => i.id === id) ??
+        latestDiscoveryItemsRef.current.find(i => i.id === id) ??
+        latestOpenWebItemsRef.current.find(i => i.id === id) ??
         (await feedRepository.getItemById(id));
 
       if (item) {
@@ -1534,7 +1515,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {
       return { item: itemOverride ?? null, domain: '', keywords: [] };
     }
-  }, [dailyEdition, discoveryItems, openWebItems, scheduleFeedRecompute]);
+  }, [scheduleFeedRecompute]);
 
   const undoDismissItem = useCallback(async (id: string, itemOverride?: FeedItem) => {
     setDismissedItemIds(prev => {
@@ -1551,9 +1532,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       let item: FeedItem | null =
         itemOverride ??
-        dailyEdition.find(i => i.id === id) ??
-        discoveryItems.find(i => i.id === id) ??
-        openWebItems.find(i => i.id === id) ??
+        latestDailyEditionRef.current.find(i => i.id === id) ??
+        latestDiscoveryItemsRef.current.find(i => i.id === id) ??
+        latestOpenWebItemsRef.current.find(i => i.id === id) ??
         (await feedRepository.getItemById(id));
 
       if (item) {
@@ -1568,7 +1549,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       scheduleCloudSyncPushRef.current();
     } catch {}
-  }, [dailyEdition, discoveryItems, openWebItems, scheduleFeedRecompute]);
+  }, [scheduleFeedRecompute]);
 
   const removeFeedbackBoost = useCallback(async (
     category: 'topic' | 'author' | 'keyword' | 'domain' | 'space',
@@ -2210,11 +2191,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ]
   );
 
-  return (
-    <AppContext.Provider value={contextValue}>
-      {children}
-    </AppContext.Provider>
+  const actionsContextValue = useMemo<AppActionsContextValue>(
+    () => ({
+      openArticle,
+      toggleSaveItem,
+      voteItem,
+      dismissItem,
+      scheduleCloudSyncPush
+    }),
+    [openArticle, toggleSaveItem, voteItem, dismissItem, scheduleCloudSyncPush]
   );
+
+  return (
+    <AppActionsContext.Provider value={actionsContextValue}>
+      <AppContext.Provider value={contextValue}>
+        {children}
+      </AppContext.Provider>
+    </AppActionsContext.Provider>
+  );
+};
+
+export const useAppActions = (): AppActionsContextValue => {
+  const context = useContext(AppActionsContext);
+  if (!context) {
+    throw new Error('useAppActions must be used within an AppProvider');
+  }
+  return context;
 };
 
 export const useApp = () => {

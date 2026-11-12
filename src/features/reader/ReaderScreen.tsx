@@ -42,7 +42,8 @@ import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { QuizCheckpointCard } from '../../ui/components/QuizCheckpointCard';
 import {
   generateQuizForArticle,
-  generateSingleArticleQuizWithAi
+  generateSingleArticleQuizWithAi,
+  isPlausibleNonMetadataQuiz
 } from '../../core/quiz/quizGenerator';
 import { AtmenSymbol } from '../../ui/components/AtmenSymbol';
 
@@ -102,19 +103,23 @@ export const ReaderScreen: React.FC = () => {
   );
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Stage 4: Socratic Salon generator for ReaderScreen (WP 7)
+  // Stage 4: Socratic Salon generator for ReaderScreen (WP 7) — lazy-loaded when Extra Tools is expanded
   useEffect(() => {
     let isMounted = true;
     if (!selectedArticle) return;
     if (selectedArticle.socraticSalon) {
       setSocraticSalon(selectedArticle.socraticSalon);
-    } else {
-      void buildSocraticSalonPerspectives(selectedArticle).then(salon => {
-        if (isMounted && salon) setSocraticSalon(salon);
-      }).catch(() => {});
+      return;
     }
+    if (!showExtraTools) {
+      setSocraticSalon(null);
+      return;
+    }
+    void buildSocraticSalonPerspectives(selectedArticle).then(salon => {
+      if (isMounted && salon) setSocraticSalon(salon);
+    }).catch(() => {});
     return () => { isMounted = false; };
-  }, [selectedArticle]);
+  }, [selectedArticle, showExtraTools]);
 
   // Automatically run on-demand AI synthesis & Socratic quiz generation when a paid API key is configured
   useEffect(() => {
@@ -122,26 +127,39 @@ export const ReaderScreen: React.FC = () => {
     setAiQuizOverride(null);
     if (!selectedArticle) return;
 
-    let isMounted = true;
-    enrichArticleOnDemandWithAi(selectedArticle)
-      .then((enriched) => {
-        if (isMounted && enriched.enrichmentTier === 'ai') {
-          setAiEnrichedOverride(enriched);
-        }
-      })
-      .catch(() => {
-        // Non-fatal fallback
-      });
+    const alreadyAiEnriched =
+      selectedArticle.enrichmentTier === 'ai' &&
+      Boolean(selectedArticle.aiAssisted) &&
+      hasSubstantiveEditorialSection(selectedArticle.keyInsight, 10);
+    const alreadyAiQuiz =
+      Boolean(selectedArticle.quiz) &&
+      isPlausibleNonMetadataQuiz(selectedArticle.quiz!) &&
+      Boolean(selectedArticle.aiAssisted || selectedArticle.enrichmentTier === 'ai');
 
-    generateSingleArticleQuizWithAi(selectedArticle)
-      .then((quiz) => {
-        if (isMounted && quiz) {
-          setAiQuizOverride(quiz);
-        }
-      })
-      .catch(() => {
-        // Non-fatal fallback
-      });
+    let isMounted = true;
+    if (!alreadyAiEnriched) {
+      enrichArticleOnDemandWithAi(selectedArticle)
+        .then((enriched) => {
+          if (isMounted && (enriched.enrichmentTier === 'ai' || enriched.aiAssisted)) {
+            setAiEnrichedOverride(enriched);
+          }
+        })
+        .catch(() => {
+          // Non-fatal fallback
+        });
+    }
+
+    if (!alreadyAiQuiz) {
+      generateSingleArticleQuizWithAi(selectedArticle)
+        .then((quiz) => {
+          if (isMounted && quiz) {
+            setAiQuizOverride(quiz);
+          }
+        })
+        .catch(() => {
+          // Non-fatal fallback
+        });
+    }
 
     return () => {
       isMounted = false;
@@ -262,7 +280,7 @@ export const ReaderScreen: React.FC = () => {
   }
 
   const activeArticle = aiEnrichedOverride || selectedArticle;
-  const isAiSynthesized = activeArticle.enrichmentTier === 'ai';
+  const isAiSynthesized = activeArticle.enrichmentTier === 'ai' || Boolean(activeArticle.aiAssisted);
   const currentInteraction = interactions[selectedArticle.id];
   const isSaved = currentInteraction?.saved ?? false;
   const currentFeedback = currentInteraction?.feedback;

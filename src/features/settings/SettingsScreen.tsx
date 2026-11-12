@@ -33,7 +33,7 @@ import {
   hasAiConfiguration,
   testAiConnection
 } from '../../core/ai/atmenAiClient';
-import { defaultUsageLedger, MONTHLY_BUDGET_CEILING_EUR } from '../../core/enrichment/ledger';
+import { defaultUsageLedger, getEffectiveBudgetCeilingEur } from '../../core/enrichment/ledger';
 import { EnrichmentLedgerSummary } from '../../core/enrichment/types';
 import { BackupService } from '../../core/data/backupService';
 
@@ -157,17 +157,23 @@ export const SettingsScreen: React.FC = () => {
   const [isSyncingSnapshot, setIsSyncingSnapshot] = useState<boolean>(false);
 
   useEffect(() => {
-    void (async () => {
-      const creds = await loadAiCredentials();
+    let active = true;
+    const refreshCredsAndSummary = async (creds: AiCredentials) => {
+      if (!active) return;
       setAiCreds(creds);
       setProxyUrlInput(creds.proxyUrl ?? '');
-      const summary = await defaultUsageLedger.getSummary();
-      setLedgerSummary(summary);
-    })();
-    return onAiCredentialsChange(creds => {
-      setAiCreds(creds);
-      setProxyUrlInput(creds.proxyUrl ?? '');
+      const ceilingEur = getEffectiveBudgetCeilingEur(Boolean(creds.apiKey?.trim()));
+      const summary = await defaultUsageLedger.getSummary(undefined, ceilingEur);
+      if (active) setLedgerSummary(summary);
+    };
+    void loadAiCredentials().then(refreshCredsAndSummary);
+    const unsub = onAiCredentialsChange(creds => {
+      void refreshCredsAndSummary(creds);
     });
+    return () => {
+      active = false;
+      unsub();
+    };
   }, []);
 
   useEffect(() => {
@@ -884,26 +890,36 @@ export const SettingsScreen: React.FC = () => {
                 </View>
               </View>
 
-              <View style={[styles.budgetTrack, { backgroundColor: colors.background }]}>
-                <View
-                  style={[
-                    styles.budgetFill,
-                    {
-                      width: `${Math.min(100, Math.round(((ledgerSummary?.totalCostEur ?? 0) / MONTHLY_BUDGET_CEILING_EUR) * 100))}%`,
-                      backgroundColor: ledgerSummary?.isBudgetExceeded ? '#EF4444' : colors.accent
-                    }
-                  ]}
-                />
-              </View>
+              {(() => {
+                const effectiveCeilingEur =
+                  ledgerSummary?.budgetLimitEur ?? getEffectiveBudgetCeilingEur(Boolean(aiCreds.apiKey?.trim()));
+                const currentCostEur = ledgerSummary?.totalCostEur ?? 0;
+                const usagePct = Math.min(100, Math.round((currentCostEur / effectiveCeilingEur) * 100));
+                return (
+                  <>
+                    <View style={[styles.budgetTrack, { backgroundColor: colors.background }]}>
+                      <View
+                        style={[
+                          styles.budgetFill,
+                          {
+                            width: `${usagePct}%`,
+                            backgroundColor: ledgerSummary?.isBudgetExceeded ? '#EF4444' : colors.accent
+                          }
+                        ]}
+                      />
+                    </View>
 
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, marginBottom: 8 }}>
-                <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted }}>
-                  Geschätzt: {(ledgerSummary?.totalCostEur ?? 0).toFixed(2)} € ({Math.round(((ledgerSummary?.totalCostEur ?? 0) / MONTHLY_BUDGET_CEILING_EUR) * 100)}%)
-                </Text>
-                <Text style={{ fontSize: typography.sizes.micro, color: colors.accent, fontWeight: '600' }}>
-                  Schätzlimit: {MONTHLY_BUDGET_CEILING_EUR.toFixed(2)} € / Monat
-                </Text>
-              </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, marginBottom: 8 }}>
+                      <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted }}>
+                        Geschätzt: {currentCostEur.toFixed(2)} € ({usagePct}%)
+                      </Text>
+                      <Text style={{ fontSize: typography.sizes.micro, color: colors.accent, fontWeight: '600' }}>
+                        Schätzlimit: {effectiveCeilingEur.toFixed(2)} € / Monat
+                      </Text>
+                    </View>
+                  </>
+                );
+              })()}
 
               <Text style={{ fontSize: typography.sizes.micro, color: colors.textSecondary, lineHeight: 17 }}>
                 • Anfragen diesen Monat: {ledgerSummary?.totalCalls ?? 0} Aufrufe ({((ledgerSummary?.totalInputTokens ?? 0) + (ledgerSummary?.totalOutputTokens ?? 0)).toLocaleString()} Tokens).{'\n'}

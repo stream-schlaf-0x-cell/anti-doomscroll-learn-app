@@ -95,7 +95,13 @@ test('Snapshot JSON files contain 0 instances of synthetic filler sentences', ()
     'Didaktische Relevanz & Ausblick',
     'Core Dimensions & Key Findings',
     'Didactic Relevance & Outlook',
-    'widmet sich den ethischen und erkenntnistheoretischen'
+    'widmet sich den ethischen und erkenntnistheoretischen',
+    'untersucht die kognitiven und psychologischen Mechanismen',
+    'Kritische Urteilskraft entsteht durch die geduldige Analyse',
+    'Critical discernment emerges through patient analysis',
+    'gleichen den Befund',
+    'Inhaltliche Einordnung zu „',
+    'Bezug für Schule & Unterricht zu „'
   ];
 
   for (const forbidden of forbiddenStrings) {

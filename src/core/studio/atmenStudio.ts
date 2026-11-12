@@ -1,6 +1,10 @@
 import { TopicTag } from '../domain/types';
 import { AiCredentials, callAiModel, loadAiCredentials } from '../ai/atmenAiClient';
-import { EnrichmentUsageLedger, defaultUsageLedger } from '../enrichment/ledger';
+import {
+  EnrichmentUsageLedger,
+  defaultUsageLedger,
+  getEffectiveBudgetCeilingEur
+} from '../enrichment/ledger';
 
 export type StudioLens = 'didactics' | 'contemplation' | 'sound_alchemy';
 
@@ -234,7 +238,8 @@ export class AtmenStudioService {
     }
 
     const ledger = request.ledger ?? this.ledger;
-    const canSpend = await ledger.canSpend(0.002);
+    const budgetCeilingEur = getEffectiveBudgetCeilingEur(Boolean(credentials.apiKey?.trim()));
+    const canSpend = await ledger.canSpend(0.002, undefined, budgetCeilingEur);
     if (!canSpend) {
       return generateStudioOutputDeterministic(lens, title, text, topic);
     }

@@ -1,10 +1,11 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_USER_PROFILE } from '../src/core/data/fixtures';
 import { LocalUserProfileRepository, USER_PROFILE_STORAGE_KEY } from '../src/core/data/userProfileRepository';
 import { AtemStorage, MemoryStorageDriver } from '../src/core/data/storage';
 import { LiveCivicPulseService } from '../src/core/ingestion/liveCivicPulseService';
-import { seenImpressionsService } from '../src/core/data/seenImpressionsService';
+import { seenImpressionsService, SeenImpressionsService } from '../src/core/data/seenImpressionsService';
+import { SpaceRepository } from '../src/core/spaces/spaceRepository';
 import {
   mergeSyncSnapshots,
   encodePairingCode,
@@ -12,6 +13,12 @@ import {
   generatePairingUrl,
   encryptSyncPayload,
   decryptSyncPayload,
+  resolveSyncSecret,
+  DEFAULT_SYNC_PASSPHRASE,
+  canonicalSnapshotFingerprint,
+  CloudSyncService,
+  CLOUD_SYNC_CONFIG_KEY,
+  GIST_SYNC_FILENAME,
   AtmenSyncSnapshot
 } from '../src/core/sync/cloudSyncService';
 import {
@@ -283,5 +290,130 @@ test('Single-Instance Cloud Sync & Surgical Hotfixes Suite (Tasks 1-9)', async (
     const seenIds = await seenImpressionsService.getSeenIds();
     assert.ok(seenIds.has('civic-fallback-sachsen-ki-1'));
     assert.ok(seenIds.has('civic-pulse-saxony-edu-v1'));
+  });
+
+  await t.test('7. SpaceRepository tombstones keep deleted custom spaces deleted across CloudSync snapshots', async () => {
+    const storage = new AtemStorage(new MemoryStorageDriver());
+    const spaceRepo = new SpaceRepository(storage);
+    const syncService = new CloudSyncService(storage);
+
+    const created = await spaceRepo.createSubchannel({
+      title: 'Phänomenologie Labor',
+      handle: 'c/phaenomenologie',
+      primaryTopic: 'philosophy_ethics'
+    });
+    assert.ok((await spaceRepo.getAllSpaces()).some(s => s.id === created.id));
+
+    const deleted = await spaceRepo.deleteSubchannel(created.id);
+    assert.equal(deleted, true);
+    assert.ok((await spaceRepo.getDeletedSpaceIds()).includes(created.id));
+
+    const localSnap = await syncService.buildLocalSnapshot();
+    assert.ok(localSnap.deletedSpaceIds?.includes(created.id), 'buildLocalSnapshot must export real deletedSpaceIds');
+
+    // Simulate stale remote device still holding the deleted custom space
+    const remoteSnap: AtmenSyncSnapshot = {
+      version: 1,
+      deviceId: 'stale-ipad',
+      updatedAt: '2026-11-12T23:59:59.000Z',
+      spaces: [created]
+    };
+
+    const merged = mergeSyncSnapshots(localSnap, remoteSnap);
+    assert.ok(
+      !merged.spaces?.some(s => s.id === created.id),
+      'Deleted custom space tombstone must prevent stale remote device from resurrecting deleted space'
+    );
+    assert.ok(merged.deletedSpaceIds?.includes(created.id));
+
+    await syncService.applySnapshot(merged);
+    assert.ok(!(await spaceRepo.getAllSpaces()).some(s => s.id === created.id));
+  });
+
+  await t.test('8. CloudSync unified default passphrase, preserved seenImpressions metadata & no-op sync skip', async () => {
+    assert.equal(resolveSyncSecret(''), DEFAULT_SYNC_PASSPHRASE);
+    assert.equal(resolveSyncSecret('  custom-key  '), 'custom-key');
+
+    const storage = new AtemStorage(new MemoryStorageDriver());
+    const syncService = new CloudSyncService(storage);
+    await syncService.saveConfig({
+      enabled: true,
+      githubToken: 'ghp_test_token',
+      gistId: 'gist-test-1',
+      encryptionPassphrase: '' // Empty user passphrase -> unified default secret!
+    });
+
+    const fixedFirstSeen = '2026-11-01T08:00:00.000Z';
+    const fixedLastSeen = '2026-11-02T14:30:00.000Z';
+    const localSnapBefore = await syncService.buildLocalSnapshot();
+    const remoteSeedSnap: AtmenSyncSnapshot = {
+      ...localSnapBefore,
+      deviceId: 'remote-mac',
+      updatedAt: '2026-11-12T10:00:00.000Z',
+      seenImpressions: {
+        'article-seen-remote-1': {
+          firstSeenAt: fixedFirstSeen,
+          lastSeenAt: fixedLastSeen,
+          count: 4
+        }
+      }
+    };
+
+    let remoteVaultContent = JSON.stringify({
+      encrypted: await encryptSyncPayload(JSON.stringify(remoteSeedSnap), DEFAULT_SYNC_PASSPHRASE),
+      updatedAt: remoteSeedSnap.updatedAt,
+      deviceId: remoteSeedSnap.deviceId
+    });
+    let patchCalls = 0;
+
+    mock.method(globalThis, 'fetch', async (_url: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        patchCalls += 1;
+        const body = JSON.parse(String(init.body || '{}'));
+        const content = body.files?.[GIST_SYNC_FILENAME]?.content;
+        if (content) remoteVaultContent = content;
+        return new Response(JSON.stringify({ id: 'gist-test-1' }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          id: 'gist-test-1',
+          files: {
+            [GIST_SYNC_FILENAME]: { content: remoteVaultContent }
+          }
+        }),
+        { status: 200 }
+      );
+    });
+
+    try {
+      // First sync: remote has seenImpressions not yet present locally; empty passphrase still decrypts DEFAULT_SYNC_PASSPHRASE
+      const firstSync = await syncService.sync();
+      assert.equal(firstSync.success, true);
+      assert.equal(firstSync.skippedApply, false);
+
+      // Verify seenImpressions timestamps & count were preserved rather than reset to Date.now() / count: 1
+      const seenService = new SeenImpressionsService(storage);
+      const recordMap = await seenService.getSeenRecordMap();
+      const syncedRec = recordMap.get('article-seen-remote-1');
+      assert.ok(syncedRec, 'Synced seen impression record must exist locally');
+      assert.equal(syncedRec.firstSeenAt, fixedFirstSeen);
+      assert.equal(syncedRec.lastSeenAt, fixedLastSeen);
+      assert.equal(syncedRec.count, 4);
+
+      const patchCallsBeforeNoop = patchCalls;
+      // Second immediate sync with no local/remote mutations must skip BOTH applySnapshot and Gist PATCH push
+      const secondSync = await syncService.sync();
+      assert.equal(secondSync.success, true);
+      assert.equal(secondSync.skippedApply, true, 'Identical fingerprint must skip redundant local applySnapshot');
+      assert.equal(secondSync.skippedPush, true, 'Identical fingerprint must skip redundant remote Gist PATCH');
+      assert.equal(patchCalls, patchCallsBeforeNoop);
+      assert.equal(
+        canonicalSnapshotFingerprint(localSnapBefore) === canonicalSnapshotFingerprint(remoteSeedSnap),
+        false
+      );
+      assert.ok(await storage.getItem(CLOUD_SYNC_CONFIG_KEY));
+    } finally {
+      mock.restoreAll();
+    }
   });
 });

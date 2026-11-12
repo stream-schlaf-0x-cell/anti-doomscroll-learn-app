@@ -179,14 +179,11 @@ fs.writeFileSync(path.join(ROOT_DIR, 'atem_source_code_only.txt'), sourceOnlyCon
 fs.writeFileSync(path.join(ROOT_DIR, 'ATMEN_COMPLETE_CODEBASE.txt'), sourceOnlyContent, 'utf8');
 fs.writeFileSync(path.join(ROOT_DIR, `atmen_source_code_v5.2.0_${nowDate}.txt`), sourceOnlyContent, 'utf8');
 
-// Ensure exports and public/exports directories exist for remote iPhone access
+// Write local-only export bundle outside public/ so web deploys never expose full source bundles
 const exportsDir = path.join(ROOT_DIR, 'exports');
-const publicExportsDir = path.join(ROOT_DIR, 'public', 'exports');
 if (!fs.existsSync(exportsDir)) fs.mkdirSync(exportsDir, { recursive: true });
-if (!fs.existsSync(publicExportsDir)) fs.mkdirSync(publicExportsDir, { recursive: true });
 
 fs.writeFileSync(path.join(exportsDir, 'atem_source_code_bundle.txt'), sourceOnlyContent, 'utf8');
-fs.writeFileSync(path.join(publicExportsDir, 'atem_source_code_bundle.txt'), sourceOnlyContent, 'utf8');
 
 // Update zip archive if needed
 console.log('Creating fresh atem_complete_codebase.zip...');

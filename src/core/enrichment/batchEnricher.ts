@@ -11,12 +11,27 @@ import {
 import { AiHttpError } from '../ai/aiTransport';
 import { z } from 'zod';
 import { EnrichmentCache, StorageDriverCacheStorage, CacheKeyParams } from './cache';
+import { appStorage } from '../data/storage';
 import { pureJsSha256 } from '../ingestion/normalizer';
-import { EnrichmentUsageLedger, defaultUsageLedger } from './ledger';
+import {
+  EnrichmentUsageLedger,
+  defaultUsageLedger,
+  getEffectiveBudgetCeilingEur
+} from './ledger';
 import { synthesizeDidacticTransfer } from '../synthesis/backgroundResearchPipeline';
 import { upgradeImageResolutionUrl, isRejectedLowResOrLogoUrl } from '../utils/imageQuality';
 import { extractCleanArticleFromHtml, enrichStubItemWithFulltext } from '../ingestion/webContentExtractor';
 export { upgradeImageResolutionUrl, extractCleanArticleFromHtml, enrichStubItemWithFulltext };
+
+const defaultReaderAiCache = new EnrichmentCache<any>(
+  undefined,
+  undefined,
+  new StorageDriverCacheStorage<any>(appStorage, '@atem:reader_ai_cache:v1')
+);
+
+export async function clearReaderOnDemandAiCache(): Promise<void> {
+  await defaultReaderAiCache.clear();
+}
 
 export interface BatchEnrichmentItemInput {
   id: string;
@@ -352,17 +367,29 @@ export function stripSyntheticFillerSentences(text: string): string {
   s = s.replace(/##\s*Context & Analysis[\s\S]*?(?:headlines\.?|\n\n|$)/gi, '');
   s = s.replace(/##\s*Didaktische Reflexion[\s\S]*?(?:Fragestellungen\.?|\n\n|$)/gi, '');
   s = s.replace(/##\s*Didactic Inquiry[\s\S]*?(?:society\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Hintergrund & Vertiefung[\s\S]*?(?:entwickeln\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Perspektiven & Anwendung[\s\S]*?(?:Urteilsbildung\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Conceptual Framework & In-Depth Analysis[\s\S]*?(?:dynamics\.?|\n\n|$)/gi, '');
+  s = s.replace(/##\s*Practical Applications & Horizons[\s\S]*?(?:clarity\.?|\n\n|$)/gi, '');
 
   // Orphan blockquotes
   s = s.replace(/>\s*[„"'\u201e\u201c]Eine differenzierte Betrachtung[^“"'\u201d\n]*[“"'\u201d]/gi, '');
   s = s.replace(/>\s*[„"'\u201e\u201c]Nuanced understanding[^“"'\u201d\n]*[“"'\u201d]/gi, '');
   s = s.replace(/>\s*[„"'\u201e\u201c]Wissen entfaltet seine transformative Kraft[^“"'\u201d\n]*[“"'\u201d]/gi, '');
   s = s.replace(/>\s*[„"'\u201e\u201c]Knowledge reveals its transformative power[^“"'\u201d\n]*[“"'\u201d]/gi, '');
+  s = s.replace(/>\s*[„"'\u201e\u201c]Kritische Urteilskraft entsteht[^“"'\u201d\n]*[“"'\u201d]/gi, '');
+  s = s.replace(/>\s*[„"'\u201e\u201c]Critical discernment emerges[^“"'\u201d\n]*[“"'\u201d]/gi, '');
 
   // Orphan section headers
-  s = s.replace(/##\s*(?:Erkenntnisdimensionen & Kernbefunde|Didaktische Relevanz & Ausblick|Core Dimensions & Key Findings|Didactic Relevance & Outlook|Kontext & Einordnung|Didaktische Reflexion|Context & Analysis|Didactic Inquiry)\b/gi, '');
+  s = s.replace(/##\s*(?:Erkenntnisdimensionen & Kernbefunde|Didaktische Relevanz & Ausblick|Core Dimensions & Key Findings|Didactic Relevance & Outlook|Kontext & Einordnung|Didaktische Reflexion|Context & Analysis|Didactic Inquiry|Hintergrund & Vertiefung|Perspektiven & Anwendung|Conceptual Framework & In-Depth Analysis|Practical Applications & Horizons)\b/gi, '');
 
   // German sentences
+  s = s.replace(/Die Analyse zu\s+„[^“]*“\s*untersucht die kognitiven und psychologischen Mechanismen[^.]*\./gi, '');
+  s = s.replace(/Im Fokus stehen fundierte Erkenntnisse der Kognitionswissenschaft[^.]*\./gi, '');
+  s = s.replace(/Vertiefende Ausführungen und praktische Perspektiven sind im Primärbeitrag dokumentiert\.?/gi, '');
+  s = s.replace(/The investigation into\s+"[^"]*"\s*examines the cognitive and psychological frameworks[^.]*\./gi, '');
+  s = s.replace(/It analyzes grounded insights from cognitive science[^.]*\./gi, '');
+  s = s.replace(/Further explorations and detailed perspectives remain available in the original source\.?/gi, '');
   s = s.replace(/In diesem Beitrag zu\s+.*?\s*werden die zentralen Thesen[^.!?]*[.!?]/gi, '');
   s = s.replace(/In diesem didaktischen Fachbeitrag zu\s+.*?\s*steht die Weiterentwicklung[^.!?]*[.!?]/gi, '');
   s = s.replace(/Anhand konkreter Unterrichtsbeispiele wird reflektiert[^.!?]*[.!?]/gi, '');
@@ -721,23 +748,34 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     }
   }
 
-  // Stub item fulltext enrichment (Tier A essence >= 220 chars & Tier B reader body >= 500 chars):
-  // For thin stubs (< 120 chars), use harvested essence.
-  // Genuine journalistic excerpts (>= 120 chars) are complete and honest as-is — NEVER pad or concatenate them!
-  const isThinStub = cleanedFeedText.length < 120;
+  // Genuine journalistic/research excerpts remain honest as-is; only parse raw HTML or missing fields.
+  const rawExtractSource =
+    (/<[a-z][\s\S]*>/i.test(item.articleBody || '') ? item.articleBody : undefined) ||
+    (/<[a-z][\s\S]*>/i.test(item.body || '') ? item.body : undefined) ||
+    (/<[a-z][\s\S]*>/i.test(item.feedText || '') ? item.feedText : undefined) ||
+    item.articleBody ||
+    item.body ||
+    item.feedText ||
+    cleanedBody ||
+    cleanedFeedText;
+  const looksLikeHtml = /<[a-z][\s\S]*>/i.test(rawExtractSource || '');
 
-  if (!isVisualArtOrMeme && isSupportedFeedLanguage(cleanedTitle, `${item.subtitle || ''} ${cleanedFeedText} ${cleanedBody}`)) {
-    if (isThinStub || cleanedBody.length < 500) {
-      const harvested = extractCleanArticleFromHtml(
-        item.body || item.feedText || item.articleBody || cleanedBody || cleanedFeedText,
-        item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || ''
-      );
-      if (isThinStub && harvested.essenceText) {
-        cleanedFeedText = stripSyntheticFillerSentences(harvested.essenceText);
-      }
-      if (cleanedBody.length < 500 || isPodcastOrVideoStub) {
-        cleanedBody = stripSyntheticFillerSentences(harvested.fullMarkdownBody);
-      }
+  if (
+    !isVisualArtOrMeme &&
+    isSupportedFeedLanguage(cleanedTitle, `${item.subtitle || ''} ${cleanedFeedText} ${cleanedBody}`) &&
+    (looksLikeHtml || !cleanedFeedText || !cleanedBody)
+  ) {
+    const harvested = extractCleanArticleFromHtml(
+      rawExtractSource,
+      item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || ''
+    );
+    const cleanedEssence = stripSyntheticFillerSentences(harvested.essenceText || '');
+    const cleanedHarvestBody = stripSyntheticFillerSentences(harvested.fullMarkdownBody || '');
+    if ((!cleanedFeedText || looksLikeHtml) && cleanedEssence.length > cleanedFeedText.length) {
+      cleanedFeedText = cleanedEssence;
+    }
+    if ((!cleanedBody || isPodcastOrVideoStub || looksLikeHtml) && cleanedHarvestBody.length > cleanedBody.length) {
+      cleanedBody = cleanedHarvestBody;
     }
   }
 
@@ -771,15 +809,23 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
         .replace(/\s*[–-]\s*podcast/gi, '')
     : undefined;
 
-  const cleanedDidacticTransfer = item.didacticTransfer
-    ? stripPublisherBoilerplate(
-        item.didacticTransfer
-          .replace(/From the archive:\s*/gi, '')
-          .replace(/\s*[–-]\s*podcast/gi, '')
-          .replace(/Read by Sam Peter Jackson[\s\S]*?(Continue reading\.{0,3}|—|$)/gi, '—'),
-        cleanedTitle
+  const rawCleanedTransfer = item.didacticTransfer
+    ? stripSyntheticFillerSentences(
+        stripPublisherBoilerplate(
+          item.didacticTransfer
+            .replace(/From the archive:\s*/gi, '')
+            .replace(/\s*[–-]\s*podcast/gi, '')
+            .replace(/Read by Sam Peter Jackson[\s\S]*?(Continue reading\.{0,3}|—|$)/gi, '—'),
+          cleanedTitle
+        )
       )
     : undefined;
+  const cleanedDidacticTransfer =
+    rawCleanedTransfer &&
+    rawCleanedTransfer.trim().length >= 25 &&
+    !rawCleanedTransfer.trim().endsWith(':')
+      ? rawCleanedTransfer
+      : undefined;
 
   const updatedTopics = item.topics?.includes(correctedTopic)
     ? item.topics
@@ -1226,11 +1272,12 @@ export class BatchEditionEnricher {
       return fromDecisions(cachedDecisions);
     }
 
-    const canSpend = await this.ledger.canSpend(0.005);
+    const effectiveCeilingEur = getEffectiveBudgetCeilingEur(Boolean(credentials.apiKey?.trim()));
+    const canSpend = await this.ledger.canSpend(0.005, undefined, effectiveCeilingEur);
     if (!canSpend) {
       this.lastBatchReport.usedFallback = true;
       this.lastBatchReport.errorClass = 'budget_exceeded';
-      this.lastBatchReport.errorMessage = 'Monatliches KI-Budget von 5,00 € erreicht oder gesperrt.';
+      this.lastBatchReport.errorMessage = `Monatliches KI-Budget von ${effectiveCeilingEur.toFixed(2).replace('.', ',')} € erreicht oder gesperrt.`;
       return fromDecisions(cachedDecisions);
     }
 
@@ -1472,6 +1519,19 @@ export async function enrichArticleOnDemandWithAi(
   overrideCredentials?: AiCredentials,
   ledger: EnrichmentUsageLedger = defaultUsageLedger
 ): Promise<FeedItem> {
+  const alreadySubstantiveCounter = hasSubstantiveEditorialSection(
+    item.perspectiveDetails?.counterPerspective || item.deepeningOptions?.counterArgument,
+    35
+  );
+  if (
+    item.aiAssisted &&
+    item.enrichmentTier === 'ai' &&
+    hasSubstantiveEditorialSection(item.keyInsight, 10) &&
+    alreadySubstantiveCounter
+  ) {
+    return sanitizeCuratedFeedItem(item);
+  }
+
   let creds = overrideCredentials;
   if (!creds) {
     try {
@@ -1485,7 +1545,58 @@ export async function enrichArticleOnDemandWithAi(
     return sanitizeCuratedFeedItem(item);
   }
 
-  const canSpend = await ledger.canSpend(0.002);
+  const useSharedCache = !overrideCredentials && ledger === defaultUsageLedger;
+  const cacheKey = {
+    contentHash: pureJsSha256(`${item.id}|${item.title}|${(item.feedText || '').slice(0, 300)}`),
+    task: 'reader_ondemand',
+    modelId: creds.model || 'default'
+  };
+  if (useSharedCache) {
+    const cached = await defaultReaderAiCache.get(cacheKey);
+    if (cached && typeof cached.feedText === 'string' && typeof cached.keyInsight === 'string') {
+      const counterPerspective = typeof cached.counterPerspective === 'string' && cached.counterPerspective.trim().length > 60
+        ? cached.counterPerspective.trim()
+        : undefined;
+      const didacticTransfer = typeof cached.didacticTransfer === 'string' && cached.didacticTransfer.trim().length > 60
+        ? cached.didacticTransfer.trim()
+        : undefined;
+      return sanitizeCuratedFeedItem({
+        ...item,
+        feedText: cached.feedText,
+        keyInsight: cached.keyInsight,
+        aiAssisted: true,
+        enrichmentTier: 'ai',
+        contentOrigin: 'enriched_ai',
+        ...(counterPerspective
+          ? {
+              perspectiveDetails: {
+                claim: cached.keyInsight || item.title,
+                humanSource:
+                  item.perspectiveDetails?.humanSource ||
+                  item.sourceReferences?.[0]?.author ||
+                  item.sourceReferences?.[0]?.publisher ||
+                  'Redaktion',
+                counterPerspective
+              },
+              deepeningOptions: {
+                ...item.deepeningOptions,
+                counterArgument: counterPerspective,
+                ...(didacticTransfer ? { didacticSeed: didacticTransfer } : {})
+              }
+            }
+          : {}),
+        ...(didacticTransfer
+          ? {
+              didacticTransfer,
+              didacticSeed: didacticTransfer
+            }
+          : {})
+      });
+    }
+  }
+
+  const budgetCeilingEur = getEffectiveBudgetCeilingEur(Boolean(creds.apiKey?.trim()));
+  const canSpend = await ledger.canSpend(0.002, undefined, budgetCeilingEur);
   if (!canSpend) {
     return sanitizeCuratedFeedItem(item);
   }
@@ -1513,7 +1624,7 @@ Antworte AUSSCHLIESSLICH als valides JSON-Objekt:
       systemInstruction,
       jsonMode: true,
       maxTokens: 900,
-      timeoutMs: 18_000,
+      timeoutMs: 28_000,
       credentials: creds,
       ledger,
       itemId: `ondemand-enrich-${item.id}`
@@ -1533,11 +1644,22 @@ Antworte AUSSCHLIESSLICH als valides JSON-Objekt:
       ? parsed.didacticTransfer.trim()
       : undefined;
 
+    if (useSharedCache) {
+      await defaultReaderAiCache.set(cacheKey, {
+        feedText,
+        keyInsight,
+        counterPerspective: counterPerspective || '',
+        didacticTransfer: didacticTransfer || ''
+      });
+    }
+
     return sanitizeCuratedFeedItem({
       ...item,
       feedText,
       keyInsight,
       aiAssisted: true,
+      enrichmentTier: 'ai',
+      contentOrigin: 'enriched_ai',
       ...(counterPerspective
         ? {
             perspectiveDetails: {
@@ -1827,7 +1949,7 @@ export async function runBackgroundEditorialNewsroomBatch(
     credentials?: AiCredentials;
   } = {}
 ): Promise<EditorialNewsroomBatchResult> {
-  const batchSize = Math.max(1, Math.min(8, options.batchSize ?? 4));
+  const batchSize = Math.max(1, Math.min(8, options.batchSize ?? 3));
   let creds = options.credentials;
   if (!creds) {
     try {
@@ -1838,6 +1960,16 @@ export async function runBackgroundEditorialNewsroomBatch(
   }
 
   if (!creds || !hasAiConfiguration(creds)) {
+    return {
+      enrichedItems: [],
+      processedCount: 0,
+      usedAI: false
+    };
+  }
+
+  const ceilingEur = getEffectiveBudgetCeilingEur(Boolean(creds.apiKey?.trim()));
+  const canSpend = await defaultUsageLedger.canSpend(0.005, undefined, ceilingEur);
+  if (!canSpend) {
     return {
       enrichedItems: [],
       processedCount: 0,
@@ -1909,7 +2041,7 @@ Antworte ausschließlich als valides JSON-Objekt:
       credentials: creds,
       jsonMode: true,
       maxTokens: 3600,
-      bypassBudgetCeiling: true,
+      timeoutMs: 42_000,
       itemId: `newsroom-batch-${Date.now()}`
     });
 
@@ -1975,6 +2107,7 @@ Antworte ausschließlich als valides JSON-Objekt:
         keyInsight: nextKeyInsight || original.keyInsight,
         quiz: validQuiz,
         aiAssisted: true,
+        enrichmentTier: 'ai',
         contentOrigin: 'enriched_ai',
         wordCount,
         estimatedReadingMinutes: Math.max(2, Math.ceil(wordCount / 180)),

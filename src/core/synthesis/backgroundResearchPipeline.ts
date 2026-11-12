@@ -83,32 +83,63 @@ export function synthesizeDidacticTransfer(
   topic: TopicTag,
   isTeachingRelated?: boolean
 ): string {
-  const cleaned = (bodyText || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-  const sentences = cleaned.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length >= 30);
-  const coreDetail = sentences.length > 2
+  const cleaned = (bodyText || '')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/<[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const normalizedTitle = title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const sentences = cleaned
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => {
+      if (s.length < 30) return false;
+      const normSent = s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+      return normSent !== normalizedTitle && normSent.length > 15;
+    });
+  const coreDetail = sentences.length > 1
     ? sentences[sentences.length - 1]
-    : (sentences[0] || title);
-  const shortDetail = coreDetail.length > 160 ? coreDetail.slice(0, 157) + '…' : coreDetail;
+    : (sentences[0] || '');
+  const shortDetail = coreDetail
+    ? (coreDetail.length > 160 ? coreDetail.slice(0, 157) + '…' : coreDetail)
+    : '';
 
   if (isTeachingRelated || topic === 'german_didactics') {
-    return `Bezug für Schule & Unterricht zu „${title}“: ${shortDetail} — Prüfe, welche konkrete Frage daraus als Diskussions- oder Schreibanlass im Unterricht taugt.`;
+    if (shortDetail) {
+      return `Schule & Unterricht („${title}“): ${shortDetail} Welche zentrale Leitfrage ließe sich daraus direkt als Diskussionsanlass im Seminar oder Unterricht nutzen?`;
+    }
+    return `Schule & Unterricht („${title}“): Welche konkrete These oder Materialspur dieses Beitrags eignet sich als kritischer Diskussionsanlass im Unterricht?`;
   }
 
   switch (topic) {
     case 'ai_apple':
-      return `Technologische Einordnung zu „${title}“: ${shortDetail} — Entscheidend ist, ob hier echte Werkzeug-Qualität entsteht oder lediglich kurzfristige Aufmerksamkeit gebunden wird.`;
+      return shortDetail
+        ? `System-Einordnung: ${shortDetail} Entscheidend bleibt, ob echte Werkzeug-Qualität entsteht oder lediglich kurzfristige Aufmerksamkeit gebunden wird.`
+        : `System-Einordnung zu „${title}“: Entscheidend ist, ob hier nachhaltige Werkzeug-Qualität entsteht oder nur kurzfristiger Hype.`;
     case 'philosophy_ethics':
-      return `Philosophische Einordnung zu „${title}“: ${shortDetail} — Welche unausgesprochene Grundannahme trägt dieses Argument, und wo liegt sein stärkster Einwand?`;
+      return shortDetail
+        ? `Begriffsanalyse: ${shortDetail} Welche unausgesprochene Prämisse trägt dieses Argument, und wo liegt sein stärkster Einwand?`
+        : `Begriffsanalyse zu „${title}“: Welche unausgesprochene Grundannahme trägt die These, und wie ließe sie sich bestreiten?`;
     case 'sound_synthesis':
-      return `Klang- & Praxisbezug zu „${title}“: ${shortDetail} — Überlege, welche klangliche oder kompositorische Idee du daraus direkt im eigenen Setup ausprobieren kannst.`;
+      return shortDetail
+        ? `Klang- & Praxisbezug: ${shortDetail} Welche klangliche oder kompositorische Idee lässt sich direkt ins eigene Setup übertragen?`
+        : `Klang- & Praxisbezug zu „${title}“: Welche strukturelle Idee lässt sich direkt beim nächsten Patch oder Arrangement erproben?`;
     case 'contemplation_mind':
-      return `Kontemplative Einordnung zu „${title}“: ${shortDetail} — Ein Impuls, um Geistesklarheit und wache Aufmerksamkeit im eigenen Alltag zu schärfen.`;
+      return shortDetail
+        ? `Kontemplative Einordnung: ${shortDetail} Ein Impuls, um Geistesklarheit und wache Aufmerksamkeit im Alltag zu schärfen.`
+        : `Kontemplative Einordnung zu „${title}“: Ein Anstoß, die eigene Aufmerksamkeit zwischen Reiz und Innehalten bewusst zu beobachten.`;
     case 'art_aesthetics':
-      return `Ästhetische Betrachtung zu „${title}“: ${shortDetail} — Nimm dir einen ruhigen Moment für Komposition, Lichtführung und handwerkliche Details.`;
+      return shortDetail
+        ? `Ästhetische Betrachtung: ${shortDetail} Nimm dir einen ruhigen Moment für Komposition, Lichtführung und handwerkliche Details.`
+        : `Ästhetische Betrachtung zu „${title}“: Achte auf Spannungsaufbau, Materialität und Formsprache jenseits schneller Eindrücke.`;
     case 'memes_satire':
-      return `Spielerischer Perspektivwechsel zu „${title}“: ${shortDetail} — Humor legt oft genau jene blinden Flecken frei, die in ernsten Fachdebatten übersehen werden.`;
+      return shortDetail
+        ? `Perspektivwechsel: ${shortDetail} Humor legt oft genau jene blinden Flecken frei, die in ernsten Fachdebatten übersehen werden.`
+        : `Perspektivwechsel zu „${title}“: Worauf zielt die Zuspitzung, und welchen stillschweigenden Konsens stellt sie infrage?`;
     default:
-      return `Inhaltliche Einordnung zu „${title}“: ${shortDetail} — Prüfe die genannte Primärquelle und gleichen den Befund mit deinem bisherigen Weltbild ab.`;
+      return shortDetail
+        ? `Weiterführende Perspektive: ${shortDetail} Prüfe die genannte Primärquelle und gleiche den Befund mit deinem bisherigen Kenntnisstand ab.`
+        : `Weiterführende Perspektive zu „${title}“: Prüfe die genannte Primärquelle und gleiche den Befund mit deinem bisherigen Kenntnisstand ab.`;
   }
 }
 

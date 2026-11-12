@@ -246,6 +246,7 @@ export class SpaceRepository {
   private static STORAGE_KEY = '@atem:custom_subchannels';
   private static PINNED_IDS_KEY = '@atem:pinned_space_ids';
   private static PRIORITIES_KEY = '@atem:space_feed_priorities';
+  private static DELETED_IDS_KEY = '@atem:deleted_space_ids:v1';
   private listeners = new Set<(spaces: Subchannel[]) => void>();
 
   constructor(private storage: AtemStorage = appStorage) {}
@@ -268,16 +269,79 @@ export class SpaceRepository {
     }
   }
 
+  public async getDeletedSpaceIds(): Promise<string[]> {
+    try {
+      const raw = await this.storage.getItem(SpaceRepository.DELETED_IDS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? Array.from(new Set(parsed.map(v => String(v).trim()).filter(Boolean)))
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  public async recordDeletedSpaceIds(ids: string[]): Promise<string[]> {
+    const incoming = ids.map(v => String(v).trim()).filter(Boolean);
+    if (incoming.length === 0) return this.getDeletedSpaceIds();
+    const existing = await this.getDeletedSpaceIds();
+    const merged = Array.from(new Set([...existing, ...incoming]));
+    await this.storage.setItem(SpaceRepository.DELETED_IDS_KEY, JSON.stringify(merged));
+    return merged;
+  }
+
+  public async applyDeletedSpaceIds(ids: string[]): Promise<void> {
+    const merged = await this.recordDeletedSpaceIds(ids);
+    if (merged.length === 0) return;
+    const deletedSet = new Set(merged);
+
+    const [rawCustom, rawPinned] = await Promise.all([
+      this.storage.getItem(SpaceRepository.STORAGE_KEY),
+      this.storage.getItem(SpaceRepository.PINNED_IDS_KEY)
+    ]);
+
+    if (rawCustom) {
+      try {
+        const custom: Subchannel[] = JSON.parse(rawCustom);
+        if (Array.isArray(custom)) {
+          const filtered = custom.filter(s => !deletedSet.has(s.id) && !deletedSet.has(s.handle));
+          if (filtered.length !== custom.length) {
+            await this.storage.setItem(SpaceRepository.STORAGE_KEY, JSON.stringify(filtered));
+          }
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    if (rawPinned) {
+      try {
+        const pinned: string[] = JSON.parse(rawPinned);
+        if (Array.isArray(pinned)) {
+          const filteredPinned = pinned.filter(id => !deletedSet.has(id));
+          if (filteredPinned.length !== pinned.length) {
+            await this.storage.setItem(SpaceRepository.PINNED_IDS_KEY, JSON.stringify(filteredPinned));
+          }
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+  }
+
   public async getAllSpaces(): Promise<Subchannel[]> {
     try {
-      const [rawCustom, rawPinned, rawPriorities] = await Promise.all([
+      const [rawCustom, rawPinned, rawPriorities, deletedIds] = await Promise.all([
         this.storage.getItem(SpaceRepository.STORAGE_KEY),
         this.storage.getItem(SpaceRepository.PINNED_IDS_KEY),
-        this.storage.getItem(SpaceRepository.PRIORITIES_KEY)
+        this.storage.getItem(SpaceRepository.PRIORITIES_KEY),
+        this.getDeletedSpaceIds()
       ]);
       const pinnedIds: string[] | null = rawPinned ? JSON.parse(rawPinned) : null;
       const priorities: Record<string, SubchannelFeedPriority> = rawPriorities ? JSON.parse(rawPriorities) : {};
       const custom: Subchannel[] = rawCustom ? JSON.parse(rawCustom) : [];
+      const deletedSet = new Set(deletedIds);
 
       const map = new Map<string, Subchannel>();
       for (const d of DEFAULT_SUBCHANNELS) {
@@ -290,7 +354,7 @@ export class SpaceRepository {
         });
       }
       for (const c of custom) {
-        if (c.isCustom) {
+        if (c.isCustom && !deletedSet.has(c.id)) {
           const isPinned = pinnedIds ? pinnedIds.includes(c.id) : c.pinned;
           const feedPriority = priorities[c.id] || priorities[c.handle] || c.feedPriority || (isPinned ? 'high' : 'normal');
           map.set(c.id, {
@@ -405,8 +469,28 @@ export class SpaceRepository {
       const raw = await this.storage.getItem(SpaceRepository.STORAGE_KEY);
       if (!raw) return false;
       const custom: Subchannel[] = JSON.parse(raw);
+      const removed = custom.some(s => s.id === id);
+      if (!removed) return false;
+
       const filtered = custom.filter(s => s.id !== id);
       await this.storage.setItem(SpaceRepository.STORAGE_KEY, JSON.stringify(filtered));
+
+      const rawPinned = await this.storage.getItem(SpaceRepository.PINNED_IDS_KEY);
+      if (rawPinned) {
+        try {
+          const pinned: string[] = JSON.parse(rawPinned);
+          if (Array.isArray(pinned) && pinned.includes(id)) {
+            await this.storage.setItem(
+              SpaceRepository.PINNED_IDS_KEY,
+              JSON.stringify(pinned.filter(pid => pid !== id))
+            );
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      await this.recordDeletedSpaceIds([id]);
       await this.notify();
       return true;
     } catch {

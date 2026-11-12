@@ -99,16 +99,36 @@ describe('Phase 2.5: Intelligence, Studio & Body Sharding Architecture', () => {
       );
     });
 
-    it('enforces monthly ledger budget ceiling before making AI requests', async () => {
+    it('enforces monthly ledger budget ceiling (€5 proxy / €20 active session key) before making AI requests', async () => {
       const ledger = new EnrichmentUsageLedger('', false);
 
-      // Exhaust the budget on the ledger directly (€5.00 limit)
+      // Seed usage past the €5.00 shared/proxy limit
       await ledger.recordUsage({
         itemId: 'exhaust-budget',
         model: 'gemini-3.8-flash',
         inputTokens: 100000,
         outputTokens: 50000,
         costEur: 5.01
+      });
+
+      // Proxy-only mode without user API key enforces €5.00 limit
+      await assert.rejects(
+        async () => {
+          await callAiModel('Test prompt', {
+            credentials: { provider: 'gemini', proxyUrl: 'https://proxy.example/api/ai' },
+            ledger
+          });
+        },
+        AiBudgetExceededError
+      );
+
+      // Active personal key (session-only) gets the €20.00 ceiling, so usage > €20.00 rejects
+      await ledger.recordUsage({
+        itemId: 'exhaust-budget-20',
+        model: 'gemini-3.8-flash',
+        inputTokens: 100000,
+        outputTokens: 50000,
+        costEur: 15.05
       });
 
       await assert.rejects(

@@ -237,4 +237,30 @@ endobj`;
     assert.equal(mergedRoman.progressPercent, 33);
     assert.equal(mergedRoman.mixIntoMainFeed, false, 'Newer timestamp should win for mixIntoMainFeed toggle');
   });
+
+  it('6. Decompresses FlateDecode PDF streams via DecompressionStream and throws an honest error on unreadable/scanned PDFs', async () => {
+    const zlib = await import('zlib');
+    const { extractTextFromUploadedFile } = await import('../src/core/learning/hivemindLearningService');
+
+    const streamContent = 'BT /F1 12 Tf 72 712 Td (Kant und die Kritik der reinen Vernunft untersucht apriorische Erkenntnisformen in aller Tiefe.) Tj ET';
+    const compressed = zlib.deflateSync(Buffer.from(streamContent, 'latin1'));
+    const header = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Length ' + compressed.length + ' /Filter /FlateDecode >>\nstream\n', 'latin1');
+    const footer = Buffer.from('\nendstream\nendobj\n%%EOF', 'latin1');
+    const pdfBytes = Uint8Array.from(Buffer.concat([header, compressed, footer]));
+
+    const extracted = await extractTextFromUploadedFile(pdfBytes, 'kant_skript.pdf');
+    assert.ok(extracted.includes('Kritik der reinen Vernunft'), `Expected decompressed PDF text, got: ${extracted}`);
+
+    // Compressed stream containing only graphics/scan binary -> explicit honest error
+    const scanCompressed = zlib.deflateSync(Buffer.from('q 1 0 0 1 0 0 cm /Im0 Do Q', 'latin1'));
+    const scanPdf = Uint8Array.from(Buffer.concat([
+      Buffer.from('%PDF-1.4\n1 0 obj\n<< /Length ' + scanCompressed.length + ' /Filter /FlateDecode >>\nstream\n', 'latin1'),
+      scanCompressed,
+      Buffer.from('\nendstream\nendobj\n%%EOF', 'latin1')
+    ]));
+    await assert.rejects(
+      () => extractTextFromUploadedFile(scanPdf, 'scan.pdf'),
+      /kein auslesbarer Text/i
+    );
+  });
 });

@@ -86,7 +86,7 @@ describe('Scroll-Freeze & Python Scrapling Bridge Architecture Suite', () => {
     assert.ok(harvested.estimatedReadingMinutes >= 1, 'Estimated reading minutes must be at least 1');
   });
 
-  it('2. Stub items passed through batchEnricher receive both a substantive feedText (>= 220 chars) and a rich body (>= 500 chars)', () => {
+  it('2. HTML articles extract rich essence & body while bare teaser stubs remain honest with zero canned filler', () => {
     const rawStubItem = createMockItem('stub-guardian-longread-test', {
       title: 'Kognitive Resilienz im digitalen Zeitalter',
       feedText: 'Listen to the podcast. Brief teaser.',
@@ -108,22 +108,44 @@ describe('Scroll-Freeze & Python Scrapling Bridge Architecture Suite', () => {
       isDailyEdition: true
     });
 
-    // Sanitize item
+    // Bare stub MUST NOT be padded with fake philosophical boilerplate templates
     const sanitized = sanitizeCuratedFeedItem(rawStubItem);
-    assert.ok(
-      sanitized.feedText.length >= 220,
-      `Sanitized stub feedText must be >= 220 chars (got ${sanitized.feedText.length}: "${sanitized.feedText}")`
-    );
-    assert.ok(
-      sanitized.body.length >= 500,
-      `Sanitized stub body must be >= 500 chars (got ${sanitized.body.length})`
-    );
+    assert.equal(sanitized.feedText.includes('untersucht die kognitiven und psychologischen Mechanismen'), false);
+    assert.equal(sanitized.body.includes('Kritische Urteilskraft entsteht'), false);
+    assert.equal(sanitized.body.includes('Hintergrund & Vertiefung'), false);
 
-    // Deterministic enrichment
-    const enriched = defaultBatchEditionEnricher.enrichDeterministically(sanitized);
-    assert.ok(enriched.feedText.length >= 220, `Enriched feedText must be >= 220 chars (got ${enriched.feedText.length})`);
-    assert.ok(enriched.body.length >= 500, `Enriched body must be >= 500 chars (got ${enriched.body.length})`);
-    assert.ok(enriched.wordCount >= 50, `Word count must be calculated (got ${enriched.wordCount})`);
+    // Rich HTML input still produces >= 220 char essence & >= 500 char body deterministically
+    const richHtmlItem = createMockItem('rich-html-longread-test', {
+      title: 'Epistemische Wachsamkeit in digitalen Diskursräumen',
+      feedText: 'Eine ausführliche Untersuchung zur digitalen Aufmerksamkeit.',
+      body: `<html><body><article>
+        <h1>Epistemische Wachsamkeit in digitalen Diskursräumen</h1>
+        <p>Digitale Plattformen strukturieren unsere Aufmerksamkeit durch kurzgetaktete Belohnungsschleifen, die oft reflexive Tiefe zugunsten unmittelbarer Reaktion verdrängen.</p>
+        <p>Langfristige Studien zeigen jedoch, dass gezielte Leseumgebungen mit klarer Quellenangabe und diskursiver Gegenperspektive das kritische Urteilsvermögen nachweislich stärken.</p>
+        <p>Für Schule, Philosophieunterricht und politische Bildung ergeben sich daraus konkrete Gestaltungsprinzipien für entschleunigtes Arbeiten am Primärtext.</p>
+      </article></body></html>`,
+      space: 'c/dialektik',
+      primaryTopic: 'philosophy_ethics',
+      topics: ['philosophy_ethics'],
+      sourceDomain: 'example.com',
+      sourceReferences: [{
+        originalUrl: 'https://example.com/epistemische-wachsamkeit',
+        publisher: 'ZEIT',
+        title: 'Epistemische Wachsamkeit in digitalen Diskursräumen',
+        retrievalTimestamp: '2026-11-05T12:00:00.000Z',
+        isVerified: true
+      }],
+      publishedAt: '2026-11-05T12:00:00.000Z',
+      wordCount: 80,
+      estimatedReadingMinutes: 1,
+      isDailyEdition: true
+    });
+
+    const sanitizedRich = sanitizeCuratedFeedItem(richHtmlItem);
+    assert.ok(sanitizedRich.feedText.length >= 220, `Sanitized HTML feedText must be >= 220 chars (got ${sanitizedRich.feedText.length})`);
+    assert.ok(sanitizedRich.body.length >= 400, `Sanitized HTML body must preserve extracted prose (got ${sanitizedRich.body.length})`);
+    const enriched = defaultBatchEditionEnricher.enrichDeterministically(sanitizedRich);
+    assert.ok(enriched.wordCount >= 40, `Word count must be calculated (got ${enriched.wordCount})`);
     assert.ok(enriched.estimatedReadingMinutes >= 1, 'Estimated reading time must be at least 1 minute');
   });
 

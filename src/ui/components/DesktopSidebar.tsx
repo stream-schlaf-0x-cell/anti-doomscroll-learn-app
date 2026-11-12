@@ -4,7 +4,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing } from '../theme';
 import { generateCraftMarkdown, copyToClipboard, downloadMarkdownFile } from '../../core/export/craftExport';
-import { defaultUsageLedger } from '../../core/enrichment/ledger';
+import {
+  defaultUsageLedger,
+  getEffectiveBudgetCeilingEur,
+  MONTHLY_BUDGET_CEILING_EUR
+} from '../../core/enrichment/ledger';
+import { loadAiCredentials, onAiCredentialsChange } from '../../core/ai/atmenAiClient';
 import { EnrichmentLedgerSummary } from '../../core/enrichment/types';
 import { defaultSourceRepository } from '../../core/data/sourceRepository';
 import { TOPIC_SPACE_MAP, TopicTag } from '../../core/domain/types';
@@ -34,7 +39,19 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
   const healthOverview = defaultSourceRepository.getHealthOverview();
 
   React.useEffect(() => {
-    void defaultUsageLedger.getSummary().then(setBudgetSummary);
+    let active = true;
+    const refresh = async (hasKey: boolean) => {
+      const summary = await defaultUsageLedger.getSummary(undefined, getEffectiveBudgetCeilingEur(hasKey));
+      if (active) setBudgetSummary(summary);
+    };
+    void loadAiCredentials().then(creds => refresh(Boolean(creds.apiKey?.trim())));
+    const unsub = onAiCredentialsChange(creds => {
+      void refresh(Boolean(creds.apiKey?.trim()));
+    });
+    return () => {
+      active = false;
+      unsub();
+    };
   }, []);
 
   const handleShuffleAndRefresh = async () => {
@@ -285,9 +302,20 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
                 {
                   width: `${Math.min(
                     100,
-                    Math.max(1, Math.round(((budgetSummary?.totalCostEur ?? 0) / (budgetSummary?.budgetLimitEur ?? 5)) * 100))
+                    Math.max(
+                      1,
+                      Math.round(
+                        ((budgetSummary?.totalCostEur ?? 0) /
+                          (budgetSummary?.budgetLimitEur ?? MONTHLY_BUDGET_CEILING_EUR)) *
+                          100
+                      )
+                    )
                   )}%`,
-                  backgroundColor: (budgetSummary?.totalCostEur ?? 0) >= 4.5 ? '#EF4444' : '#10B981'
+                  backgroundColor:
+                    (budgetSummary?.totalCostEur ?? 0) >=
+                    (budgetSummary?.budgetLimitEur ?? MONTHLY_BUDGET_CEILING_EUR) * 0.9
+                      ? '#EF4444'
+                      : '#10B981'
                 }
               ]}
             />
