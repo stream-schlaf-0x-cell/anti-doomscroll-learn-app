@@ -651,6 +651,26 @@ export const SHOWCASE_STARTER_TRACK_IDS = new Set<string>([
   'track-quantum-reality'
 ]);
 
+/**
+ * Shared detector for removed showcase starter tracks ("Aufstieg & Fall Roms", "Quantenphysik").
+ * Used across migration, storage repositories, cloud sync and feed filtering.
+ */
+export function isDeprecatedShowcaseStarterItem(raw: Partial<FeedItem> | null | undefined): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const trackId = raw.hivemindMeta?.trackId || raw.memeMeta?.trackId;
+  const idStr = String(raw.id || '').toLowerCase();
+  const titleStr = String(raw.title || '').toLowerCase();
+  return Boolean(
+    (trackId && SHOWCASE_STARTER_TRACK_IDS.has(trackId)) ||
+      idStr.startsWith('hivemind-track-roman') ||
+      idStr.startsWith('hivemind-track-quantum') ||
+      idStr.startsWith('track-roman-') ||
+      idStr.startsWith('track-quantum-') ||
+      titleStr.includes('aufstieg & fall roms') ||
+      titleStr.includes('paradox der römischen republik')
+  );
+}
+
 export function buildShowcaseStarterTracks(): HivemindLearningTrack[] {
   return [];
 }

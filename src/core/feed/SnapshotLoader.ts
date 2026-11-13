@@ -26,13 +26,13 @@ export class SnapshotLoader {
   }
 
   private async executeFetch(remoteUrl?: string, timeoutMs = 8000): Promise<SnapshotHydrationResult> {
-    const cacheBuster = `?t=${Math.floor(Date.now() / 300000)}`;
+    const cacheBuster = `?t=${Date.now()}`;
     const urlsToTry: string[] = [];
 
     const appendWithBuster = (url: string) => {
       const trimmed = url.trim();
       if (!trimmed) return;
-      urlsToTry.push(trimmed.includes('?') ? trimmed : `${trimmed}${cacheBuster}`);
+      urlsToTry.push(trimmed.includes('?') ? `${trimmed}&_t=${Date.now()}` : `${trimmed}${cacheBuster}`);
       // Also try without query string if server/proxy rejects query parameters
       if (!trimmed.includes('?')) urlsToTry.push(trimmed);
     };
@@ -56,7 +56,7 @@ export class SnapshotLoader {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await fetch(targetUrl, { cache: 'default', signal: controller.signal });
+        const response = await fetch(targetUrl, { cache: 'no-store', signal: controller.signal });
         if (!response.ok) continue;
         const payload = parseSnapshotPayload(await response.json());
         if (!payload) continue;

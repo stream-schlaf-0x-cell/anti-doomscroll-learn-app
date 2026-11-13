@@ -201,12 +201,13 @@ describe('Work Package 3: AI Gatekeeper, Batch Intelligence & Model Selection', 
 
   describe('4. Model Selector & BYOK AI Settings Configuration', () => {
     it('defines standard recommended models for Gemini and OpenRouter', () => {
-      assert.strictEqual(DEFAULT_GEMINI_MODEL, 'gemini-3.8-flash');
-      assert.strictEqual(DEFAULT_OPENROUTER_MODEL, 'google/gemini-3.8-flash');
+      assert.strictEqual(DEFAULT_GEMINI_MODEL, 'gemini-4-hydrogen');
+      assert.strictEqual(DEFAULT_OPENROUTER_MODEL, 'google/gemini-4-hydrogen');
 
+      assert.ok(GEMINI_MODEL_PRESETS.some(m => m.id === 'gemini-4-hydrogen'));
       assert.ok(GEMINI_MODEL_PRESETS.some(m => m.id === 'gemini-3.8-flash'));
       assert.ok(OPENROUTER_MODEL_PRESETS.some(m => m.id === 'anthropic/claude-3.5-sonnet'));
-      assert.ok(OPENROUTER_MODEL_PRESETS.some(m => m.id === 'google/gemini-3.8-flash'));
+      assert.ok(OPENROUTER_MODEL_PRESETS.some(m => m.id === 'google/gemini-4-hydrogen'));
     });
 
     it('persists and loads chosen models and providers cleanly', async () => {
@@ -215,7 +216,7 @@ describe('Work Package 3: AI Gatekeeper, Batch Intelligence & Model Selection', 
       // Default
       const initial = await loadAiCredentials(memoryStorage);
       assert.strictEqual(initial.provider, 'gemini');
-      assert.strictEqual(initial.model, 'gemini-3.8-flash');
+      assert.strictEqual(initial.model, 'gemini-4-hydrogen');
 
       // Update to OpenRouter with Claude 3.5 Sonnet
       await saveAiCredentials(
@@ -241,10 +242,11 @@ describe('Work Package 3: AI Gatekeeper, Batch Intelligence & Model Selection', 
 
   describe('5. Google Gemini Model Registry & Live Discovery (October 2026 Source of Truth)', () => {
     it('contains all official verified models across all 8 functional categories', () => {
-      assert.strictEqual(DEFAULT_GEMINI_TEXT_MODEL, 'gemini-3.8-flash');
+      assert.strictEqual(DEFAULT_GEMINI_TEXT_MODEL, 'gemini-4-hydrogen');
 
       // Text / Reasoning
       assert.ok(findGeminiModel('gemini-4-argon'), 'Gemini 4 Argon must exist');
+      assert.ok(findGeminiModel('gemini-4-hydrogen'), 'Gemini 4 Hydrogen must exist');
       assert.ok(findGeminiModel('gemini-3.8-flash'), 'Gemini 3.8 Flash must exist');
       assert.ok(findGeminiModel('gemini-3.6-flash'), 'Gemini 3.6 Flash must exist');
       assert.ok(findGeminiModel('gemini-3.5-flash-lite'), 'Gemini 3.5 Flash-Lite must exist');

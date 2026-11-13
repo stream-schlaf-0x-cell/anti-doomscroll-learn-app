@@ -49,11 +49,11 @@ export interface AiCredentials {
 export const DEFAULT_AI_CREDENTIALS: AiCredentials = {
   provider: 'gemini',
   apiKey: '',
-  model: 'gemini-3.8-flash'
+  model: 'gemini-4-hydrogen'
 };
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
-export const DEFAULT_OPENROUTER_MODEL = 'google/gemini-3.8-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
+export const DEFAULT_OPENROUTER_MODEL = 'google/gemini-4-hydrogen';
 
 export interface SelectableAiModel {
   id: string;
@@ -123,6 +123,7 @@ export const GEMINI_MODEL_PRESETS: ModelPreset[] = AVAILABLE_AI_MODELS.filter(m 
 
 export const OPENROUTER_MODEL_PRESETS: ModelPreset[] = [
   ...AVAILABLE_AI_MODELS.filter(m => m.provider === 'openrouter'),
+  { id: 'google/gemini-4-hydrogen', label: 'google/gemini-4-hydrogen', provider: 'openrouter', description: 'Gemini 4 Hydrogen über OpenRouter' },
   { id: 'google/gemini-3.8-flash', label: 'google/gemini-3.8-flash', provider: 'openrouter', description: 'Gemini 3.8 über OpenRouter' },
   { id: 'openai/gpt-4o-mini', label: 'openai/gpt-4o-mini', provider: 'openrouter', description: 'Schnelles, sparsames OpenAI-Modell' },
   { id: 'meta-llama/llama-3.3-70b-instruct', label: 'meta-llama/llama-3.3-70b-instruct', provider: 'openrouter', description: 'Führendes Open-Source-Modell' }
@@ -305,6 +306,11 @@ export async function clearAiCredentials(storage: AtemStorage = appStorage): Pro
   sessionApiKeys.delete(storage);
 }
 
+export interface AiGroundingChunk {
+  uri: string;
+  title: string;
+}
+
 export interface AiCallResponse {
   text: string;
   usage: {
@@ -313,6 +319,8 @@ export interface AiCallResponse {
     costEur: number;
   };
   modelUsed?: string;
+  groundingChunks?: AiGroundingChunk[];
+  webSearchQueries?: string[];
 }
 
 export interface AiCallOptions {
@@ -328,7 +336,53 @@ export interface AiCallOptions {
   bypassBudgetCeiling?: boolean;
   /** Optional explicit budget ceiling override in EUR for this request. */
   budgetCeilingEur?: number;
+  /** Enables live Google Search Grounding (tools: [{ google_search: {} }]) without JSON mime type conflicts. */
+  enableGoogleSearch?: boolean;
 }
+
+function extractGeminiGroundingMetadata(rawJson: unknown): {
+  groundingChunks: AiGroundingChunk[];
+  webSearchQueries: string[];
+} {
+  if (!rawJson || typeof rawJson !== 'object') {
+    return { groundingChunks: [], webSearchQueries: [] };
+  }
+  const candidates = (rawJson as { candidates?: unknown[] }).candidates;
+  const firstCandidate = Array.isArray(candidates) && candidates[0] && typeof candidates[0] === 'object'
+    ? (candidates[0] as {
+        groundingMetadata?: {
+          webSearchQueries?: unknown[];
+          groundingChunks?: { web?: { uri?: string; title?: string } }[];
+        };
+      })
+    : undefined;
+  const meta = firstCandidate?.groundingMetadata;
+  if (!meta) return { groundingChunks: [], webSearchQueries: [] };
+
+  const chunks: AiGroundingChunk[] = [];
+  const seenUris = new Set<string>();
+  if (Array.isArray(meta.groundingChunks)) {
+    for (const chunk of meta.groundingChunks) {
+      const uri = typeof chunk?.web?.uri === 'string' ? chunk.web.uri.trim() : '';
+      const title = typeof chunk?.web?.title === 'string' ? chunk.web.title.trim() : '';
+      if (uri && /^https?:\/\//i.test(uri) && !seenUris.has(uri)) {
+        seenUris.add(uri);
+        chunks.push({ uri, title: title || uri });
+      }
+    }
+  }
+
+  const queries = Array.isArray(meta.webSearchQueries)
+    ? meta.webSearchQueries.filter((q): q is string => typeof q === 'string' && q.trim().length > 0)
+    : [];
+
+  return { groundingChunks: chunks, webSearchQueries: queries };
+}
+
+const groundingMetadataByParsedResult = new WeakMap<
+  ParsedAiResult,
+  { groundingChunks: AiGroundingChunk[]; webSearchQueries: string[] }
+>();
 
 export interface AiConnectionTestResult {
   ok: boolean;
@@ -476,13 +530,15 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
           : (options.timeoutMs ?? (isProTier ? AI_REQUEST_TIMEOUT_MS : 22_000));
         const candidateTimeoutMs = Math.min(AI_MAX_REQUEST_TIMEOUT_MS, Math.max(1, rawTimeoutMs));
 
+        const useGoogleSearchTool = options.enableGoogleSearch === true;
         const body = JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           ...(options.systemInstruction ? { systemInstruction: { parts: [{ text: options.systemInstruction }] } } : {}),
+          ...(useGoogleSearchTool ? { tools: [{ google_search: {} }] } : {}),
           generationConfig: {
             maxOutputTokens: maxTokens,
             ...(typeof options.temperature === 'number' ? { temperature: options.temperature } : {}),
-            ...(options.jsonMode ? { responseMimeType: 'application/json' } : {})
+            ...(!useGoogleSearchTool && options.jsonMode ? { responseMimeType: 'application/json' } : {})
           }
         });
         const sendGemini = (chosenModel: string) => fetchAiJson(
@@ -508,7 +564,7 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
 
         const tierFallbacks = isProTier
           ? ['gemini-2.5-pro', 'gemini-2.5-flash']
-          : ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+          : ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 
         const geminiCandidateModels = Array.from(new Set([
           primaryCandidate,
@@ -551,6 +607,10 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
           throw (lastError || new Error(`Kein kompatibles Gemini-Modell erreichbar.`));
         }
         result = parseAiResult(json, 'gemini');
+        const extractedGrounding = extractGeminiGroundingMetadata(json);
+        if (extractedGrounding.groundingChunks.length > 0 || extractedGrounding.webSearchQueries.length > 0) {
+          groundingMetadataByParsedResult.set(result, extractedGrounding);
+        }
       } else {
       const messages = [
         ...(options.systemInstruction ? [{ role: 'system', content: options.systemInstruction }] : []),
@@ -601,10 +661,33 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
   const inputTokens = result.inputTokens ?? estimatedInputTokens;
   const outputTokens = result.outputTokens ?? maxTokens;
   const costEur = calculateCostEur(inputTokens, outputTokens);
+  const groundingMeta = groundingMetadataByParsedResult.get(result);
     await ledger.commitReservation(reservationId, { itemId: options.itemId ?? 'live-ai-call', model: effectiveModel, inputTokens, outputTokens, costEur });
-    return { text: result.text, usage: { inputTokens, outputTokens, costEur }, modelUsed: effectiveModel };
+    return {
+      text: result.text,
+      usage: { inputTokens, outputTokens, costEur },
+      modelUsed: effectiveModel,
+      ...(groundingMeta?.groundingChunks?.length ? { groundingChunks: groundingMeta.groundingChunks } : {}),
+      ...(groundingMeta?.webSearchQueries?.length ? { webSearchQueries: groundingMeta.webSearchQueries } : {})
+    };
   } catch (error) {
     await ledger.releaseReservation(reservationId);
     throw error;
   }
+}
+
+/**
+ * Convenience wrapper for grounded web research using Google Gemini `google_search` tool.
+ * Automatically enforces `jsonMode: false` on the grounded retrieval call because combining
+ * `tools: [{ google_search: {} }]` with `responseMimeType: 'application/json'` causes HTTP 400.
+ */
+export async function callAiWithGoogleSearch(
+  prompt: string,
+  options: Omit<AiCallOptions, 'enableGoogleSearch' | 'jsonMode'> = {}
+): Promise<AiCallResponse> {
+  return callAiModel(prompt, {
+    ...options,
+    enableGoogleSearch: true,
+    jsonMode: false
+  });
 }

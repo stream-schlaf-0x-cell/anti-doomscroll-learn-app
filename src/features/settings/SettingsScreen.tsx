@@ -227,9 +227,12 @@ export const SettingsScreen: React.FC = () => {
   };
 
   const handleChangeApiKey = async (text: string) => {
+    const trimmed = text.trim();
+    // Persist non-empty user keys by default so settings survive PWA reloads
     const next: AiCredentials = {
       ...aiCreds,
-      apiKey: text.trim()
+      apiKey: trimmed,
+      persistApiKey: trimmed.length > 0
     };
     setAiCreds(next);
     try {

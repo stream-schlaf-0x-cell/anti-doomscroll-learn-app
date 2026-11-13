@@ -244,7 +244,7 @@ ${s.contentSnippet.slice(0, 4000)}
         rationale: s.rationale || ''
       })),
       diffFromPreviousVersion: diff,
-      modelUsed: response.modelUsed || 'gemini-3.8-flash',
+      modelUsed: response.modelUsed || 'gemini-4-hydrogen',
       promptVersion: INVESTIGATION_PROMPT_VERSION,
       executionMode: 'ai_real',
       tokenUsage: {

@@ -119,7 +119,7 @@ describe('Provider-Independent Enrichment & €5 Budget Enforcement', () => {
     const result = await providerEnricher.enrich({ item });
 
     assert.strictEqual(result.isFallback, false);
-    assert.strictEqual(result.modelUsed, 'gemini-3.8-flash');
+    assert.strictEqual(result.modelUsed, 'gemini-4-hydrogen');
     assert.strictEqual(result.inputTokens, 1200);
 
     const summary = await ledger.getSummary();

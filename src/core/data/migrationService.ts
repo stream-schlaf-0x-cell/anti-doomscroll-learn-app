@@ -17,10 +17,11 @@ import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 import { FeedItem } from '../domain/types';
 import {
   hivemindLearningService,
+  isDeprecatedShowcaseStarterItem,
   SHOWCASE_STARTER_TRACK_IDS
 } from '../learning/hivemindLearningService';
 
-export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-13-v8.0-purge-showcase-starters';
+export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-13-v9.0-redaktion-hydrogen-clean';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
@@ -278,18 +279,22 @@ export async function runInPlaceDataMigration(
         purgedCount++;
         continue;
       }
-      if (!satisfiesCuratedBodyContract(item)) {
+      // Normalize boilerplate & derive fallback insight before checking the body contract,
+      // so fresh RSS/live items with "Publisher • Redaktion" subtitles are not misclassified as stubs.
+      const preSanitized = sanitizeCuratedFeedItem(item);
+      if (!satisfiesCuratedBodyContract(preSanitized)) {
         purgedCount++;
         continue;
       }
       // Purge stale unbookmarked mid-October ARD ticker filler (> 7 days old)
-      if (isArdSource(item)) {
-        const pubTime = new Date(item.publishedAt).getTime();
+      if (isArdSource(preSanitized)) {
+        const pubTime = new Date(preSanitized.publishedAt).getTime();
         if (!isNaN(pubTime) && Date.now() - pubTime > 7 * 86400 * 1000) {
           purgedCount++;
           continue;
         }
       }
+      Object.assign(item, preSanitized);
     }
 
     // In-place timestamp, topic accuracy and provenance normalization
@@ -323,8 +328,10 @@ export async function runInPlaceDataMigration(
     preservedCount++;
   }
 
-  // 4. Force-merge latest REAL_KNOWLEDGE_VAULT and MEME_VAULT_ENTRIES
+  // 4. Keep curated museum artworks in seed, never re-inject seen 2004 essays into populated live feeds
+  const hasRichLivePool = cleanedMap.size >= 25;
   for (const vaultItem of REAL_KNOWLEDGE_VAULT) {
+    if (hasRichLivePool && vaultItem.space !== 'c/kunst_galerie') continue;
     if (!cleanedMap.has(vaultItem.id)) {
       cleanedMap.set(vaultItem.id, vaultItem);
     }
@@ -336,7 +343,24 @@ export async function runInPlaceDataMigration(
     }
   }
 
-  const finalItems = Array.from(cleanedMap.values());
+  try {
+    const rawDyn = await storage.getItem('@atem:dynamic_items:v1');
+    if (rawDyn) {
+      const parsedDyn = JSON.parse(rawDyn);
+      if (Array.isArray(parsedDyn)) {
+        const cleanedDyn = parsedDyn
+          .filter((item: any) => !isDeprecatedShowcaseStarterItem(item))
+          .map((item: any) => sanitizeCuratedFeedItem(item));
+        await storage.setItem('@atem:dynamic_items:v1', JSON.stringify(cleanedDyn));
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  const finalItems = Array.from(cleanedMap.values())
+    .filter(item => !isDeprecatedShowcaseStarterItem(item))
+    .map(item => sanitizeCuratedFeedItem(item));
 
   // 5. Save upgraded articles to PersistentArticleStore, storage and repository
   try {

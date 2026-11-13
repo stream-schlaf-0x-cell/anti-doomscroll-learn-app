@@ -903,20 +903,23 @@ export function rankBloomScrollFeed(
         utility += 0.05;
       }
 
-      // Hard 72-Hour Seen Cooldown & Seen-Impression Rotation
+      // Permanent Seen Quarantine Penalty & Pre-2016 Archive Demotion (Pillar 4)
       const seenRecord = options?.seenRecords?.get(cand.id);
       if (seenRecord) {
         const firstSeenMs = new Date(seenRecord.firstSeenAt).getTime();
         const ageSinceFirstSeenMs = Date.now() - firstSeenMs;
-        // Seen in previous session or > 20 min ago receives hard -3.0 penalty for 72h
-        if (ageSinceFirstSeenMs > 20 * 60 * 1000 && ageSinceFirstSeenMs <= 72 * 3600 * 1000) {
-          utility -= 3.0;
-        } else if (ageSinceFirstSeenMs > 72 * 3600 * 1000) {
-          utility -= 1.0;
+        if (ageSinceFirstSeenMs > 20 * 60 * 1000) {
+          utility -= 450.0;
         }
       }
       if (options?.seenItemIds?.has(cand.id)) {
-        utility -= 3.5;
+        utility -= 500.0;
+      }
+      if (!isArtShowcaseItem(cand) && (cand.isStaticFallback || cand.id.startsWith('vault-gem-'))) {
+        const pubYear = cand.publishedAt ? new Date(cand.publishedAt).getUTCFullYear() : NaN;
+        if (cand.isStaticFallback || (!isNaN(pubYear) && pubYear < 2016)) {
+          utility -= 14.0;
+        }
       }
 
       // Exponential freshness decay for breaking / daily news items older than 36 hours
@@ -1026,8 +1029,21 @@ export function rankBloomScrollFeed(
  * (indices 5, 11, 17, 23...) in the `for_you` stream: a high-substance (`curationScore >= 7.5`)
  * mind-expanding item outside the dominant top 2 topics of the preceding window.
  */
-export function interleaveSerendipitySlot(items: ScoredFeedItem[]): ScoredFeedItem[] {
+export function interleaveSerendipitySlot(
+  items: ScoredFeedItem[],
+  seenItemIds?: ReadonlySet<string>
+): ScoredFeedItem[] {
   if (items.length < 6) return items;
+
+  const isEligibleSerendipityCandidate = (cand: ScoredFeedItem): boolean => {
+    if (seenItemIds?.has(cand.id)) return false;
+    if (cand.isStaticFallback) return false;
+    if (!isArtShowcaseItem(cand) && cand.id.startsWith('vault-gem-')) {
+      const pubYear = cand.publishedAt ? new Date(cand.publishedAt).getUTCFullYear() : NaN;
+      if (!isNaN(pubYear) && pubYear < 2016) return false;
+    }
+    return true;
+  };
 
   const result = [...items];
 
@@ -1050,6 +1066,7 @@ export function interleaveSerendipitySlot(items: ScoredFeedItem[]): ScoredFeedIt
     const currentAtSlot = result[slotIdx];
 
     const isAlreadySerendipitous =
+      isEligibleSerendipityCandidate(currentAtSlot) &&
       (currentAtSlot.curationScore ?? 7.8) >= 7.5 &&
       !dominantTop2Topics.has(currentAtSlot.primaryTopic) &&
       !recentTopics.has(currentAtSlot.primaryTopic);
@@ -1058,10 +1075,11 @@ export function interleaveSerendipitySlot(items: ScoredFeedItem[]): ScoredFeedIt
       continue;
     }
 
-    // Look ahead for a high-quality mind-expanding item outside dominantTop2Topics and recentTopics
+    // Look ahead for a high-quality mind-expanding unseen item outside dominantTop2Topics and recentTopics
     let swapCandidateIdx = -1;
     for (let j = slotIdx + 1; j < result.length; j++) {
       const cand = result[j];
+      if (!isEligibleSerendipityCandidate(cand)) continue;
       const score = cand.curationScore ?? 7.8;
       const isSerendipitousFormat =
         cand.format === 'surprising_connection' ||
@@ -1081,10 +1099,11 @@ export function interleaveSerendipitySlot(items: ScoredFeedItem[]): ScoredFeedIt
       }
     }
 
-    // Fallback: any item with score >= 7.5 not in recentTopics
+    // Fallback: any eligible unseen item with score >= 7.5 not in recentTopics
     if (swapCandidateIdx === -1) {
       for (let j = slotIdx + 1; j < result.length; j++) {
         const cand = result[j];
+        if (!isEligibleSerendipityCandidate(cand)) continue;
         const score = cand.curationScore ?? 7.8;
         if (score >= 7.5 && !recentTopics.has(cand.primaryTopic)) {
           swapCandidateIdx = j;
@@ -1210,7 +1229,7 @@ export function sortFeedForDisplay(
       seenItemIds: options.seenItemIds,
       seenRecords: options.seenRecords
     });
-    const withSerendipity = interleaveSerendipitySlot(ranked);
+    const withSerendipity = interleaveSerendipitySlot(ranked, options.seenItemIds);
     return [...effectiveTopPins, ...withSerendipity];
   }
 

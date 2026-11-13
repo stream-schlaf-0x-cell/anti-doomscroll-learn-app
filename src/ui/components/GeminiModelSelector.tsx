@@ -438,7 +438,7 @@ export const GeminiModelSelector: React.FC<GeminiModelSelectorProps> = ({
                 styles.customInput,
                 { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }
               ]}
-              placeholder="z. B. gemini-4-argon oder gemini-3.8-flash"
+              placeholder="z. B. gemini-4-hydrogen oder gemini-4-argon"
               placeholderTextColor={colors.textMuted}
               value={customModelText}
               onChangeText={setCustomModelText}

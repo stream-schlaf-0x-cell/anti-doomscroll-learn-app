@@ -4,12 +4,13 @@ import { rankAndInterleaveFeed, rankEditionFeed, ScoredFeedItem, scoreFeedItem }
 import { AtemStorage, appStorage } from './storage';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
-import { defaultBatchEditionEnricher } from '../enrichment/batchEnricher';
+import { defaultBatchEditionEnricher, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
 import { ArticleIndex } from '../feed/articleIndex';
 import { RelatedContentService } from '../feed/RelatedContentService';
 import { FeedMergeService, MergeOptions } from '../feed/FeedMergeService';
 import { defaultFeedOperationManager, FeedOperationResult, FeedOperationType } from '../feed/FeedOperationManager';
 import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
+import { isDeprecatedShowcaseStarterItem } from '../learning/hivemindLearningService';
 
 // Dynamic, non-static load of pipeline output in Node.js test / CLI environments
 // Uses eval('require') so Metro / Expo Web bundler DOES NOT bundle 1.8 MB of JSON into the client JS
@@ -179,12 +180,13 @@ export class LocalFeedRepository implements IFeedRepository {
     if (items.length <= maxItems) return items;
     const protectedIds = new Set<string>();
     for (const item of items) {
+      if (isDeprecatedShowcaseStarterItem(item)) continue;
       if (
-        item.id.startsWith('hivemind-') ||
+        (item.id.startsWith('hivemind-') && !isDeprecatedShowcaseStarterItem(item)) ||
         item.id.startsWith('flourish-') ||
-        item.isEvergreenGem === true ||
+        (item.isEvergreenGem === true && item.space === 'c/kunst_galerie') ||
         Boolean((item as any).isSaved) ||
-        Boolean(item.space && item.space !== 'c/memes')
+        Boolean(item.space && item.space !== 'c/memes' && !item.isStaticFallback)
       ) {
         protectedIds.add(item.id);
       }
@@ -231,10 +233,18 @@ export class LocalFeedRepository implements IFeedRepository {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          this.dynamicItems = parsed.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
+          const filtered = parsed.filter((i: any) => !isDeprecatedShowcaseStarterItem(i));
+          this.dynamicItems = filtered.map(i =>
+            sanitizeCuratedFeedItem(enrichSocialFeedItem(i, { lazyCrossReferences: true }))
+          );
+          if (filtered.length !== parsed.length) {
+            await this.storage.setItem('@atem:dynamic_items:v1', JSON.stringify(this.dynamicItems));
+          }
           const map = new Map<string, FeedItem>();
           for (const item of this.items) {
-            map.set(item.id, item);
+            if (!isDeprecatedShowcaseStarterItem(item)) {
+              map.set(item.id, item);
+            }
           }
           for (const dyn of this.dynamicItems) {
             map.set(dyn.id, dyn);
@@ -251,6 +261,7 @@ export class LocalFeedRepository implements IFeedRepository {
 
   private async persistDynamicItems(): Promise<void> {
     try {
+      this.dynamicItems = this.dynamicItems.filter(i => !isDeprecatedShowcaseStarterItem(i));
       await this.storage.setItem('@atem:dynamic_items:v1', JSON.stringify(this.dynamicItems));
     } catch {
       // Non-fatal fallback
@@ -262,13 +273,17 @@ export class LocalFeedRepository implements IFeedRepository {
     const canonicalMap = new Map<string, string>();
 
     for (const item of items) {
-      const enriched = enrichSocialFeedItem(item, { lazyCrossReferences: true });
+      if (isDeprecatedShowcaseStarterItem(item)) continue;
+      const enriched = sanitizeCuratedFeedItem(enrichSocialFeedItem(item, { lazyCrossReferences: true }));
       map.set(item.id, enriched);
       if (item.canonicalUrl) {
         canonicalMap.set(item.canonicalUrl.toLowerCase(), item.id);
       }
     }
+    const hasRichPool = map.size >= 25;
     for (const item of REAL_KNOWLEDGE_VAULT) {
+      // Keep curated museum artworks available, but never re-inject 2004 archive essays into populated live pools
+      if (hasRichPool && item.space !== 'c/kunst_galerie') continue;
       const canon = item.canonicalUrl?.toLowerCase();
       if (!map.has(item.id) && (!canon || !canonicalMap.has(canon))) {
         map.set(item.id, enrichSocialFeedItem(item, { lazyCrossReferences: true }));
@@ -277,17 +292,20 @@ export class LocalFeedRepository implements IFeedRepository {
     }
     const survivingDynamic: FeedItem[] = [];
     for (const dyn of this.dynamicItems) {
+      if (isDeprecatedShowcaseStarterItem(dyn)) continue;
       const canon = dyn.canonicalUrl?.toLowerCase();
       const existingIdForCanon = canon ? canonicalMap.get(canon) : undefined;
       if (map.has(dyn.id)) {
-        map.set(dyn.id, dyn);
-        survivingDynamic.push(dyn);
+        const cleanDyn = sanitizeCuratedFeedItem(dyn);
+        map.set(dyn.id, cleanDyn);
+        survivingDynamic.push(cleanDyn);
       } else if (existingIdForCanon) {
         // Duplicate canonical URL under a different ID is not resurrected
       } else {
-        map.set(dyn.id, dyn);
+        const cleanDyn = sanitizeCuratedFeedItem(dyn);
+        map.set(dyn.id, cleanDyn);
         if (canon) canonicalMap.set(canon, dyn.id);
-        survivingDynamic.push(dyn);
+        survivingDynamic.push(cleanDyn);
       }
     }
     this.dynamicItems = survivingDynamic;
@@ -297,7 +315,10 @@ export class LocalFeedRepository implements IFeedRepository {
   }
 
   addItems(newItems: FeedItem[], options?: { operationType?: FeedOperationType; pinInserted?: boolean; telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry }): void {
-    const enrichedNew = newItems.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
+    const cleanInput = newItems.filter(i => !isDeprecatedShowcaseStarterItem(i));
+    const enrichedNew = cleanInput.map(i =>
+      sanitizeCuratedFeedItem(enrichSocialFeedItem(i, { lazyCrossReferences: true }))
+    );
     const mergeResult = FeedMergeService.merge(this.items, enrichedNew, {
       operationType: options?.operationType ?? 'background_sync',
       pinInserted: options?.pinInserted ?? false,

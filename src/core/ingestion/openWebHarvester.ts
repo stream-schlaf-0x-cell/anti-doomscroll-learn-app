@@ -1,4 +1,4 @@
-import { FeedItem } from '../domain/types';
+import { FeedItem, TopicTag, TOPIC_SPACE_MAP } from '../domain/types';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 import {
   classifyTopicDeterministically,
@@ -12,7 +12,15 @@ import { VERIFIED_FEED_SOURCES } from './sources';
 import { GLOBAL_CORPUS_RESERVE_SOURCES } from './globalCorpusSources';
 import { fetchSingleFeed } from './feedFetcher';
 import { normalizeFeedEntry } from './normalizer';
-import { loadAiCredentials, hasAiConfiguration, AiCredentials } from '../ai/atmenAiClient';
+import {
+  loadAiCredentials,
+  hasAiConfiguration,
+  AiCredentials,
+  callAiWithGoogleSearch,
+  callAiModel
+} from '../ai/atmenAiClient';
+import { ContinuousLiveNewsService } from '../data/continuousLiveNewsService';
+import { isDeprecatedShowcaseStarterItem } from '../learning/hivemindLearningService';
 
 export interface MultiLaneDiscoveryOptions {
   storage?: AtemStorage;
@@ -20,6 +28,7 @@ export interface MultiLaneDiscoveryOptions {
   seenIds?: Set<string>;
   targetNewCount?: number;
   credentials?: AiCredentials;
+  topicHint?: string;
   onStageChange?: (stage: string) => void;
 }
 
@@ -63,14 +72,72 @@ export class OpenWebHarvester {
   private static cache: OpenWebHarvestResult | null = null;
   private static cacheTimestamp = 0;
   private static CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+  private static readonly DISCOVERY_CURSOR_KEY = '@atem:discovery_cursor:v1';
+  private static inMemoryCursor = 0;
 
-  private static fetchWithTimeout(url: string, timeoutMs = 3500): Promise<Response> {
+  private static isBrowserEnvironment(): boolean {
+    return typeof window !== 'undefined' && typeof document !== 'undefined';
+  }
+
+  private static async nextDiscoveryCursor(storage?: AtemStorage): Promise<number> {
+    const store = storage || appStorage;
+    let current = this.inMemoryCursor;
+    try {
+      const raw = await store.getItem(this.DISCOVERY_CURSOR_KEY);
+      if (raw) {
+        const parsed = parseInt(raw, 10);
+        if (!Number.isNaN(parsed) && parsed >= 0) {
+          current = parsed;
+        }
+      }
+      const next = current + 1;
+      this.inMemoryCursor = next;
+      await store.setItem(this.DISCOVERY_CURSOR_KEY, String(next));
+      return current;
+    } catch {
+      const val = this.inMemoryCursor;
+      this.inMemoryCursor += 1;
+      return val;
+    }
+  }
+
+  private static reconstructOpenAlexAbstract(invertedIndex: unknown, maxWords = 250): string {
+    if (!invertedIndex || typeof invertedIndex !== 'object') return '';
+    const wordsByPos: string[] = [];
+    for (const [word, positions] of Object.entries(invertedIndex as Record<string, unknown>)) {
+      if (Array.isArray(positions)) {
+        for (const pos of positions) {
+          if (typeof pos === 'number' && pos >= 0 && pos < maxWords) {
+            wordsByPos[pos] = word;
+          }
+        }
+      }
+    }
+    return wordsByPos.filter(Boolean).join(' ').trim();
+  }
+
+  private static stripXmlAndHtml(raw: string): string {
+    return (raw || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;|&apos;/gi, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private static fetchWithTimeout(url: string, timeoutMs = 4500): Promise<Response> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const acceptHeader = url.includes('rss') || url.includes('xml')
+      ? 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8'
+      : 'application/json';
     return fetch(url, {
       signal: controller.signal,
       headers: {
-        Accept: 'application/json',
+        Accept: acceptHeader,
         'User-Agent': 'atmen-learning-network/2.0 (https://atmen.app; sovereign-knowledge-client)'
       }
     }).finally(() => {
@@ -79,20 +146,30 @@ export class OpenWebHarvester {
   }
 
   /**
-   * 1. Art Institute of Chicago Open Access API
-   * Note: Artworks are categorized as museum_collection / art_showcase, never as live news.
+   * 1. Art Institute of Chicago & Metropolitan Museum Open Access APIs
+   * Rotates page & search queries so repeated live discovery runs yield fresh artworks.
    */
-  public static async harvestMuseumArtworks(limit = 6): Promise<FeedItem[]> {
+  public static async harvestMuseumArtworks(limit = 6, cursor = 0): Promise<FeedItem[]> {
+    const artQueries = [
+      'painting landscape impressionism modern',
+      'japanese woodblock architecture study',
+      'still life portrait oil canvas',
+      'abstract color geometry drawing',
+      'romanticism light sea horizon',
+      'calligraphy sculpture ink wash'
+    ];
+    const query = artQueries[cursor % artQueries.length];
+    const page = 1 + (cursor % 20);
+    const items: FeedItem[] = [];
+
     try {
-      const url = `https://api.artic.edu/api/v1/artworks/search?q=painting+landscape+impressionism+modern&query[term][is_public_domain]=true&fields=id,title,artist_display,date_display,medium_display,image_id,thumbnail,style_title,classification_title&limit=${limit}`;
-      const response = await this.fetchWithTimeout(url, 3500);
+      const url = `https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(query)}&query[term][is_public_domain]=true&fields=id,title,artist_display,date_display,medium_display,image_id,thumbnail,style_title,classification_title&page=${page}&limit=${limit}`;
+      const response = await this.fetchWithTimeout(url, 4000);
       if (!response.ok) {
         throw new Error(`Art Institute API responded with status ${response.status}`);
       }
       const data = await response.json();
       const records = Array.isArray(data?.data) ? data.data : [];
-
-      const items: FeedItem[] = [];
 
       for (const record of records) {
         if (!record.image_id || !record.title) continue;
@@ -178,10 +255,120 @@ export class OpenWebHarvester {
         items.push(item);
       }
 
+      // Supplement with The Metropolitan Museum of Art (Open Access CORS-native)
+      if (items.length < limit) {
+        const metArtItems = await this.harvestMetMuseumArtworks(Math.max(2, limit - items.length), cursor);
+        for (const m of metArtItems) {
+          if (items.length < limit) items.push(m);
+        }
+      }
+
       if (items.length > 0) return items;
       return this.getLocalArtFallback();
     } catch {
+      const metArtItems = await this.harvestMetMuseumArtworks(limit, cursor);
+      if (metArtItems.length > 0) return metArtItems;
       return this.getLocalArtFallback();
+    }
+  }
+
+  /**
+   * 1b. The Metropolitan Museum of Art Open Access API (CORS-open)
+   */
+  public static async harvestMetMuseumArtworks(limit = 3, cursor = 0): Promise<FeedItem[]> {
+    const queries = ['landscape', 'philosophy', 'astronomy', 'music', 'portrait', 'architecture'];
+    const q = queries[cursor % queries.length];
+    try {
+      const searchUrl = `https://collectionapi.metmuseum.org/public/collection/v1/search?hasImages=true&isHighlight=true&q=${encodeURIComponent(q)}`;
+      const res = await this.fetchWithTimeout(searchUrl, 3800);
+      if (!res.ok) return [];
+      const data = await res.json();
+      const ids: number[] = Array.isArray(data?.objectIDs) ? data.objectIDs : [];
+      if (ids.length === 0) return [];
+      const offset = (cursor * limit) % Math.max(1, ids.length);
+      const pickedIds = Array.from({ length: Math.min(limit, ids.length) }, (_, idx) => ids[(offset + idx) % ids.length]);
+      const objResponses = await Promise.allSettled(
+        pickedIds.map(id => this.fetchWithTimeout(`https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`, 3500).then(r => (r.ok ? r.json() : null)))
+      );
+      const items: FeedItem[] = [];
+      for (const objRes of objResponses) {
+        if (objRes.status !== 'fulfilled' || !objRes.value) continue;
+        const obj = objRes.value;
+        const imgUrl = obj.primaryImageSmall || obj.primaryImage;
+        if (!obj.title || !imgUrl) continue;
+        const artist = obj.artistDisplayName || 'Unbekannter Meister';
+        const year = obj.objectDate || 'Sammlungswerk';
+        const medium = obj.medium || 'Kunstwerk';
+        const styleMovement = obj.department || 'Metropolitan Museum Collection';
+        const desc = `${obj.title} (${year}) von ${artist} — ${medium} aus der Sammlung des Metropolitan Museum of Art.`;
+        items.push({
+          id: `openweb-met-${obj.objectID}`,
+          type: 'quick_insight',
+          format: 'art_showcase',
+          title: obj.title,
+          subtitle: `${artist} (${year}) • ${styleMovement}`,
+          feedText: desc,
+          articleBody: `Werk: ${obj.title}\nKünstler: ${artist}\nDatierung: ${year}\nTechnik: ${medium}\nAbteilung: ${styleMovement}\nSammlung: The Metropolitan Museum of Art (Open Access CC0)\n\n${desc}`,
+          body: desc,
+          topics: ['art_aesthetics', 'contemplation_mind'],
+          primaryTopic: 'art_aesthetics',
+          sourceReferences: [
+            {
+              title: `${obj.title} (${artist})`,
+              publisher: 'The Metropolitan Museum of Art',
+              author: artist,
+              originalUrl: obj.objectURL || `https://www.metmuseum.org/art/collection/search/${obj.objectID}`,
+              retrievalTimestamp: new Date().toISOString(),
+              isVerified: true
+            }
+          ],
+          publishedAt: '1900-01-01T00:00:00.000Z',
+          publicationDateReliable: false,
+          historicalYearOrEra: year,
+          firstSeenAt: new Date().toISOString(),
+          generatedAt: new Date().toISOString(),
+          estimatedReadingMinutes: 1,
+          relevanceExplanation: 'Gemeinfreies Highlight aus dem Metropolitan Museum of Art.',
+          contentStatus: 'philosophical_perspective',
+          isDailyEdition: false,
+          editionDate: new Date().toISOString().split('T')[0],
+          isTeachingRelated: false,
+          isChallengingPerspective: false,
+          isDemonstration: false,
+          aiAssisted: false,
+          factReviewStatus: 'historical_reference',
+          provenanceSummary: 'Museums-Sammlung: The Metropolitan Museum of Art (CC0).',
+          wordCount: 75,
+          evidenceTier: 'permitted_full_text',
+          contentOrigin: 'live_ingested',
+          contentHash: `met-${obj.objectID}`,
+          canonicalUrl: obj.objectURL || `https://www.metmuseum.org/art/collection/search/${obj.objectID}`,
+          imageUrl: imgUrl,
+          hasAuthenticImage: true,
+          space: 'c/kunst_galerie',
+          flair: '🎨 Met Museum',
+          keyInsight: `Wie ${artist} in „${obj.title}“ mit ${medium} Form und Präsenz verdichtet, öffnet einen ruhigen Gegenpol zum Nachrichtenstrom.`,
+          challengePrompt: 'Welche visuelle Spannung prägt den Bildaufbau auf den zweiten Blick?',
+          upvotesCount: 0,
+          awardsCount: { gold: 0, brain: 0, spark: 0 },
+          sourceTrustLevel: 'museum_collection',
+          sourceDomain: 'metmuseum.org',
+          sourceBroadcasterName: 'Metropolitan Museum of Art',
+          artMeta: {
+            artist,
+            year,
+            medium,
+            museum: 'The Metropolitan Museum of Art',
+            highResImageUrl: imgUrl,
+            styleMovement,
+            aestheticImpulse: desc
+          },
+          comments: []
+        });
+      }
+      return items;
+    } catch {
+      return [];
     }
   }
 
@@ -420,13 +607,16 @@ export class OpenWebHarvester {
   }
 
   /**
-   * 3. Hacker News Algolia API Frontpage Discovery
-   * Stores real HN points/comments in externalCommunityScore; internal upvotes/awards are 0.
+   * 3. Hacker News Algolia API Frontpage & Recent High-Signal Discovery
+   * Rotates pages and alternates frontpage vs recent top stories so manual refreshes find unseen discussions.
    */
-  public static async harvestTechFrontpage(limit = 6): Promise<FeedItem[]> {
+  public static async harvestTechFrontpage(limit = 8, cursor = 0): Promise<FeedItem[]> {
     try {
-      const url = `https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=${limit}`;
-      const response = await this.fetchWithTimeout(url, 3500);
+      const page = cursor % 5;
+      const endpoint = cursor % 2 === 0
+        ? `https://hn.algolia.com/api/v1/search?tags=front_page&page=${page}&hitsPerPage=${limit}`
+        : `https://hn.algolia.com/api/v1/search_by_date?tags=story&numericFilters=points%3E45&page=${cursor % 6}&hitsPerPage=${limit}`;
+      const response = await this.fetchWithTimeout(endpoint, 4000);
       if (!response.ok) {
         throw new Error(`Hacker News Algolia responded with status ${response.status}`);
       }
@@ -522,11 +712,23 @@ export class OpenWebHarvester {
 
   /**
    * 4. OpenAlex Open-Access Science API (Genuine Peer-Reviewed Papers)
+   * Rotates discipline queries, sorting (newest vs most cited), and page cursor on every run.
    */
-  public static async harvestOpenAlexPapers(limit = 5): Promise<FeedItem[]> {
+  public static async harvestOpenAlexPapers(limit = 6, cursor = 0, topicHint?: string): Promise<FeedItem[]> {
+    const rotatingQueries = [
+      'philosophy OR ethics OR epistemology',
+      'pedagogy OR didactics OR education',
+      'cognitive neuroscience OR consciousness',
+      'artificial intelligence OR alignment OR interpretability',
+      'mindfulness OR contemplation OR phenomenology',
+      'electronic music OR acoustics OR aesthetics'
+    ];
+    const searchQ = topicHint?.trim() || rotatingQueries[cursor % rotatingQueries.length];
+    const page = 1 + (cursor % 8);
+    const sortMode = cursor % 2 === 0 ? 'publication_date:desc' : 'cited_by_count:desc';
     try {
-      const url = `https://api.openalex.org/works?filter=is_oa:true,has_abstract:true,from_publication_date:2025-01-01&sort=cited_by_count:desc&per-page=${limit}`;
-      const response = await this.fetchWithTimeout(url, 3500);
+      const url = `https://api.openalex.org/works?filter=is_oa:true,has_abstract:true,from_publication_date:2025-01-01&search=${encodeURIComponent(searchQ)}&sort=${sortMode}&page=${page}&per-page=${limit}`;
+      const response = await this.fetchWithTimeout(url, 4000);
       if (!response.ok) {
         throw new Error(`OpenAlex API responded with status ${response.status}`);
       }
@@ -544,21 +746,7 @@ export class OpenWebHarvester {
           ? new Date(work.publication_date).toISOString()
           : new Date().toISOString();
 
-        // Reconstruct abstract from OpenAlex abstract_inverted_index if available
-        let abstractText = '';
-        if (work.abstract_inverted_index && typeof work.abstract_inverted_index === 'object') {
-          const wordsByPos: string[] = [];
-          for (const [word, positions] of Object.entries(work.abstract_inverted_index)) {
-            if (Array.isArray(positions)) {
-              for (const pos of positions) {
-                if (typeof pos === 'number' && pos < 250) {
-                  wordsByPos[pos] = word;
-                }
-              }
-            }
-          }
-          abstractText = wordsByPos.filter(Boolean).join(' ').trim();
-        }
+        let abstractText = this.reconstructOpenAlexAbstract(work.abstract_inverted_index, 250);
 
         if (abstractText.length < 40) {
           abstractText = `Open-Access-Forschungsarbeit veröffentlicht in ${journal} (${work.cited_by_count || 0} wissenschaftliche Zitationen).`;
@@ -654,20 +842,7 @@ export class OpenWebHarvester {
           ? new Date(work.publication_date).toISOString()
           : new Date().toISOString();
 
-        let abstractText = '';
-        if (work.abstract_inverted_index && typeof work.abstract_inverted_index === 'object') {
-          const wordsByPos: string[] = [];
-          for (const [word, positions] of Object.entries(work.abstract_inverted_index)) {
-            if (Array.isArray(positions)) {
-              for (const pos of positions) {
-                if (typeof pos === 'number' && pos < 250) {
-                  wordsByPos[pos] = word;
-                }
-              }
-            }
-          }
-          abstractText = wordsByPos.filter(Boolean).join(' ').trim();
-        }
+        const abstractText = this.reconstructOpenAlexAbstract(work.abstract_inverted_index, 250);
 
         // Directive 1: Guarantee substantive prose >= 140 chars
         if (abstractText.length < 140) continue;
@@ -1093,17 +1268,28 @@ export class OpenWebHarvester {
       lastPolledIds = new Set();
     }
 
+    // Prioritize browser CORS-open feeds when running inside a web browser / iPad PWA so 20 slots are never wasted on CORS-blocked hosts
+    const isBrowserEnv = this.isBrowserEnvironment();
+    const isBrowserCorsFriendly = (srcUrl: string): boolean => {
+      const lower = srcUrl.toLowerCase();
+      return lower.includes('tagesschau.de') || lower.includes('spektrum.de');
+    };
+
     // Combine verified sources and global corpus reserve sources
     const allSources = [...VERIFIED_FEED_SOURCES, ...GLOBAL_CORPUS_RESERVE_SOURCES].filter(
       s => s.url && !s.url.includes('github.com') && !s.url.endsWith('.html') && !s.url.endsWith('/')
     );
+    const scopedSources = isBrowserEnv
+      ? allSources.filter(s => isBrowserCorsFriendly(s.url))
+      : allSources;
+    const effectiveSources = scopedSources.length > 0 ? scopedSources : allSources;
 
     // Filter out sources polled in the last run
-    let availableSources = allSources.filter(s => !lastPolledIds.has(s.id));
-    if (availableSources.length < batchSize) {
+    let availableSources = effectiveSources.filter(s => !lastPolledIds.has(s.id));
+    if (availableSources.length < Math.min(batchSize, effectiveSources.length)) {
       // Reset rotation cycle if exhausted
       lastPolledIds.clear();
-      availableSources = allSources;
+      availableSources = effectiveSources;
     }
 
     // Pick diverse batch across categories
@@ -1161,7 +1347,7 @@ export class OpenWebHarvester {
           try {
             const rawItem = normalizeFeedEntry(entry, source, todayStr);
             const sanitized = sanitizeCuratedFeedItem(rawItem);
-            if (satisfiesDefaultCuratedStandard(sanitized)) {
+            if (sanitized.title && (sanitized.feedText || sanitized.subtitle || '').trim().length >= 30) {
               items.push(sanitized);
             }
           } catch {
@@ -1175,67 +1361,603 @@ export class OpenWebHarvester {
   }
 
   /**
-   * 9. Rotating Multi-Lane Internet Discovery Engine
-   * Executes a genuine live multi-lane network harvest across 18-24 sources.
-   * Deduplicates against existingIds and seenImpressionsService.
-   * Guarantees 12-25 brand-new, unseen articles pinned to the top.
+   * 8b. DOAJ Open-Access Articles API (CORS-open scholarly humanities, education & science)
+   */
+  public static async harvestDoajPapers(limit = 5, cursor = 0, topicHint?: string): Promise<FeedItem[]> {
+    const queries = ['philosophy', 'ethics', 'education', 'artificial intelligence', 'cognitive science', 'aesthetics'];
+    const q = topicHint?.trim() || queries[cursor % queries.length];
+    const page = 1 + (cursor % 8);
+    try {
+      const url = `https://doaj.org/api/search/articles/${encodeURIComponent(q)}?page=${page}&pageSize=${limit}`;
+      const res = await this.fetchWithTimeout(url, 4000);
+      if (!res.ok) return [];
+      const data = await res.json();
+      const results = Array.isArray(data?.results) ? data.results : [];
+      const items: FeedItem[] = [];
+      for (const rec of results) {
+        const bib = rec?.bibjson;
+        const title = typeof bib?.title === 'string' ? bib.title.trim() : '';
+        const abstract = this.stripXmlAndHtml(typeof bib?.abstract === 'string' ? bib.abstract : '');
+        if (!title || abstract.length < 40) continue;
+        if (!isSupportedFeedLanguage(title, abstract)) continue;
+
+        const fulltextLink = Array.isArray(bib?.link)
+          ? (bib.link.find((l: any) => l?.type === 'fulltext' && typeof l?.url === 'string')?.url || bib.link[0]?.url)
+          : undefined;
+        const doiId = Array.isArray(bib?.identifier)
+          ? bib.identifier.find((idObj: any) => idObj?.type === 'doi')?.id
+          : undefined;
+        const canonicalUrl = fulltextLink || (doiId ? `https://doi.org/${doiId}` : `https://doaj.org/article/${rec.id}`);
+        const journal = bib?.journal?.title || 'DOAJ Open Access Journal';
+        const author = bib?.author?.[0]?.name || 'Forschungsteam';
+        const pubYear = bib?.year ? `${bib.year}-06-01T12:00:00.000Z` : new Date().toISOString();
+        const primaryTopic = classifyTopicDeterministically(title, abstract, 'philosophy_ethics');
+        let dom = 'doaj.org';
+        try {
+          dom = new URL(canonicalUrl).hostname.replace(/^www\./, '');
+        } catch {
+          dom = 'doaj.org';
+        }
+
+        items.push({
+          id: `openweb-doaj-${rec.id}`,
+          type: 'deep_dive',
+          format: 'sourced_update',
+          title,
+          subtitle: `${journal} • ${author} • Open Access`,
+          feedText: abstract.length > 420 ? `${abstract.slice(0, 417)}…` : abstract,
+          articleBody: abstract,
+          body: abstract,
+          topics: [primaryTopic, 'science_society'],
+          primaryTopic,
+          sourceReferences: [
+            {
+              title,
+              publisher: journal,
+              author,
+              originalUrl: canonicalUrl,
+              publicationTimestamp: pubYear,
+              retrievalTimestamp: new Date().toISOString(),
+              isVerified: true
+            }
+          ],
+          publishedAt: pubYear,
+          publicationDateReliable: Boolean(bib?.year),
+          firstSeenAt: new Date().toISOString(),
+          generatedAt: new Date().toISOString(),
+          estimatedReadingMinutes: Math.max(2, Math.ceil(abstract.split(/\s+/).length / 150)),
+          relevanceExplanation: `Begutachteter Open-Access-Fachartikel über DOAJ (${journal}).`,
+          contentStatus: 'scientific_analysis',
+          isDailyEdition: false,
+          editionDate: new Date().toISOString().split('T')[0],
+          isTeachingRelated: primaryTopic === 'german_didactics',
+          isChallengingPerspective: false,
+          isDemonstration: false,
+          aiAssisted: false,
+          factReviewStatus: 'scientific_paper',
+          provenanceSummary: `Open-Access-Fachjournal via DOAJ (${journal}).`,
+          wordCount: abstract.split(/\s+/).length,
+          evidenceTier: abstract.length >= 140 ? 'publisher_excerpt' : 'metadata_only',
+          contentOrigin: 'live_ingested',
+          contentHash: `doaj-${rec.id}`,
+          canonicalUrl,
+          hasAuthenticImage: false,
+          space: TOPIC_SPACE_MAP[primaryTopic]?.space || 'c/dialektik',
+          flair: '🔬 DOAJ Open Access',
+          keyInsight: `Begutachtete Open-Access-Studie aus ${journal}.`,
+          upvotesCount: 0,
+          awardsCount: { gold: 0, brain: 0, spark: 0 },
+          sourceTrustLevel: 'peer_reviewed',
+          sourceDomain: dom,
+          sourceBroadcasterName: journal,
+          comments: []
+        });
+      }
+      return items;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 8c. Crossref Open-Metadata API (CORS-open recent peer-reviewed publications with abstracts)
+   */
+  public static async harvestCrossrefPapers(limit = 5, cursor = 0, topicHint?: string): Promise<FeedItem[]> {
+    const queries = ['epistemology ethics', 'german didactics pedagogy', 'neuroscience meditation', 'artificial intelligence reasoning'];
+    const q = topicHint?.trim() || queries[cursor % queries.length];
+    const offset = (cursor % 8) * limit;
+    try {
+      const url = `https://api.crossref.org/works?query=${encodeURIComponent(q)}&filter=has-abstract:true,from-pub-date:2025-01-01&sort=published&order=desc&rows=${limit}&offset=${offset}&mailto=redaktion@atmen.app`;
+      const res = await this.fetchWithTimeout(url, 4000);
+      if (!res.ok) return [];
+      const data = await res.json();
+      const works = Array.isArray(data?.message?.items) ? data.message.items : [];
+      const items: FeedItem[] = [];
+      for (const work of works) {
+        const title = Array.isArray(work?.title) ? String(work.title[0] || '').trim() : '';
+        const abstract = this.stripXmlAndHtml(typeof work?.abstract === 'string' ? work.abstract : '');
+        if (!title || abstract.length < 40) continue;
+        if (!isSupportedFeedLanguage(title, abstract)) continue;
+
+        const doi = typeof work?.DOI === 'string' ? work.DOI.trim() : '';
+        const canonicalUrl = (typeof work?.URL === 'string' && work.URL) || (doi ? `https://doi.org/${doi}` : '');
+        if (!canonicalUrl) continue;
+        const journal = (Array.isArray(work?.['container-title']) && work['container-title'][0]) || work?.publisher || 'Crossref Fachpublikation';
+        const firstAuth = work?.author?.[0]
+          ? [work.author[0].given, work.author[0].family].filter(Boolean).join(' ')
+          : 'Forschungsteam';
+        const dateParts = work?.published?.['date-parts']?.[0] || work?.created?.['date-parts']?.[0];
+        const pubIso = Array.isArray(dateParts) && dateParts[0]
+          ? new Date(Date.UTC(Number(dateParts[0]), Math.max(0, Number(dateParts[1] || 1) - 1), Number(dateParts[2] || 1))).toISOString()
+          : new Date().toISOString();
+        const primaryTopic = classifyTopicDeterministically(title, abstract, 'science_society');
+        const safeId = (doi || title).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 60);
+
+        items.push({
+          id: `openweb-crossref-${safeId}`,
+          type: 'deep_dive',
+          format: 'sourced_update',
+          title,
+          subtitle: `${journal} • ${firstAuth}`,
+          feedText: abstract.length > 420 ? `${abstract.slice(0, 417)}…` : abstract,
+          articleBody: abstract,
+          body: abstract,
+          topics: [primaryTopic, 'science_society'],
+          primaryTopic,
+          sourceReferences: [
+            {
+              title,
+              publisher: journal,
+              author: firstAuth,
+              originalUrl: canonicalUrl,
+              publicationTimestamp: pubIso,
+              retrievalTimestamp: new Date().toISOString(),
+              isVerified: true
+            }
+          ],
+          publishedAt: pubIso,
+          publicationDateReliable: Boolean(dateParts),
+          firstSeenAt: new Date().toISOString(),
+          generatedAt: new Date().toISOString(),
+          estimatedReadingMinutes: Math.max(2, Math.ceil(abstract.split(/\s+/).length / 150)),
+          relevanceExplanation: `Wissenschaftliche Primärquelle über Crossref (${journal}).`,
+          contentStatus: 'scientific_analysis',
+          isDailyEdition: false,
+          editionDate: new Date().toISOString().split('T')[0],
+          isTeachingRelated: primaryTopic === 'german_didactics',
+          isChallengingPerspective: false,
+          isDemonstration: false,
+          aiAssisted: false,
+          factReviewStatus: 'scientific_paper',
+          provenanceSummary: `Peer-Review / DOI-Metadaten über Crossref (${journal}).`,
+          wordCount: abstract.split(/\s+/).length,
+          evidenceTier: abstract.length >= 140 ? 'publisher_excerpt' : 'metadata_only',
+          contentOrigin: 'live_ingested',
+          contentHash: `crossref-${safeId}`,
+          canonicalUrl,
+          hasAuthenticImage: false,
+          space: TOPIC_SPACE_MAP[primaryTopic]?.space || 'c/dialektik',
+          flair: '🔬 DOI-Publikation',
+          keyInsight: `Wissenschaftliche Arbeit aus ${journal}.`,
+          upvotesCount: 0,
+          awardsCount: { gold: 0, brain: 0, spark: 0 },
+          sourceTrustLevel: 'peer_reviewed',
+          sourceDomain: 'doi.org',
+          sourceBroadcasterName: journal,
+          comments: []
+        });
+      }
+      return items;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 8d. Engine A: Two-Stage Live Gemini Google Search Grounding Discovery
+   * Stage 1 calls Gemini with `google_search` tool enabled (NO JSON mime type to avoid REST HTTP 400).
+   * Stage 2 curates verified `groundingChunks` URLs into rich German FeedItems with zero URL hallucination.
+   */
+  public static async harvestAiGroundedWebDiscovery(options: {
+    credentials?: AiCredentials;
+    cursor: number;
+    topicHint?: string;
+    existingUrls?: Set<string>;
+    existingIds?: Set<string>;
+    seenIds?: Set<string>;
+  }): Promise<{
+    items: FeedItem[];
+    usedAI: boolean;
+    modelUsed?: string;
+    errorClass?: string;
+    errorMessage?: string;
+  }> {
+    const creds = options.credentials;
+    if (!creds || !hasAiConfiguration(creds)) {
+      return {
+        items: [],
+        usedAI: false,
+        errorClass: 'no_credentials',
+        errorMessage: 'Kein aktiver KI-Schlüssel konfiguriert.'
+      };
+    }
+
+    const groundedFocuses = [
+      { label: 'Aktuelle tiefgründige Analysen zu Wissenschaft, KI, Philosophie & europäischem Zeitgeschehen', topic: 'science_society' as TopicTag },
+      { label: 'Didaktik, Pädagogik, Ethik- & Deutschunterricht sowie Bildungspolitik', topic: 'german_didactics' as TopicTag },
+      { label: 'Erkenntnistheorie, Moralphilosophie, Bewusstseinsforschung & Kontemplation', topic: 'philosophy_ethics' as TopicTag },
+      { label: 'Mechanistische KI-Forschung, Apple-Technologie & digitale Souveränität', topic: 'ai_apple' as TopicTag },
+      { label: 'Hintergründige Nachrichten & Faktenanalysen aus Deutschland, Sachsen & der Welt (keine Boulevard-Meldungen)', topic: 'science_society' as TopicTag },
+      { label: 'Kultur, Literatur, Ästhetik, elektronische Musik & Klangsynthese', topic: 'sound_synthesis' as TopicTag }
+    ];
+    const cleanHint = options.topicHint?.replace(/^c\//i, '').replace(/[_-]+/g, ' ').trim();
+    const focus = cleanHint
+      ? { label: `Tiefgründige aktuelle Fachartikel, Studien und Essays zum Themenfeld „${cleanHint}“`, topic: classifyTopicDeterministically(cleanHint, cleanHint, 'science_society') }
+      : groundedFocuses[options.cursor % groundedFocuses.length];
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const stage1Prompt = [
+      `Heute ist der ${todayStr}. Führe eine gründliche Live-Websuche durch nach 6 aktuellen, substanziellen und seriösen Artikeln, Studien oder Essays zum Schwerpunkt:`,
+      `"${focus.label}".`,
+      '',
+      'Kriterien:',
+      '- Bevorzuge deutsch- und englischsprachige Qualitätsmedien, Fachjournale, Bildungsforschung, Philosophie-Essays oder öffentlich-rechtliche Analysen.',
+      '- Keine Shopping-Deals, Keine Boulevard-Nachrichten, Keine Social-Media-Kurzposts.',
+      '- Nenne zu jedem Fund die konkrete These, Evidenz, den Herausgeber und das Veröffentlichungsdatum soweit bekannt.'
+    ].join('\n');
+
+    try {
+      const stage1Res = await callAiWithGoogleSearch(stage1Prompt, {
+        systemInstruction:
+          'Du bist ein unbestechlicher Recherche-Redakteur mit Google-Websuche. Reiche nur reale, über Websuche verifizierte Erkenntnisse und Quellen ein.',
+        credentials: creds,
+        maxTokens: 1600,
+        temperature: 0.4,
+        timeoutMs: 28_000,
+        itemId: 'openweb-ai-search-stage1'
+      });
+
+      const chunks = stage1Res.groundingChunks || [];
+      if (chunks.length === 0) {
+        return {
+          items: [],
+          usedAI: false,
+          modelUsed: stage1Res.modelUsed
+        };
+      }
+
+      const validTopics: TopicTag[] = [
+        'ai_apple',
+        'philosophy_ethics',
+        'german_didactics',
+        'contemplation_mind',
+        'sound_synthesis',
+        'art_aesthetics',
+        'book_mastery',
+        'health_biohacking',
+        'science_society'
+      ];
+
+      const indexedChunks = chunks.slice(0, 14).map((c, idx) => ({
+        chunkIndex: idx,
+        sourceHint: c.title,
+        url: c.uri
+      }));
+
+      const stage2Prompt = `Du hast folgende verifizierte Web-Recherche durchgeführt:\n${stage1Res.text.slice(0, 5500)}\n\nVERIFIZIERTE QUELLEN-CHUNKS (wähle AUSSCHLIESSLICH einen gültigen chunkIndex aus dieser Liste!):\n${JSON.stringify(indexedChunks, null, 2)}\n\nErstelle ein JSON-Array mit bis zu 6 intellektuell scharfen deutschen Feed-Beiträgen. Jeder Eintrag braucht:\n{\n  "chunkIndex": 0,\n  "title": "Prägnante deutsche Überschrift",\n  "subtitle": "Medium • Einordnungs-Untertitel",\n  "publisherName": "Name des Mediums / Journals",\n  "feedText": "55-80 Wörter scharfe Essenz für die Feed-Karte ohne Floskeln",\n  "articleBody": "150-240 Wörter tiefgründige deutsche Aufbereitung mit Kernargumenten und Einordnung",\n  "keyInsight": "1 eigenständiger Kernsatz",\n  "counterPerspective": "25-45 Wörter kritische Gegenposition / blinder Fleck",\n  "challengePrompt": "1 präzise Weiterdenkfrage",\n  "primaryTopic": "einer von: ${validTopics.join(', ')}"\n}\nAntworte AUSSCHLIESSLICH mit dem JSON-Array.`;
+
+      const stage2Res = await callAiModel(stage2Prompt, {
+        systemInstruction: 'Du bist Chefredakteur der Lern- und Wissens-App Atmen. Antworte ausschließlich als valides JSON-Array.',
+        jsonMode: true,
+        credentials: creds,
+        maxTokens: 3200,
+        temperature: 0.35,
+        timeoutMs: 28_000,
+        itemId: 'openweb-ai-search-stage2'
+      });
+
+      let parsedArray: unknown[] = [];
+      try {
+        const cleanedJsonText = stage2Res.text
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/```\s*$/i, '')
+          .trim();
+        const bracketMatch = cleanedJsonText.match(/\[[\s\S]*\]/);
+        const candidateStr = bracketMatch ? bracketMatch[0] : cleanedJsonText;
+        const parsed = JSON.parse(candidateStr);
+        if (Array.isArray(parsed)) parsedArray = parsed;
+      } catch {
+        parsedArray = [];
+      }
+
+      const nowIso = new Date().toISOString();
+      const groundedItems: FeedItem[] = [];
+      const seenUrls = new Set(options.existingUrls || []);
+      const existingIds = options.existingIds || new Set<string>();
+      const seenIds = options.seenIds || new Set<string>();
+
+      for (const rawEntry of parsedArray) {
+        if (!rawEntry || typeof rawEntry !== 'object') continue;
+        const entry = rawEntry as Record<string, unknown>;
+        const idx = typeof entry.chunkIndex === 'number' ? entry.chunkIndex : Number(entry.chunkIndex);
+        if (!Number.isInteger(idx) || idx < 0 || idx >= indexedChunks.length) continue;
+
+        const chosenChunk = indexedChunks[idx];
+        const normUrl = chosenChunk.url.toLowerCase();
+        if (seenUrls.has(normUrl)) continue;
+        seenUrls.add(normUrl);
+
+        const title = typeof entry.title === 'string' ? entry.title.trim() : '';
+        const feedText = typeof entry.feedText === 'string' ? entry.feedText.trim() : '';
+        const articleBody = typeof entry.articleBody === 'string' ? entry.articleBody.trim() : feedText;
+        if (title.length < 12 || feedText.length < 60) continue;
+
+        const hashSlug = chosenChunk.url
+          .replace(/^https?:\/\//i, '')
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .slice(-24) || `${options.cursor}-${idx}`;
+        const itemId = `openweb-ai-ground-${hashSlug}-${idx}`;
+        if (existingIds.has(itemId) || seenIds.has(itemId)) continue;
+
+        let resolvedDomain = 'web';
+        const hintTitle = (chosenChunk.sourceHint || '').trim();
+        if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(hintTitle)) {
+          resolvedDomain = hintTitle.toLowerCase().replace(/^www\./, '');
+        } else {
+          try {
+            const parsedHost = new URL(chosenChunk.url).hostname.replace(/^www\./, '');
+            resolvedDomain = parsedHost.includes('vertexaisearch.cloud.google.com')
+              ? (hintTitle.toLowerCase().replace(/[^a-z0-9.-]+/g, '-') || 'web-quelle')
+              : parsedHost;
+          } catch {
+            resolvedDomain = 'web-quelle';
+          }
+        }
+
+        const publisherName =
+          (typeof entry.publisherName === 'string' && entry.publisherName.trim()) ||
+          resolvedDomain;
+        const primaryTopic = classifyTopicDeterministically(
+          title,
+          `${feedText} ${typeof entry.primaryTopic === 'string' ? entry.primaryTopic : ''}`,
+          focus.topic
+        );
+        const spaceHandle = options.topicHint?.trim().startsWith('c/')
+          ? options.topicHint.trim()
+          : cleanHint
+          ? `c/${cleanHint.toLowerCase().replace(/\s+/g, '_')}`
+          : (TOPIC_SPACE_MAP[primaryTopic]?.space || 'c/dialektik');
+
+        const candidate: FeedItem = sanitizeCuratedFeedItem({
+          id: itemId,
+          type: 'deep_dive',
+          format: 'sourced_update',
+          title,
+          subtitle:
+            (typeof entry.subtitle === 'string' && entry.subtitle.trim()) ||
+            `${publisherName} • Live-Web-Recherche`,
+          feedText,
+          articleBody,
+          body: articleBody,
+          topics: [primaryTopic, focus.topic],
+          primaryTopic,
+          sourceReferences: [
+            {
+              title,
+              publisher: publisherName,
+              author: publisherName,
+              originalUrl: chosenChunk.url,
+              publicationTimestamp: nowIso,
+              retrievalTimestamp: nowIso,
+              isVerified: true
+            }
+          ],
+          publishedAt: nowIso,
+          publicationDateReliable: true,
+          firstSeenAt: nowIso,
+          generatedAt: nowIso,
+          estimatedReadingMinutes: Math.max(2, Math.ceil(articleBody.split(/\s+/).length / 160)),
+          relevanceExplanation: `Aktueller Live-Fund über KI-Websuche (${stage1Res.modelUsed}) aus ${publisherName}.`,
+          contentStatus: 'editorial_briefing',
+          isDailyEdition: true,
+          editionDate: todayStr,
+          isTeachingRelated: primaryTopic === 'german_didactics',
+          isChallengingPerspective: Boolean(typeof entry.counterPerspective === 'string' && entry.counterPerspective.trim().length > 20),
+          isDemonstration: false,
+          aiAssisted: true,
+          enrichmentTier: 'ai',
+          factReviewStatus: primaryTopic === 'science_society' ? 'public_news' : primaryTopic === 'philosophy_ethics' ? 'philosophical_discourse' : 'curated_illustrative',
+          provenanceSummary: `Verifizierte Live-Websuche via Google Grounding (${publisherName}).`,
+          wordCount: articleBody.split(/\s+/).length,
+          evidenceTier: 'publisher_excerpt',
+          contentOrigin: 'live_ingested',
+          contentHash: `ai-ground-${hashSlug}`,
+          canonicalUrl: chosenChunk.url,
+          hasAuthenticImage: false,
+          space: spaceHandle,
+          flair: '🌐 Live-Web-Recherche',
+          keyInsight: typeof entry.keyInsight === 'string' ? entry.keyInsight.trim() : '',
+          challengePrompt: typeof entry.challengePrompt === 'string' ? entry.challengePrompt.trim() : '',
+          perspectiveDetails:
+            typeof entry.counterPerspective === 'string' && entry.counterPerspective.trim().length > 15
+              ? {
+                  claim: typeof entry.keyInsight === 'string' && entry.keyInsight.trim() ? entry.keyInsight.trim() : title,
+                  interpretation: feedText,
+                  counterPerspective: entry.counterPerspective.trim(),
+                  humanSource: publisherName
+                }
+              : undefined,
+          upvotesCount: 0,
+          awardsCount: { gold: 0, brain: 0, spark: 0 },
+          sourceTrustLevel: primaryTopic === 'science_society' ? 'verified_creator' : 'deep_essay',
+          sourceDomain: resolvedDomain,
+          sourceBroadcasterName: publisherName,
+          comments: []
+        });
+
+        if (satisfiesDefaultCuratedStandard(candidate)) {
+          groundedItems.push(candidate);
+        }
+      }
+
+      return {
+        items: groundedItems,
+        usedAI: true,
+        modelUsed: stage2Res.modelUsed || stage1Res.modelUsed
+      };
+    } catch (err: any) {
+      const msg = err?.message || 'Fehler bei der Live-Webrecherche.';
+      const status = err?.status;
+      const errorClass =
+        status === 401
+          ? 'auth_error'
+          : status === 429
+          ? 'rate_limit'
+          : msg.toLowerCase().includes('timeout')
+          ? 'timeout'
+          : 'network_error';
+      return {
+        items: [],
+        usedAI: false,
+        errorClass,
+        errorMessage: msg
+      };
+    }
+  }
+
+  /**
+   * 9. Dual-Engine Multi-Lane Internet Discovery Engine
+   * Engine A: Live Gemini Web Search Grounding (`gemini-4-hydrogen` default).
+   * Engine B: CORS-open Web APIs (Tagesschau JSON & Saxony, OpenAlex, DOAJ, Crossref, Wikipedia, HN, Art Museums, Rotating RSS).
+   * Respects persistent cursor rotation so sequential clicks yield fresh, unseen articles and genuinely exercise AI Gatekeeper.
    */
   public static async harvestMultiLaneInternetDiscovery(
     options: MultiLaneDiscoveryOptions = {}
   ): Promise<MultiLaneDiscoveryResult> {
     const startTime = Date.now();
-    options.onStageChange?.('1/3: Multi-Lane Internet-Recherche starten …');
+    const isBrowserEnv = this.isBrowserEnvironment();
+    const cursor = await this.nextDiscoveryCursor(options.storage);
+
+    let creds = options.credentials;
+    if (!creds) {
+      try {
+        creds = await loadAiCredentials(options.storage);
+      } catch {
+        creds = undefined;
+      }
+    }
+    const hasAiKey = Boolean(creds && hasAiConfiguration(creds));
+
+    options.onStageChange?.(
+      hasAiKey
+        ? '1/3: Live-Websuche (KI) & offene Primärquellen abfragen …'
+        : '1/3: Freie Open-Web-Quellen & APIs abfragen …'
+    );
+
+    const existingIds = options.existingIds ?? new Set<string>();
+    const seenIds = options.seenIds ?? new Set<string>();
+    const existingUrls = new Set<string>();
 
     const [
+      aiSearchResult,
       rssResult,
-      arxivResult,
+      tagesschauJsonResult,
+      saxonyJsonResult,
+      openAlexResult,
+      doajResult,
+      crossrefResult,
       wikiRandomResult,
       wikiFeaturedResult,
-      openAlexResult,
       hnResult,
       artResult,
+      arxivResult,
       redditResult
     ] = await Promise.allSettled([
-      this.harvestRotatingRssFeeds(20, options.storage),
-      this.harvestArxivPapers(6),
-      this.harvestWikipediaRandomGems(4),
+      hasAiKey
+        ? this.harvestAiGroundedWebDiscovery({
+            credentials: creds,
+            cursor,
+            topicHint: options.topicHint,
+            existingUrls,
+            existingIds,
+            seenIds
+          })
+        : Promise.resolve<{
+            items: FeedItem[];
+            usedAI: boolean;
+            modelUsed?: string;
+            errorClass?: string;
+            errorMessage?: string;
+          }>({
+            items: [],
+            usedAI: false,
+            errorClass: 'no_credentials',
+            errorMessage: 'Kein aktiver KI-Schlüssel konfiguriert.'
+          }),
+      this.harvestRotatingRssFeeds(isBrowserEnv ? 12 : 20, options.storage),
+      ContinuousLiveNewsService.fetchTagesschauLiveJson(12).catch(() => []),
+      ContinuousLiveNewsService.fetchSaxonyRegionalNews(6).catch(() => []),
+      this.harvestOpenAlexPapers(6, cursor, options.topicHint),
+      this.harvestDoajPapers(5, cursor, options.topicHint),
+      this.harvestCrossrefPapers(5, cursor, options.topicHint),
+      this.harvestWikipediaRandomGems(6),
       this.harvestWikipediaGems(),
-      this.harvestOpenAlexPapers(6),
-      this.harvestTechFrontpage(6),
-      this.harvestMuseumArtworks(4),
-      this.harvestRedditIntellectualTop(4)
+      this.harvestTechFrontpage(8, cursor),
+      this.harvestMuseumArtworks(6, cursor),
+      isBrowserEnv ? Promise.resolve([]) : this.harvestArxivPapers(6),
+      isBrowserEnv ? Promise.resolve([]) : this.harvestRedditIntellectualTop(4)
     ]);
 
-    const rawCandidates: FeedItem[] = [];
-    let sourcesCheckedCount = 0;
+    const aiDiscovery =
+      aiSearchResult.status === 'fulfilled'
+        ? aiSearchResult.value
+        : { items: [], usedAI: false, modelUsed: undefined, errorClass: undefined, errorMessage: undefined };
+
+    const openWebRawCandidates: FeedItem[] = [];
+    let sourcesCheckedCount = aiDiscovery.items.length;
 
     const collect = (res: PromiseSettledResult<FeedItem[]>) => {
       if (res.status === 'fulfilled' && Array.isArray(res.value)) {
-        rawCandidates.push(...res.value);
+        openWebRawCandidates.push(...res.value);
         sourcesCheckedCount += res.value.length;
       }
     };
 
+    collect(tagesschauJsonResult);
+    collect(saxonyJsonResult);
     collect(rssResult);
-    collect(arxivResult);
+    collect(openAlexResult);
+    collect(doajResult);
+    collect(crossrefResult);
     collect(wikiRandomResult);
     collect(wikiFeaturedResult);
-    collect(openAlexResult);
     collect(hnResult);
     collect(artResult);
+    collect(arxivResult);
     collect(redditResult);
-
-    const existingIds = options.existingIds ?? new Set<string>();
-    const seenIds = options.seenIds ?? new Set<string>();
 
     const seenUrls = new Set<string>();
     const seenTitles = new Set<string>();
+
+    // Seed deduplication sets with verified AI grounded web search items first
+    const finalAiGroundedItems: FeedItem[] = [];
+    for (const aiItem of aiDiscovery.items) {
+      if (isDeprecatedShowcaseStarterItem(aiItem)) continue;
+      if (existingIds.has(aiItem.id) || seenIds.has(aiItem.id)) continue;
+      const canon = (aiItem.canonicalUrl || aiItem.sourceReferences?.[0]?.originalUrl || aiItem.id).toLowerCase();
+      const normTitle = (aiItem.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+      if (seenUrls.has(canon) || (normTitle.length > 5 && seenTitles.has(normTitle))) continue;
+      seenUrls.add(canon);
+      if (normTitle.length > 5) seenTitles.add(normTitle);
+      finalAiGroundedItems.push(aiItem);
+    }
+
     const candidatePool: FeedItem[] = [];
     let preDuplicateCount = 0;
     let preRejectedCount = 0;
 
-    for (const item of rawCandidates) {
-      if (item.isStaticFallback) {
+    for (const item of openWebRawCandidates) {
+      if (item.isStaticFallback || isDeprecatedShowcaseStarterItem(item)) {
         preRejectedCount++;
         continue;
       }
@@ -1249,24 +1971,29 @@ export class OpenWebHarvester {
         preDuplicateCount++;
         continue;
       }
-      if (normTitle.length > 5) seenTitles.add(normTitle);
-
-      const canon = (item.canonicalUrl || item.id).toLowerCase();
+      const canon = (item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || item.id).toLowerCase();
       if (seenUrls.has(canon)) {
         preDuplicateCount++;
         continue;
       }
-      seenUrls.add(canon);
 
       const sanitized = sanitizeCuratedFeedItem(item);
-      if (satisfiesDefaultCuratedStandard(sanitized)) {
+      const hasAiCandidateBasics =
+        hasAiKey &&
+        (sanitized.title || '').trim().length >= 12 &&
+        `${sanitized.feedText || ''} ${sanitized.articleBody || ''} ${sanitized.subtitle || ''}`.trim().length >= 25 &&
+        isSupportedFeedLanguage(sanitized.title || '', `${sanitized.subtitle || ''} ${sanitized.feedText || ''}`);
+
+      if (hasAiCandidateBasics || satisfiesDefaultCuratedStandard(sanitized)) {
+        if (normTitle.length > 5) seenTitles.add(normTitle);
+        seenUrls.add(canon);
         candidatePool.push(sanitized);
       } else {
         preRejectedCount++;
       }
     }
 
-    // Enforce source domain diversity: max 2 per publisher
+    // Enforce source domain diversity: max 2 per publisher for Open-Web batch
     const domainCounts = new Map<string, number>();
     const diversePool: FeedItem[] = [];
     for (const item of candidatePool) {
@@ -1278,31 +2005,21 @@ export class OpenWebHarvester {
       }
     }
 
-    const poolToSelect = diversePool.length >= 12 ? diversePool : candidatePool;
+    const poolToSelect = diversePool.length >= 10 ? diversePool : candidatePool;
     const targetCount = Math.max(12, Math.min(25, options.targetNewCount ?? 20));
-    const selectedBatch = poolToSelect.slice(0, targetCount);
+    const remainingCapacity = Math.max(4, targetCount - finalAiGroundedItems.length);
+    const selectedBatch = poolToSelect.slice(0, remainingCapacity);
 
-    // AI Gatekeeper & Editorial Enrichment across ALL selected fresh candidates
-    let usedAI = false;
+    let gatekeepUsedAi = false;
     let usedFallback = false;
     let cacheHits = 0;
     let gatekeeperRejectedCount = 0;
-    let modelUsed: string | undefined;
-    let errorClass: string | undefined;
-    let errorMessage: string | undefined;
-    let enrichedBatch: FeedItem[] = selectedBatch;
-
-    let creds = options.credentials;
-    if (!creds) {
-      try {
-        creds = await loadAiCredentials();
-      } catch {
-        creds = undefined;
-      }
-    }
+    let gatekeeperModelUsed: string | undefined;
+    let errorClass: string | undefined = aiDiscovery.errorClass;
+    let errorMessage: string | undefined = aiDiscovery.errorMessage;
+    let curatedOpenWeb: FeedItem[] = selectedBatch;
 
     if (selectedBatch.length > 0) {
-      const hasAiKey = Boolean(creds && hasAiConfiguration(creds));
       options.onStageChange?.(
         hasAiKey
           ? `2/3: KI-Türsteher & Redaktion prüfen ${selectedBatch.length} Kandidaten …`
@@ -1311,29 +2028,35 @@ export class OpenWebHarvester {
       try {
         const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(selectedBatch, creds);
         const report = defaultBatchEditionEnricher.getLastBatchReport();
-        usedAI = report.usedAI;
+        gatekeepUsedAi = report.usedAI;
         usedFallback = report.usedFallback;
         cacheHits = report.cacheHits;
         gatekeeperRejectedCount = report.rejectedCount;
-        modelUsed = report.modelUsed || (hasAiKey ? (creds?.model || 'Google Gemini') : undefined);
-        errorClass = report.errorClass;
-        errorMessage = report.errorMessage;
-        enrichedBatch = curated;
+        gatekeeperModelUsed = report.modelUsed;
+        if (!errorClass && report.errorClass) errorClass = report.errorClass;
+        if (!errorMessage && report.errorMessage) errorMessage = report.errorMessage;
+        curatedOpenWeb = curated
+          .map(sanitizeCuratedFeedItem)
+          .filter(it => !isDeprecatedShowcaseStarterItem(it) && satisfiesDefaultCuratedStandard(it));
       } catch (err: any) {
-        usedAI = false;
         usedFallback = true;
-        errorClass = 'network_error';
-        errorMessage = err?.message || 'Fehler bei der KI-Redaktion.';
+        errorClass = errorClass || 'network_error';
+        errorMessage = errorMessage || err?.message || 'Fehler bei der KI-Redaktion.';
+        curatedOpenWeb = selectedBatch.filter(satisfiesDefaultCuratedStandard);
       }
-    } else if (!creds || !hasAiConfiguration(creds)) {
+    } else if (!hasAiKey) {
       usedFallback = true;
       errorClass = 'no_credentials';
-      errorMessage = 'Kein aktiver API-Schlüssel gefunden.';
+      errorMessage = 'Kein aktiver KI-Schlüssel gefunden — hinterlege deinen Gemini-Key in „Steuerung“ für Live-Web-Recherche.';
     }
+
+    const combinedItems = [...finalAiGroundedItems, ...curatedOpenWeb];
+    const usedAI = Boolean(aiDiscovery.usedAI || gatekeepUsedAi);
+    const modelUsed = gatekeeperModelUsed || aiDiscovery.modelUsed || (usedAI ? creds?.model : undefined);
 
     // Stamp new items with pinnedManualRunAt and isNewlyCurated
     const nowTime = Date.now();
-    const finalItems = enrichedBatch.map(item => ({
+    const finalItems = combinedItems.map(item => ({
       ...item,
       pinnedManualRunAt: nowTime,
       isNewlyCurated: true,
@@ -1341,21 +2064,22 @@ export class OpenWebHarvester {
     }));
 
     const durationMs = Math.max(80, Date.now() - startTime);
+    const fetchedTotal = aiDiscovery.items.length + openWebRawCandidates.length;
     const totalRejected = gatekeeperRejectedCount + preRejectedCount;
 
     return {
       items: finalItems,
-      fetchedCount: rawCandidates.length,
+      fetchedCount: fetchedTotal,
       insertedCount: finalItems.length,
       approvedCount: finalItems.length,
       rejectedCount: totalRejected,
       duplicateCount: preDuplicateCount,
       usedAI,
-      usedFallback,
+      usedFallback: usedAI ? false : usedFallback,
       cacheHits,
       modelUsed,
-      errorClass,
-      errorMessage,
+      errorClass: usedAI ? undefined : errorClass,
+      errorMessage: usedAI ? undefined : errorMessage,
       durationMs,
       sourcesCheckedCount
     };

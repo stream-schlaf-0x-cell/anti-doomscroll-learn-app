@@ -7,10 +7,12 @@ import { ZERO_WIDTH_REGEX, sanitizeImageUrl } from '../src/core/ingestion/rssPar
 import { stripBoilerplate, splitSentencesAware, isSubstantialSubtitle } from '../src/core/ingestion/normalizer';
 import {
   sanitizeCuratedFeedItem,
+  stripPublisherBoilerplate,
   stripSyntheticFillerSentences,
   isSupportedFeedLanguage,
   satisfiesDefaultCuratedStandard
 } from '../src/core/enrichment/batchEnricher';
+import { isDeprecatedShowcaseStarterItem } from '../src/core/learning/hivemindLearningService';
 
 const PUBLIC_SNAPSHOT_PATH = path.resolve(__dirname, '../public/feed-snapshot.json');
 const PIPELINE_OUTPUT_PATH = path.resolve(__dirname, '../src/core/data/pipeline-output.json');
@@ -34,18 +36,19 @@ function deepCleanZeroWidth<T>(obj: T): T {
 
 function sanitizeItem(rawItem: FeedItem): FeedItem | null {
   try {
+    if (isDeprecatedShowcaseStarterItem(rawItem)) return null;
     const item = deepCleanZeroWidth(rawItem);
     const cleanTitle = (item.title || '').replace(ZERO_WIDTH_REGEX, '').trim();
     if (!cleanTitle) return null;
 
     const rawBody = (item.articleBody || item.body || item.feedText || '').replace(ZERO_WIDTH_REGEX, '').trim();
-    const cleanBody = stripSyntheticFillerSentences(stripBoilerplate(rawBody));
+    const cleanBody = stripPublisherBoilerplate(stripSyntheticFillerSentences(stripBoilerplate(rawBody)), cleanTitle);
 
     let subtitle = (item.subtitle || '').replace(ZERO_WIDTH_REGEX, '').trim();
-    subtitle = stripSyntheticFillerSentences(stripBoilerplate(subtitle));
+    subtitle = stripPublisherBoilerplate(stripSyntheticFillerSentences(stripBoilerplate(subtitle)), cleanTitle);
 
     let feedText = (item.feedText || '').replace(ZERO_WIDTH_REGEX, '').trim();
-    feedText = stripSyntheticFillerSentences(stripBoilerplate(feedText));
+    feedText = stripPublisherBoilerplate(stripSyntheticFillerSentences(stripBoilerplate(feedText)), cleanTitle);
 
     const isVisual =
       item.format === 'art_showcase' ||
@@ -82,10 +85,10 @@ function sanitizeItem(rawItem: FeedItem): FeedItem | null {
     }));
 
     const cleanKeyInsight = item.keyInsight
-      ? stripSyntheticFillerSentences(stripBoilerplate(item.keyInsight))
+      ? stripPublisherBoilerplate(stripSyntheticFillerSentences(stripBoilerplate(item.keyInsight)), cleanTitle)
       : undefined;
     const rawCleanTransfer = item.didacticTransfer
-      ? stripSyntheticFillerSentences(stripBoilerplate(item.didacticTransfer))
+      ? stripPublisherBoilerplate(stripSyntheticFillerSentences(stripBoilerplate(item.didacticTransfer)), cleanTitle)
       : undefined;
     // Strip legacy boilerplate didacticTransfer strings so snapshots only carry genuine impulses
     const legacyTransferRegex =

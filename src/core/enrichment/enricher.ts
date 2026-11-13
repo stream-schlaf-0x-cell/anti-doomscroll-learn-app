@@ -96,7 +96,7 @@ export class MockEnricher implements IContentEnricher {
         : undefined,
       didacticSeed: item.isTeachingRelated ? 'Sokratische Fragestellung für den Unterricht.' : undefined,
       counterArgument: 'Möglicher systemischer Einwand.',
-      modelUsed: 'gemini-3.8-flash',
+      modelUsed: 'gemini-4-hydrogen',
       promptVersion: CURRENT_PROMPT_VERSION,
       inputTokens: this.inputTokens,
       outputTokens: this.outputTokens,

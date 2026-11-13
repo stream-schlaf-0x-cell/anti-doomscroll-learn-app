@@ -46,8 +46,8 @@ describe('Phase 2.5: Intelligence, Studio & Body Sharding Architecture', () => {
       assert.strictEqual(creds.provider, 'gemini');
       assert.strictEqual(creds.apiKey, '');
       assert.strictEqual(creds.model, DEFAULT_GEMINI_MODEL);
-      assert.strictEqual(DEFAULT_GEMINI_MODEL, 'gemini-3.8-flash');
-      assert.strictEqual(DEFAULT_OPENROUTER_MODEL, 'google/gemini-3.8-flash');
+      assert.strictEqual(DEFAULT_GEMINI_MODEL, 'gemini-4-hydrogen');
+      assert.strictEqual(DEFAULT_OPENROUTER_MODEL, 'google/gemini-4-hydrogen');
     });
 
     it('persists and clears credentials under @atem:ai_credentials:v1', async () => {

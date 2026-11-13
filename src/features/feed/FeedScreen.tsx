@@ -49,7 +49,7 @@ import {
 } from '../../core/enrichment/batchEnricher';
 import { seenImpressionsService, SeenImpressionRecord } from '../../core/data/seenImpressionsService';
 import { OpenWebHarvester } from '../../core/ingestion/openWebHarvester';
-import { loadAiCredentials } from '../../core/ai/atmenAiClient';
+import { loadAiCredentials, hasAiConfiguration } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
 import { SubchannelFlourishService, detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
@@ -68,6 +68,7 @@ import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/new
 import {
   HivemindLearningTrack,
   hivemindLearningService,
+  isDeprecatedShowcaseStarterItem,
   generateNextHivemindChapter
 } from '../../core/learning/hivemindLearningService';
 
@@ -655,11 +656,12 @@ export const FeedScreen: React.FC = () => {
     setIsGeneratingPocket(true);
 
     try {
+      const creds = await loadAiCredentials().catch(() => undefined);
       await OnTheFlyStreamService.generateStreamForPocket({
         space: targetSpace,
         topic: activeTopic,
         searchTerm: searchQuery.trim() || undefined,
-        includeAiSynthesis: false,
+        includeAiSynthesis: Boolean(creds && hasAiConfiguration(creds)),
         includeMemes: false,
         count: 10,
         onProgress: (p, label) => {
@@ -850,6 +852,7 @@ export const FeedScreen: React.FC = () => {
 
     for (const entry of candidateEntries) {
       if (!matchesSelectedSpace(entry.scoredItem)) continue;
+      if (isDeprecatedShowcaseStarterItem(entry.scoredItem)) continue;
       if (sortMode === 'today' && isHivemindLearningCard(entry.scoredItem)) continue;
       if (entry.strictStandardOk) {
         strictMatches.push(entry.scoredItem);
@@ -863,12 +866,10 @@ export const FeedScreen: React.FC = () => {
       strictMatches.length >= 3 || selectedFilter === 'all' ? strictMatches : fallbackMatches;
     const curatedPool = filterByQuery(baseCuratedPool);
 
-    // Hard 72-Hour Seen Quarantine (Work Package 3):
-    // Any article seen in a previous session (> 5 min before current session started) within 72h
-    // and not bookmarked/upvoted is strictly moved behind 100% of all unseen items.
+    // Permanent Seen Quarantine (Pillar 4):
+    // Any unbookmarked and non-upvoted article seen in a previous session (> 5 min before current session)
+    // stays permanently behind 100% of unseen items instead of resurrecting after 72 hours.
     const cutoffMs = sessionStartedAt.current - 5 * 60_000;
-    const seventyTwoHoursMs = 72 * 3600 * 1000;
-    const nowTime = Date.now();
 
     const unseenCandidates: ScoredFeedItem[] = [];
     const quarantinedTail: ScoredFeedItem[] = [];
@@ -878,11 +879,11 @@ export const FeedScreen: React.FC = () => {
       const isSaved = Boolean(userInt?.saved);
       const isUpvoted = Boolean(userInt?.voteScore === 1);
       const rec = seenRecordMap.get(item.id);
+      const isAlreadySeen = seenIds.has(item.id);
 
-      if (rec && !isSaved && !isUpvoted) {
-        const firstSeen = new Date(rec.firstSeenAt).getTime();
-        const ageSinceSeen = nowTime - firstSeen;
-        if (firstSeen < cutoffMs && ageSinceSeen <= seventyTwoHoursMs) {
+      if ((rec || isAlreadySeen) && !isSaved && !isUpvoted) {
+        const firstSeen = rec ? new Date(rec.firstSeenAt).getTime() : 0;
+        if (!rec || isNaN(firstSeen) || firstSeen < cutoffMs) {
           quarantinedTail.push(item);
           continue;
         }
@@ -1047,7 +1048,7 @@ export const FeedScreen: React.FC = () => {
     if (revealedNewItems.length === 0) return [];
     const currentInteractions = interactionsRef.current;
     const scored = revealedNewItems
-      .filter(item => !dismissedSet.has(item.id) && !(sortMode === 'today' && isHivemindLearningCard(item)))
+      .filter(item => !dismissedSet.has(item.id) && !isDeprecatedShowcaseStarterItem(item) && !(sortMode === 'today' && isHivemindLearningCard(item)))
       .map(item => getCachedSanitizedEntry(item))
       .filter(entry => entry.strictStandardOk && matchesSelectedSpace(entry.item))
       .map(entry => scoreFeedItem(entry.item, profile, currentInteractions));
@@ -1199,10 +1200,17 @@ export const FeedScreen: React.FC = () => {
       const seenIds = await seenImpressionsService.getSeenIds();
       const creds = await loadAiCredentials().catch(() => undefined);
 
+      const topicHint =
+        activeTopic ||
+        (selectedFilter !== 'all'
+          ? selectedFilter.replace(/^c\//i, '').replace(/[_-]+/g, ' ').trim()
+          : undefined);
+
       const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
         existingIds,
         seenIds,
         targetNewCount: 20,
+        topicHint,
         credentials: creds,
         onStageChange: (_stage: string) => setManualPipelineStageLabel(_stage)
       });
@@ -1259,7 +1267,7 @@ export const FeedScreen: React.FC = () => {
       setIsRunningManualPipeline(false);
       setManualPipelineStageLabel('');
     }
-  }, [isRunningManualPipeline, recomputeFeed]);
+  }, [isRunningManualPipeline, recomputeFeed, activeTopic, selectedFilter]);
 
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});

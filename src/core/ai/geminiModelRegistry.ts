@@ -86,12 +86,23 @@ export const GEMINI_MODEL_CATALOG: GeminiModelEntry[] = [
     contextWindow: 2097152
   },
   {
-    id: 'gemini-3.8-flash',
-    label: 'Gemini 3.8 Flash (Standard)',
+    id: 'gemini-4-hydrogen',
+    label: 'Gemini 4 Hydrogen (Standard)',
     category: 'text',
     status: 'stable',
-    description: 'Offizielles Google Produktions-Modell: Höchste Geschwindigkeit, exzellente Kuration, Studio-Linsen & Quizze.',
+    description: 'Neuestes Google Produktions-Modell: Überlegene Redaktions-Tiefe, Web-Recherche-Grounding, ~2,5× schneller mit 1M-Kontext.',
     recommended: true,
+    legacy: false,
+    supportedMethods: ['generateContent'],
+    contextWindow: 1048576
+  },
+  {
+    id: 'gemini-3.8-flash',
+    label: 'Gemini 3.8 Flash',
+    category: 'text',
+    status: 'stable',
+    description: 'Schnelles Google Produktions-Modell für Kuration, Studio-Linsen & Quizze.',
+    recommended: false,
     legacy: false,
     supportedMethods: ['generateContent'],
     contextWindow: 1048576
@@ -516,7 +527,7 @@ export const DISCONTINUED_MODEL_IDS = new Set<string>([
 export const DISCONTINUED_GEMINI_MODEL_IDS = DISCONTINUED_MODEL_IDS;
 
 export const OFFICIAL_GEMINI_MODELS = GEMINI_MODEL_CATALOG;
-export const DEFAULT_GEMINI_TEXT_MODEL = 'gemini-3.8-flash';
+export const DEFAULT_GEMINI_TEXT_MODEL = 'gemini-4-hydrogen';
 
 export function findGeminiModel(
   modelId: string,
@@ -583,7 +594,7 @@ export function validateModelChoice(
     return {
       valid: false,
       reason: `Das Modell „${modelId}“ wurde dauerhaft eingestellt (discontinued) und ist nicht mehr verfügbar.`,
-      suggestedModelId: 'gemini-3.8-flash'
+      suggestedModelId: 'gemini-4-hydrogen'
     };
   }
 
@@ -598,7 +609,7 @@ export function validateModelChoice(
     return {
       valid: false,
       reason: `„${model.label}“ ist ein ${CATEGORY_LABELS[model.category]?.label || model.category}-Modell und nicht mit dem Workflow „${CATEGORY_LABELS[workflow]?.label || workflow}“ kompatibel.`,
-      suggestedModelId: workflow === 'text' ? 'gemini-3.8-flash' : undefined
+      suggestedModelId: workflow === 'text' ? 'gemini-4-hydrogen' : undefined
     };
   }
 
@@ -795,6 +806,8 @@ const PREFERRED_PRO_MODELS = [
 ];
 
 const PREFERRED_FLASH_MODELS = [
+  'gemini-4-hydrogen',
+  'gemini-3.8-flash',
   'gemini-2.5-flash',
   'gemini-2.5-flash-lite',
   'gemini-flash-latest',

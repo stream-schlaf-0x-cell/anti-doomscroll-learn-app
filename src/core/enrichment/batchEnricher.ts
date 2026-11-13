@@ -242,7 +242,7 @@ export const PODCAST_OR_VIDEO_INTRO_REGEX =
   /^(listen to the (interview|episode|podcast)|watch the (video|recording|livestream)|\(transcript\):\s*\.\.\.|hier (den podcast|die episode|das video) anhören|den vollständigen podcast hören)/i;
 
 export const SPONSOR_BOILERPLATE_REGEX =
-  /^(sponsored by\b|this page contains .* links|when you make a purchase through|advertisement\b|anzeige\b|werbung\b|werbehinweis\b)/i;
+  /^(sponsored by\b|presented by\b|and support ainews\b|give your ai agents\b|retrieve public web pages\b|this page contains .* links|when you make a purchase through|advertisement\b|anzeige\b|werbung\b|werbehinweis\b)/i;
 
 /**
  * RSS Formatting Sanitizer (Work Package 2):
@@ -504,7 +504,14 @@ export function stripPublisherBoilerplate(raw: string, title?: string): string {
     .replace(/Originalbeitrag veröffentlicht bei [^.\n]+\.?/gi, '')
     .replace(/–––[\s\S]*?(Spende jetzt|Jetzt spenden)[\s\S]*?(–––|$)/gi, '')
     .replace(/\b\d+\s+posts?\s*-\s*\d+\s+participants?\s*Read full topic\b/gi, '')
-    .replace(/Sponsored by [^.\n]+(\.|$)/gi, '')
+    .replace(/And you can hear all this and more on today['’]s\s+[^\n.]+\.?/gi, '')
+    .replace(/(?:And\s+)?support\s+(?:AINews|the\s+newsletter|our\s+sponsors?|us)\s+by\s+giving\s+your\s+agent\b[^\n]*(\n*(?:Sponsored\s+by\b[^\n]*))?/gi, '')
+    .replace(/(?:This\s+edition\s+is\s+|Proudly\s+)?Sponsored\s+by\s+[^\n]+(?:\n+(?:Give\s+Your\s+AI\s+Agents[\s\S]*?(?:with\s+one\s+provider\.|SerpApi['’]?s?\s+Extract\s+API\.[^\n]*)|Retrieve\s+public\s+web\s+pages[^\n]*|Try\s+[A-Z]\w+[^\n]*|Use\s+code\b[^\n]*|Learn\s+more\b[^\n]*))*/gi, '')
+    .replace(/Give\s+Your\s+AI\s+Agents\s+the\s+Full\s+Page[\s\S]*?(?:with\s+one\s+provider\.|crawl\s+the\s+web[!.]*|Extract\s+API\.[^\n]*)/gi, '')
+    .replace(/Retrieve\s+public\s+web\s+pages\s+by\s+URL[\s\S]*?(?:with\s+one\s+provider\.|\.\.\.|…|$)/gi, '')
+    .replace(/Thanks\s+to\s+SerpApi\s+for\s+working\s+with[^\n]*[!.]?/gi, '')
+    .replace(/\bSerpApi\b[^.\n]*(?:read\s+and\s+crawl\s+the\s+web|web\s+scraping|sponsored|Extract\s+API)[^.\n]*[.!…]*/gi, '')
+    .replace(/Sponsored by [^.\n]+(\.|\.\.\.|…|$)/gi, '')
     .replace(/This page contains [^.\n]*links\.?/gi, '')
     .replace(/When you make a purchase through (these|the) links[^.\n]*\.\s*/gi, '')
     .replace(/What’s the difference between Amazon and Bookshop\.org\??/gi, '')

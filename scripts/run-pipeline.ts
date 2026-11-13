@@ -103,13 +103,52 @@ async function runIngestionPipeline() {
       async () => ({ provider, apiKey, model })
     );
 
-    console.log('\nApplying Fulltext Web Harvesting & Batch Edition Enrichment...');
-    const fulltextEnriched = interleavedItems.map(item => {
-      if ((item.feedText || '').trim().length < 220 || (item.body || '').trim().length < 500) {
-        return enrichStubItemWithFulltext(item);
+    console.log('\nApplying Fulltext Web Harvesting (Scrapling + HTML) & Batch Edition Enrichment...');
+    const STUB_HARVEST_CONCURRENCY = 6;
+    const MAX_SCRAPLING_HARVESTS = 28;
+    const fulltextEnriched = [...interleavedItems];
+    const shortStubIndices: number[] = [];
+    for (let i = 0; i < fulltextEnriched.length && shortStubIndices.length < MAX_SCRAPLING_HARVESTS; i++) {
+      const it = fulltextEnriched[i];
+      const url = it.canonicalUrl || it.sourceReferences?.[0]?.originalUrl;
+      if (url && /^https?:\/\//i.test(url) && ((it.feedText || '').trim().length < 220 || (it.body || '').trim().length < 500)) {
+        shortStubIndices.push(i);
       }
-      return item;
-    });
+    }
+    for (let i = 0; i < shortStubIndices.length; i += STUB_HARVEST_CONCURRENCY) {
+      const batchIndices = shortStubIndices.slice(i, i + STUB_HARVEST_CONCURRENCY);
+      await Promise.allSettled(
+        batchIndices.map(async idx => {
+          const it = fulltextEnriched[idx];
+          const url = it.canonicalUrl || it.sourceReferences?.[0]?.originalUrl;
+          let updated = enrichStubItemWithFulltext(it);
+          if (url && /^https?:\/\//i.test(url)) {
+            try {
+              const harvested = await harvestWebPageContent(url);
+              if (harvested?.fullMarkdownBody && harvested.fullMarkdownBody.trim().length > (updated.articleBody || '').trim().length) {
+                const richBody = harvested.fullMarkdownBody.trim();
+                const richLead = (harvested.essenceText || richBody.slice(0, 420)).trim();
+                updated = {
+                  ...updated,
+                  articleBody: richBody,
+                  body: richBody,
+                  feedText: updated.feedText && updated.feedText.length >= 160 ? updated.feedText : richLead,
+                  wordCount: Math.max(updated.wordCount || 0, harvested.wordCount || richBody.split(/\s+/).length),
+                  estimatedReadingMinutes: Math.max(
+                    updated.estimatedReadingMinutes || 1,
+                    harvested.estimatedReadingMinutes || Math.ceil(richBody.split(/\s+/).length / 180)
+                  ),
+                  evidenceTier: 'permitted_full_text'
+                };
+              }
+            } catch {
+              // Individual timeout falls back to deterministic fulltext stub cleanup
+            }
+          }
+          fulltextEnriched[idx] = updated;
+        })
+      );
+    }
 
     const preCurated = fulltextEnriched
       .filter(i => isSupportedFeedLanguage(i.title || '', `${i.subtitle || ''} ${i.feedText || ''} ${i.body || ''}`))
