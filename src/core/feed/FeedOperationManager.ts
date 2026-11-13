@@ -48,6 +48,8 @@ export interface FeedOperationTelemetry {
   candidateCount: number;
   approvedCount: number;
   rejectedCount: number;
+  duplicateCount?: number;
+  durationMs?: number;
   usedAI: boolean;
   usedFallback: boolean;
   cacheHits: number;
@@ -70,11 +72,17 @@ export class FeedOperationManager {
   private pinnedItemOrder: string[] = [];
   private listeners = new Set<(lastResult: FeedOperationResult) => void>();
   private activeOperation: FeedOperationResult | null = null;
+  private activeOperationsById = new Map<string, FeedOperationResult>();
 
   /**
    * Starts tracking a new feed operation.
    */
   public startOperation(type: FeedOperationType, operationId?: string): FeedOperationResult {
+    if (operationId && this.activeOperationsById.has(operationId)) {
+      const existing = this.activeOperationsById.get(operationId)!;
+      this.activeOperation = existing;
+      return existing;
+    }
     if (this.activeOperation && operationId && this.activeOperation.operationId === operationId) {
       return this.activeOperation;
     }
@@ -98,6 +106,7 @@ export class FeedOperationManager {
       cacheHits: 0,
       errors: []
     };
+    this.activeOperationsById.set(id, op);
     this.activeOperation = op;
     return op;
   }
@@ -109,9 +118,13 @@ export class FeedOperationManager {
     resultUpdates: Partial<FeedOperationResult>,
     options?: { pinNewItems?: boolean; pinUpdatedItems?: boolean }
   ): FeedOperationResult {
-    const current = this.activeOperation || this.startOperation('manual_refresh');
+    const matchedById = resultUpdates.operationId
+      ? this.activeOperationsById.get(resultUpdates.operationId)
+      : undefined;
+    const current = matchedById || this.activeOperation || this.startOperation(resultUpdates.operationType || 'manual_refresh', resultUpdates.operationId);
     const now = Date.now();
     const startTime = new Date(current.startedAt).getTime() || now;
+    const measuredDurationMs = Math.max(0, now - startTime);
     const completedAt = new Date(now).toISOString();
 
     const determinedStatus: FeedOperationStatus =
@@ -125,9 +138,10 @@ export class FeedOperationManager {
     const finalized: FeedOperationResult = {
       ...current,
       ...resultUpdates,
+      operationId: current.operationId,
       status: determinedStatus,
       completedAt,
-      durationMs: now - startTime
+      durationMs: Math.max(measuredDurationMs, resultUpdates.durationMs ?? 0)
     };
 
     // Only genuinely new items receive automatic top-pinning (capped at 4 items)
@@ -158,7 +172,10 @@ export class FeedOperationManager {
     if (this.operationHistory.length > 50) {
       this.operationHistory.pop();
     }
-    this.activeOperation = null;
+    this.activeOperationsById.delete(finalized.operationId);
+    if (this.activeOperation?.operationId === finalized.operationId) {
+      this.activeOperation = null;
+    }
 
     this.notifyListeners(finalized);
     return finalized;

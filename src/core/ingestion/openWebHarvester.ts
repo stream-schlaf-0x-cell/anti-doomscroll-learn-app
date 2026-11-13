@@ -27,9 +27,15 @@ export interface MultiLaneDiscoveryResult {
   items: FeedItem[];
   fetchedCount: number;
   insertedCount: number;
+  approvedCount: number;
+  rejectedCount: number;
   duplicateCount: number;
   usedAI: boolean;
+  usedFallback: boolean;
+  cacheHits: number;
   modelUsed?: string;
+  errorClass?: string;
+  errorMessage?: string;
   durationMs: number;
   sourcesCheckedCount: number;
 }
@@ -1225,23 +1231,38 @@ export class OpenWebHarvester {
     const seenUrls = new Set<string>();
     const seenTitles = new Set<string>();
     const candidatePool: FeedItem[] = [];
+    let preDuplicateCount = 0;
+    let preRejectedCount = 0;
 
     for (const item of rawCandidates) {
-      if (item.isStaticFallback) continue;
-      if (existingIds.has(item.id)) continue;
-      if (seenIds.has(item.id)) continue;
+      if (item.isStaticFallback) {
+        preRejectedCount++;
+        continue;
+      }
+      if (existingIds.has(item.id) || seenIds.has(item.id)) {
+        preDuplicateCount++;
+        continue;
+      }
 
       const normTitle = (item.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-      if (normTitle.length > 5 && seenTitles.has(normTitle)) continue;
+      if (normTitle.length > 5 && seenTitles.has(normTitle)) {
+        preDuplicateCount++;
+        continue;
+      }
       if (normTitle.length > 5) seenTitles.add(normTitle);
 
       const canon = (item.canonicalUrl || item.id).toLowerCase();
-      if (seenUrls.has(canon)) continue;
+      if (seenUrls.has(canon)) {
+        preDuplicateCount++;
+        continue;
+      }
       seenUrls.add(canon);
 
       const sanitized = sanitizeCuratedFeedItem(item);
       if (satisfiesDefaultCuratedStandard(sanitized)) {
         candidatePool.push(sanitized);
+      } else {
+        preRejectedCount++;
       }
     }
 
@@ -1258,13 +1279,18 @@ export class OpenWebHarvester {
     }
 
     const poolToSelect = diversePool.length >= 12 ? diversePool : candidatePool;
-    const targetCount = Math.max(12, Math.min(25, options.targetNewCount ?? 18));
+    const targetCount = Math.max(12, Math.min(25, options.targetNewCount ?? 20));
     const selectedBatch = poolToSelect.slice(0, targetCount);
 
-    // AI Enrichment if credentials are configured
+    // AI Gatekeeper & Editorial Enrichment across ALL selected fresh candidates
     let usedAI = false;
+    let usedFallback = false;
+    let cacheHits = 0;
+    let gatekeeperRejectedCount = 0;
     let modelUsed: string | undefined;
-    let enrichedBatch = selectedBatch;
+    let errorClass: string | undefined;
+    let errorMessage: string | undefined;
+    let enrichedBatch: FeedItem[] = selectedBatch;
 
     let creds = options.credentials;
     if (!creds) {
@@ -1275,19 +1301,34 @@ export class OpenWebHarvester {
       }
     }
 
-    if (creds && hasAiConfiguration(creds) && selectedBatch.length > 0) {
-      options.onStageChange?.('2/3: KI-Veredelung & Relevanzprüfung …');
+    if (selectedBatch.length > 0) {
+      const hasAiKey = Boolean(creds && hasAiConfiguration(creds));
+      options.onStageChange?.(
+        hasAiKey
+          ? `2/3: KI-Türsteher & Redaktion prüfen ${selectedBatch.length} Kandidaten …`
+          : '2/3: Lokale Qualitätsprüfung & Einordnung …'
+      );
       try {
-        const enriched = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(selectedBatch.slice(0, 8), creds);
+        const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(selectedBatch, creds);
         const report = defaultBatchEditionEnricher.getLastBatchReport();
-        if (report.usedAI) {
-          usedAI = true;
-          modelUsed = creds.model || 'Google Gemini';
-          enrichedBatch = [...enriched, ...selectedBatch.slice(8)];
-        }
-      } catch (err) {
-        console.warn('AI enrichment in multi-lane harvester failed:', err);
+        usedAI = report.usedAI;
+        usedFallback = report.usedFallback;
+        cacheHits = report.cacheHits;
+        gatekeeperRejectedCount = report.rejectedCount;
+        modelUsed = report.modelUsed || (hasAiKey ? (creds?.model || 'Google Gemini') : undefined);
+        errorClass = report.errorClass;
+        errorMessage = report.errorMessage;
+        enrichedBatch = curated;
+      } catch (err: any) {
+        usedAI = false;
+        usedFallback = true;
+        errorClass = 'network_error';
+        errorMessage = err?.message || 'Fehler bei der KI-Redaktion.';
       }
+    } else if (!creds || !hasAiConfiguration(creds)) {
+      usedFallback = true;
+      errorClass = 'no_credentials';
+      errorMessage = 'Kein aktiver API-Schlüssel gefunden.';
     }
 
     // Stamp new items with pinnedManualRunAt and isNewlyCurated
@@ -1300,14 +1341,21 @@ export class OpenWebHarvester {
     }));
 
     const durationMs = Math.max(80, Date.now() - startTime);
+    const totalRejected = gatekeeperRejectedCount + preRejectedCount;
 
     return {
       items: finalItems,
       fetchedCount: rawCandidates.length,
       insertedCount: finalItems.length,
-      duplicateCount: Math.max(0, rawCandidates.length - finalItems.length),
+      approvedCount: finalItems.length,
+      rejectedCount: totalRejected,
+      duplicateCount: preDuplicateCount,
       usedAI,
+      usedFallback,
+      cacheHits,
       modelUsed,
+      errorClass,
+      errorMessage,
       durationMs,
       sourcesCheckedCount
     };

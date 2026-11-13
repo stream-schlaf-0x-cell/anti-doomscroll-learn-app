@@ -35,9 +35,8 @@ export interface HivemindStreamModalProps {
 type CreatorSourceMode = 'topic_book' | 'pdf_file' | 'url_wiki';
 
 const QUICK_SUGGESTIONS = [
-  { label: 'Römisches Reich', value: 'Aufstieg & Fall Roms (Marius bis Augustus)' },
-  { label: 'Quantenphysik', value: 'Quantenphysik & Realität' },
   { label: 'Kants Erkenntnistheorie', value: 'Kants Kritik der reinen Vernunft' },
+  { label: 'Platon: Höhlengleichnis', value: 'Platons Höhlengleichnis & Ideenlehre' },
   { label: 'Hartmann von Aue: Erec', value: 'Hartmann von Aue: Erec (Mittelhochdeutsche Epik)' },
   { label: 'Ableton & Klangsynthese', value: 'Modulare Klangsynthese & Frequenz-Architektur' }
 ];
@@ -340,7 +339,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
               <>
                 <TextInput
                   style={[styles.input, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle }]}
-                  placeholder="z. B. Römisches Reich, Quantenphysik, Faust, Ableton Mixing…"
+                  placeholder="z. B. Kants Erkenntnistheorie, Faust, Ableton Mixing, Sokrates…"
                   placeholderTextColor={colors.textMuted}
                   value={titleInput}
                   onChangeText={setTitleInput}

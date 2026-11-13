@@ -25,7 +25,7 @@ import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
 import { DesktopSidebar } from '../../ui/components/DesktopSidebar';
 import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
-import { ScoredFeedItem, scoreFeedItem, sortFeedForDisplay, FeedSortMode } from '../../core/domain/ranking';
+import { ScoredFeedItem, scoreFeedItem, sortFeedForDisplay, FeedSortMode, isHivemindLearningCard } from '../../core/domain/ranking';
 import {
   Subchannel,
   defaultSpaceRepository,
@@ -58,7 +58,6 @@ import { FeedOperationResult, defaultFeedOperationManager } from '../../core/fee
 import { holdFeedPresentation, prependRevealedItems, applyScrollFreeze } from '../../core/feed/feedPresentation';
 import { NewsEvolutionModal } from '../../ui/components/NewsEvolutionModal';
 import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
-import { NewsroomPipelineModal } from '../../ui/components/NewsroomPipelineModal';
 import {
   HivemindLearningTrack,
   hivemindLearningService,
@@ -172,14 +171,22 @@ export const FeedScreen: React.FC = () => {
   }, [feedScrollToTopSignal, scrollToFeedTop]);
 
   // Viewport Top-Lock & Background Arrivals (WP 1, WP 3 & WP 5)
-  const appMountedAtRef = React.useRef<number>(Date.now());
+  const hydratedAtRef = React.useRef<number | null>(isHydrated ? Date.now() : null);
+  React.useEffect(() => {
+    if (isHydrated && hydratedAtRef.current === null) {
+      hydratedAtRef.current = Date.now();
+    }
+  }, [isHydrated]);
   const sessionStartedAt = React.useRef<number>(Date.now());
   const surfacedArrivalIdsRef = React.useRef<Set<string>>(new Set());
   const lockedTopItemIdsRef = React.useRef<string[] | null>(null);
   const hasCommittedInitialViewportRef = React.useRef<boolean>(false);
   const previousScopeRef = React.useRef<string>('');
+  const lastScopeForFreezeRef = React.useRef<string>('');
+  const revealScrollGraceUntilRef = React.useRef<number>(0);
+  const frozenRenderedFreshRef = React.useRef<ScoredFeedItem[]>([]);
+  const newArrivalsQueueRef = React.useRef<ScoredFeedItem[]>([]);
   const [pendingStreamArrivals, setPendingStreamArrivals] = useState<ScoredFeedItem[]>([]);
-  const [showPipelineModal, setShowPipelineModal] = useState<boolean>(false);
 
   // Restore today's surfaced arrival IDs so duplicate background items never re-trigger the pill repeatedly
   React.useEffect(() => {
@@ -197,47 +204,24 @@ export const FeedScreen: React.FC = () => {
     });
   }, []);
 
+  const [pendingNewItemIds, setPendingNewItemIds] = useState<string[]>([]);
+  const [revealedNewItems, setRevealedNewItems] = useState<FeedItem[]>([]);
+
   const handleSortChange = useCallback((mode: FeedSortMode) => {
     defaultFeedOperationManager.clearAutomaticPins();
     setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
     lockedTopItemIdsRef.current = null;
     hasCommittedInitialViewportRef.current = false;
+    newArrivalsQueueRef.current = [];
+    frozenRenderedFreshRef.current = [];
+    revealScrollGraceUntilRef.current = Date.now() + 800;
     setPendingStreamArrivals([]);
+    setPendingNewItemIds([]);
     setVisibleInfiniteCount(12);
     setSortMode(mode);
     setActiveCardIndex(0);
     scrollToFeedTop(true);
   }, [scrollToFeedTop]);
-
-  const handleRevealPendingArrivals = useCallback(() => {
-    if (pendingStreamArrivals.length === 0) return;
-    const now = Date.now();
-    const stampedArrivals = pendingStreamArrivals.map(item => ({
-      ...item,
-      pinnedManualRunAt: now,
-      isNewlyArrived: true
-    }));
-
-    if ((feedRepository as any).addItems) {
-      (feedRepository as any).addItems(stampedArrivals);
-    }
-
-    // Immediately reset lockedTopItemIdsRef and prepend new arrival IDs
-    const newArrivalIds = stampedArrivals.map(i => i.id);
-    lockedTopItemIdsRef.current = newArrivalIds;
-    hasCommittedInitialViewportRef.current = true;
-
-    for (const item of stampedArrivals) {
-      defaultFeedOperationManager.pinItem(item.id);
-    }
-    setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
-    setPendingStreamArrivals([]);
-
-    scrollToFeedTop(true);
-  }, [pendingStreamArrivals, scrollToFeedTop]);
-
-  const [pendingNewItemIds, setPendingNewItemIds] = useState<string[]>([]);
-  const [revealedNewItems, setRevealedNewItems] = useState<FeedItem[]>([]);
   const [curatedSelection, setCuratedSelection] = useState<{
     items: FeedItem[];
     timestamp: string;
@@ -472,13 +456,26 @@ export const FeedScreen: React.FC = () => {
     return item.primaryTopic === topicFilter || item.topics.includes(topicFilter);
   }, [selectedFilter, selectedSpaceContext, activeTopic, subchannels]);
 
-  // Context-accurate pending changes: only count inserted items matching current space and search query
+  // Context-accurate pending changes: only count genuine post-boot inserted items matching current space and search query
   React.useEffect(() => defaultFeedOperationManager.subscribe(result => {
-    setLastOperationResult(result);
+    if (result.operationType !== 'background_sync') {
+      setLastOperationResult(result);
+    }
     setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
-    if (scrollYRef.current > 180 && result.insertedIds && result.insertedIds.length > 0) {
+
+    const isPostBoot =
+      hydratedAtRef.current !== null && Date.now() >= hydratedAtRef.current + 3500;
+    const isManualResearchOp = result.operationType === 'manual_refresh';
+    const isIncrementalBackground =
+      result.operationType === 'background_sync' &&
+      isPostBoot &&
+      result.insertedCount > 0 &&
+      result.insertedCount <= 80;
+
+    if ((isManualResearchOp || isIncrementalBackground) && result.insertedIds && result.insertedIds.length > 0) {
       const allAvailable = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
       const matchingIds = result.insertedIds.filter(id => {
+        if (surfacedArrivalIdsRef.current.has(id)) return false;
         const item = allAvailable.find(i => i.id === id);
         if (!item) return false;
         if (!matchesSelectedSpace(item)) return false;
@@ -495,23 +492,58 @@ export const FeedScreen: React.FC = () => {
     }
   }), [matchesSelectedSpace, searchQuery]);
 
-  React.useEffect(() => {
-    if (!isScrolledDown) setPendingNewItemIds([]);
-  }, [isScrolledDown]);
-
-  const handleRevealPendingItems = useCallback(() => {
-    if (pendingNewItemIds.length > 0) {
-      const allAvailable = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
-      const toReveal = allAvailable.filter(item => pendingNewItemIds.includes(item.id));
-      if (toReveal.length > 0) {
-        setRevealedNewItems(prev => prependRevealedItems(prev, toReveal));
+  const handleRevealPendingArrivals = useCallback(() => {
+    const allAvailable = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+    const byId = new Map<string, FeedItem>();
+    for (const item of pendingStreamArrivals) {
+      byId.set(item.id, item);
+    }
+    for (const id of pendingNewItemIds) {
+      if (!byId.has(id)) {
+        const match = allAvailable.find(i => i.id === id);
+        if (match) byId.set(id, match);
       }
     }
+    const itemsToReveal = Array.from(byId.values());
+    const newArrivalIds = itemsToReveal.map(i => i.id);
+
+    // Immediately clear all queues, freeze buffers, and banner state before scrolling
+    revealScrollGraceUntilRef.current = Date.now() + 1400;
+    newArrivalsQueueRef.current = [];
+    frozenRenderedFreshRef.current = [];
+    setPendingStreamArrivals([]);
     setPendingNewItemIds([]);
+    setRevealedNewItems([]);
     isScrolledDownRef.current = false;
     setIsScrolledDown(false);
-    scrollToFeedTop(false);
-  }, [pendingNewItemIds, scrollToFeedTop]);
+    scrollYRef.current = 0;
+
+    if (newArrivalIds.length > 0) {
+      for (const id of newArrivalIds) {
+        surfacedArrivalIdsRef.current.add(id);
+        defaultFeedOperationManager.pinItem(id);
+      }
+      void appStorage.setItem(
+        '@atem:surfaced_arrival_ids:v1',
+        JSON.stringify(Array.from(surfacedArrivalIdsRef.current).slice(-200))
+      );
+
+      const previousLocked = lockedTopItemIdsRef.current || [];
+      lockedTopItemIdsRef.current = Array.from(new Set([...newArrivalIds, ...previousLocked]));
+      hasCommittedInitialViewportRef.current = true;
+      setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
+      void recomputeFeed();
+    }
+
+    scrollToFeedTop(true);
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      try {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch {
+        window.scrollTo(0, 0);
+      }
+    }
+  }, [pendingStreamArrivals, pendingNewItemIds, recomputeFeed, scrollToFeedTop]);
 
   const loadSubchannels = useCallback(async () => {
     await defaultSpaceRepository.notify();
@@ -521,7 +553,11 @@ export const FeedScreen: React.FC = () => {
     setRefreshing(true);
     lockedTopItemIdsRef.current = null;
     hasCommittedInitialViewportRef.current = false;
+    newArrivalsQueueRef.current = [];
+    frozenRenderedFreshRef.current = [];
+    revealScrollGraceUntilRef.current = Date.now() + 1000;
     setPendingStreamArrivals([]);
+    setPendingNewItemIds([]);
     await refreshLiveFeed();
     await loadSubchannels();
     const [updatedSeen, updatedRecords] = await Promise.all([
@@ -747,6 +783,7 @@ export const FeedScreen: React.FC = () => {
 
     for (const entry of candidateEntries) {
       if (!matchesSelectedSpace(entry.scoredItem)) continue;
+      if (sortMode === 'today' && isHivemindLearningCard(entry.scoredItem)) continue;
       if (entry.strictStandardOk) {
         strictMatches.push(entry.scoredItem);
       }
@@ -864,10 +901,12 @@ export const FeedScreen: React.FC = () => {
     const lockedSet = new Set(lockedIds);
     const itemMap = new Map(infiniteInterleavedBase.map(i => [i.id, i]));
 
-    // Identify new items arriving in the top 12 of infiniteInterleavedBase that were not in lockedSet
+    // Identify new items arriving in the top 12 of infiniteInterleavedBase after initial boot has settled
     const incomingTop12New = infiniteInterleavedBase.slice(0, 12).filter(i => !lockedSet.has(i.id));
     let validIncoming: ScoredFeedItem[] = [];
-    if (incomingTop12New.length > 0 && Date.now() >= appMountedAtRef.current) {
+    const bootSettled =
+      hydratedAtRef.current !== null && Date.now() >= hydratedAtRef.current + 3500;
+    if (incomingTop12New.length > 0 && bootSettled && Date.now() >= revealScrollGraceUntilRef.current) {
       const existingTitlesNormalized = new Set(
         infiniteInterleavedBase
           .filter(i => lockedSet.has(i.id))
@@ -900,7 +939,10 @@ export const FeedScreen: React.FC = () => {
 
   React.useEffect(() => {
     if (lockedInfiniteResult.resetArrivals) {
+      newArrivalsQueueRef.current = [];
+      frozenRenderedFreshRef.current = [];
       setPendingStreamArrivals([]);
+      setPendingNewItemIds([]);
     }
     const validIncoming = lockedInfiniteResult.validIncoming;
     if (validIncoming.length > 0) {
@@ -938,31 +980,37 @@ export const FeedScreen: React.FC = () => {
     if (revealedNewItems.length === 0) return [];
     const currentInteractions = interactionsRef.current;
     const scored = revealedNewItems
-      .filter(item => !dismissedSet.has(item.id))
+      .filter(item => !dismissedSet.has(item.id) && !(sortMode === 'today' && isHivemindLearningCard(item)))
       .map(item => getCachedSanitizedEntry(item))
       .filter(entry => entry.strictStandardOk && matchesSelectedSpace(entry.item))
       .map(entry => scoreFeedItem(entry.item, profile, currentInteractions));
     return filterByQuery(scored);
-  }, [revealedNewItems, dismissedSet, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery, profile]);
-
-  const frozenRenderedFreshRef = React.useRef<ScoredFeedItem[]>([]);
-  const newArrivalsQueueRef = React.useRef<ScoredFeedItem[]>([]);
+  }, [revealedNewItems, dismissedSet, sortMode, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery, profile]);
 
   const renderedInfiniteFreshItems = useMemo(() => {
+    if (lastScopeForFreezeRef.current !== presentationScope) {
+      frozenRenderedFreshRef.current = [];
+      newArrivalsQueueRef.current = [];
+      lastScopeForFreezeRef.current = presentationScope;
+    }
+
     const freshBatch = lockedInfiniteBase.slice(0, Math.min(visibleInfiniteCount, lockedInfiniteBase.length));
+    const bootSettled =
+      hydratedAtRef.current !== null && Date.now() >= hydratedAtRef.current + 3500;
+    const effectiveScrollOffset =
+      bootSettled && Date.now() >= revealScrollGraceUntilRef.current ? scrollOffsetYRef.current : 0;
+
     const frozen = applyScrollFreeze(
       frozenRenderedFreshRef.current,
       freshBatch,
-      scrollOffsetYRef.current,
+      effectiveScrollOffset,
       pendingStreamArrivals,
       80
     );
-    if (frozen.queuedArrivals.length > pendingStreamArrivals.length) {
-      newArrivalsQueueRef.current = frozen.queuedArrivals;
-    }
+    newArrivalsQueueRef.current = effectiveScrollOffset > 80 ? frozen.queuedArrivals : [];
     frozenRenderedFreshRef.current = frozen.items;
     return frozen.items;
-  }, [lockedInfiniteBase, visibleInfiniteCount, pendingStreamArrivals]);
+  }, [lockedInfiniteBase, visibleInfiniteCount, pendingStreamArrivals, presentationScope]);
 
   React.useEffect(() => {
     if (newArrivalsQueueRef.current.length > pendingStreamArrivals.length) {
@@ -1074,6 +1122,7 @@ export const FeedScreen: React.FC = () => {
     if (isRunningManualPipeline) return;
     setIsRunningManualPipeline(true);
     setManualPipelineStageLabel('Multi-Lane Internet-Recherche…');
+    const startedAt = Date.now();
     const initialOp = defaultFeedOperationManager.startOperation('manual_refresh');
     const operationId = initialOp.operationId;
     try {
@@ -1091,39 +1140,48 @@ export const FeedScreen: React.FC = () => {
         onStageChange: (_stage: string) => setManualPipelineStageLabel(_stage)
       });
 
-      if (discoveryResult.items.length > 0) {
-        if (feedRepository.executeContentOperation) {
-          const opResult = await feedRepository.executeContentOperation('manual_refresh', discoveryResult.items, {
-            pinInserted: true,
-            pinUpdated: false,
-            operationId,
-            telemetry: {
-              candidateCount: discoveryResult.fetchedCount,
-              approvedCount: discoveryResult.insertedCount,
-              rejectedCount: discoveryResult.duplicateCount,
-              usedAI: discoveryResult.usedAI,
-              usedFallback: false,
-              cacheHits: 0,
-              modelUsed: discoveryResult.modelUsed
-            }
-          });
-          setLastOperationResult(opResult);
-        } else {
-          feedRepository.addItems(discoveryResult.items);
-        }
+      const elapsedMs = Math.max(discoveryResult.durationMs || 0, Date.now() - startedAt, 100);
+      const telemetry = {
+        candidateCount: discoveryResult.fetchedCount,
+        approvedCount: discoveryResult.approvedCount,
+        rejectedCount: discoveryResult.rejectedCount,
+        duplicateCount: discoveryResult.duplicateCount,
+        usedAI: discoveryResult.usedAI,
+        usedFallback: discoveryResult.usedFallback,
+        cacheHits: discoveryResult.cacheHits,
+        errorClass: discoveryResult.errorClass,
+        errorMessage: discoveryResult.errorMessage,
+        modelUsed: discoveryResult.modelUsed,
+        durationMs: elapsedMs
+      };
 
-        lockedTopItemIdsRef.current = discoveryResult.items.map((i: FeedItem) => i.id);
-        for (const item of discoveryResult.items) {
-          defaultFeedOperationManager.pinItem(item.id);
-        }
-        setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
-        setPendingStreamArrivals([]);
-        await recomputeFeed();
-        scrollToFeedTop(true);
+      if (feedRepository.executeContentOperation) {
+        const opResult = await feedRepository.executeContentOperation('manual_refresh', discoveryResult.items, {
+          pinInserted: true,
+          pinUpdated: false,
+          operationId,
+          telemetry
+        });
+        setLastOperationResult(opResult);
+      } else if (discoveryResult.items.length > 0) {
+        feedRepository.addItems?.(discoveryResult.items, {
+          operationType: 'manual_refresh',
+          pinInserted: true,
+          telemetry
+        });
       }
 
-      const modeText = discoveryResult.usedAI ? `KI (${discoveryResult.modelUsed || 'Gemini'})` : 'Lokal';
-      setSimToast(`${discoveryResult.insertedCount} neu hinzugefügt · Modus: ${modeText}`);
+      if (discoveryResult.items.length > 0) {
+        setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
+        await recomputeFeed();
+      }
+
+      const modeText = discoveryResult.usedAI
+        ? `KI (${discoveryResult.modelUsed || 'Gemini'})`
+        : discoveryResult.usedFallback
+          ? 'Lokal (Fallback)'
+          : 'Lokal';
+      setSimToast(`${discoveryResult.insertedCount} neu · ${discoveryResult.rejectedCount} aussortiert · ${modeText}`);
       setTimeout(() => setSimToast(null), 4500);
     } catch (e: any) {
       console.warn('Manual research pipeline failed:', e);
@@ -1134,7 +1192,7 @@ export const FeedScreen: React.FC = () => {
       setIsRunningManualPipeline(false);
       setManualPipelineStageLabel('');
     }
-  }, [isRunningManualPipeline, recomputeFeed, scrollToFeedTop]);
+  }, [isRunningManualPipeline, recomputeFeed]);
 
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
@@ -1334,17 +1392,24 @@ export const FeedScreen: React.FC = () => {
           operationId,
           telemetry: {
             candidateCount: discoveryResult.fetchedCount,
-            approvedCount: discoveryResult.insertedCount,
-            rejectedCount: discoveryResult.duplicateCount,
+            approvedCount: discoveryResult.approvedCount,
+            rejectedCount: discoveryResult.rejectedCount,
+            duplicateCount: discoveryResult.duplicateCount,
             usedAI: discoveryResult.usedAI,
-            usedFallback: false,
-            cacheHits: 0,
-            modelUsed: discoveryResult.modelUsed
+            usedFallback: discoveryResult.usedFallback,
+            cacheHits: discoveryResult.cacheHits,
+            errorClass: discoveryResult.errorClass,
+            errorMessage: discoveryResult.errorMessage,
+            modelUsed: discoveryResult.modelUsed,
+            durationMs: discoveryResult.durationMs
           }
         });
         setLastOperationResult(opResult);
       } else {
-        feedRepository.addItems(itemsToPresent);
+        feedRepository.addItems?.(itemsToPresent, {
+          operationType: 'ai_curation',
+          pinInserted: true
+        });
       }
 
       if (itemsToPresent.length > 0) {
@@ -1876,10 +1941,10 @@ export const FeedScreen: React.FC = () => {
           isRunning={isCuratingLiveAi}
           currentStage={curationStage}
           lastResult={lastOperationResult}
-          pendingChangeCount={pendingNewItemIds.length}
+          pendingChangeCount={new Set([...pendingNewItemIds, ...pendingStreamArrivals.map(i => i.id)]).size}
           isScrolledDown={isScrolledDown}
           onOpenReport={() => setShowReportModal(true)}
-          onScrollToTop={handleRevealPendingItems}
+          onScrollToTop={handleRevealPendingArrivals}
           colors={colors}
           isDark={isDark}
         />
@@ -2198,73 +2263,8 @@ export const FeedScreen: React.FC = () => {
                           : 'Recherche jetzt starten'}
                       </Text>
                     </TouchableOpacity>
-
-                    <TouchableOpacity
-                      activeOpacity={0.75}
-                      onPress={() => setShowHivemindModal(true)}
-                      style={[
-                        styles.sortTab,
-                        {
-                          borderColor: '#8B5CF6',
-                          backgroundColor: isDark ? 'rgba(139, 92, 246, 0.16)' : '#F5F3FF',
-                          paddingVertical: 6,
-                          paddingHorizontal: 10,
-                          marginLeft: 6
-                        }
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Lernen (Hivemind) öffnen"
-                    >
-                      <Text style={{ fontSize: 12, marginRight: 4 }}>🧠</Text>
-                      <Text style={[styles.sortTabText, { color: '#8B5CF6', fontSize: 11.5, fontWeight: '700' }]}>
-                        Lernen (Hivemind)
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      activeOpacity={0.7}
-                      onPress={() => setShowPipelineModal(true)}
-                      style={[
-                        styles.sortTab,
-                        {
-                          borderColor: colors.borderSubtle,
-                          backgroundColor: colors.surfaceSecondary,
-                          paddingVertical: 6,
-                          paddingHorizontal: 8,
-                          marginLeft: 6
-                        }
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Pipeline-Einblick"
-                    >
-                      <Text style={{ fontSize: 12, marginRight: 3 }}>ℹ️</Text>
-                      <Text style={[styles.sortTabText, { color: colors.textSecondary, fontSize: 11.5 }]}>
-                        Pipeline-Einblick
-                      </Text>
-                    </TouchableOpacity>
                   </View>
                 </View>
-
-                {/* Smart "New Items" Pill: positioned cleanly above the first card, never overlapping navigation pills */}
-                {pendingStreamArrivals.length > 0 && (
-                  <View style={styles.inlineArrivalsContainer}>
-                    <TouchableOpacity
-                      activeOpacity={0.88}
-                      onPress={handleRevealPendingArrivals}
-                      style={[
-                        styles.inlineArrivalsPill,
-                        { backgroundColor: colors.accent, shadowColor: colors.accent }
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${pendingStreamArrivals.length} neue Beiträge aus der Redaktion anzeigen`}
-                    >
-                      <Ionicons name="arrow-up" size={15} color="#0E1424" style={{ marginRight: 6 }} />
-                      <Text style={[styles.floatingArrivalsText, { color: '#0E1424' }]}>
-                        ↑ {pendingStreamArrivals.length} {pendingStreamArrivals.length === 1 ? 'neuer Beitrag' : 'neue Beiträge'} aus der Redaktion anzeigen
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
 
                 {/* Visible Curated Selection Header */}
                 {curatedSelection && (
@@ -3014,15 +3014,6 @@ export const FeedScreen: React.FC = () => {
         />
       )}
 
-      {/* 5-Stage Virtual Newsroom Pipeline Inspector Modal */}
-      {showPipelineModal && (
-        <NewsroomPipelineModal
-          visible={true}
-          onClose={() => setShowPipelineModal(false)}
-          onSelectArticle={openArticle}
-        />
-      )}
-
       {/* Channel Edit & Typo-Correction Modal */}
       {editingChannel && (
         <Modal
@@ -3129,47 +3120,6 @@ export const FeedScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1
-  },
-  inlineArrivalsContainer: {
-    width: '100%',
-    alignItems: 'center',
-    marginVertical: 12
-  },
-  inlineArrivalsPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 4
-  },
-  floatingArrivalsContainer: {
-    position: 'absolute',
-    top: 54,
-    left: 0,
-    right: 0,
-    zIndex: 999,
-    alignItems: 'center',
-    pointerEvents: 'box-none'
-  },
-  floatingArrivalsPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 20,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 6
-  },
-  floatingArrivalsText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    letterSpacing: 0.2
   },
   operationStatusArea: {
     width: '100%',

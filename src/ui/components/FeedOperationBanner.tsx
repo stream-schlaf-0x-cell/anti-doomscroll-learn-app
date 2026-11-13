@@ -122,8 +122,8 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
         </View>
       )}
 
-      {/* 3. Floating "Neue Beiträge anzeigen ↑" Pill when Scrolled Down */}
-      {isScrolledDown && pendingChangeCount > 0 && onScrollToTop && (
+      {/* 3. Unified "neue Beiträge aus der Redaktion anzeigen" Pill */}
+      {pendingChangeCount > 0 && onScrollToTop && (
         <TouchableOpacity
           onPress={onScrollToTop}
           activeOpacity={0.9}
@@ -131,13 +131,13 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
           accessibilityRole="button"
           accessibilityLabel={
             bannerLabel || (pendingChangeCount === 1
-              ? '1 neue Meldung am Anfang anzeigen'
-              : `${pendingChangeCount} neue Meldungen am Anfang anzeigen`)
+              ? '1 neuer Beitrag aus der Redaktion anzeigen'
+              : `${pendingChangeCount} neue Beiträge aus der Redaktion anzeigen`)
           }
         >
           <Ionicons name="arrow-up" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
           <Text accessibilityLiveRegion="polite" style={styles.floatingPillText}>
-            {bannerLabel || (pendingChangeCount === 1 ? '✨ 1 neue Meldung anzeigen ↑' : `✨ ${pendingChangeCount} neue Meldungen anzeigen ↑`)}
+            {bannerLabel || (pendingChangeCount === 1 ? '1 neuer Beitrag aus der Redaktion anzeigen' : `${pendingChangeCount} neue Beiträge aus der Redaktion anzeigen`)}
           </Text>
         </TouchableOpacity>
       )}

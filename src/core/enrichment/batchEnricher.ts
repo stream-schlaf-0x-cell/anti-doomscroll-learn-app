@@ -5,6 +5,7 @@ import {
   AiCredentials,
   loadAiCredentials,
   hasAiConfiguration,
+  isProOrReasoningModelId,
   AiCredentialsMissingError,
   AiBudgetExceededError
 } from '../ai/atmenAiClient';
@@ -80,16 +81,41 @@ export interface BatchCurationReport {
 }
 
 const BATCH_PROMPT_VERSION = 'curation-v2';
+
+function normalizeAiTopicTag(rawTopic: unknown, fallback: TopicTag = 'philosophy_ethics'): TopicTag {
+  if (typeof rawTopic !== 'string') return fallback;
+  const parsed = TopicTagSchema.safeParse(rawTopic.trim());
+  if (parsed.success) return parsed.data;
+  const lower = rawTopic.toLowerCase();
+  if (/tech|ai|ki|apple|software|computer|digital|ml|llm/.test(lower)) return 'ai_apple';
+  if (/philo|ethik|ethics|epistem|moral|kritik/.test(lower)) return 'philosophy_ethics';
+  if (/didakt|pädagog|pedagog|schule|deutsch|bildung|educat|teach|learn/.test(lower)) return 'german_didactics';
+  if (/budd|contempl|medit|mind|achtsam|zen|stoic/.test(lower)) return 'contemplation_mind';
+  if (/music|sound|synth|audio|ableton|elektron/.test(lower)) return 'sound_synthesis';
+  if (/art|kunst|ästhet|aesth|museum|design|architekt/.test(lower)) return 'art_aesthetics';
+  if (/book|buch|literat/.test(lower)) return 'book_mastery';
+  if (/health|gesund|biohack|schlaf|ernährung/.test(lower)) return 'health_biohacking';
+  if (/meme|satir|humor|comic/.test(lower)) return 'memes_satire';
+  if (/youtube|video/.test(lower)) return 'youtube_gems';
+  if (/opportun|career|stipend|grant/.test(lower)) return 'opportunities_growth';
+  if (/scien|wiss|soc|gesell|polit|wirtsch|hist|forsch|news|natur/.test(lower)) return 'science_society';
+  return fallback;
+}
+
+const CoercedTopicTagSchema = z.any().transform((val): TopicTag => normalizeAiTopicTag(val));
+
 const BatchDecisionSchema = z.object({
   id: z.string().min(1),
-  curationScore: z.number().min(0).max(10),
-  rejectionReason: z.string().max(1000).optional(),
-  feedText: z.string().max(10000).default(''),
-  keyInsight: z.string().max(2000).default(''),
-  counterPerspective: z.string().max(4000).optional().default(''),
-  primaryTopic: TopicTagSchema,
-  topics: z.array(TopicTagSchema).max(3).default([]),
-  didacticTransfer: z.string().max(4000).default('')
+  curationScore: z.coerce.number().min(0).max(10),
+  rejectionReason: z.string().max(1000).nullable().optional().transform(v => v ?? undefined),
+  feedText: z.string().max(10000).nullable().optional().transform(v => v ?? ''),
+  keyInsight: z.string().max(2000).nullable().optional().transform(v => v ?? ''),
+  counterPerspective: z.string().max(4000).nullable().optional().transform(v => v ?? ''),
+  primaryTopic: CoercedTopicTagSchema,
+  topics: z.array(z.any()).max(5).nullable().optional().transform(arr =>
+    Array.isArray(arr) ? arr.map(t => normalizeAiTopicTag(t)).slice(0, 3) : []
+  ),
+  didacticTransfer: z.string().max(4000).nullable().optional().transform(v => v ?? '')
 });
 
 export interface GatekeeperEvaluation {
@@ -1096,6 +1122,45 @@ export function classifyTopicDeterministically(
   return fallback;
 }
 
+/**
+ * Extracts a JSON array of curation decisions from raw AI text, handling markdown
+ * code fences and wrapped objects (`{ articles: [...] }`, `{ items: [...] }`).
+ */
+function extractBatchDecisionArrayFromAiText(rawText: string): unknown {
+  let cleaned = (rawText || '').trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch && fenceMatch[1]) {
+    cleaned = fenceMatch[1].trim();
+  }
+
+  const unwrap = (val: unknown): unknown => {
+    if (Array.isArray(val)) return val;
+    if (val && typeof val === 'object') {
+      const obj = val as Record<string, unknown>;
+      if (Array.isArray(obj.articles)) return obj.articles;
+      if (Array.isArray(obj.items)) return obj.items;
+      if (Array.isArray(obj.results)) return obj.results;
+    }
+    return val;
+  };
+
+  try {
+    return unwrap(JSON.parse(cleaned));
+  } catch {
+    const firstBracket = cleaned.indexOf('[');
+    const lastBracket = cleaned.lastIndexOf(']');
+    if (firstBracket >= 0 && lastBracket > firstBracket) {
+      return unwrap(JSON.parse(cleaned.slice(firstBracket, lastBracket + 1)));
+    }
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      return unwrap(JSON.parse(cleaned.slice(firstBrace, lastBrace + 1)));
+    }
+    throw new SyntaxError('Antwort des KI-Modells enthielt kein gültiges JSON-Array.');
+  }
+}
+
 export class BatchEditionEnricher {
   private runQueue: Promise<unknown> = Promise.resolve();
   private lastBatchReport: BatchCurationReport = {
@@ -1198,13 +1263,26 @@ export class BatchEditionEnricher {
         usedFallback: false,
         cacheHits: 0
       };
-      const curated: FeedItem[] = [];
-      const CHUNK_SIZE = 6;
+      const CHUNK_SIZE = 5;
+      const chunks: FeedItem[][] = [];
       for (let i = 0; i < items.length; i += CHUNK_SIZE) {
-        curated.push(...await this.processChunk(items.slice(i, i + CHUNK_SIZE), overrideCredentials));
+        chunks.push(items.slice(i, i + CHUNK_SIZE));
       }
+
+      const curated: FeedItem[] = [];
+      const MAX_CONCURRENT_CHUNKS = 3;
+      for (let i = 0; i < chunks.length; i += MAX_CONCURRENT_CHUNKS) {
+        const windowChunks = chunks.slice(i, i + MAX_CONCURRENT_CHUNKS);
+        const results = await Promise.all(
+          windowChunks.map(chunk => this.processChunk(chunk, overrideCredentials))
+        );
+        for (const chunkItems of results) {
+          curated.push(...chunkItems);
+        }
+      }
+
       this.lastBatchReport.approvedCount = curated.length;
-      this.lastBatchReport.rejectedCount = items.length - curated.length;
+      this.lastBatchReport.rejectedCount = Math.max(0, items.length - curated.length);
       return curated;
     });
     this.runQueue = run.catch(() => undefined);
@@ -1273,7 +1351,8 @@ export class BatchEditionEnricher {
     }
 
     const effectiveCeilingEur = getEffectiveBudgetCeilingEur(Boolean(credentials.apiKey?.trim()));
-    const canSpend = await this.ledger.canSpend(0.005, undefined, effectiveCeilingEur);
+    const isPersonalByok = Boolean(credentials.apiKey?.trim() && credentials.persistApiKey === true);
+    const canSpend = isPersonalByok || (await this.ledger.canSpend(0.005, undefined, effectiveCeilingEur));
     if (!canSpend) {
       this.lastBatchReport.usedFallback = true;
       this.lastBatchReport.errorClass = 'budget_exceeded';
@@ -1335,11 +1414,12 @@ Antworte AUSSCHLIESSLICH als JSON-Array:
     const prompt = `Hier sind die ${pending.length} Kandidaten zur Kuration und Signal-vs-Noise-Prüfung:\n${JSON.stringify(payload, null, 2)}`;
 
     try {
+      const isProTier = isProOrReasoningModelId(credentials.model || '');
       const response = await callAiModel(prompt, {
         systemInstruction,
         jsonMode: true,
-        maxTokens: 2500,
-        timeoutMs: 25_000,
+        maxTokens: 4096,
+        timeoutMs: isProTier ? 40_000 : 28_000,
         credentials,
         ledger: this.ledger,
         itemId: `ai-gatekeeper-${Date.now()}`
@@ -1347,7 +1427,7 @@ Antworte AUSSCHLIESSLICH als JSON-Array:
 
       this.lastBatchReport.usedAI = true;
       this.lastBatchReport.modelUsed = response.modelUsed || credentials.model;
-      const parsed: unknown = JSON.parse(response.text);
+      const parsed: unknown = extractBatchDecisionArrayFromAiText(response.text);
       if (Array.isArray(parsed)) {
         const wantedIds = new Set(pending.map(item => item.id));
         const decisions = new Map(cachedDecisions);

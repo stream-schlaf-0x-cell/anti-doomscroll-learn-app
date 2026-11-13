@@ -59,22 +59,41 @@ export function applyScrollFreeze<T extends { id: string }>(
     };
   }
 
-  // Scrolled down (scrollOffsetY > threshold): FREEZE ORDER
+  // Scrolled down (scrollOffsetY > threshold): FREEZE visible order against top insertions
   const currentIdSet = new Set(currentRendered.map(i => i.id));
   const incomingMap = new Map(incomingItems.map(i => [i.id, i]));
+
+  // Locate the furthest rendered index in incomingItems so pure tail appends (infinite scroll pagination)
+  // extend cleanly below the viewport instead of being mistaken for "new top arrivals".
+  let maxRenderedIdx = -1;
+  for (let i = 0; i < incomingItems.length; i++) {
+    if (currentIdSet.has(incomingItems[i].id)) {
+      maxRenderedIdx = i;
+    }
+  }
 
   // In-place updates for already rendered items (preserves exact order)
   const frozenItems: T[] = currentRendered.map(item => {
     return incomingMap.get(item.id) || item;
   });
 
-  // Identify new arrivals not present in the currently rendered items
-  const newArrivals = incomingItems.filter(item => !currentIdSet.has(item.id));
+  const tailAppends: T[] = [];
+  const topArrivals: T[] = [];
+  for (let i = 0; i < incomingItems.length; i++) {
+    const candidate = incomingItems[i];
+    if (currentIdSet.has(candidate.id)) continue;
+    if (maxRenderedIdx >= 0 && i > maxRenderedIdx) {
+      tailAppends.push(candidate);
+    } else {
+      topArrivals.push(candidate);
+    }
+  }
+
   const existingQueuedIds = new Set(existingQueuedArrivals.map(i => i.id));
-  const newlyQueued = newArrivals.filter(item => !existingQueuedIds.has(item.id));
+  const newlyQueued = topArrivals.filter(item => !existingQueuedIds.has(item.id));
 
   return {
-    items: frozenItems,
+    items: tailAppends.length > 0 ? [...frozenItems, ...tailAppends] : frozenItems,
     queuedArrivals: [...existingQueuedArrivals, ...newlyQueued]
   };
 }

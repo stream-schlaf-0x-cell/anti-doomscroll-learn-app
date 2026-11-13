@@ -15,8 +15,12 @@ import { isArdSource } from '../domain/ranking';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { MEME_VAULT_ENTRIES } from './memeVaultEntries';
 import { FeedItem } from '../domain/types';
+import {
+  hivemindLearningService,
+  SHOWCASE_STARTER_TRACK_IDS
+} from '../learning/hivemindLearningService';
 
-export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-10-v6.3-gordian-clean';
+export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-13-v7.0-redaktion-clean';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
@@ -74,6 +78,12 @@ export async function runInPlaceDataMigration(
         await storage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(parsedProfile));
       }
     }
+  } catch {
+    // Non-fatal
+  }
+
+  try {
+    await hivemindLearningService.purgeShowcaseStarterTracks(storage);
   } catch {
     // Non-fatal
   }
@@ -192,6 +202,11 @@ export async function runInPlaceDataMigration(
 
   for (const [id, item] of candidateMap.entries()) {
     const isUserProtected = protectedUserItemIds.has(id);
+    const trackId = item.hivemindMeta?.trackId || item.memeMeta?.trackId;
+    if (!isUserProtected && trackId && SHOWCASE_STARTER_TRACK_IDS.has(trackId)) {
+      purgedCount++;
+      continue;
+    }
 
     // WP 2: Purge or repair generic slop templates & synthetic filler sentences
     item.feedText = stripSyntheticFillerSentences(item.feedText || '');

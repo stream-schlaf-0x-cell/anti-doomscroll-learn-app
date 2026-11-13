@@ -97,33 +97,11 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
         <View style={styles.communityBody}>
           <View style={styles.communityTitleRow}>
             <Text style={[styles.communityHandle, { color: colors.textPrimary }]}>c/atmen</Text>
-            <View style={[styles.badgePill, { backgroundColor: 'rgba(16, 185, 129, 0.14)' }]}>
-              <Text style={[styles.badgeText, { color: '#10B981' }]}>
-                {healthOverview.deliveringSources} AKTIVE QUELLEN
-              </Text>
-            </View>
           </View>
 
           <Text style={[styles.communityDesc, { color: colors.textSecondary }]}>
             Dein lebendiger Reddit-Ersatz zum Lesen: echte Stimmen, Forschung, KI, Philosophie, Kultur, Musik & Kunst. Endlos scrollbar, ohne künstliche Dopamin-Fallen.
           </Text>
-
-          <View style={[styles.statsRow, { borderTopColor: colors.borderSubtle, borderBottomColor: colors.borderSubtle }]}>
-            <View style={styles.statCol}>
-              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>{articleCount}</Text>
-              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Im Pool</Text>
-            </View>
-            <View style={styles.statCol}>
-              <Text style={[styles.statNumber, { color: '#10B981' }]}>
-                {healthOverview.deliveringSources}/{healthOverview.totalSources}
-              </Text>
-              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Quellen live</Text>
-            </View>
-            <View style={styles.statCol}>
-              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>{savedArticles.length}</Text>
-              <Text style={[styles.statLabel, { color: colors.textMuted }]}>Gemerkt</Text>
-            </View>
-          </View>
 
           <View style={{ gap: 8, marginTop: 12 }}>
             <TouchableOpacity
@@ -138,16 +116,6 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => setShowNewsHubModal(true)}
-              style={[styles.secondarySidebarBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="radio-outline" size={13} color={colors.textPrimary} style={{ marginRight: 6 }} />
-              <Text style={[styles.secondarySidebarBtnText, { color: colors.textPrimary }]}>
-                Quellen-Katalog & Health ({healthOverview.deliveringSources}/{healthOverview.totalSources})
-              </Text>
-            </TouchableOpacity>
           </View>
         </View>
       </View>

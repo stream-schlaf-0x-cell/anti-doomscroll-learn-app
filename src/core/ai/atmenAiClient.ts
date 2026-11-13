@@ -168,10 +168,27 @@ function normalizeCredentials(credentials: AiCredentials): AiCredentials {
 }
 
 export async function loadAiCredentials(storage: AtemStorage = appStorage): Promise<AiCredentials> {
+  const readFallbackProviderKey = async (provider: AiProvider): Promise<string> => {
+    try {
+      const slot = provider === 'openrouter' ? '@atem:openrouter_api_key:v1' : '@atem:gemini_api_key:v1';
+      const val = await storage.getItem(slot);
+      return typeof val === 'string' ? val.trim() : '';
+    } catch {
+      return '';
+    }
+  };
+
   const raw = await storage.getItem(AI_CREDENTIALS_STORAGE_KEY);
   if (!raw) {
     sessionApiKeys.delete(storage);
-    return { ...DEFAULT_AI_CREDENTIALS };
+    const directGeminiKey = await readFallbackProviderKey(DEFAULT_AI_CREDENTIALS.provider);
+    if (directGeminiKey) {
+      sessionApiKeys.set(storage, directGeminiKey);
+    }
+    return {
+      ...DEFAULT_AI_CREDENTIALS,
+      apiKey: directGeminiKey
+    };
   }
   let parsed: Record<string, unknown>;
   try {
@@ -181,11 +198,16 @@ export async function loadAiCredentials(storage: AtemStorage = appStorage): Prom
   } catch {
     return { ...DEFAULT_AI_CREDENTIALS };
   }
+  const provider: AiProvider = parsed.provider === 'openrouter' ? 'openrouter' : 'gemini';
   const persistedKey = typeof parsed.apiKey === 'string' ? parsed.apiKey.trim() : '';
+  const directKey = !persistedKey && !sessionApiKeys.get(storage)
+    ? await readFallbackProviderKey(provider)
+    : '';
+  const resolvedKey = persistedKey || sessionApiKeys.get(storage) || directKey || '';
   const credentials: AiCredentials = {
-    provider: parsed.provider === 'openrouter' ? 'openrouter' : 'gemini',
-    apiKey: persistedKey || sessionApiKeys.get(storage) || '',
-    model: typeof parsed.model === 'string' && parsed.model ? parsed.model : (parsed.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL),
+    provider,
+    apiKey: resolvedKey,
+    model: typeof parsed.model === 'string' && parsed.model ? parsed.model : (provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL),
     // Preserve invalid legacy configuration so calls fail closed until the user corrects it.
     proxyUrl: typeof parsed.proxyUrl === 'string' ? parsed.proxyUrl : undefined,
     persistApiKey: parsed.persistApiKey === true

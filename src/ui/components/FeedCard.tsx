@@ -469,10 +469,14 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
             onPress={() => onInvestigateTopic && onInvestigateTopic(item.primaryTopic)}
           />
 
-          <Text style={[styles.dotSeparator, { color: colors.textMuted }]}>•</Text>
-          <Text style={[styles.publisherText, { color: colors.textPrimary }]} numberOfLines={1}>
-            {publisherName}
-          </Text>
+          {!hivemindTrackId && (
+            <>
+              <Text style={[styles.dotSeparator, { color: colors.textMuted }]}>•</Text>
+              <Text style={[styles.publisherText, { color: colors.textPrimary }]} numberOfLines={1}>
+                {publisherName}
+              </Text>
+            </>
+          )}
           <Text style={[styles.dotSeparator, { color: colors.textMuted }]}>•</Text>
           <Text style={[styles.timeText, { color: colors.textMuted }]} numberOfLines={1}>
             {timeAgo}

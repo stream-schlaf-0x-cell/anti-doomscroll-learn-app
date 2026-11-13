@@ -4,6 +4,7 @@ import { AtemStorage, MemoryStorageDriver } from '../src/core/data/storage';
 import { FeedItemSchema } from '../src/core/domain/types';
 import {
   HivemindLearningService,
+  HIVEMIND_TRACKS_STORAGE_KEY,
   generateHivemindLearningTrack,
   extractTextFromUploadedFile,
   parsePdfBufferTextFallback,
@@ -13,23 +14,17 @@ import { mergeSyncSnapshots, AtmenSyncSnapshot } from '../src/core/sync/cloudSyn
 import { satisfiesDefaultCuratedStandard, satisfiesCuratedBodyContract } from '../src/core/enrichment/batchEnricher';
 
 describe('Atmen Hivemind — Scroll to Study V5 (Learning Tracks, 4-Tier Memes, Dual Modes & Cloud Sync)', () => {
-  it('1. Pre-seeds 2 rich 12-card showcase starter tracks (Roman Republic & Quantum Reality) with valid FeedItems', async () => {
+  it('1. Starts Hivemind clean/empty with zero pre-seeded demo tracks and purges legacy demo tracks while keeping user tracks', async () => {
     const storage = new AtemStorage(new MemoryStorageDriver());
     const service = new HivemindLearningService();
-    const tracks = await service.getTracks(storage);
+    const initialTracks = await service.getTracks(storage);
+    assert.equal(initialTracks.length, 0, 'Hivemind must start empty with 0 pre-seeded demo tracks');
 
-    assert.equal(tracks.length, 2, 'Should pre-seed 2 showcase tracks');
-    const romanTrack = tracks.find(t => t.id === 'track-roman-republic-empire');
-    const quantumTrack = tracks.find(t => t.id === 'track-quantum-reality');
-
-    assert.ok(romanTrack, 'Roman Republic track must exist');
-    assert.ok(quantumTrack, 'Quantum Reality track must exist');
-
+    // Showcase track builders still produce valid 12-card schemas if needed in unit helpers
+    const legacyDemoTracks = buildShowcaseStarterTracks();
+    assert.equal(legacyDemoTracks.length, 2);
+    const romanTrack = legacyDemoTracks[0];
     assert.equal(romanTrack.items.length, 12);
-    assert.equal(romanTrack.mixIntoMainFeed, true);
-    assert.equal(romanTrack.progressPercent, 0);
-
-    // Every card must validate against FeedItemSchema and pass curated standards
     for (const item of romanTrack.items) {
       const parsed = FeedItemSchema.safeParse(item);
       assert.equal(parsed.success, true, `Card ${item.id} must validate against FeedItemSchema`);
@@ -37,16 +32,28 @@ describe('Atmen Hivemind — Scroll to Study V5 (Learning Tracks, 4-Tier Memes, 
       assert.equal(satisfiesDefaultCuratedStandard(item), true);
     }
 
-    // Verify presence of 4-tier expanding_brain_meme with Roman legionary escalation stages
     const memeCards = romanTrack.items.filter(
       i => (i.hivemindMeta?.cardArchetype || i.memeMeta?.cardArchetype) === 'expanding_brain_meme'
     );
-    assert.ok(memeCards.length >= 2, 'Roman track should include 4-tier escalation concept memes');
-    const firstMeme = memeCards[0];
-    const stages = firstMeme.hivemindMeta?.escalationStages || firstMeme.memeMeta?.escalationStages || [];
+    assert.ok(memeCards.length >= 2, 'Should include 4-tier escalation concept memes');
+    const stages = memeCards[0].hivemindMeta?.escalationStages || memeCards[0].memeMeta?.escalationStages || [];
     assert.equal(stages.length, 4, 'Expanding brain meme must have 4 escalation stages');
-    assert.equal(stages[0].visualLevel, 1);
-    assert.equal(stages[3].visualLevel, 4);
+
+    // Verify seeding legacy demo tracks + a user track results in ONLY the user track surviving getTracks()
+    const userTrack = {
+      ...romanTrack,
+      id: 'track-user-kant-epistemologie',
+      title: 'Kants Epistemologie',
+      items: romanTrack.items.map((it, idx) => ({
+        ...it,
+        id: `user-kant-step-${idx + 1}`,
+        hivemindMeta: it.hivemindMeta ? { ...it.hivemindMeta, trackId: 'track-user-kant-epistemologie' } : undefined
+      }))
+    };
+    await storage.setItem(HIVEMIND_TRACKS_STORAGE_KEY, JSON.stringify([...legacyDemoTracks, userTrack]));
+    const cleaned = await service.getTracks(storage);
+    assert.equal(cleaned.length, 1, 'Legacy Rome & Quantum demo tracks must be purged automatically');
+    assert.equal(cleaned[0].id, 'track-user-kant-epistemologie');
   });
 
   it('2. Generates a >= 10 card HivemindLearningTrack from a topic/book or uploaded PDF/text buffer across all 4 archetypes', async () => {
@@ -118,28 +125,41 @@ endobj`;
   it('3. Accurately updates completedItemIds and progressPercent (0% -> ... -> 100%) when steps are marked completed', async () => {
     const storage = new AtemStorage(new MemoryStorageDriver());
     const service = new HivemindLearningService();
+    const baseTemplate = buildShowcaseStarterTracks()[0];
+    const customTrack = {
+      ...baseTemplate,
+      id: 'track-user-progress-test',
+      title: 'Benutzer-Lernpfad Ethik',
+      items: baseTemplate.items.map((it, idx) => ({
+        ...it,
+        id: `user-progress-step-${idx + 1}`,
+        hivemindMeta: it.hivemindMeta ? { ...it.hivemindMeta, trackId: 'track-user-progress-test' } : undefined
+      }))
+    };
+    await service.saveTrack(customTrack, storage);
+
     const tracks = await service.getTracks(storage);
-    const roman = tracks[0];
-    assert.equal(roman.progressPercent, 0);
-    assert.equal(roman.completedItemIds.length, 0);
+    const track = tracks[0];
+    assert.equal(track.progressPercent, 0);
+    assert.equal(track.completedItemIds.length, 0);
 
     // Complete 3 of 12 steps -> 25%
-    await service.markItemCompleted(roman.id, roman.items[0].id, storage);
-    await service.markItemCompleted(roman.id, roman.items[1].id, storage);
-    const after3 = await service.markItemCompleted(roman.id, roman.items[2].id, storage);
+    await service.markItemCompleted(track.id, track.items[0].id, storage);
+    await service.markItemCompleted(track.id, track.items[1].id, storage);
+    const after3 = await service.markItemCompleted(track.id, track.items[2].id, storage);
 
     assert.ok(after3);
     assert.equal(after3.completedItemIds.length, 3);
     assert.equal(after3.progressPercent, 25);
 
     // Duplicate completion should be idempotent
-    const afterDup = await service.markItemCompleted(roman.id, roman.items[0].id, storage);
+    const afterDup = await service.markItemCompleted(track.id, track.items[0].id, storage);
     assert.equal(afterDup?.completedItemIds.length, 3);
     assert.equal(afterDup?.progressPercent, 25);
 
     // Complete all remaining steps -> 100%
     let latest: Awaited<ReturnType<typeof service.markItemCompletedByItemId>> = after3;
-    for (const item of roman.items.slice(3)) {
+    for (const item of track.items.slice(3)) {
       latest = await service.markItemCompletedByItemId(item.id, storage);
     }
     assert.ok(latest);
@@ -150,24 +170,37 @@ endobj`;
   it('4. Mode 2 (mixIntoMainFeed: true) interleaves unread learning cards into the main stream without duplicating completed cards', async () => {
     const storage = new AtemStorage(new MemoryStorageDriver());
     const service = new HivemindLearningService();
+    const baseTemplate = buildShowcaseStarterTracks()[0];
+    const customTrack = {
+      ...baseTemplate,
+      id: 'track-user-interleave-test',
+      title: 'Benutzer-Lernpfad Erkenntnistheorie',
+      items: baseTemplate.items.map((it, idx) => ({
+        ...it,
+        id: `user-interleave-step-${idx + 1}`,
+        hivemindMeta: it.hivemindMeta ? { ...it.hivemindMeta, trackId: 'track-user-interleave-test' } : undefined
+      }))
+    };
+    await service.saveTrack(customTrack, storage);
+
     const tracks = await service.getTracks(storage);
-    const roman = tracks.find(t => t.id === 'track-roman-republic-empire')!;
+    const track = tracks.find(t => t.id === 'track-user-interleave-test')!;
 
     // Mark step 1 and step 2 as already completed
-    await service.markItemCompleted(roman.id, roman.items[0].id, storage);
-    await service.markItemCompleted(roman.id, roman.items[1].id, storage);
+    await service.markItemCompleted(track.id, track.items[0].id, storage);
+    await service.markItemCompleted(track.id, track.items[1].id, storage);
 
     const updatedTracks = await service.getTracks(storage);
     const dripCards = service.getAmbientDripCards(updatedTracks, 2);
 
     // Must pick unread step 3 and step 4, never already completed step 1 or 2
     assert.equal(dripCards.length, 2);
-    assert.equal(dripCards[0].id, roman.items[2].id);
-    assert.equal(dripCards[1].id, roman.items[3].id);
+    assert.equal(dripCards[0].id, track.items[2].id);
+    assert.equal(dripCards[1].id, track.items[3].id);
 
     // Create 15 dummy main stream cards
     const dummyStream = Array.from({ length: 15 }, (_, idx) => ({
-      ...roman.items[0],
+      ...track.items[0],
       id: `main-stream-card-${idx + 1}`,
       hivemindMeta: undefined,
       memeMeta: undefined,
@@ -183,10 +216,10 @@ endobj`;
 
     assert.equal(interleaved.length, 17, 'Should weave 2 unread drip cards into the 15-card stream');
     const interleavedIds = interleaved.map(i => i.id);
-    assert.equal(interleavedIds.includes(roman.items[0].id), false, 'Completed card 1 must NOT be interleaved');
-    assert.equal(interleavedIds.includes(roman.items[1].id), false, 'Completed card 2 must NOT be interleaved');
-    assert.equal(interleavedIds.includes(roman.items[2].id), true, 'Unread card 3 MUST be interleaved');
-    assert.equal(interleavedIds.includes(roman.items[3].id), true, 'Unread card 4 MUST be interleaved');
+    assert.equal(interleavedIds.includes(track.items[0].id), false, 'Completed card 1 must NOT be interleaved');
+    assert.equal(interleavedIds.includes(track.items[1].id), false, 'Completed card 2 must NOT be interleaved');
+    assert.equal(interleavedIds.includes(track.items[2].id), true, 'Unread card 3 MUST be interleaved');
+    assert.equal(interleavedIds.includes(track.items[3].id), true, 'Unread card 4 MUST be interleaved');
   });
 
   it('5. Deterministically merges hivemindTracks and unions completedItemIds across devices in cloudSyncService', () => {

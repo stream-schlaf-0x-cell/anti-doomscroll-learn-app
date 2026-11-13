@@ -84,7 +84,9 @@ export const FeedOperationReportModal: React.FC<FeedOperationReportModalProps> =
               <View style={styles.detailRow}>
                 <Text style={[styles.detailKey, { color: colors.textSecondary }]}>KI verwendet</Text>
                 <Text style={[styles.detailValue, { color: colors.textPrimary }]}>
-                  {result.usedAI ? 'Ja, in diesem Durchlauf' : 'Nein, in diesem Durchlauf'}
+                  {result.usedAI
+                    ? `Ja (${result.modelUsed || 'Gemini'})`
+                    : 'Nein, in diesem Durchlauf'}
                 </Text>
               </View>
 

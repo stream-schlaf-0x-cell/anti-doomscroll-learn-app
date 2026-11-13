@@ -102,7 +102,7 @@ export interface IFeedRepository {
   getItemById(id: string): Promise<FeedItem | null>;
   searchItems(query: string, profile: UserProfile, interactions?: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
   setItems?(items: FeedItem[]): void;
-  addItems?(items: FeedItem[]): void;
+  addItems?(items: FeedItem[], options?: { operationType?: FeedOperationType; pinInserted?: boolean; telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry }): void;
   getAllItems?(): FeedItem[];
   hydrateFromPublicSnapshot?(remoteUrl?: string): Promise<{ success: boolean; itemCount: number; snapshotDate?: string }>;
   curateAndAddItems?(items: FeedItem[]): Promise<FeedItem[]>;
@@ -296,11 +296,12 @@ export class LocalFeedRepository implements IFeedRepository {
     this.relatedService.setIndex(this.articleIndex);
   }
 
-  addItems(newItems: FeedItem[]): void {
+  addItems(newItems: FeedItem[], options?: { operationType?: FeedOperationType; pinInserted?: boolean; telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry }): void {
     const enrichedNew = newItems.map(i => enrichSocialFeedItem(i, { lazyCrossReferences: true }));
     const mergeResult = FeedMergeService.merge(this.items, enrichedNew, {
-      operationType: 'manual_refresh',
-      pinInserted: false
+      operationType: options?.operationType ?? 'background_sync',
+      pinInserted: options?.pinInserted ?? false,
+      telemetry: options?.telemetry
     });
 
     this.items = this.purgeDemoFixturesIfSufficient(mergeResult.mergedItems);

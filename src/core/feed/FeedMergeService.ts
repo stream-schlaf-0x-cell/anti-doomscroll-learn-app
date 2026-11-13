@@ -36,7 +36,7 @@ export class FeedMergeService {
   ): MergeExecutionResult {
     const opType = options.operationType || 'manual_refresh';
     const opManager = defaultFeedOperationManager;
-    opManager.startOperation(opType, options.operationId);
+    const trackedOp = opManager.startOperation(opType, options.operationId);
 
     options.onProgress?.('1/3: Artikelkandidaten prüfen …', 0.33);
 
@@ -62,7 +62,7 @@ export class FeedMergeService {
     const rejectedReasons: Record<string, number> = options.telemetry?.rejectedCount
       ? { gatekeeper: options.telemetry.rejectedCount }
       : {};
-    let duplicateCount = 0;
+    let duplicateCount = options.telemetry?.duplicateCount ?? 0;
     let rejectedCount = options.telemetry?.rejectedCount ?? 0;
 
     options.onProgress?.('2/3: Duplikate und Rauschen filtern …', 0.66);
@@ -159,6 +159,7 @@ export class FeedMergeService {
 
     const operationResult = opManager.completeOperation(
       {
+        operationId: trackedOp.operationId,
         fetchedCount: options.telemetry?.candidateCount ?? candidates.length,
         candidateCount: options.telemetry?.candidateCount ?? candidates.length,
         insertedCount: inserted.length,
@@ -171,6 +172,7 @@ export class FeedMergeService {
         usedAI: options.telemetry?.usedAI ?? false,
         usedFallback: options.telemetry?.usedFallback ?? false,
         cacheHits: options.telemetry?.cacheHits ?? 0,
+        durationMs: options.telemetry?.durationMs,
         errorClass: options.telemetry?.errorClass,
         errorMessage: options.telemetry?.errorMessage,
         modelUsed: options.telemetry?.modelUsed,

@@ -88,8 +88,8 @@ test('Bloomscroll Polish V4.1 — Eliminate the 8 Live iPhone Stumbling Blocks',
 
     const feedScreenTsx = fs.readFileSync(path.join(rootDir, 'src/features/feed/FeedScreen.tsx'), 'utf8');
     assert.ok(
-      feedScreenTsx.includes('appMountedAtRef'),
-      'FeedScreen must track appMountedAtRef to suppress arrivals banner during boot window'
+      feedScreenTsx.includes('hydratedAtRef') || feedScreenTsx.includes('appMountedAtRef'),
+      'FeedScreen must track hydratedAtRef/appMountedAtRef to suppress arrivals banner during boot window'
     );
     assert.ok(
       feedScreenTsx.includes('@atem:surfaced_arrival_ids:v1'),

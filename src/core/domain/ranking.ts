@@ -1115,6 +1115,15 @@ function demoteItemsLeadingOtherHorizons(
   return [...fresh, ...demoted];
 }
 
+export function isHivemindLearningCard(item: Pick<FeedItem, 'space' | 'hivemindMeta' | 'memeMeta' | 'factReviewStatus'>): boolean {
+  return Boolean(
+    item.hivemindMeta?.trackId ||
+    item.memeMeta?.trackId ||
+    item.space === 'c/hivemind' ||
+    item.factReviewStatus === 'pedagogical_concept'
+  );
+}
+
 export function sortFeedForDisplay(
   items: ScoredFeedItem[],
   requestedMode: FeedSortMode,
@@ -1161,13 +1170,15 @@ export function sortFeedForDisplay(
     return [...effectiveTopPins, ...withSerendipity];
   }
 
-  // 2a. "⚡ Heute" (True Today Contract: strictly < 18 hours old and from current calendar day or within 16h overnight)
+  // 2a. "⚡ Heute" (True Today Contract: strictly < 18 hours old and NEVER Hivemind learning cards)
   if (mode === 'today') {
     const now = new Date();
     const eighteenHoursMs = 18 * 3600 * 1000;
     const futureToleranceMs = 24 * 3600 * 1000;
 
+    const todayTopPins = effectiveTopPins.filter(item => !isHivemindLearningCard(item));
     const strictlyToday = remaining.filter(item => {
+      if (isHivemindLearningCard(item)) return false;
       if (item.publicationDateReliable === false) return false;
       const pubTime = new Date(item.publishedAt).getTime();
       if (isNaN(pubTime) || pubTime <= 0) return false;
@@ -1189,7 +1200,7 @@ export function sortFeedForDisplay(
       return b.id.localeCompare(a.id);
     });
 
-    return [...effectiveTopPins, ...enforceCuratedStreamDiversity(sorted)];
+    return [...todayTopPins, ...enforceCuratedStreamDiversity(sorted)];
   }
 
   // 2b. Legacy 'new' sort mode (preserves full pool ordering for backward-compatible unit tests)

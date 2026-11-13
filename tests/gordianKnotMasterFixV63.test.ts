@@ -107,7 +107,7 @@ describe('Gordian Knot Master Architectural Fix v6.3', () => {
     assert.ok(feedScreenSrc.includes('{showNewsHubSettingsModal && ('), 'NewsHubModal must be lazily mounted');
     assert.ok(feedScreenSrc.includes('{showEvolutionModal && ('), 'NewsEvolutionModal must be lazily mounted');
     assert.ok(feedScreenSrc.includes('{showReportModal && ('), 'FeedOperationReportModal must be lazily mounted');
-    assert.ok(feedScreenSrc.includes('{showPipelineModal && ('), 'NewsroomPipelineModal must be lazily mounted');
+    assert.strictEqual(feedScreenSrc.includes('<NewsroomPipelineModal'), false, 'Technical NewsroomPipelineModal must NOT be mounted in FeedScreen');
     assert.strictEqual(feedScreenSrc.includes('<LinkPreviewModal'), false, 'LinkPreviewModal must NOT be mounted in FeedScreen');
 
     // App modals

@@ -646,6 +646,11 @@ function buildHivemindFeedItem(params: {
 // Pre-Seeded Showcase Starter Tracks (Ready with 1 Tap at 0% Progress)
 // ---------------------------------------------------------------------------
 
+export const SHOWCASE_STARTER_TRACK_IDS = new Set<string>([
+  'track-roman-republic-empire',
+  'track-quantum-reality'
+]);
+
 export function buildShowcaseStarterTracks(): HivemindLearningTrack[] {
   const createdAt = '2026-11-07T08:00:00.000Z';
 
@@ -1521,22 +1526,6 @@ export async function generateHivemindLearningTrack(
 
   options.onProgress?.(15, `Analysiere Material zu „${cleanTitle}“…`);
 
-  // Check if user requested one of the pre-seeded showcase topics directly
-  const lowerTitle = cleanTitle.toLowerCase();
-  if (!docText && (lowerTitle === 'römisches reich' || lowerTitle === 'aufstieg & fall roms' || lowerTitle === 'rom')) {
-    const showcase = buildShowcaseStarterTracks()[0];
-    const cloned: HivemindLearningTrack = {
-      ...showcase,
-      id: `track-roman-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      mixIntoMainFeed: options.mixIntoMainFeed ?? true
-    };
-    await hivemindLearningService.saveTrack(cloned, options.storage);
-    options.onProgress?.(100, 'Lernpfad bereit!');
-    return cloned;
-  }
-
   let contextText = (docText || '').trim();
   let resolvedUrl = options.sourceUrl;
 
@@ -2109,31 +2098,74 @@ export class HivemindLearningService {
     return this.cachedTracks ? [...this.cachedTracks] : [];
   }
 
+  public async purgeShowcaseStarterTracks(storage: AtemStorage = appStorage): Promise<number> {
+    let removedCount = 0;
+    try {
+      const deletedSet = new Set(await this.getDeletedTrackIds(storage));
+      let deletedChanged = false;
+      for (const starterId of SHOWCASE_STARTER_TRACK_IDS) {
+        if (!deletedSet.has(starterId)) {
+          deletedSet.add(starterId);
+          deletedChanged = true;
+        }
+      }
+      if (deletedChanged) {
+        await storage.setItem(DELETED_HIVEMIND_TRACK_IDS_KEY, JSON.stringify(Array.from(deletedSet)));
+      }
+
+      const raw = await storage.getItem(HIVEMIND_TRACKS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const remaining = parsed.filter(
+            (t: any) => t && typeof t.id === 'string' && !SHOWCASE_STARTER_TRACK_IDS.has(t.id)
+          );
+          removedCount = parsed.length - remaining.length;
+          if (removedCount > 0) {
+            await storage.setItem(HIVEMIND_TRACKS_STORAGE_KEY, JSON.stringify(remaining));
+            if (storage === appStorage) {
+              this.cachedTracks = remaining;
+            }
+          }
+        }
+      }
+    } catch {
+      // Non-fatal
+    }
+    return removedCount;
+  }
+
   public async getTracks(storage: AtemStorage = appStorage): Promise<HivemindLearningTrack[]> {
     try {
       const raw = await storage.getItem(HIVEMIND_TRACKS_STORAGE_KEY);
       const deletedIds = new Set(await this.getDeletedTrackIds(storage));
       if (!raw) {
-        const starters = buildShowcaseStarterTracks().filter(t => !deletedIds.has(t.id));
-        await storage.setItem(HIVEMIND_TRACKS_STORAGE_KEY, JSON.stringify(starters));
         if (storage === appStorage) {
-          this.cachedTracks = starters;
+          this.cachedTracks = [];
         }
-        return starters;
+        return [];
       }
 
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) {
-        const starters = buildShowcaseStarterTracks().filter(t => !deletedIds.has(t.id));
-        await storage.setItem(HIVEMIND_TRACKS_STORAGE_KEY, JSON.stringify(starters));
         if (storage === appStorage) {
-          this.cachedTracks = starters;
+          this.cachedTracks = [];
         }
-        return starters;
+        return [];
       }
 
+      const hasShowcaseTracks = parsed.some(
+        (t: any) => t && typeof t.id === 'string' && SHOWCASE_STARTER_TRACK_IDS.has(t.id)
+      );
+
       const normalized: HivemindLearningTrack[] = parsed
-        .filter((t: any) => t && typeof t.id === 'string' && !deletedIds.has(t.id))
+        .filter(
+          (t: any) =>
+            t &&
+            typeof t.id === 'string' &&
+            !SHOWCASE_STARTER_TRACK_IDS.has(t.id) &&
+            !deletedIds.has(t.id)
+        )
         .map((t: any): HivemindLearningTrack => {
           const items = Array.isArray(t.items) ? t.items : [];
           const totalItemsCount = items.length || Number(t.totalItemsCount) || 0;
@@ -2173,21 +2205,28 @@ export class HivemindLearningService {
           };
         });
 
+      if (hasShowcaseTracks) {
+        await storage.setItem(HIVEMIND_TRACKS_STORAGE_KEY, JSON.stringify(normalized));
+        for (const starterId of SHOWCASE_STARTER_TRACK_IDS) {
+          deletedIds.add(starterId);
+        }
+        await storage.setItem(DELETED_HIVEMIND_TRACK_IDS_KEY, JSON.stringify(Array.from(deletedIds)));
+      }
+
       if (storage === appStorage) {
         this.cachedTracks = normalized;
       }
       return normalized;
     } catch {
-      const starters = buildShowcaseStarterTracks();
       if (storage === appStorage) {
-        this.cachedTracks = starters;
+        this.cachedTracks = [];
       }
-      return starters;
+      return [];
     }
   }
 
   public getCachedTracks(): HivemindLearningTrack[] {
-    return this.cachedTracks || buildShowcaseStarterTracks();
+    return this.cachedTracks ? [...this.cachedTracks] : [];
   }
 
   public async getTrackById(trackId: string, storage: AtemStorage = appStorage): Promise<HivemindLearningTrack | null> {
