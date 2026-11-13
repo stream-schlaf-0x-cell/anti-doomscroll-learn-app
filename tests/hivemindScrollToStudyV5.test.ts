@@ -14,43 +14,63 @@ import { mergeSyncSnapshots, AtmenSyncSnapshot } from '../src/core/sync/cloudSyn
 import { satisfiesDefaultCuratedStandard, satisfiesCuratedBodyContract } from '../src/core/enrichment/batchEnricher';
 
 describe('Atmen Hivemind — Scroll to Study V5 (Learning Tracks, 4-Tier Memes, Dual Modes & Cloud Sync)', () => {
+  async function createTestUserTrack(id: string, title: string, prefix: string) {
+    const generated = await generateHivemindLearningTrack({
+      titleOrTopic: title,
+      sourceType: 'topic',
+      sourceLabel: title,
+      rawText:
+        `${title}: Epistemologische Grundlagen, kritische Argumentationsanalyse, historische Bezüge ` +
+        `und praktische Denkanstöße für tiefes Verstehen jenseits schneller Schlagzeilen.`,
+      mixIntoMainFeed: true,
+      cardCount: 12
+    });
+    return {
+      ...generated,
+      id,
+      title,
+      items: generated.items.map((it, idx) => ({
+        ...it,
+        id: `${prefix}-step-${idx + 1}`,
+        hivemindMeta: it.hivemindMeta ? { ...it.hivemindMeta, trackId: id } : undefined
+      }))
+    };
+  }
+
   it('1. Starts Hivemind clean/empty with zero pre-seeded demo tracks and purges legacy demo tracks while keeping user tracks', async () => {
     const storage = new AtemStorage(new MemoryStorageDriver());
     const service = new HivemindLearningService();
     const initialTracks = await service.getTracks(storage);
     assert.equal(initialTracks.length, 0, 'Hivemind must start empty with 0 pre-seeded demo tracks');
 
-    // Showcase track builders still produce valid 12-card schemas if needed in unit helpers
+    // Showcase starter demo tracks (Rome & Quantum) must be permanently removed (0 pre-seeded tracks)
     const legacyDemoTracks = buildShowcaseStarterTracks();
-    assert.equal(legacyDemoTracks.length, 2);
-    const romanTrack = legacyDemoTracks[0];
-    assert.equal(romanTrack.items.length, 12);
-    for (const item of romanTrack.items) {
+    assert.equal(legacyDemoTracks.length, 0, 'buildShowcaseStarterTracks() must return [] (no Rome/Quantum demo tracks)');
+
+    // Generated tracks still produce valid 12-card schemas with 4 archetypes and 4-tier escalation memes
+    const userTrack = await createTestUserTrack('track-user-kant-epistemologie', 'Kants Epistemologie', 'user-kant');
+    assert.equal(userTrack.items.length, 12);
+    for (const item of userTrack.items) {
       const parsed = FeedItemSchema.safeParse(item);
       assert.equal(parsed.success, true, `Card ${item.id} must validate against FeedItemSchema`);
       assert.equal(satisfiesCuratedBodyContract(item), true);
       assert.equal(satisfiesDefaultCuratedStandard(item), true);
     }
 
-    const memeCards = romanTrack.items.filter(
+    const memeCards = userTrack.items.filter(
       i => (i.hivemindMeta?.cardArchetype || i.memeMeta?.cardArchetype) === 'expanding_brain_meme'
     );
     assert.ok(memeCards.length >= 2, 'Should include 4-tier escalation concept memes');
     const stages = memeCards[0].hivemindMeta?.escalationStages || memeCards[0].memeMeta?.escalationStages || [];
     assert.equal(stages.length, 4, 'Expanding brain meme must have 4 escalation stages');
 
-    // Verify seeding legacy demo tracks + a user track results in ONLY the user track surviving getTracks()
-    const userTrack = {
-      ...romanTrack,
-      id: 'track-user-kant-epistemologie',
-      title: 'Kants Epistemologie',
-      items: romanTrack.items.map((it, idx) => ({
-        ...it,
-        id: `user-kant-step-${idx + 1}`,
-        hivemindMeta: it.hivemindMeta ? { ...it.hivemindMeta, trackId: 'track-user-kant-epistemologie' } : undefined
-      }))
-    };
-    await storage.setItem(HIVEMIND_TRACKS_STORAGE_KEY, JSON.stringify([...legacyDemoTracks, userTrack]));
+    // Verify seeding legacy Rome & Quantum track IDs + a user track results in ONLY the user track surviving getTracks()
+    const syntheticLegacyRome = await createTestUserTrack('track-roman-republic-empire', 'Der Aufstieg und Fall Roms', 'legacy-rome');
+    const syntheticLegacyQuantum = await createTestUserTrack('track-quantum-reality', 'Quantenphysik verstehen', 'legacy-quantum');
+    await storage.setItem(
+      HIVEMIND_TRACKS_STORAGE_KEY,
+      JSON.stringify([syntheticLegacyRome, syntheticLegacyQuantum, userTrack])
+    );
     const cleaned = await service.getTracks(storage);
     assert.equal(cleaned.length, 1, 'Legacy Rome & Quantum demo tracks must be purged automatically');
     assert.equal(cleaned[0].id, 'track-user-kant-epistemologie');
@@ -125,17 +145,11 @@ endobj`;
   it('3. Accurately updates completedItemIds and progressPercent (0% -> ... -> 100%) when steps are marked completed', async () => {
     const storage = new AtemStorage(new MemoryStorageDriver());
     const service = new HivemindLearningService();
-    const baseTemplate = buildShowcaseStarterTracks()[0];
-    const customTrack = {
-      ...baseTemplate,
-      id: 'track-user-progress-test',
-      title: 'Benutzer-Lernpfad Ethik',
-      items: baseTemplate.items.map((it, idx) => ({
-        ...it,
-        id: `user-progress-step-${idx + 1}`,
-        hivemindMeta: it.hivemindMeta ? { ...it.hivemindMeta, trackId: 'track-user-progress-test' } : undefined
-      }))
-    };
+    const customTrack = await createTestUserTrack(
+      'track-user-progress-test',
+      'Benutzer-Lernpfad Ethik',
+      'user-progress'
+    );
     await service.saveTrack(customTrack, storage);
 
     const tracks = await service.getTracks(storage);
@@ -170,17 +184,11 @@ endobj`;
   it('4. Mode 2 (mixIntoMainFeed: true) interleaves unread learning cards into the main stream without duplicating completed cards', async () => {
     const storage = new AtemStorage(new MemoryStorageDriver());
     const service = new HivemindLearningService();
-    const baseTemplate = buildShowcaseStarterTracks()[0];
-    const customTrack = {
-      ...baseTemplate,
-      id: 'track-user-interleave-test',
-      title: 'Benutzer-Lernpfad Erkenntnistheorie',
-      items: baseTemplate.items.map((it, idx) => ({
-        ...it,
-        id: `user-interleave-step-${idx + 1}`,
-        hivemindMeta: it.hivemindMeta ? { ...it.hivemindMeta, trackId: 'track-user-interleave-test' } : undefined
-      }))
-    };
+    const customTrack = await createTestUserTrack(
+      'track-user-interleave-test',
+      'Benutzer-Lernpfad Erkenntnistheorie',
+      'user-interleave'
+    );
     await service.saveTrack(customTrack, storage);
 
     const tracks = await service.getTracks(storage);
@@ -222,9 +230,9 @@ endobj`;
     assert.equal(interleavedIds.includes(track.items[3].id), true, 'Unread card 4 MUST be interleaved');
   });
 
-  it('5. Deterministically merges hivemindTracks and unions completedItemIds across devices in cloudSyncService', () => {
-    const starter = buildShowcaseStarterTracks();
-    const trackA = starter[0]; // 12 items
+  it('5. Deterministically merges hivemindTracks and unions completedItemIds across devices in cloudSyncService', async () => {
+    const trackA = await createTestUserTrack('track-user-sync-a', 'Didaktik & Hermeneutik', 'sync-a');
+    const trackB = await createTestUserTrack('track-user-sync-b', 'Buddhismus & Meditation', 'sync-b');
 
     const localSnap: AtmenSyncSnapshot = {
       version: 1,
@@ -254,7 +262,7 @@ endobj`;
           mixIntoMainFeed: false,
           updatedAt: '2026-11-07T16:00:00.000Z'
         },
-        starter[1]
+        trackB
       ],
       deletedHivemindTrackIds: []
     };

@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { FeedItem, FeedItemSchema, TopicTag } from '../src/core/domain/types';
+import { FeedItem, FeedItemSchema, TOPIC_SPACE_MAP, TopicTag } from '../src/core/domain/types';
 import { REAL_KNOWLEDGE_VAULT } from '../src/core/data/realKnowledgeVault';
+import { resolveItemSpaceHandle } from '../src/core/spaces/spaceRepository';
 import { ZERO_WIDTH_REGEX, sanitizeImageUrl } from '../src/core/ingestion/rssParser';
 import { stripBoilerplate, splitSentencesAware, isSubstantialSubtitle } from '../src/core/ingestion/normalizer';
 import {
@@ -99,10 +100,17 @@ function sanitizeItem(rawItem: FeedItem): FeedItem | null {
 
     const { didacticTransfer: _dropDt, didacticSeed: _dropDs, ...restItem } = item;
 
+    const resolvedSpace =
+      item.space ||
+      resolveItemSpaceHandle(item) ||
+      TOPIC_SPACE_MAP[item.primaryTopic]?.space ||
+      'c/philosophie';
+
     const cleaned: FeedItem = {
       ...restItem,
       title: cleanTitle,
       subtitle,
+      space: resolvedSpace,
       feedText: feedText || cleanBody.slice(0, 500),
       articleBody: cleanBody || feedText,
       body: cleanBody || feedText,
@@ -166,8 +174,9 @@ function pruneAndBalanceItems(items: FeedItem[], targetLimit = 140): FeedItem[] 
     });
   }
 
-  // Round-robin selection across topics up to targetLimit
+  // Round-robin selection across topics up to targetLimit with strict per-domain diversity cap (<= 4 per domain)
   const selected: FeedItem[] = [];
+  const domainCounts = new Map<string, number>();
   const keys = Array.from(byTopic.keys());
   let addedInRound = true;
   let roundIdx = 0;
@@ -178,7 +187,13 @@ function pruneAndBalanceItems(items: FeedItem[], targetLimit = 140): FeedItem[] 
       if (selected.length >= targetLimit) break;
       const list = byTopic.get(key);
       if (list && roundIdx < list.length) {
-        selected.push(list[roundIdx]);
+        const candidate = list[roundIdx];
+        const dom = (candidate.sourceDomain || candidate.sourceReferences?.[0]?.publisher || candidate.id).toLowerCase().replace(/^www\./, '');
+        const maxPerDom = candidate.format === 'art_showcase' ? 3 : 5;
+        if ((domainCounts.get(dom) || 0) < maxPerDom) {
+          selected.push(candidate);
+          domainCounts.set(dom, (domainCounts.get(dom) || 0) + 1);
+        }
         addedInRound = true;
       }
     }
@@ -215,20 +230,49 @@ function runSanitization() {
     }
   }
 
-  // 1. Write clean pipeline output (120 articles, zero vault items, article at [0])
-  const prunedPipeline = pruneAndBalanceItems(pipelineCandidates, 120);
+  // 1. Write clean pipeline output (135 articles, zero vault items, article at [0])
+  const prunedPipeline = pruneAndBalanceItems(pipelineCandidates, 135);
   fs.writeFileSync(PIPELINE_OUTPUT_PATH, JSON.stringify(prunedPipeline, null, 2), 'utf8');
   console.log(`✓ src/core/data/pipeline-output.json written (${prunedPipeline.length} items).`);
 
-  // 2. Build public snapshot: pipeline articles + 20 authentic museum artworks for c/kunst_galerie
-  const galleryArtworks: FeedItem[] = [];
+  // 2. Build public snapshot: pipeline articles + 20 diverse museum artworks (round-robin across museums)
+  const seenInPipelineIds = new Set(prunedPipeline.map(i => i.id));
+  const seenInPipelineUrls = new Set(
+    prunedPipeline.map(i => (i.canonicalUrl || '').trim().toLowerCase()).filter(Boolean)
+  );
+  const existingGalleryCount = prunedPipeline.filter(i => resolveItemSpaceHandle(i) === 'c/kunst_galerie').length;
+  const neededVaultArtworks = Math.max(22 - existingGalleryCount, 15);
+
+  const byMuseum = new Map<string, FeedItem[]>();
   for (const vaultItem of REAL_KNOWLEDGE_VAULT) {
-    if (vaultItem.space === 'c/kunst_galerie') {
-      const sanitized = sanitizeItem(vaultItem);
-      if (sanitized && galleryArtworks.length < 20) {
-        galleryArtworks.push(sanitized);
+    if (vaultItem.space !== 'c/kunst_galerie') continue;
+    const sanitized = sanitizeItem(vaultItem);
+    if (!sanitized) continue;
+    const normUrl = (sanitized.canonicalUrl || '').trim().toLowerCase();
+    if (seenInPipelineIds.has(sanitized.id) || (normUrl && seenInPipelineUrls.has(normUrl))) continue;
+    const museumDom = (sanitized.sourceDomain || sanitized.sourceReferences?.[0]?.publisher || 'museum')
+      .toLowerCase()
+      .replace(/^www\./, '');
+    const list = byMuseum.get(museumDom) || [];
+    list.push(sanitized);
+    byMuseum.set(museumDom, list);
+  }
+
+  const galleryArtworks: FeedItem[] = [];
+  const museumKeys = Array.from(byMuseum.keys());
+  let round = 0;
+  let added = true;
+  while (galleryArtworks.length < neededVaultArtworks && added) {
+    added = false;
+    for (const mKey of museumKeys) {
+      if (galleryArtworks.length >= neededVaultArtworks) break;
+      const list = byMuseum.get(mKey);
+      if (list && round < list.length) {
+        galleryArtworks.push(list[round]);
+        added = true;
       }
     }
+    round++;
   }
 
   const snapshotItems: FeedItem[] = [...prunedPipeline, ...galleryArtworks];

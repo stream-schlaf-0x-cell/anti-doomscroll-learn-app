@@ -1950,7 +1950,9 @@ export const ReaderScreen: React.FC = () => {
 
 const styles = StyleSheet.create({
   safeArea: {
-    flex: 1
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : {})
   },
   notFoundContainer: {
     flex: 1,

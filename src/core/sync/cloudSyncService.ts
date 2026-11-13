@@ -10,6 +10,7 @@ import {
   HivemindLearningTrack,
   HIVEMIND_TRACKS_STORAGE_KEY,
   DELETED_HIVEMIND_TRACK_IDS_KEY,
+  SHOWCASE_STARTER_TRACK_IDS,
   calculateTrackProgressPercent,
   hivemindLearningService
 } from '../learning/hivemindLearningService';
@@ -446,10 +447,21 @@ export function mergeSyncSnapshots(
     }
   }
 
-  // Saved Articles (Bibliothek): Union by id
+  // Saved Articles (Bibliothek): Union by id (always stripping deprecated showcase starter cards)
   const savedArticlesMap = new Map<string, FeedItem>();
-  for (const a of local.savedArticles || []) savedArticlesMap.set(a.id, a);
+  const isDeprecatedStarterItem = (it: FeedItem) => {
+    const tId = it.hivemindMeta?.trackId || it.memeMeta?.trackId;
+    return Boolean(
+      (tId && SHOWCASE_STARTER_TRACK_IDS.has(tId)) ||
+      it.id.startsWith('hivemind-track-roman') ||
+      it.id.startsWith('hivemind-track-quantum')
+    );
+  };
+  for (const a of local.savedArticles || []) {
+    if (!isDeprecatedStarterItem(a)) savedArticlesMap.set(a.id, a);
+  }
   for (const a of remote.savedArticles || []) {
+    if (isDeprecatedStarterItem(a)) continue;
     if (!savedArticlesMap.has(a.id) || isRemoteNewer) {
       savedArticlesMap.set(a.id, a);
     }
@@ -494,6 +506,7 @@ export function mergeSyncSnapshots(
 
   // 6. Hivemind Learning Tracks: Union by trackId, union completedItemIds, recalculate progressPercent
   const deletedTrackSet = new Set<string>([
+    ...Array.from(SHOWCASE_STARTER_TRACK_IDS),
     ...(local.deletedHivemindTrackIds || []),
     ...(remote.deletedHivemindTrackIds || [])
   ]);

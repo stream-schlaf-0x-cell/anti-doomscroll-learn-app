@@ -4,7 +4,7 @@
   "description": "Souveränes Wissens-Netzwerk & kuratierter Erkenntnis-Stream",
   "start_url": "./",
   "display": "standalone",
-  "orientation": "portrait-primary",
+  "orientation": "any",
   "background_color": "#0E1424",
   "theme_color": "#0E1424",
   "icons": [

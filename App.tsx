@@ -472,7 +472,9 @@ export default function App() {
 
 const styles = StyleSheet.create({
   mainSafeArea: {
-    flex: 1
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : {})
   },
   loadingContainer: {
     flex: 1,
@@ -543,10 +545,14 @@ const styles = StyleSheet.create({
   },
   screenContainer: {
     flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : {}),
     backgroundColor: '#0A0E1A'
   },
   tabPane: {
-    flex: 1
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : {})
   },
   desktopTopNav: {
     borderBottomWidth: 1,
@@ -623,6 +629,7 @@ const styles = StyleSheet.create({
   readerOverlay: {
     ...StyleSheet.absoluteFillObject,
     ...(Platform.OS === 'web' ? ({ position: 'fixed' } as any) : {}),
+    ...(Platform.OS === 'web' ? ({ inset: 0, minHeight: 0, overflow: 'hidden' } as any) : {}),
     zIndex: 5000
   },
   tabBar: {

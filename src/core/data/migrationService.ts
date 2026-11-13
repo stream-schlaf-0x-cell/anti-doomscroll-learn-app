@@ -20,7 +20,7 @@ import {
   SHOWCASE_STARTER_TRACK_IDS
 } from '../learning/hivemindLearningService';
 
-export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-13-v7.0-redaktion-clean';
+export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-13-v8.0-purge-showcase-starters';
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
@@ -195,6 +195,36 @@ export async function runInPlaceDataMigration(
     }
   }
 
+  // Unconditionally remove deprecated showcase starter tracks (Rom & Quantenphysik) across storage & saved cache
+  try {
+    await hivemindLearningService.purgeShowcaseStarterTracks();
+    const rawSaved = await storage.getItem(SAVED_ARTICLES_STORAGE_KEY);
+    if (rawSaved) {
+      const parsedSaved = JSON.parse(rawSaved);
+      if (Array.isArray(parsedSaved)) {
+        const cleanedSaved = parsedSaved.filter((it: any) => {
+          if (!it || typeof it !== 'object') return false;
+          const tId = it.hivemindMeta?.trackId || it.memeMeta?.trackId;
+          const itemId = String(it.id || '');
+          const isStarter =
+            (tId && SHOWCASE_STARTER_TRACK_IDS.has(tId)) ||
+            itemId.startsWith('hivemind-track-roman') ||
+            itemId.startsWith('hivemind-track-quantum');
+          if (isStarter) {
+            protectedUserItemIds.delete(itemId);
+            return false;
+          }
+          return true;
+        });
+        if (cleanedSaved.length !== parsedSaved.length) {
+          await storage.setItem(SAVED_ARTICLES_STORAGE_KEY, JSON.stringify(cleanedSaved));
+        }
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
   // 3. Filter items: preserve protected user items, filter others through satisfiesCuratedBodyContract
   let purgedCount = 0;
   let preservedCount = 0;
@@ -203,7 +233,11 @@ export async function runInPlaceDataMigration(
   for (const [id, item] of candidateMap.entries()) {
     const isUserProtected = protectedUserItemIds.has(id);
     const trackId = item.hivemindMeta?.trackId || item.memeMeta?.trackId;
-    if (!isUserProtected && trackId && SHOWCASE_STARTER_TRACK_IDS.has(trackId)) {
+    const isDeprecatedStarter =
+      (trackId && SHOWCASE_STARTER_TRACK_IDS.has(trackId)) ||
+      id.startsWith('hivemind-track-roman') ||
+      id.startsWith('hivemind-track-quantum');
+    if (isDeprecatedStarter) {
       purgedCount++;
       continue;
     }

@@ -629,10 +629,20 @@ export function getDomainDiversityKey(item: FeedItem): string {
   return pubKey;
 }
 
+export function isArtShowcaseItem(item: Pick<FeedItem, 'format' | 'primaryTopic' | 'space'>): boolean {
+  return (
+    item.format === 'art_showcase' ||
+    item.primaryTopic === 'art_aesthetics' ||
+    item.space === 'c/kunst_galerie'
+  );
+}
+
 /**
  * Hard Sliding-Window Diversity & Anti-ARD Filter (`enforceCuratedStreamDiversity`):
  * - Max 1 ARD/Tagesschau item per 10 cards (<= 10% of the resulting stream).
  * - Never two items from the same domain within 4 cards of each other (minimum index gap >= 4).
+ * - Museum & Artwork diversity in mixed streams: prevents museum/art_showcase clusters
+ *   from crowding out essays and news (min 4 cards apart, max ~12% in mixed feeds).
  */
 export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T[] {
   if (items.length <= 6) {
@@ -643,22 +653,39 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
   // Guarantee ARD <= 10% of the final stream: ARD / (nonArd + ARD) <= 0.10 => ARD <= floor(nonArd / 9)
   const maxArdAllowed = Math.max(0, Math.floor(nonArdTotal / 9));
 
+  const nonArtTotal = items.filter(i => !isArtShowcaseItem(i)).length;
+  const enforceMixedArtCap = nonArtTotal >= items.length * 0.45 && items.length >= 10;
+  const maxArtAllowed = enforceMixedArtCap
+    ? Math.max(2, Math.floor(nonArtTotal / 7))
+    : items.length;
+
   const pool = [...items];
   const result: T[] = [];
   let ardPlaced = 0;
+  let artPlaced = 0;
 
   while (pool.length > 0) {
     let pickedIdx = -1;
     const recent9 = result.slice(-9);
+    const recent4 = result.slice(-4); // at least 4 intervening cards => >= 5 card gap for artworks
     const recent3 = result.slice(-3); // 3 intervening cards => index difference >= 4
     const ardInRecent9 = recent9.some(x => isArdSource(x));
+    const artInRecent4 = recent4.some(x => isArtShowcaseItem(x));
+    const hasNonArtLeft = pool.some(x => !isArtShowcaseItem(x));
 
     for (let i = 0; i < pool.length; i++) {
       const cand = pool[i];
       const candIsArd = isArdSource(cand);
+      const candIsArt = isArtShowcaseItem(cand);
 
       if (candIsArd) {
         if (ardPlaced >= maxArdAllowed || ardInRecent9) {
+          continue;
+        }
+      }
+
+      if (enforceMixedArtCap && candIsArt && hasNonArtLeft) {
+        if (artPlaced >= maxArtAllowed || artInRecent4) {
           continue;
         }
       }
@@ -674,13 +701,16 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
     }
 
     if (pickedIdx === -1) {
-      // No remaining candidate can be placed without violating the <=10% ARD cap or 4-card domain spacing
+      // No remaining candidate can be placed without violating diversity constraints
       break;
     }
 
     const [chosen] = pool.splice(pickedIdx, 1);
     if (isArdSource(chosen)) {
       ardPlaced++;
+    }
+    if (isArtShowcaseItem(chosen)) {
+      artPlaced++;
     }
     result.push(chosen);
   }
@@ -769,11 +799,14 @@ export function rankBloomScrollFeed(
     const topicCounts30 = new Map<TopicTag, number>();
     let teachingCount30 = 0;
     let challengingCount30 = 0;
+    let artCount30 = 0;
     for (const s of window30) {
       topicCounts30.set(s.primaryTopic, (topicCounts30.get(s.primaryTopic) || 0) + 1);
       if (s.isTeachingRelated || s.primaryTopic === 'german_didactics') teachingCount30++;
       if (s.isChallengingPerspective) challengingCount30++;
+      if (isArtShowcaseItem(s) || getCardRhythmFormat(s) === 'visual_art') artCount30++;
     }
+    const aiCount30 = topicCounts30.get('ai_apple') || 0;
 
     const lastRhythm = lastCard ? getCardRhythmFormat(lastCard) : null;
     const lastPub = lastCard ? getNormalizedPublisherKey(lastCard) : null;
@@ -784,15 +817,16 @@ export function rankBloomScrollFeed(
     let bestIdx = 0;
     let bestWindowScore = -Infinity;
 
-    // Evaluate top candidates in remaining pool (plus top challenging/teaching candidates if under target)
+    // Evaluate top candidates in remaining pool (plus top challenging/teaching/AI candidates if under target)
     const evalLimit = Math.min(remaining.length, 120);
     const candidateIndices: number[] = [];
     for (let i = 0; i < evalLimit; i++) {
       candidateIndices.push(i);
     }
-    if (challengingCount30 < 2 || teachingCount30 < 2) {
+    if (challengingCount30 < 2 || teachingCount30 < 2 || aiCount30 < 3) {
       let extraChall = 0;
       let extraTeach = 0;
+      let extraAi = 0;
       for (let i = evalLimit; i < remaining.length; i++) {
         const c = remaining[i];
         if (challengingCount30 < 2 && c.isChallengingPerspective && extraChall < 10) {
@@ -801,8 +835,11 @@ export function rankBloomScrollFeed(
         } else if (teachingCount30 < 2 && (c.isTeachingRelated || c.primaryTopic === 'german_didactics') && extraTeach < 10) {
           candidateIndices.push(i);
           extraTeach++;
+        } else if (aiCount30 < 3 && c.primaryTopic === 'ai_apple' && extraAi < 10) {
+          candidateIndices.push(i);
+          extraAi++;
         }
-        if (extraChall >= 10 && extraTeach >= 10) break;
+        if (extraChall >= 10 && extraTeach >= 10 && extraAi >= 10) break;
       }
     }
 
@@ -911,16 +948,23 @@ export function rankBloomScrollFeed(
       if (cand.primaryTopic === 'ai_apple') {
         if (topicCountIn6 >= 1) utility -= 1.1;
         if (topicCountIn30 >= 6) utility -= 3.0;
-        else if (topicCountIn30 < 2 && pos >= 8) utility += 0.55;
+        else if (aiCount30 < 3 && topicCountIn6 === 0 && pos >= 2) utility += 0.68;
       }
-      // Keep Wikipedia / Encyclopedia & Artworks balanced
+      // Keep Wikipedia / Encyclopedia, Memes & Artworks balanced (never crowd out intellectually rich reading)
       if (cand.sourceTrustLevel === 'encyclopedia' && pubCountIn30 >= 2) {
         utility -= 2.5;
       }
-      if (candRhythm === 'visual_art') {
-        const recentArtCount = recentWindow.filter(x => getCardRhythmFormat(x) === 'visual_art').length;
-        if (recentArtCount >= 1) utility -= 1.6;
-        else utility += 0.28;
+      if (cand.primaryTopic === 'memes_satire' || cand.format === 'meme') {
+        if (topicCountIn6 >= 1) utility -= 1.4;
+        if (topicCountIn30 >= 3) utility -= 3.2;
+      }
+      if (candRhythm === 'visual_art' || isArtShowcaseItem(cand)) {
+        const recentArtCount = recentWindow.filter(
+          x => getCardRhythmFormat(x) === 'visual_art' || isArtShowcaseItem(x)
+        ).length;
+        if (artCount30 >= 3) utility -= 3.2;
+        else if (recentArtCount >= 1) utility -= 1.8;
+        else utility += 0.22;
       }
 
       // 3. ~10% Teaching & ~10% Counter-Perspective Target Steering
@@ -1179,6 +1223,7 @@ export function sortFeedForDisplay(
     const todayTopPins = effectiveTopPins.filter(item => !isHivemindLearningCard(item));
     const strictlyToday = remaining.filter(item => {
       if (isHivemindLearningCard(item)) return false;
+      if (isArtShowcaseItem(item) || item.isEvergreenGem) return false;
       if (item.publicationDateReliable === false) return false;
       const pubTime = new Date(item.publishedAt).getTime();
       if (isNaN(pubTime) || pubTime <= 0) return false;
@@ -1188,7 +1233,45 @@ export function sortFeedForDisplay(
       return true;
     });
 
-    const sorted = [...strictlyToday].sort((a, b) => {
+    // Progressive freshness fallback ONLY when 0 items are strictly < 18h (e.g. before live RSS resolves or offline)
+    let todayCandidates = strictlyToday;
+    if (todayCandidates.length === 0 && todayTopPins.length === 0) {
+      const fortyEightHoursMs = 48 * 3600 * 1000;
+      const recent48h = remaining.filter(item => {
+        if (isHivemindLearningCard(item)) return false;
+        if (isArtShowcaseItem(item) || item.isEvergreenGem) return false;
+        if (item.publicationDateReliable === false) return false;
+        const pubTime = new Date(item.publishedAt).getTime();
+        if (isNaN(pubTime) || pubTime <= 0) return false;
+        const ageMs = nowMs - pubTime;
+        if (ageMs < -futureToleranceMs || ageMs > fortyEightHoursMs) return false;
+        return item.type === 'briefing' || item.contentOrigin === 'live_ingested' || item.format !== 'long_invitation';
+      });
+      if (recent48h.length > 0) {
+        todayCandidates = recent48h;
+      } else {
+        const sevenDaysMs = 7 * 24 * 3600 * 1000;
+        const recentWeekNews = remaining.filter(item => {
+          if (isHivemindLearningCard(item)) return false;
+          if (isArtShowcaseItem(item) || item.isEvergreenGem) return false;
+          if (item.publicationDateReliable === false) return false;
+          const pubTime = new Date(item.publishedAt).getTime();
+          if (isNaN(pubTime) || pubTime <= 0) return false;
+          const ageMs = nowMs - pubTime;
+          if (ageMs < -futureToleranceMs || ageMs > sevenDaysMs) return false;
+          return (
+            item.type === 'briefing' ||
+            item.type === 'quick_insight' ||
+            item.contentOrigin === 'live_ingested' ||
+            item.format === 'sourced_update' ||
+            item.format === 'concise_insight'
+          );
+        });
+        todayCandidates = recentWeekNews.slice(0, 20);
+      }
+    }
+
+    const sorted = [...todayCandidates].sort((a, b) => {
       // Boost regional Saxony / Dresden / Leipzig items in today's news
       const saxonyA = matchesSaxonyRegion(a) ? 1 : 0;
       const saxonyB = matchesSaxonyRegion(b) ? 1 : 0;

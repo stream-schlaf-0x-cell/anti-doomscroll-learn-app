@@ -33,10 +33,11 @@ import {
 } from '../../core/utils/imageQuality';
 import { detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { SubchannelBadge } from './SubchannelBadge';
+import { formatRelativeTime } from '../../core/feed/feedPresentation';
 import { hivemindLearningService } from '../../core/learning/hivemindLearningService';
 import { QuizCheckpointCard } from './QuizCheckpointCard';
 
-export { areFeedCardPropsEqual, stripLeadingTitleDuplicate };
+export { areFeedCardPropsEqual, stripLeadingTitleDuplicate, formatRelativeTime };
 
 const ESCALATION_VISUAL_THEMES: Record<1 | 2 | 3 | 4, {
   bg: string;
@@ -103,29 +104,6 @@ export interface FeedCardProps {
   hivemindProgressPercent?: number;
   isHivemindStepCompleted?: boolean;
   isCompletedHivemindStep?: boolean;
-}
-
-function formatRelativeTime(isoString?: string): string {
-  if (!isoString) return 'Heute';
-  try {
-    const pubDate = new Date(isoString);
-    const now = new Date();
-    const diffMs = now.getTime() - pubDate.getTime();
-    if (diffMs < 0) return 'Gerade eben';
-    const diffMinutes = Math.floor(diffMs / (1000 * 60));
-    if (diffMinutes < 5) return 'Gerade eben';
-    if (diffMinutes < 60) return `vor ${diffMinutes} Min.`;
-    const diffHours = Math.floor(diffMinutes / 60);
-    // Overnight recent (< 16h) outputs "vor X Std."
-    if (diffHours < 16) return `vor ${diffHours} Std.`;
-    const isYesterday = pubDate.getDate() === now.getDate() - 1 || diffHours < 36;
-    if (isYesterday) return 'gestern';
-    const diffDays = Math.floor(diffHours / 24);
-    if (diffDays < 7) return `vor ${diffDays} Tagen`;
-    return pubDate.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
-  } catch {
-    return 'Heute';
-  }
 }
 
 export function formatHonestTimeLabel(item: ScoredFeedItem): string {
@@ -205,6 +183,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const [naturalAspectRatio, setNaturalAspectRatio] = useState<number | null>(null);
   const [showSimulatedReplies, setShowSimulatedReplies] = useState(false);
+  const [showDiscourseToggle, setShowDiscourseToggle] = useState(false);
   const [markedHivemindDone, setMarkedHivemindDone] = useState<boolean>(Boolean(resolvedStepCompleted));
   const [dynamicTrackProgress, setDynamicTrackProgress] = useState<number | undefined>(resolvedTrackProgress);
 
@@ -808,6 +787,71 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
           />
         </View>
       )}
+
+      {/* Intellectually Stimulating Collapsible Discourse (These & Gegenposition directly on card) */}
+      {!hivemindTrackId &&
+        Boolean(item.perspectiveDetails?.counterPerspective || item.deepeningOptions?.counterArgument || item.challengePrompt) && (
+          <View style={styles.simulatedRepliesWrapper}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setShowDiscourseToggle(prev => !prev)}
+              style={[
+                styles.simulatedRepliesToggleBtn,
+                {
+                  backgroundColor: colors.surfaceSecondary,
+                  borderColor: showDiscourseToggle ? colors.accent : colors.borderSubtle
+                }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="These und Gegenposition anzeigen"
+            >
+              <Ionicons name="git-compare-outline" size={14} color={colors.accent} style={{ marginRight: 6 }} />
+              <Text style={[styles.simulatedRepliesToggleText, { color: colors.textPrimary }]}>
+                These & Gegenposition
+              </Text>
+              <Ionicons
+                name={showDiscourseToggle ? 'chevron-up' : 'chevron-down'}
+                size={15}
+                color={colors.accent}
+                style={{ marginLeft: 'auto' }}
+              />
+            </TouchableOpacity>
+
+            {showDiscourseToggle && (
+              <View
+                style={[
+                  styles.simulatedReplyCard,
+                  {
+                    marginTop: 8,
+                    backgroundColor: colors.surfaceSecondary,
+                    borderColor: colors.borderSubtle,
+                    borderLeftColor: colors.accent
+                  }
+                ]}
+              >
+                {item.perspectiveDetails?.claim &&
+                  item.perspectiveDetails.claim.trim() !== item.title.trim() && (
+                    <Text style={[styles.simulatedReplyBody, { color: colors.textPrimary, marginBottom: 6 }]}>
+                      <Text style={{ fontWeight: '700' }}>These: </Text>
+                      {item.perspectiveDetails.claim}
+                    </Text>
+                  )}
+                {(item.perspectiveDetails?.counterPerspective || item.deepeningOptions?.counterArgument) && (
+                  <Text style={[styles.simulatedReplyBody, { color: colors.textSecondary, marginBottom: item.challengePrompt ? 6 : 0 }]}>
+                    <Text style={{ fontWeight: '700', color: '#F59E0B' }}>Gegenposition: </Text>
+                    {item.perspectiveDetails?.counterPerspective || item.deepeningOptions?.counterArgument}
+                  </Text>
+                )}
+                {item.challengePrompt && (
+                  <Text style={[styles.simulatedReplyBody, { color: colors.accent, fontStyle: 'italic' }]}>
+                    <Text style={{ fontWeight: '700', fontStyle: 'normal' }}>Denkanstoß: </Text>
+                    {item.challengePrompt}
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        )}
 
       {/* Inline Expandable Community Replies (💬 X Antworten anzeigen) */}
       {simulatedReplies && simulatedReplies.length > 0 && (

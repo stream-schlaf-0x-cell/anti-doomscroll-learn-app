@@ -1024,36 +1024,46 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
         </View>
       </Modal>
 
-      {/* Ultra Master Studio Modal */}
-      <UltraMasterModal
-        visible={showUltraMasterModal}
-        onClose={() => setShowUltraMasterModal(false)}
-      />
+      {/* Ultra Master Studio Modal (lazily mounted) */}
+      {showUltraMasterModal && (
+        <UltraMasterModal
+          visible={true}
+          onClose={() => setShowUltraMasterModal(false)}
+        />
+      )}
 
-      {/* Mobile Publish & QR Modal */}
-      <MobilePublishModal
-        visible={showMobilePublishModal}
-        onClose={() => setShowMobilePublishModal(false)}
-      />
+      {/* Mobile Publish & QR Modal (lazily mounted) */}
+      {showMobilePublishModal && (
+        <MobilePublishModal
+          visible={true}
+          onClose={() => setShowMobilePublishModal(false)}
+        />
+      )}
 
-      {/* News-Hub & Quellen-Zentrale Modal */}
-      <NewsHubModal
-        visible={showNewsHubModal}
-        onClose={() => setShowNewsHubModal(false)}
-      />
+      {/* News-Hub & Quellen-Zentrale Modal (lazily mounted) */}
+      {showNewsHubModal && (
+        <NewsHubModal
+          visible={true}
+          onClose={() => setShowNewsHubModal(false)}
+        />
+      )}
 
-      {/* Atmen Breathing Portal Modal */}
-      <AtmenBreathingPortal
-        visible={showBreathingPortal}
-        onClose={() => setShowBreathingPortal(false)}
-        mode="modal"
-      />
+      {/* Atmen Breathing Portal Modal (lazily mounted) */}
+      {showBreathingPortal && (
+        <AtmenBreathingPortal
+          visible={true}
+          onClose={() => setShowBreathingPortal(false)}
+          mode="modal"
+        />
+      )}
 
-      {/* Hivemind Epistemic Stream Modal */}
-      <HivemindStreamModal
-        visible={showHivemindModal}
-        onClose={() => setShowHivemindModal(false)}
-      />
+      {/* Hivemind Epistemic Stream Modal (lazily mounted) */}
+      {showHivemindModal && (
+        <HivemindStreamModal
+          visible={true}
+          onClose={() => setShowHivemindModal(false)}
+        />
+      )}
 
       {/* Feed-Kurator & Live-Sync Modal */}
       <Modal

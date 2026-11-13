@@ -240,7 +240,11 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
           </TouchableOpacity>
         </View>
 
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={{ flex: 1, minHeight: 0 }}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
           {/* SECTION 1: Creator Box ("Was möchtest du heute durchdringen?") */}
           <View style={[styles.creatorCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
             <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
@@ -703,7 +707,8 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1
+    flex: 1,
+    minHeight: 0
   },
   header: {
     flexDirection: 'row',

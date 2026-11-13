@@ -50,6 +50,7 @@ export interface EnrichedItemData {
   feedText: string;
   keyInsight: string;
   counterPerspective?: string;
+  challengePrompt?: string;
   primaryTopic: TopicTag;
   topics: TopicTag[];
   didacticTransfer: string;
@@ -80,7 +81,7 @@ export interface BatchCurationReport {
   modelUsed?: string;
 }
 
-const BATCH_PROMPT_VERSION = 'curation-v2';
+const BATCH_PROMPT_VERSION = 'curation-v3';
 
 function normalizeAiTopicTag(rawTopic: unknown, fallback: TopicTag = 'philosophy_ethics'): TopicTag {
   if (typeof rawTopic !== 'string') return fallback;
@@ -111,6 +112,7 @@ const BatchDecisionSchema = z.object({
   feedText: z.string().max(10000).nullable().optional().transform(v => v ?? ''),
   keyInsight: z.string().max(2000).nullable().optional().transform(v => v ?? ''),
   counterPerspective: z.string().max(4000).nullable().optional().transform(v => v ?? ''),
+  challengePrompt: z.string().max(1000).nullable().optional().transform(v => v ?? ''),
   primaryTopic: CoercedTopicTagSchema,
   topics: z.array(z.any()).max(5).nullable().optional().transform(arr =>
     Array.isArray(arr) ? arr.map(t => normalizeAiTopicTag(t)).slice(0, 3) : []
@@ -1197,12 +1199,14 @@ export class BatchEditionEnricher {
     const counterText = decision.counterPerspective?.trim() || '';
     const hasRealCounter = counterText.split(/\s+/).filter(Boolean).length >= 12;
     const transferText = decision.didacticTransfer?.trim() || '';
+    const challengeText = decision.challengePrompt?.trim() || '';
     return {
       ...original,
       feedText: decision.feedText || original.feedText,
       keyInsight: decision.keyInsight || original.keyInsight || original.subtitle,
       primaryTopic: decision.primaryTopic,
       topics,
+      ...(challengeText.length >= 12 ? { challengePrompt: challengeText } : {}),
       ...(hasRealCounter
         ? {
             perspectiveDetails: {
@@ -1384,17 +1388,18 @@ Deine Aufgabe ist zweistufig:
    - Ein Score von mindestens 7 (7 bis 10) ist die zwingende Hürde für die Aufnahme in Atmen.
 
 2. Veredelung (nur für Beiträge mit curationScore >= 7):
-   - "feedText": Prägnanter, hochsubstanzieller Lesetext (50-80 Wörter, null Boilerplate).
-   - "keyInsight": Prägnante 1-Satz-Kernthese (konzeptioneller Mehrwert).
-   - "counterPerspective": Eine echte dialektische Gegenposition, ein blinder Fleck oder eine methodische Gültigkeitsgrenze (mindestens 35 Wörter spezifische Analyse; keine Floskeln).
+   - "feedText": Knapper, intellektuell scharfer Kurzpitch im Reddit-Essenz-Stil (45-70 Wörter: zentrale These + warum das relevant ist, null Boilerplate oder Floskeln).
+   - "keyInsight": Eigenständige 1-Satz-Kernthese, die Titel und feedText nicht wiederholt.
+   - "counterPerspective": Eine echte Pro-/Contra-Gegenposition, ein blinder Fleck oder ein erkenntnistheoretischer Einwand (25-50 Wörter spezifische Analyse; keine Floskeln).
+   - "challengePrompt": Eine präzise Weiterdenk- oder Seminar-Frage zum Thema (1 Satz, optional ""; bei wichtigen Diskursen immer ausfüllen).
    - "primaryTopic": Exakte semantische Zuordnung aus: ${VALID_TOPICS.join(', ')}.
    - "topics": 1 bis 3 passende Themen-Tags.
    - "didacticTransfer": NUR wenn der Beitrag einen echten pädagogischen, didaktischen oder praktischen Transfer hergibt (~10-15% der Beiträge): Ein konkreter Transfer-Impuls (mindestens 35 Wörter). Sonst leerer String "".
 
-Für abgelehnte Beiträge (Score < 7): Setze feedText, keyInsight, counterPerspective und didacticTransfer auf "" und gib einen kurzen rejectionReason an.
+Für abgelehnte Beiträge (Score < 7): Setze feedText, keyInsight, counterPerspective, challengePrompt und didacticTransfer auf "" und gib einen kurzen rejectionReason an.
 
 SPRACH-REGEL:
-Behalte die Ausgangssprache des Originalartikels bei! (sourceLanguage === "en" -> Englisch, sourceLanguage === "de" -> Deutsch).
+Antworte für redaktionelle Kurzpitches, Kernthesen, Gegenpositionen und Weiterdenk-Fragen grundsätzlich in klarem, präzisem Deutsch (bei englischsprachigen Originalartikeln präzise deutsche Einordnung mit englischen Fachbegriffen wo sinnvoll; falls ausdrücklich ein rein englischer Originalauszug nötig ist, bleibe präzise ohne Schablonen).
 
 Antworte AUSSCHLIESSLICH als JSON-Array:
 [
@@ -1405,6 +1410,7 @@ Antworte AUSSCHLIESSLICH als JSON-Array:
     "feedText": "...",
     "keyInsight": "...",
     "counterPerspective": "...",
+    "challengePrompt": "...",
     "primaryTopic": "...",
     "topics": ["..."],
     "didacticTransfer": "..."

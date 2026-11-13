@@ -581,7 +581,14 @@ export const SettingsScreen: React.FC = () => {
         </ScrollView>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={[
+          { flex: 1, minHeight: 0 },
+          Platform.OS === 'web' ? ({ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' } as any) : undefined
+        ]}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
         {activeSubTab === 'ai_sync' && (
           <>
         {/* Section: AI Brain & Model Selector (BYOK Gemini / OpenRouter) */}
@@ -2302,7 +2309,9 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.caption,
   },
   container: {
-    flex: 1
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : {})
   },
   manageSourcesBtn: {
     flexDirection: 'row',

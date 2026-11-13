@@ -55,7 +55,14 @@ import { SubchannelFlourishService, detectChannelArchetype } from '../../core/in
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
 import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
 import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
-import { holdFeedPresentation, prependRevealedItems, applyScrollFreeze } from '../../core/feed/feedPresentation';
+import {
+  holdFeedPresentation,
+  prependRevealedItems,
+  applyScrollFreeze,
+  ArrivalsBannerState,
+  INITIAL_ARRIVALS_BANNER_STATE,
+  evaluateArrivalsBannerVisibility
+} from '../../core/feed/feedPresentation';
 import { NewsEvolutionModal } from '../../ui/components/NewsEvolutionModal';
 import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
 import {
@@ -187,6 +194,11 @@ export const FeedScreen: React.FC = () => {
   const frozenRenderedFreshRef = React.useRef<ScoredFeedItem[]>([]);
   const newArrivalsQueueRef = React.useRef<ScoredFeedItem[]>([]);
   const [pendingStreamArrivals, setPendingStreamArrivals] = useState<ScoredFeedItem[]>([]);
+  const [isLoadingToday, setIsLoadingToday] = useState<boolean>(false);
+  const [arrivalsBannerState, setArrivalsBannerState] = useState<ArrivalsBannerState>(INITIAL_ARRIVALS_BANNER_STATE);
+  const arrivalsBannerStateRef = React.useRef<ArrivalsBannerState>(INITIAL_ARRIVALS_BANNER_STATE);
+  const pendingBannerTotalRef = React.useRef<number>(0);
+  const injectedLiveNewsIdsRef = React.useRef<Set<string>>(new Set());
 
   // Restore today's surfaced arrival IDs so duplicate background items never re-trigger the pill repeatedly
   React.useEffect(() => {
@@ -341,15 +353,70 @@ export const FeedScreen: React.FC = () => {
     }
   }, [evolutionBriefing, liveNewsItems]);
 
-  // Progressive live news provider updates: when Tagesschau completes in ~200ms, display immediately!
+  // Step 4: Keep arrivals banner visibility synchronized quietly with pending count & scroll offset
+  const pendingBannerTotal = new Set([...pendingNewItemIds, ...pendingStreamArrivals.map(i => i.id)]).size;
+  pendingBannerTotalRef.current = pendingBannerTotal;
+  React.useEffect(() => {
+    const nextBanner = evaluateArrivalsBannerVisibility(
+      arrivalsBannerStateRef.current,
+      pendingBannerTotal,
+      scrollOffsetYRef.current
+    );
+    arrivalsBannerStateRef.current = nextBanner;
+    setArrivalsBannerState(nextBanner);
+  }, [pendingBannerTotal]);
+
+  // Progressive live news provider updates: feed live arrivals into Heute + Live News immediately
   React.useEffect(() => {
     const unsubscribe = ContinuousLiveNewsService.subscribe(event => {
-      if (activeFeedOption === 'live_news' && event.items.length > 0) {
+      if (event.items.length === 0) return;
+      if (activeFeedOption === 'live_news' || sortMode === 'today') {
         setLiveNewsItems(event.items);
+      }
+      const unseen = event.items.filter(it => !injectedLiveNewsIdsRef.current.has(it.id));
+      if (unseen.length > 0 && feedRepository.addItems) {
+        for (const it of unseen) injectedLiveNewsIdsRef.current.add(it.id);
+        feedRepository.addItems(unseen, { operationType: 'background_sync', pinInserted: false });
+        if (sortMode === 'today' && scrollOffsetYRef.current < 120) {
+          lockedTopItemIdsRef.current = null;
+          hasCommittedInitialViewportRef.current = false;
+        }
+        void recomputeFeed();
       }
     });
     return unsubscribe;
-  }, [activeFeedOption]);
+  }, [activeFeedOption, sortMode, recomputeFeed]);
+
+  // Step 2: Switching to "⚡ Heute" actively refreshes fresh live news without blocking
+  React.useEffect(() => {
+    if (sortMode !== 'today') return;
+    let cancelled = false;
+    setIsLoadingToday(true);
+    void ContinuousLiveNewsService.refreshLiveFeeds(false)
+      .then(fresh => {
+        if (cancelled) return;
+        if (fresh.length > 0) {
+          setLiveNewsItems(fresh);
+          const unseen = fresh.filter(it => !injectedLiveNewsIdsRef.current.has(it.id));
+          if (unseen.length > 0 && feedRepository.addItems) {
+            for (const it of unseen) injectedLiveNewsIdsRef.current.add(it.id);
+            feedRepository.addItems(unseen, { operationType: 'background_sync', pinInserted: false });
+            if (scrollOffsetYRef.current < 120) {
+              lockedTopItemIdsRef.current = null;
+              hasCommittedInitialViewportRef.current = false;
+            }
+            void recomputeFeed();
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setIsLoadingToday(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sortMode, recomputeFeed]);
 
   const activeTopic: TopicTag | undefined = useMemo(() => {
     if (selectedFilter === 'all') return undefined;
@@ -1311,6 +1378,22 @@ export const FeedScreen: React.FC = () => {
       setIsScrolledDown(isDown);
     }
 
+    // Quiet arrivals badge: only show after scrolling >= 520px, auto-hide after scrolling +780px further
+    const nextBanner = evaluateArrivalsBannerVisibility(
+      arrivalsBannerStateRef.current,
+      pendingBannerTotalRef.current,
+      contentOffset.y
+    );
+    if (
+      nextBanner.isVisible !== arrivalsBannerStateRef.current.isVisible ||
+      nextBanner.dismissedAtCount !== arrivalsBannerStateRef.current.dismissedAtCount
+    ) {
+      arrivalsBannerStateRef.current = nextBanner;
+      setArrivalsBannerState(nextBanner);
+    } else {
+      arrivalsBannerStateRef.current = nextBanner;
+    }
+
     scheduleChronikFlush();
 
     const scrollBottom = layoutMeasurement.height + contentOffset.y;
@@ -1941,10 +2024,14 @@ export const FeedScreen: React.FC = () => {
           isRunning={isCuratingLiveAi}
           currentStage={curationStage}
           lastResult={lastOperationResult}
-          pendingChangeCount={new Set([...pendingNewItemIds, ...pendingStreamArrivals.map(i => i.id)]).size}
+          pendingChangeCount={arrivalsBannerState.isVisible ? pendingBannerTotal : 0}
           isScrolledDown={isScrolledDown}
           onOpenReport={() => setShowReportModal(true)}
-          onScrollToTop={handleRevealPendingArrivals}
+          onScrollToTop={() => {
+            arrivalsBannerStateRef.current = INITIAL_ARRIVALS_BANNER_STATE;
+            setArrivalsBannerState(INITIAL_ARRIVALS_BANNER_STATE);
+            handleRevealPendingArrivals();
+          }}
           colors={colors}
           isDark={isDark}
         />
@@ -1952,9 +2039,24 @@ export const FeedScreen: React.FC = () => {
       </View>
 
       {/* Main Virtualized Feed Scroll (Desktop Centered & Two-Column Layout) */}
-      <View style={[styles.mainLayoutWrapper, isDesktop && styles.desktopLayoutWrapper, { flex: 1 }, isDesktop && { paddingHorizontal: spacing.pageHorizontal }]}>
+      <View
+        style={[
+          styles.mainLayoutWrapper,
+          isDesktop && styles.desktopLayoutWrapper,
+          { flex: 1, minHeight: 0 },
+          Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : undefined,
+          isDesktop && { paddingHorizontal: spacing.pageHorizontal }
+        ]}
+      >
         {/* Feed Column (Center) */}
-        <View style={[styles.feedColumn, isDesktop && styles.desktopFeedColumn, { flex: 1 }]}>
+        <View
+          style={[
+            styles.feedColumn,
+            isDesktop && styles.desktopFeedColumn,
+            { flex: 1, minHeight: 0 },
+            Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : undefined
+          ]}
+        >
           <FlatList
             ref={flatListRef}
             data={flatListData}
@@ -1964,7 +2066,12 @@ export const FeedScreen: React.FC = () => {
               styles.scrollContent,
               isDesktop && { paddingHorizontal: 0 }
             ]}
-            style={{ flex: 1 }}
+            style={[
+              { flex: 1, minHeight: 0 },
+              Platform.OS === 'web'
+                ? ({ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' } as any)
+                : undefined
+            ]}
             showsVerticalScrollIndicator={false}
             onScroll={handleScroll}
             scrollEventThrottle={32}
@@ -2756,7 +2863,77 @@ export const FeedScreen: React.FC = () => {
                   !activeHivemindTrack &&
                   !(curatedSelection && curatedSelection.items.length > 0) &&
                   renderedInfiniteItems.length === 0 && (
-                    subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom) ? (
+                    sortMode === 'today' ? (
+                      <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                        <View style={[styles.emptyPocketBadge, { backgroundColor: colors.accentSubtle }]}>
+                          <Ionicons name="flash" size={15} color={colors.accent} />
+                          <Text style={[styles.emptyPocketBadgeText, { color: colors.accent }]}>
+                            Heute • Aktuelle Tagesmeldungen
+                          </Text>
+                        </View>
+
+                        <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                          {isLoadingToday
+                            ? 'Frische Meldungen von heute werden geladen…'
+                            : 'Noch keine aktuellen Tagesmeldungen bereit'}
+                        </Text>
+
+                        <Text style={[styles.emptySubtitle, { color: colors.textMuted }]}>
+                          {isLoadingToday
+                            ? 'Atmen fragt gerade Tagesschau, Nachrichten-Feeds und aktuelle Berichte ab.'
+                            : 'Es wurden in diesem Space noch keine brandaktuellen Nachrichten von heute geladen. Du kannst die Live-Nachrichten jetzt direkt abrufen.'}
+                        </Text>
+
+                        <View style={styles.pocketActionsRow}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setIsLoadingToday(true);
+                              void ContinuousLiveNewsService.refreshLiveFeeds(true)
+                                .then(fresh => {
+                                  if (fresh.length > 0 && feedRepository.addItems) {
+                                    for (const it of fresh) injectedLiveNewsIdsRef.current.add(it.id);
+                                    feedRepository.addItems(fresh, { operationType: 'background_sync', pinInserted: false });
+                                    setLiveNewsItems(fresh);
+                                    lockedTopItemIdsRef.current = null;
+                                    hasCommittedInitialViewportRef.current = false;
+                                    return recomputeFeed();
+                                  }
+                                  return handleRunManualResearchPipeline();
+                                })
+                                .catch(() => handleRunManualResearchPipeline())
+                                .finally(() => setIsLoadingToday(false));
+                            }}
+                            disabled={isLoadingToday || isRunningManualPipeline}
+                            style={[styles.generatePocketButton, { backgroundColor: colors.accent, opacity: (isLoadingToday || isRunningManualPipeline) ? 0.65 : 1 }]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Live-Nachrichten für Heute abrufen"
+                          >
+                            {isLoadingToday ? (
+                              <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 6 }} />
+                            ) : (
+                              <Ionicons name="refresh" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                            )}
+                            <Text style={styles.generatePocketButtonText}>
+                              {isLoadingToday ? 'Lade Live-Nachrichten…' : 'Live-Nachrichten für Heute laden'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {selectedFilter !== 'all' && (
+                            <TouchableOpacity
+                              onPress={() => {
+                                handleFilterChange('all');
+                                setSearchQuery('');
+                              }}
+                              style={[styles.resetFilterButton, { borderColor: colors.borderSubtle }]}
+                            >
+                              <Text style={[styles.resetFilterButtonText, { color: colors.textMuted }]}>
+                                Alle Spaces zeigen
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </View>
+                    ) : subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom) ? (
                       renderEmptyCustomSpaceCard(subchannels.find(s => s.handle.toLowerCase() === selectedFilter.toLowerCase() && s.isCustom)!)
                     ) : (
                       <View style={[styles.emptyPocketCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
@@ -2915,8 +3092,23 @@ export const FeedScreen: React.FC = () => {
 
         {/* Right Column: Sticky Desktop Community Sidebar */}
         {isDesktop && (
-          <View style={[styles.desktopSidebarColumn, { paddingTop: 18 }]}>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: spacing.xxl }}>
+          <View
+            style={[
+              styles.desktopSidebarColumn,
+              { paddingTop: 18, minHeight: 0 },
+              Platform.OS === 'web' ? ({ height: '100%', overflow: 'hidden' } as any) : undefined
+            ]}
+          >
+            <ScrollView
+              style={[
+                { flex: 1, minHeight: 0 },
+                Platform.OS === 'web'
+                  ? ({ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' } as any)
+                  : undefined
+              ]}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: spacing.xxl }}
+            >
               <DesktopSidebar
                 articleCount={infiniteInterleavedBase.length}
                 selectedTopicFilter={selectedFilter}
@@ -3235,23 +3427,33 @@ const styles = StyleSheet.create({
   mainLayoutWrapper: {
     width: '100%',
     alignSelf: 'center',
-    maxWidth: 780
+    maxWidth: 780,
+    minHeight: 0
   },
   desktopLayoutWrapper: {
     maxWidth: 1140,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'stretch',
+    minHeight: 0,
+    ...(Platform.OS === 'web' ? ({ height: '100%', overflow: 'hidden' } as any) : {}),
     gap: 24
   },
   feedColumn: {
-    width: '100%'
+    width: '100%',
+    minHeight: 0,
+    alignSelf: 'stretch'
   },
   desktopFeedColumn: {
     flex: 1,
-    maxWidth: 760
+    maxWidth: 760,
+    minHeight: 0,
+    alignSelf: 'stretch'
   },
   desktopSidebarColumn: {
-    width: 310
+    width: 310,
+    minHeight: 0,
+    alignSelf: 'stretch',
+    flexShrink: 0
   },
   searchNoticeCard: {
     flexDirection: 'row',

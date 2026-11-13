@@ -6,7 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Modal
+  Modal,
+  Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
@@ -394,7 +395,13 @@ export const NetworkScreen: React.FC = () => {
         </View>
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        style={[
+          styles.content,
+          Platform.OS === 'web' ? ({ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' } as any) : undefined
+        ]}
+        contentContainerStyle={styles.scrollContent}
+      >
         {/* Main View: 3D or 2D */}
         {viewMode === '3d' && isHyperspaceEnabled ? (
           <View style={styles.canvasWrapper}>
@@ -955,7 +962,9 @@ export const NetworkScreen: React.FC = () => {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : {})
   },
   header: {
     paddingHorizontal: 20,
@@ -1015,7 +1024,8 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
   content: {
-    flex: 1
+    flex: 1,
+    minHeight: 0
   },
   scrollContent: {
     padding: 20,

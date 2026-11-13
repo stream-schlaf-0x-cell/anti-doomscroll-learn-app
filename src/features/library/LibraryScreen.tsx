@@ -4,7 +4,8 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity
+  TouchableOpacity,
+  Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
@@ -234,7 +235,14 @@ export const LibraryScreen: React.FC = () => {
       )}
 
       {/* Scrollable Content */}
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={[
+          { flex: 1, minHeight: 0 },
+          Platform.OS === 'web' ? ({ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain' } as any) : undefined
+        ]}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.contentInner}>
           {activeSection === 'saved' ? (
             savedItems.length === 0 ? (
@@ -405,7 +413,9 @@ export const LibraryScreen: React.FC = () => {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : {})
   },
   header: {
     paddingHorizontal: spacing.pageHorizontal,

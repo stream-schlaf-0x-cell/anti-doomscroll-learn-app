@@ -169,3 +169,124 @@ export function applyInitialViewportLock<T extends { id: string }>(
   };
 }
 
+export interface ArrivalsBannerState {
+  isVisible: boolean;
+  anchorScrollY: number | null;
+  dismissedAtCount: number;
+  lastSeenPendingCount: number;
+}
+
+export const INITIAL_ARRIVALS_BANNER_STATE: ArrivalsBannerState = {
+  isVisible: false,
+  anchorScrollY: null,
+  dismissedAtCount: 0,
+  lastSeenPendingCount: 0
+};
+
+export const ARRIVALS_BANNER_MIN_SCROLL_Y = 520;
+export const ARRIVALS_BANNER_AUTO_HIDE_DELTA_Y = 780;
+
+/**
+ * Calm, scroll-sensitive visibility state machine for the "neue Beiträge" badge:
+ * 1. Hidden near top of stream (< 520px) so the opening viewport stays completely quiet.
+ * 2. Appears softly once the user has scrolled into the reading zone (>= 520px).
+ * 3. Automatically hides again after scrolling ~780px deeper so it never lingers over reading.
+ * 4. Resets when pendingCount drops to 0 (tapped / revealed) or grows for genuinely new arrivals.
+ */
+export function evaluateArrivalsBannerVisibility(
+  prev: ArrivalsBannerState,
+  pendingCount: number,
+  scrollY: number
+): ArrivalsBannerState {
+  if (pendingCount <= 0) {
+    if (!prev.isVisible && prev.anchorScrollY === null && prev.dismissedAtCount === 0 && prev.lastSeenPendingCount === 0) {
+      return prev;
+    }
+    return { ...INITIAL_ARRIVALS_BANNER_STATE };
+  }
+
+  // If more truly new arrivals came in after auto-hiding, allow showing once again
+  const effectiveDismissedAtCount = pendingCount > prev.lastSeenPendingCount && prev.dismissedAtCount > 0 && pendingCount > prev.dismissedAtCount
+    ? 0
+    : prev.dismissedAtCount;
+
+  if (effectiveDismissedAtCount > 0 && pendingCount <= effectiveDismissedAtCount) {
+    return prev.isVisible || prev.lastSeenPendingCount !== pendingCount
+      ? {
+          isVisible: false,
+          anchorScrollY: null,
+          dismissedAtCount: effectiveDismissedAtCount,
+          lastSeenPendingCount: pendingCount
+        }
+      : prev;
+  }
+
+  // User hasn't scrolled meaningfully yet -> keep banner quietly hidden
+  if (scrollY < ARRIVALS_BANNER_MIN_SCROLL_Y) {
+    if (!prev.isVisible && prev.anchorScrollY === null && prev.lastSeenPendingCount === pendingCount) {
+      return prev;
+    }
+    return {
+      isVisible: false,
+      anchorScrollY: null,
+      dismissedAtCount: effectiveDismissedAtCount,
+      lastSeenPendingCount: pendingCount
+    };
+  }
+
+  // User is in the reading zone (>= 520px): start anchor window or check auto-hide threshold
+  const anchorY = prev.anchorScrollY ?? scrollY;
+  if (scrollY - anchorY >= ARRIVALS_BANNER_AUTO_HIDE_DELTA_Y) {
+    return {
+      isVisible: false,
+      anchorScrollY: null,
+      dismissedAtCount: pendingCount,
+      lastSeenPendingCount: pendingCount
+    };
+  }
+
+  if (prev.isVisible && prev.anchorScrollY === anchorY && prev.lastSeenPendingCount === pendingCount) {
+    return prev;
+  }
+
+  return {
+    isVisible: true,
+    anchorScrollY: anchorY,
+    dismissedAtCount: 0,
+    lastSeenPendingCount: pendingCount
+  };
+}
+
+export function formatRelativeTime(isoString?: string, referenceNow: Date = new Date()): string {
+  if (!isoString) return 'Heute';
+  try {
+    const pubDate = new Date(isoString);
+    if (isNaN(pubDate.getTime())) return 'Heute';
+    const diffMs = referenceNow.getTime() - pubDate.getTime();
+    if (diffMs < 0) return 'Gerade eben';
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    if (diffMinutes < 5) return 'Gerade eben';
+    if (diffMinutes < 60) return `vor ${diffMinutes} Min.`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    // Overnight recent (< 16h) outputs "vor X Std."
+    if (diffHours < 16) return `vor ${diffHours} Std.`;
+
+    // Compare full local calendar date (never just day-of-month across months)
+    const startOfToday = new Date(referenceNow.getFullYear(), referenceNow.getMonth(), referenceNow.getDate()).getTime();
+    const startOfPubDay = new Date(pubDate.getFullYear(), pubDate.getMonth(), pubDate.getDate()).getTime();
+    const calendarDayDiff = Math.round((startOfToday - startOfPubDay) / (24 * 3600 * 1000));
+
+    if (calendarDayDiff === 0 && diffHours < 24) return `vor ${diffHours} Std.`;
+    if (calendarDayDiff === 1 && diffHours < 48) return 'gestern';
+    const diffDays = Math.max(1, calendarDayDiff > 0 ? calendarDayDiff : Math.floor(diffHours / 24));
+    if (diffDays < 7) return `vor ${diffDays} Tagen`;
+    return pubDate.toLocaleDateString('de-DE', {
+      day: 'numeric',
+      month: 'short',
+      ...(pubDate.getFullYear() !== referenceNow.getFullYear() ? { year: 'numeric' as const } : {})
+    });
+  } catch {
+    return 'Heute';
+  }
+}
+

@@ -14,6 +14,7 @@ import {
   HivemindLearningService,
   HIVEMIND_TRACKS_STORAGE_KEY,
   buildShowcaseStarterTracks,
+  generateHivemindLearningTrack,
   SHOWCASE_STARTER_TRACK_IDS
 } from '../src/core/learning/hivemindLearningService';
 import { runInPlaceDataMigration } from '../src/core/data/migrationService';
@@ -186,21 +187,44 @@ describe('Live Test UX & AI Editorial Upgrades v7.0', () => {
     const storage = new AtemStorage(new MemoryStorageDriver());
     const service = new HivemindLearningService();
     const demoTracks = buildShowcaseStarterTracks();
+    assert.equal(demoTracks.length, 0, 'buildShowcaseStarterTracks() must stay permanently empty');
     assert.ok(SHOWCASE_STARTER_TRACK_IDS.has('track-roman-republic-empire'));
     assert.ok(SHOWCASE_STARTER_TRACK_IDS.has('track-quantum-reality'));
 
+    const generated = await generateHivemindLearningTrack({
+      titleOrTopic: 'Ethikunterricht in der Oberstufe',
+      sourceType: 'topic',
+      sourceLabel: 'Didaktik',
+      rawText: 'Sokratische Gesprächsführung, Urteilsbildung und ethische Dilemmata im Unterricht.',
+      mixIntoMainFeed: true,
+      cardCount: 12
+    });
+
+    const syntheticRomanDemo = {
+      ...generated,
+      id: 'track-roman-republic-empire',
+      title: 'Der Aufstieg und Fall Roms'
+    };
+    const syntheticQuantumDemo = {
+      ...generated,
+      id: 'track-quantum-reality',
+      title: 'Quantenphysik verstehen'
+    };
     const userTrack = {
-      ...demoTracks[0],
+      ...generated,
       id: 'track-user-dresden-didaktik',
       title: 'Ethikunterricht in der Oberstufe',
-      items: demoTracks[0].items.map((it, idx) => ({
+      items: generated.items.map((it, idx) => ({
         ...it,
         id: `user-didaktik-${idx + 1}`,
         hivemindMeta: it.hivemindMeta ? { ...it.hivemindMeta, trackId: 'track-user-dresden-didaktik' } : undefined
       }))
     };
 
-    await storage.setItem(HIVEMIND_TRACKS_STORAGE_KEY, JSON.stringify([...demoTracks, userTrack]));
+    await storage.setItem(
+      HIVEMIND_TRACKS_STORAGE_KEY,
+      JSON.stringify([syntheticRomanDemo, syntheticQuantumDemo, userTrack])
+    );
     await runInPlaceDataMigration(storage);
 
     const remainingTracks = await service.getTracks(storage);

@@ -890,6 +890,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
             if (safeLive.length > 0 && (feedRepository as any).addItems) {
               (feedRepository as any).addItems(safeLive);
+              await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
             }
           } catch {
             // Non-blocking fallback
@@ -905,6 +906,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
             if (curatedLive.length > 0 && (feedRepository as any).addItems) {
               (feedRepository as any).addItems(curatedLive);
+              await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
             }
           } catch {
             // Non-blocking background check
