@@ -7,6 +7,7 @@ import {
   DayEditionType
 } from './types';
 import { SeenImpressionRecord } from '../data/seenImpressionsService';
+import { isSupportedFeedLanguage, IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX } from '../enrichment/batchEnricher';
 
 export interface ScoreBreakdown {
   topicMatch: number;
@@ -1011,6 +1012,26 @@ export function rankBloomScrollFeed(
         utility += 0.15;
       }
 
+      // 6. Visual Rhythm & Image Emphasis (break up text walls; elevate authentic editorial imagery)
+      const candHasAuthenticImg = Boolean(
+        cand.imageUrl &&
+        cand.hasAuthenticImage !== false &&
+        !cand.imageUrl.includes('images.unsplash.com')
+      );
+      const lastHasAuthenticImg = Boolean(
+        lastCard?.imageUrl &&
+        lastCard?.hasAuthenticImage !== false &&
+        !lastCard?.imageUrl.includes('images.unsplash.com')
+      );
+      if (candHasAuthenticImg) {
+        utility += 1.8;
+        if (lastCard && !lastHasAuthenticImg) {
+          utility += 2.2;
+        }
+      } else if (lastCard && !lastHasAuthenticImg) {
+        utility -= 2.5;
+      }
+
       if (utility > bestWindowScore) {
         bestWindowScore = utility;
         bestIdx = i;
@@ -1187,6 +1208,83 @@ export function isHivemindLearningCard(item: Pick<FeedItem, 'space' | 'hivemindM
   );
 }
 
+function hasVerifiedFeedImage(item: FeedItem): boolean {
+  return Boolean(
+    item.imageUrl &&
+    item.hasAuthenticImage !== false &&
+    !item.imageUrl.includes('images.unsplash.com')
+  );
+}
+
+/**
+ * Eligibility contract for "⚡ Heute":
+ * Strict current news & recent dispatches ONLY — excludes Hivemind cards, art showcases,
+ * evergreen vaults, old academic DOAJ/Crossref/OpenAlex papers, foreign titles, and wet-lab protocols.
+ */
+function isEligibleForTodayNews(item: ScoredFeedItem, nowMs: number, maxAgeMs: number): boolean {
+  if (isHivemindLearningCard(item)) return false;
+  if (isArtShowcaseItem(item) || item.isEvergreenGem) return false;
+  if (item.publicationDateReliable === false) return false;
+
+  if (
+    item.sourceTrustLevel === 'peer_reviewed' ||
+    item.sourceDomain === 'openalex.org' ||
+    item.sourceDomain === 'doaj.org' ||
+    item.id.startsWith('openweb-openalex-') ||
+    item.id.startsWith('openweb-doaj-') ||
+    item.id.startsWith('openweb-crossref-')
+  ) {
+    return false;
+  }
+
+  const langContext = `${item.subtitle || ''} ${item.feedText || ''}`;
+  if (!isSupportedFeedLanguage(item.title || '', langContext)) {
+    return false;
+  }
+  if (IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${item.title || ''} ${langContext}`)) {
+    return false;
+  }
+
+  const pubTime = new Date(item.publishedAt).getTime();
+  if (isNaN(pubTime) || pubTime <= 0) return false;
+  const futureToleranceMs = 24 * 3600 * 1000;
+  const ageMs = nowMs - pubTime;
+  if (ageMs < -futureToleranceMs || ageMs > maxAgeMs) return false;
+  return true;
+}
+
+/**
+ * Interleaves news domains in "⚡ Heute" without dropping ARD Tagesschau items under a 10% cap.
+ */
+export function interleaveTodayNewsStream<T extends FeedItem>(items: T[]): T[] {
+  if (items.length <= 2) return items;
+  const pool = [...items];
+  const result: T[] = [];
+
+  while (pool.length > 0) {
+    const lastIsArd = result.length > 0 && isArdSource(result[result.length - 1]);
+    const recentDomains = result.slice(-2).map(getDomainDiversityKey);
+    const hasNonArdLeft = pool.some(x => !isArdSource(x));
+
+    let chosenIdx = pool.findIndex(cand => {
+      if (lastIsArd && isArdSource(cand) && hasNonArdLeft) return false;
+      return !recentDomains.includes(getDomainDiversityKey(cand));
+    });
+
+    if (chosenIdx === -1) {
+      chosenIdx = pool.findIndex(cand => !(lastIsArd && isArdSource(cand) && hasNonArdLeft));
+    }
+    if (chosenIdx === -1) {
+      chosenIdx = 0;
+    }
+
+    const [chosen] = pool.splice(chosenIdx, 1);
+    result.push(chosen);
+  }
+
+  return result;
+}
+
 export function sortFeedForDisplay(
   items: ScoredFeedItem[],
   requestedMode: FeedSortMode,
@@ -1233,21 +1331,17 @@ export function sortFeedForDisplay(
     return [...effectiveTopPins, ...withSerendipity];
   }
 
-  // 2a. "⚡ Heute" (True Today Contract: strictly < 18 hours old and NEVER Hivemind learning cards)
+  // 2a. "⚡ Heute" (True Today News Contract: current news <= 18h / <= 36h pins, NEVER Hivemind or old papers, keeps ARD news!)
   if (mode === 'today') {
     const now = new Date();
     const eighteenHoursMs = 18 * 3600 * 1000;
-    const futureToleranceMs = 24 * 3600 * 1000;
+    const thirtySixHoursMs = 36 * 3600 * 1000;
 
-    const todayTopPins = effectiveTopPins.filter(item => !isHivemindLearningCard(item));
+    const todayTopPins = effectiveTopPins.filter(item =>
+      isEligibleForTodayNews(item, nowMs, thirtySixHoursMs)
+    );
     const strictlyToday = remaining.filter(item => {
-      if (isHivemindLearningCard(item)) return false;
-      if (isArtShowcaseItem(item) || item.isEvergreenGem) return false;
-      if (item.publicationDateReliable === false) return false;
-      const pubTime = new Date(item.publishedAt).getTime();
-      if (isNaN(pubTime) || pubTime <= 0) return false;
-      const ageMs = nowMs - pubTime;
-      if (ageMs < -futureToleranceMs || ageMs > eighteenHoursMs) return false;
+      if (!isEligibleForTodayNews(item, nowMs, eighteenHoursMs)) return false;
       if (isFormattingToGesternOrOlder(item.publishedAt, now)) return false;
       return true;
     });
@@ -1256,45 +1350,43 @@ export function sortFeedForDisplay(
     let todayCandidates = strictlyToday;
     if (todayCandidates.length === 0 && todayTopPins.length === 0) {
       const fortyEightHoursMs = 48 * 3600 * 1000;
-      const recent48h = remaining.filter(item => {
-        if (isHivemindLearningCard(item)) return false;
-        if (isArtShowcaseItem(item) || item.isEvergreenGem) return false;
-        if (item.publicationDateReliable === false) return false;
-        const pubTime = new Date(item.publishedAt).getTime();
-        if (isNaN(pubTime) || pubTime <= 0) return false;
-        const ageMs = nowMs - pubTime;
-        if (ageMs < -futureToleranceMs || ageMs > fortyEightHoursMs) return false;
-        return item.type === 'briefing' || item.contentOrigin === 'live_ingested' || item.format !== 'long_invitation';
-      });
+      const recent48h = remaining.filter(item =>
+        isEligibleForTodayNews(item, nowMs, fortyEightHoursMs) &&
+        (item.type === 'briefing' || item.contentOrigin === 'live_ingested' || item.format !== 'long_invitation')
+      );
       if (recent48h.length > 0) {
         todayCandidates = recent48h;
       } else {
         const sevenDaysMs = 7 * 24 * 3600 * 1000;
-        const recentWeekNews = remaining.filter(item => {
-          if (isHivemindLearningCard(item)) return false;
-          if (isArtShowcaseItem(item) || item.isEvergreenGem) return false;
-          if (item.publicationDateReliable === false) return false;
-          const pubTime = new Date(item.publishedAt).getTime();
-          if (isNaN(pubTime) || pubTime <= 0) return false;
-          const ageMs = nowMs - pubTime;
-          if (ageMs < -futureToleranceMs || ageMs > sevenDaysMs) return false;
-          return (
+        const recentWeekNews = remaining.filter(item =>
+          isEligibleForTodayNews(item, nowMs, sevenDaysMs) &&
+          (
             item.type === 'briefing' ||
             item.type === 'quick_insight' ||
             item.contentOrigin === 'live_ingested' ||
             item.format === 'sourced_update' ||
             item.format === 'concise_insight'
-          );
-        });
+          )
+        );
         todayCandidates = recentWeekNews.slice(0, 20);
       }
     }
 
     const sorted = [...todayCandidates].sort((a, b) => {
-      // Boost regional Saxony / Dresden / Leipzig items in today's news
+      // 1. Boost regional Saxony / Dresden / Leipzig news in today's stream
       const saxonyA = matchesSaxonyRegion(a) ? 1 : 0;
       const saxonyB = matchesSaxonyRegion(b) ? 1 : 0;
       if (saxonyA !== saxonyB) return saxonyB - saxonyA;
+
+      // 2. Prioritize current news with authentic press/editorial imagery
+      const imgA = hasVerifiedFeedImage(a) ? 1 : 0;
+      const imgB = hasVerifiedFeedImage(b) ? 1 : 0;
+      if (imgA !== imgB) return imgB - imgA;
+
+      // 3. Prioritize ARD / public broadcasters and breaking updates
+      const newsA = isArdSource(a) || a.sourceTrustLevel === 'public_broadcaster' || a.format === 'sourced_update' ? 1 : 0;
+      const newsB = isArdSource(b) || b.sourceTrustLevel === 'public_broadcaster' || b.format === 'sourced_update' ? 1 : 0;
+      if (newsA !== newsB) return newsB - newsA;
 
       const timeA = new Date(a.publishedAt).getTime();
       const timeB = new Date(b.publishedAt).getTime();
@@ -1302,7 +1394,7 @@ export function sortFeedForDisplay(
       return b.id.localeCompare(a.id);
     });
 
-    return [...todayTopPins, ...enforceCuratedStreamDiversity(sorted)];
+    return [...todayTopPins, ...interleaveTodayNewsStream(sorted)];
   }
 
   // 2b. Legacy 'new' sort mode (preserves full pool ordering for backward-compatible unit tests)

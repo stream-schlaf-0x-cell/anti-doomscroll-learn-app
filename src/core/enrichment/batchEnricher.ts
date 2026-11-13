@@ -159,14 +159,14 @@ const STRICT_DE_EN_ANCHORS =
 const CZECH_POLISH_SLAVIC_CHARS = /[ěščřžůďťňłąćęńśźżőűășțğış]/gi;
 const BROAD_FOREIGN_DIACRITICS = /[ěščřžýáíéúůďťňłąćęńóśźżőűășțğış]/gi;
 const NON_DE_EN_STOPWORDS =
-  /\b(podle|nebo|který|která|které|jsou|jako|více|před|přes|není|bude|aby|když|proč|dějiny|vítězů|však|jejich|mezi|než|také|tento|této|tomto|všechny|kterou|kterých|ještě|své|české|český|získal|režimů|zažil|nepsal|příběhy|souladu|výklady|minulosti|něž|opírala|platilo|témata|odboje|vztahu|společnosti|autoritářství|oraz|który|która|które|przez|tylko|bardzo|więcej|między|jednak|będzie|jego|jej|tych|może|kiedy|gdzie|dlaczego|wszystkich|społeczeństwo|historii|polsce|polski|sztuczna|inteligencja|edukację|les|une|dans|pour|avec|sont|cette|aux|comme|mais|nous|vous|leur|leurs|ces|tout|tous|être|avoir|même|aussi|entre|los|las|una|del|como|más|pero|sus|cuando|todo|también|sobre|estos|estas|puede|todos|desde|hasta|porque|della|delle|degli|nella|nelle|sono|più|anche|questo|questa|dalla|hanno|essere|tutto|tutti|perché|stato|stata|loro)\b/gi;
+  /\b(podle|nebo|který|která|které|jsou|jako|více|před|přes|není|bude|aby|když|proč|dějiny|vítězů|však|jejich|mezi|než|také|tento|této|tomto|všechny|kterou|kterých|ještě|své|české|český|získal|režimů|zažil|nepsal|příběhy|souladu|výklady|minulosti|něž|opírala|platilo|témata|odboje|vztahu|společnosti|autoritářství|oraz|który|która|które|przez|tylko|bardzo|więcej|między|jednak|będzie|jego|jej|tych|może|kiedy|gdzie|dlaczego|wszystkich|społeczeństwo|historii|polsce|polski|sztuczna|inteligencja|edukację|les|une|dans|pour|avec|sont|cette|aux|comme|mais|nous|vous|leur|leurs|ces|tout|tous|être|avoir|même|aussi|entre|chez|sous|étude|éthique|système|recherche|los|las|una|del|como|más|pero|sus|cuando|todo|también|sobre|estos|estas|puede|todos|desde|hasta|porque|para|según|cuidados|equipos|profesionales|reflexiones|partir|archivo|memoria|sociedad|política|educación|investigación|universidad|revista|della|delle|degli|nella|nelle|sono|più|anche|questo|questa|dalla|hanno|essere|tutto|tutti|perché|stato|stata|loro|filosofia|società|pengaruh|muatan|etika|dalam|pendidikan|akuntansi|terhadap|persepsi|mahasiswa|yang|untuk|dengan|dari|pada|adalah|sebagai|pembelajaran|melalui|secara|antara|jurnal|het|een|voor|dat|zijn|worden|ook|naar|bij|door|onderzoek|onderwijs|için|ile|olan|olarak|daha|çok|gibi)\b/gi;
 const NON_LATIN_SCRIPT_CHARS =
   /[\u0400-\u04FF\u0600-\u06FF\u0590-\u05FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/g;
 
 /**
  * Strict DE/EN Language Gate:
  * Deterministically allows ONLY German ('de') and English ('en') articles into the feed.
- * Rejects untranslated Czech, Polish, Hungarian, Romanian, Turkish, French, Spanish, Italian, etc.
+ * Rejects untranslated Czech, Polish, Hungarian, Romanian, Turkish, French, Spanish, Italian, Indonesian, Dutch, etc.
  */
 export function isSupportedFeedLanguage(title: string, text: string = ''): boolean {
   const cleanTitle = (title || '').trim();
@@ -187,7 +187,24 @@ export function isSupportedFeedLanguage(title: string, text: string = ''): boole
   const titleSlavicCharCount = (cleanTitle.match(CZECH_POLISH_SLAVIC_CHARS) || []).length;
   const broadForeignDiacriticCount = (combined.match(BROAD_FOREIGN_DIACRITICS) || []).length;
   const foreignStopwordCount = (combined.match(NON_DE_EN_STOPWORDS) || []).length;
+  const titleForeignStopwordCount = (cleanTitle.match(NON_DE_EN_STOPWORDS) || []).length;
+  const titleWords = cleanTitle.split(/\s+/).filter(Boolean);
   const words = combined.split(/\s+/).filter(Boolean);
+  const isKnownBorrowedPhrase = /\b(los angeles|las vegas|del toro|la scala|de facto|per se|status quo|ad hoc|modus operandi|alma mater|bon mots?)\b/i.test(cleanTitle);
+
+  // 0. Reject foreign-language titles EVEN IF abstract or summary was translated into English/German
+  if (
+    !isKnownBorrowedPhrase &&
+    titleForeignStopwordCount >= 1 &&
+    titleCoreDeEnCount === 0 &&
+    titleAllDeEnCount === 0
+  ) {
+    return false;
+  }
+
+  if (titleWords.length >= 4 && titleForeignStopwordCount >= 2 && titleCoreDeEnCount <= 1) {
+    return false;
+  }
 
   // 1. Reject titles with Czech/Polish/Slavic diacritics that lack German/English function words
   if (
@@ -598,6 +615,8 @@ export function getCardRenderableText(item: {
 
 const SPORTS_GOSSIP_REGEX = /\b(bundesliga|dfb-pokal|champions league|eintracht frankfurt|matchplan|pokalduell|ligapartie|torjäger|spieltag|transfermarkt|tabellenführer|trainerwechsel)\b/i;
 const CLINICAL_PATHOLOGY_JARGON_REGEX = /\b(carcinoma|oncology|chemotherapy|metastasis|randomized clinical trial|placebo-controlled|mortality rate|myocardial infarction|histopathology|adenocarcinoma)\b/i;
+export const IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX = /\b(saccharomyces cerevisiae|lipid droplets?|triacylglycerol|sterol esters?|gene knockout|yeast mutants?|galactose-inducible|protocol to induce|western blot|qrt-pcr|rt-pcr|histopathology|adenocarcinoma|carcinoma|oncology|chemotherapy|metastasis|peritoneal|mouse model|rat model|murine|in vitro assay|cell line|transfected|plasmid|primer sequence|escherichia coli|endoplasmic reticulum|hepg2|hela cells?|zebrafish|drosophila)\b/i;
+const GENERIC_PAPER_METADATA_REGEX = /^(Begutachtete\s+Open-Access-Studie|Open-Access-Forschungsarbeit|Peer-Reviewed\s+(Open-Access|Study)|Aus\s+(der\s+)?Zeitschrift\b|Originalbeitrag\s+veröffentlicht\s+bei)/i;
 
 /**
  * Directive 1: Hard Substance Gate & Zero Empty Cards Contract
@@ -655,7 +674,8 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
   }
 
   const combinedText = `${title} ${proseContext}`;
-  if (SPORTS_GOSSIP_REGEX.test(combinedText)) {
+  const wetlabCheckText = `${title} ${item.subtitle || ''} ${item.feedText || item.body || ''}`;
+  if (SPORTS_GOSSIP_REGEX.test(combinedText) || IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(wetlabCheckText)) {
     return false;
   }
 
@@ -818,18 +838,23 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
   if (
     !cleanedInsight ||
     cleanedInsight.length < 15 ||
+    GENERIC_PAPER_METADATA_REGEX.test(cleanedInsight) ||
     PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedInsight) ||
     SPONSOR_BOILERPLATE_REGEX.test(cleanedInsight) ||
     /\b(Philip Oltermann|Peter Jackson|theguardian\.com|Read by)\b/i.test(cleanedInsight)
   ) {
-    const firstSentence = cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || cleanedTitle;
-    cleanedInsight = stripSyntheticFillerSentences(firstSentence.slice(0, 220));
+    const candidateSentence = cleanedFeedText
+      .replace(/^(Summary|Abstract|Zusammenfassung)\s*:\s*/i, '')
+      .split(/(?<=[.!?])\s+/)
+      .find(s => s.trim().length >= 25 && !GENERIC_PAPER_METADATA_REGEX.test(s.trim())) || cleanedTitle;
+    cleanedInsight = stripSyntheticFillerSentences(candidateSentence.slice(0, 220));
   }
 
   const rawSubtitle = stripSyntheticFillerSentences(stripPublisherBoilerplate(item.subtitle || '', title));
   const isBadSub =
     !rawSubtitle ||
     rawSubtitle.length < 15 ||
+    GENERIC_PAPER_METADATA_REGEX.test(rawSubtitle) ||
     PODCAST_OR_VIDEO_INTRO_REGEX.test(rawSubtitle) ||
     SPONSOR_BOILERPLATE_REGEX.test(rawSubtitle) ||
     /\b(Philip Oltermann|Peter Jackson|theguardian\.com|Read by)\b/i.test(rawSubtitle);
@@ -988,6 +1013,15 @@ export function evaluateSignalVsNoiseDeterministically(
       score: 4,
       passed: false,
       reason: 'Promi-Geburtstag / Boulevard-Interview ohne Erkenntniswert'
+    };
+  }
+
+  // 2c. Specialized wet-lab protocols & clinical pathology jargon without broad intellectual insight
+  if (IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(fullContent)) {
+    return {
+      score: 2,
+      passed: false,
+      reason: 'Spezialisiertes Laborprotokoll / klinische Nischenstudie ohne allgemeinen Erkenntniswert'
     };
   }
 

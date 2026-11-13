@@ -10,8 +10,10 @@ import {
   stripPublisherBoilerplate,
   stripSyntheticFillerSentences,
   isSupportedFeedLanguage,
-  satisfiesDefaultCuratedStandard
+  satisfiesDefaultCuratedStandard,
+  IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX
 } from '../src/core/enrichment/batchEnricher';
+import { ContinuousLiveNewsService } from '../src/core/data/continuousLiveNewsService';
 import { isDeprecatedShowcaseStarterItem } from '../src/core/learning/hivemindLearningService';
 
 const PUBLIC_SNAPSHOT_PATH = path.resolve(__dirname, '../public/feed-snapshot.json');
@@ -37,6 +39,7 @@ function deepCleanZeroWidth<T>(obj: T): T {
 function sanitizeItem(rawItem: FeedItem): FeedItem | null {
   try {
     if (isDeprecatedShowcaseStarterItem(rawItem)) return null;
+    if (rawItem.id?.startsWith('openweb-doaj-') || rawItem.id?.startsWith('openweb-crossref-')) return null;
     const item = deepCleanZeroWidth(rawItem);
     const cleanTitle = (item.title || '').replace(ZERO_WIDTH_REGEX, '').trim();
     if (!cleanTitle) return null;
@@ -49,6 +52,10 @@ function sanitizeItem(rawItem: FeedItem): FeedItem | null {
 
     let feedText = (item.feedText || '').replace(ZERO_WIDTH_REGEX, '').trim();
     feedText = stripPublisherBoilerplate(stripSyntheticFillerSentences(stripBoilerplate(feedText)), cleanTitle);
+
+    if (IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${cleanTitle} ${subtitle} ${feedText}`)) {
+      return null;
+    }
 
     const isVisual =
       item.format === 'art_showcase' ||
@@ -168,18 +175,23 @@ function pruneAndBalanceItems(items: FeedItem[], targetLimit = 140): FeedItem[] 
     byTopic.set(key, list);
   }
 
-  // Sort within each topic by substance and recency
-  for (const [key, list] of byTopic.entries()) {
+  // Sort within each topic: place live fresh items (<= 48h) ahead of older backlog of same publisher/topic while sorting archive by substance
+  const nowSortMs = Date.now();
+  for (const [, list] of byTopic.entries()) {
     list.sort((a, b) => {
+      const freshA = a.id.startsWith('live-tagesschau-') && nowSortMs - new Date(a.publishedAt).getTime() <= 48 * 3600 * 1000 ? 1 : 0;
+      const freshB = b.id.startsWith('live-tagesschau-') && nowSortMs - new Date(b.publishedAt).getTime() <= 48 * 3600 * 1000 ? 1 : 0;
+      if (freshA !== freshB) return freshB - freshA;
       const aScore = (a.feedText?.length || 0) + (a.articleBody?.length || 0) * 0.2;
       const bScore = (b.feedText?.length || 0) + (b.articleBody?.length || 0) * 0.2;
       return bScore - aScore;
     });
   }
 
-  // Round-robin selection across topics up to targetLimit with strict per-domain diversity cap (<= 4 per domain)
+  // Round-robin selection across topics up to targetLimit with strict per-domain diversity cap (and <= 10 ARD total for static snapshot compliance)
   const selected: FeedItem[] = [];
   const domainCounts = new Map<string, number>();
+  let totalArdSelected = 0;
   const keys = Array.from(byTopic.keys());
   let addedInRound = true;
   let roundIdx = 0;
@@ -192,10 +204,12 @@ function pruneAndBalanceItems(items: FeedItem[], targetLimit = 140): FeedItem[] 
       if (list && roundIdx < list.length) {
         const candidate = list[roundIdx];
         const dom = (candidate.sourceDomain || candidate.sourceReferences?.[0]?.publisher || candidate.id).toLowerCase().replace(/^www\./, '');
-        const maxPerDom = candidate.format === 'art_showcase' ? 3 : 5;
-        if ((domainCounts.get(dom) || 0) < maxPerDom) {
+        const isArd = dom.includes('tagesschau') || (candidate.sourceBroadcasterName || '').toLowerCase().includes('tagesschau');
+        const maxPerDom = candidate.format === 'art_showcase' ? 3 : isArd ? 8 : 5;
+        if ((domainCounts.get(dom) || 0) < maxPerDom && (!isArd || totalArdSelected < 10)) {
           selected.push(candidate);
           domainCounts.set(dom, (domainCounts.get(dom) || 0) + 1);
+          if (isArd) totalArdSelected++;
         }
         addedInRound = true;
       }
@@ -206,10 +220,32 @@ function pruneAndBalanceItems(items: FeedItem[], targetLimit = 140): FeedItem[] 
   return selected;
 }
 
-function runSanitization() {
+async function runSanitization() {
   console.log('Sanitizing and trimming snapshot files...');
 
-  let pipelineCandidates: FeedItem[] = [];
+  let freshArdCandidates: FeedItem[] = [];
+  try {
+    const [tsGeneral, tsSaxony] = await Promise.all([
+      ContinuousLiveNewsService.fetchTagesschauLiveJson(8).catch(() => []),
+      ContinuousLiveNewsService.fetchSaxonyRegionalNews(4).catch(() => [])
+    ]);
+    const combinedLive = [...tsSaxony, ...tsGeneral];
+    const seenLiveIds = new Set<string>();
+    for (const raw of combinedLive) {
+      if (freshArdCandidates.length >= 8) break;
+      if (!raw.id || seenLiveIds.has(raw.id) || !raw.imageUrl) continue;
+      const clean = sanitizeItem(raw);
+      if (clean && satisfiesDefaultCuratedStandard(clean)) {
+        seenLiveIds.add(clean.id);
+        freshArdCandidates.push(clean);
+      }
+    }
+    console.log(`✓ Fetched ${freshArdCandidates.length} fresh imaged Tagesschau/Saxony articles for snapshot.`);
+  } catch {
+    freshArdCandidates = [];
+  }
+
+  let pipelineCandidates: FeedItem[] = [...freshArdCandidates];
 
   if (fs.existsSync(PIPELINE_OUTPUT_PATH)) {
     const raw = fs.readFileSync(PIPELINE_OUTPUT_PATH, 'utf8');
@@ -290,4 +326,4 @@ function runSanitization() {
   console.log(`✓ public/feed-snapshot.json written (${snapshotItems.length} items).`);
 }
 
-runSanitization();
+void runSanitization();

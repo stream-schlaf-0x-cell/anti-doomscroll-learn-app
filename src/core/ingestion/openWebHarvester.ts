@@ -5,8 +5,11 @@ import {
   sanitizeCuratedFeedItem,
   satisfiesDefaultCuratedStandard,
   isSupportedFeedLanguage,
+  detectLanguage,
+  IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX,
   defaultBatchEditionEnricher
 } from '../enrichment/batchEnricher';
+import { upgradeImageResolutionUrl, isRejectedLowResOrLogoUrl } from '../utils/imageQuality';
 import { appStorage, AtemStorage } from '../data/storage';
 import { VERIFIED_FEED_SOURCES } from './sources';
 import { GLOBAL_CORPUS_RESERVE_SOURCES } from './globalCorpusSources';
@@ -727,7 +730,7 @@ export class OpenWebHarvester {
     const page = 1 + (cursor % 8);
     const sortMode = cursor % 2 === 0 ? 'publication_date:desc' : 'cited_by_count:desc';
     try {
-      const url = `https://api.openalex.org/works?filter=is_oa:true,has_abstract:true,from_publication_date:2025-01-01&search=${encodeURIComponent(searchQ)}&sort=${sortMode}&page=${page}&per-page=${limit}`;
+      const url = `https://api.openalex.org/works?filter=is_oa:true,has_abstract:true,from_publication_date:2026-01-01&search=${encodeURIComponent(searchQ)}&sort=${sortMode}&page=${page}&per-page=${limit}`;
       const response = await this.fetchWithTimeout(url, 4000);
       if (!response.ok) {
         throw new Error(`OpenAlex API responded with status ${response.status}`);
@@ -746,11 +749,15 @@ export class OpenWebHarvester {
           ? new Date(work.publication_date).toISOString()
           : new Date().toISOString();
 
-        let abstractText = this.reconstructOpenAlexAbstract(work.abstract_inverted_index, 250);
+        const abstractText = this.reconstructOpenAlexAbstract(work.abstract_inverted_index, 250);
+        if (abstractText.length < 40) continue;
+        if (!isSupportedFeedLanguage(work.title, abstractText)) continue;
+        if (IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${work.title} ${abstractText}`)) continue;
 
-        if (abstractText.length < 40) {
-          abstractText = `Open-Access-Forschungsarbeit veröffentlicht in ${journal} (${work.cited_by_count || 0} wissenschaftliche Zitationen).`;
-        }
+        const firstInsightSentence = abstractText
+          .split(/(?<=[.!?])\s+/)
+          .find(s => s.trim().length >= 25 && !/^(Open-Access-Forschungsarbeit|Begutachtete|Summary|Abstract)/i.test(s.trim()));
+        const cleanInsight = firstInsightSentence ? firstInsightSentence.trim().slice(0, 220) : work.title;
 
         items.push({
           id: `openweb-openalex-${workId}`,
@@ -797,7 +804,7 @@ export class OpenWebHarvester {
           hasAuthenticImage: false,
           space: 'c/dialektik',
           flair: '🔬 Fachpublikation',
-          keyInsight: `Forschungsarbeit aus ${journal} (${work.cited_by_count || 0} Zitationen).`,
+          keyInsight: cleanInsight,
           upvotesCount: 0,
           awardsCount: { gold: 0, brain: 0, spark: 0 },
           sourceTrustLevel: 'peer_reviewed',
@@ -1272,7 +1279,19 @@ export class OpenWebHarvester {
     const isBrowserEnv = this.isBrowserEnvironment();
     const isBrowserCorsFriendly = (srcUrl: string): boolean => {
       const lower = srcUrl.toLowerCase();
-      return lower.includes('tagesschau.de') || lower.includes('spektrum.de');
+      return (
+        lower.includes('tagesschau.de') ||
+        lower.includes('spektrum.de') ||
+        lower.includes('nachrichtenfeeds.br.de') ||
+        lower.includes('wired.com') ||
+        lower.includes('openculture.com') ||
+        lower.includes('feedpress.me') ||
+        lower.includes('sketchplanations.com') ||
+        lower.includes('dynomight.net') ||
+        lower.includes('rss.beehiiv.com') ||
+        lower.includes('jalammar.github.io') ||
+        lower.includes('lilianweng.github.io')
+      );
     };
 
     // Combine verified sources and global corpus reserve sources
@@ -1826,9 +1845,75 @@ export class OpenWebHarvester {
   }
 
   /**
+   * 8b. Contextual Visual Image Enricher (CORS-open Wikimedia / Wikipedia PageImages)
+   * Enriches imageless articles with genuine Wikimedia editorial photography/artwork (never SVG icons/logos).
+   */
+  public static async enrichMissingArticleImages(items: FeedItem[], maxToEnrich = 10): Promise<FeedItem[]> {
+    const candidates = items
+      .filter(it => !it.hivemindMeta?.trackId && (!it.imageUrl || isRejectedLowResOrLogoUrl(it.imageUrl)))
+      .slice(0, maxToEnrich);
+    if (candidates.length === 0) return items;
+
+    const STOPWORDS = new Set([
+      'der', 'die', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'einer', 'eines', 'und', 'oder',
+      'aber', 'mit', 'für', 'auf', 'von', 'vom', 'aus', 'bei', 'nach', 'über', 'vor', 'zum', 'zur',
+      'wie', 'warum', 'wieso', 'neue', 'neuer', 'neues', 'studie', 'bericht', 'analyse', 'heute',
+      'the', 'and', 'for', 'with', 'from', 'that', 'this', 'how', 'why', 'what', 'when', 'into', 'about'
+    ]);
+
+    const buildQuery = (title: string): string => {
+      const cleaned = title.replace(/[„“"':;?!()[\]–—]/g, ' ').trim();
+      const keywords = cleaned
+        .split(/\s+/)
+        .filter(w => w.length >= 4 && !STOPWORDS.has(w.toLowerCase()) && !/^\d+$/.test(w))
+        .slice(0, 3);
+      if (keywords.length >= 1) return keywords.join(' ');
+      return cleaned.split(/\s+/).slice(0, 3).join(' ');
+    };
+
+    const enrichedMap = new Map<string, string>();
+    await Promise.allSettled(
+      candidates.map(async item => {
+        const query = buildQuery(item.title || '');
+        if (!query || query.length < 3) return;
+        const lang = detectLanguage(`${item.title || ''} ${item.feedText || ''}`);
+        const url = `https://${lang}.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrlimit=2&prop=pageimages&piprop=thumbnail&pithumbsize=960&format=json&origin=*`;
+        try {
+          const res = await this.fetchWithTimeout(url, 1800);
+          if (!res.ok) return;
+          const json = await res.json();
+          const pages = json?.query?.pages ? (Object.values(json.query.pages) as { thumbnail?: { source?: string } }[]) : [];
+          for (const page of pages) {
+            const rawSrc = page?.thumbnail?.source;
+            if (!rawSrc || /\.svg(\?|$)/i.test(rawSrc) || isRejectedLowResOrLogoUrl(rawSrc)) continue;
+            const upgraded = upgradeImageResolutionUrl(rawSrc, 960);
+            if (upgraded) {
+              enrichedMap.set(item.id, upgraded);
+              break;
+            }
+          }
+        } catch {
+          // Graceful offline/timeout skip
+        }
+      })
+    );
+
+    if (enrichedMap.size === 0) return items;
+    return items.map(item => {
+      const resolvedUrl = enrichedMap.get(item.id);
+      if (!resolvedUrl) return item;
+      return {
+        ...item,
+        imageUrl: resolvedUrl,
+        hasAuthenticImage: true
+      };
+    });
+  }
+
+  /**
    * 9. Dual-Engine Multi-Lane Internet Discovery Engine
    * Engine A: Live Gemini Web Search Grounding (`gemini-4-hydrogen` default).
-   * Engine B: CORS-open Web APIs (Tagesschau JSON & Saxony, OpenAlex, DOAJ, Crossref, Wikipedia, HN, Art Museums, Rotating RSS).
+   * Engine B: CORS-open Web APIs (Tagesschau JSON & Saxony, Wikipedia Current News & Gems, OpenAlex, HN, Art Museums, Rotating RSS).
    * Respects persistent cursor rotation so sequential clicks yield fresh, unseen articles and genuinely exercise AI Gatekeeper.
    */
   public static async harvestMultiLaneInternetDiscovery(
@@ -1863,9 +1948,8 @@ export class OpenWebHarvester {
       rssResult,
       tagesschauJsonResult,
       saxonyJsonResult,
+      wikiCurrentNewsResult,
       openAlexResult,
-      doajResult,
-      crossrefResult,
       wikiRandomResult,
       wikiFeaturedResult,
       hnResult,
@@ -1895,11 +1979,10 @@ export class OpenWebHarvester {
             errorMessage: 'Kein aktiver KI-Schlüssel konfiguriert.'
           }),
       this.harvestRotatingRssFeeds(isBrowserEnv ? 12 : 20, options.storage),
-      ContinuousLiveNewsService.fetchTagesschauLiveJson(12).catch(() => []),
-      ContinuousLiveNewsService.fetchSaxonyRegionalNews(6).catch(() => []),
-      this.harvestOpenAlexPapers(6, cursor, options.topicHint),
-      this.harvestDoajPapers(5, cursor, options.topicHint),
-      this.harvestCrossrefPapers(5, cursor, options.topicHint),
+      ContinuousLiveNewsService.fetchTagesschauLiveJson(18).catch(() => []),
+      ContinuousLiveNewsService.fetchSaxonyRegionalNews(10).catch(() => []),
+      ContinuousLiveNewsService.fetchWikipediaCurrentNewsJson().catch(() => []),
+      this.harvestOpenAlexPapers(3, cursor, options.topicHint),
       this.harvestWikipediaRandomGems(6),
       this.harvestWikipediaGems(),
       this.harvestTechFrontpage(8, cursor),
@@ -1925,10 +2008,9 @@ export class OpenWebHarvester {
 
     collect(tagesschauJsonResult);
     collect(saxonyJsonResult);
+    collect(wikiCurrentNewsResult);
     collect(rssResult);
     collect(openAlexResult);
-    collect(doajResult);
-    collect(crossrefResult);
     collect(wikiRandomResult);
     collect(wikiFeaturedResult);
     collect(hnResult);
@@ -1978,11 +2060,18 @@ export class OpenWebHarvester {
       }
 
       const sanitized = sanitizeCuratedFeedItem(item);
+      const wetlabContext = `${sanitized.title || ''} ${sanitized.subtitle || ''} ${sanitized.feedText || ''}`;
+      if (
+        !isSupportedFeedLanguage(sanitized.title || '', `${sanitized.subtitle || ''} ${sanitized.feedText || ''}`) ||
+        IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(wetlabContext)
+      ) {
+        preRejectedCount++;
+        continue;
+      }
       const hasAiCandidateBasics =
         hasAiKey &&
         (sanitized.title || '').trim().length >= 12 &&
-        `${sanitized.feedText || ''} ${sanitized.articleBody || ''} ${sanitized.subtitle || ''}`.trim().length >= 25 &&
-        isSupportedFeedLanguage(sanitized.title || '', `${sanitized.subtitle || ''} ${sanitized.feedText || ''}`);
+        `${sanitized.feedText || ''} ${sanitized.articleBody || ''} ${sanitized.subtitle || ''}`.trim().length >= 25;
 
       if (hasAiCandidateBasics || satisfiesDefaultCuratedStandard(sanitized)) {
         if (normTitle.length > 5) seenTitles.add(normTitle);
@@ -2037,7 +2126,11 @@ export class OpenWebHarvester {
         if (!errorMessage && report.errorMessage) errorMessage = report.errorMessage;
         curatedOpenWeb = curated
           .map(sanitizeCuratedFeedItem)
-          .filter(it => !isDeprecatedShowcaseStarterItem(it) && satisfiesDefaultCuratedStandard(it));
+          .filter(it =>
+            !isDeprecatedShowcaseStarterItem(it) &&
+            satisfiesDefaultCuratedStandard(it) &&
+            !IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${it.title || ''} ${it.subtitle || ''} ${it.feedText || ''}`)
+          );
       } catch (err: any) {
         usedFallback = true;
         errorClass = errorClass || 'network_error';
@@ -2050,7 +2143,10 @@ export class OpenWebHarvester {
       errorMessage = 'Kein aktiver KI-Schlüssel gefunden — hinterlege deinen Gemini-Key in „Steuerung“ für Live-Web-Recherche.';
     }
 
-    const combinedItems = [...finalAiGroundedItems, ...curatedOpenWeb];
+    const combinedItems = await this.enrichMissingArticleImages(
+      [...finalAiGroundedItems, ...curatedOpenWeb],
+      10
+    );
     const usedAI = Boolean(aiDiscovery.usedAI || gatekeepUsedAi);
     const modelUsed = gatekeeperModelUsed || aiDiscovery.modelUsed || (usedAI ? creds?.model : undefined);
 

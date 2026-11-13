@@ -4,13 +4,30 @@ import { rankAndInterleaveFeed, rankEditionFeed, ScoredFeedItem, scoreFeedItem }
 import { AtemStorage, appStorage } from './storage';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
-import { defaultBatchEditionEnricher, sanitizeCuratedFeedItem } from '../enrichment/batchEnricher';
+import {
+  defaultBatchEditionEnricher,
+  sanitizeCuratedFeedItem,
+  isSupportedFeedLanguage,
+  IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX
+} from '../enrichment/batchEnricher';
 import { ArticleIndex } from '../feed/articleIndex';
 import { RelatedContentService } from '../feed/RelatedContentService';
 import { FeedMergeService, MergeOptions } from '../feed/FeedMergeService';
 import { defaultFeedOperationManager, FeedOperationResult, FeedOperationType } from '../feed/FeedOperationManager';
 import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
 import { isDeprecatedShowcaseStarterItem } from '../learning/hivemindLearningService';
+
+function isRejectedCachedItem(item: Partial<FeedItem> | null | undefined): boolean {
+  if (!item || typeof item !== 'object') return true;
+  if (isDeprecatedShowcaseStarterItem(item)) return true;
+  const id = String(item.id || '');
+  if (id.startsWith('openweb-doaj-') || id.startsWith('openweb-crossref-')) return true;
+  const title = String(item.title || '');
+  const context = `${item.subtitle || ''} ${item.feedText || ''}`;
+  if (title && !isSupportedFeedLanguage(title, context)) return true;
+  if (IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${title} ${context}`)) return true;
+  return false;
+}
 
 // Dynamic, non-static load of pipeline output in Node.js test / CLI environments
 // Uses eval('require') so Metro / Expo Web bundler DOES NOT bundle 1.8 MB of JSON into the client JS
@@ -233,7 +250,7 @@ export class LocalFeedRepository implements IFeedRepository {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          const filtered = parsed.filter((i: any) => !isDeprecatedShowcaseStarterItem(i));
+          const filtered = parsed.filter((i: any) => !isRejectedCachedItem(i));
           this.dynamicItems = filtered.map(i =>
             sanitizeCuratedFeedItem(enrichSocialFeedItem(i, { lazyCrossReferences: true }))
           );
@@ -242,7 +259,7 @@ export class LocalFeedRepository implements IFeedRepository {
           }
           const map = new Map<string, FeedItem>();
           for (const item of this.items) {
-            if (!isDeprecatedShowcaseStarterItem(item)) {
+            if (!isRejectedCachedItem(item)) {
               map.set(item.id, item);
             }
           }
@@ -261,7 +278,7 @@ export class LocalFeedRepository implements IFeedRepository {
 
   private async persistDynamicItems(): Promise<void> {
     try {
-      this.dynamicItems = this.dynamicItems.filter(i => !isDeprecatedShowcaseStarterItem(i));
+      this.dynamicItems = this.dynamicItems.filter(i => !isRejectedCachedItem(i));
       await this.storage.setItem('@atem:dynamic_items:v1', JSON.stringify(this.dynamicItems));
     } catch {
       // Non-fatal fallback
@@ -273,7 +290,7 @@ export class LocalFeedRepository implements IFeedRepository {
     const canonicalMap = new Map<string, string>();
 
     for (const item of items) {
-      if (isDeprecatedShowcaseStarterItem(item)) continue;
+      if (isRejectedCachedItem(item)) continue;
       const enriched = sanitizeCuratedFeedItem(enrichSocialFeedItem(item, { lazyCrossReferences: true }));
       map.set(item.id, enriched);
       if (item.canonicalUrl) {
@@ -292,7 +309,7 @@ export class LocalFeedRepository implements IFeedRepository {
     }
     const survivingDynamic: FeedItem[] = [];
     for (const dyn of this.dynamicItems) {
-      if (isDeprecatedShowcaseStarterItem(dyn)) continue;
+      if (isRejectedCachedItem(dyn)) continue;
       const canon = dyn.canonicalUrl?.toLowerCase();
       const existingIdForCanon = canon ? canonicalMap.get(canon) : undefined;
       if (map.has(dyn.id)) {
@@ -315,7 +332,7 @@ export class LocalFeedRepository implements IFeedRepository {
   }
 
   addItems(newItems: FeedItem[], options?: { operationType?: FeedOperationType; pinInserted?: boolean; telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry }): void {
-    const cleanInput = newItems.filter(i => !isDeprecatedShowcaseStarterItem(i));
+    const cleanInput = newItems.filter(i => !isRejectedCachedItem(i));
     const enrichedNew = cleanInput.map(i =>
       sanitizeCuratedFeedItem(enrichSocialFeedItem(i, { lazyCrossReferences: true }))
     );

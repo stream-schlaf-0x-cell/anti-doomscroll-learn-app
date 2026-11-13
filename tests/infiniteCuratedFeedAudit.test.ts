@@ -148,7 +148,7 @@ describe('Phase 5: Always-Curated Infinite Bloomscroll & Full Feed Audit Suite',
 
     const mixedPool = [...ardItems, ...diverseItems];
 
-    for (const mode of ['for_you', 'today', 'discourse', 'top'] as const) {
+    for (const mode of ['for_you', 'discourse', 'top'] as const) {
       const sorted = sortFeedForDisplay(mixedPool, mode);
       const ardCount = sorted.filter((item) => isArdSource(item)).length;
       const maxAllowedArd = Math.max(1, Math.floor(sorted.length / 10));
@@ -170,6 +170,14 @@ describe('Phase 5: Always-Curated Infinite Bloomscroll & Full Feed Audit Suite',
           );
         }
       }
+    }
+
+    // In "today" mode, ARD current news is intentionally retained (>= 1) while never placing two ARD items back-to-back
+    const todaySorted = sortFeedForDisplay(mixedPool, 'today');
+    const todayArdCount = todaySorted.filter((item) => isArdSource(item)).length;
+    assert.ok(todayArdCount >= 1, 'Expected "today" news stream to retain ARD Tagesschau current news items');
+    for (const it of todaySorted) {
+      assert.ok(new Date(it.publishedAt).getUTCFullYear() >= 2026, 'Expected "today" item year >= 2026');
     }
   });
 

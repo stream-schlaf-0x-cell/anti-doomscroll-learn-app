@@ -24,18 +24,24 @@ import {
 } from '../src/core/learning/hivemindLearningService';
 import {
   sanitizeCuratedFeedItem,
-  stripPublisherBoilerplate
+  stripPublisherBoilerplate,
+  isSupportedFeedLanguage,
+  satisfiesCuratedBodyContract,
+  satisfiesDefaultCuratedStandard,
+  evaluateSignalVsNoiseDeterministically
 } from '../src/core/enrichment/batchEnricher';
 import {
   rankBloomScrollFeed,
   interleaveSerendipitySlot,
   sortFeedForDisplay,
-  scoreFeedItem
+  scoreFeedItem,
+  isArdSource
 } from '../src/core/domain/ranking';
 import { DEFAULT_USER_PROFILE } from '../src/core/data/fixtures';
 import { REAL_KNOWLEDGE_VAULT } from '../src/core/data/realKnowledgeVault';
 import { FeedItem } from '../src/core/domain/types';
 import { OpenWebHarvester } from '../src/core/ingestion/openWebHarvester';
+import { ContinuousLiveNewsService } from '../src/core/data/continuousLiveNewsService';
 
 function makeArticle(id: string, overrides: Partial<FeedItem> = {}): FeedItem {
   const nowIso = new Date().toISOString();
@@ -564,6 +570,212 @@ describe('Masterplan 1000%-Reparatur: Alle 6 Säulen', () => {
       assert.equal(snapshotRaw.includes('SerpApi'), false, 'public/feed-snapshot.json darf keine SerpApi-Werbung enthalten');
       assert.equal(snapshotRaw.includes('hivemind-track-roman'), false, 'public/feed-snapshot.json darf keine Rom-Karten enthalten');
       assert.equal(snapshotRaw.includes('hivemind-track-quantum'), false, 'public/feed-snapshot.json darf keine Quanten-Karten enthalten');
+    }
+  });
+
+  it('Säule 6: Entfernt These/Gegenposition & Doppel-Badge aus FeedCard, zeigt permanenten Bericht-Button & 18s-Toast', () => {
+    const feedCardSrc = fs.readFileSync(path.resolve(__dirname, '../src/ui/components/FeedCard.tsx'), 'utf8');
+    assert.equal(feedCardSrc.includes('These & Gegenposition'), false, 'FeedCard darf keinen These & Gegenposition Toggle mehr enthalten');
+    assert.equal(feedCardSrc.includes('Frisch aus der Redaktion'), false, 'FeedCard darf kein doppeltes Frisch-aus-der-Redaktion-Badge enthalten');
+
+    const feedScreenSrc = fs.readFileSync(path.resolve(__dirname, '../src/features/feed/FeedScreen.tsx'), 'utf8');
+    assert.ok(feedScreenSrc.includes('📋 Bericht ('), 'FeedScreen muss einen dauerhaften Bericht-Button neben Recherche jetzt starten rendern');
+
+    const bannerSrc = fs.readFileSync(path.resolve(__dirname, '../src/ui/components/FeedOperationBanner.tsx'), 'utf8');
+    assert.ok(bannerSrc.includes('18000'), 'FeedOperationBanner Toast-Timeout muss auf 18000 ms erhöht sein');
+  });
+
+  it('Säule 7: Blockiert fremdsprachige Titel (trotz EN/DE-Abstract) & Laborprotokolle wie Saccharomyces cerevisiae', () => {
+    assert.equal(
+      isSupportedFeedLanguage(
+        'Cuidados en los equipos profesionales: reflexiones a partir del archivo oral y memoria del Cuartel Borgoño (1977-1989), Santiago de Chile',
+        'The purpose of this article is to present some of the considerations that arose following the development of an experience of caregiving.'
+      ),
+      false,
+      'Spanischer Titel mit englischem Abstract muss abgewiesen werden'
+    );
+
+    assert.equal(
+      isSupportedFeedLanguage(
+        'Pengaruh Muatan Etika dalam Pendidikan Akuntansi terhadap Persepsi Etika Mahasiswa',
+        'Die Integration ethischer Inhalte in die Buchhaltungs-Ausbildung beeinflusst signifikant die moralische Wahrnehmung von Studierenden.'
+      ),
+      false,
+      'Indonesischer Titel mit deutschem Abstract muss abgewiesen werden'
+    );
+
+    const yeastProtocol = makeArticle('doaj-yeast-protocol', {
+      title: 'Protocol to induce de novo lipid droplets in Saccharomyces cerevisiae',
+      subtitle: 'STAR Protocols • Bench Research',
+      feedText:
+        'Summary: We present a protocol for inducing de novo triacylglycerol lipid droplets in Saccharomyces cerevisiae using galactose-inducible promoters and conditional yeast mutants.',
+      body:
+        'Summary: We present a protocol for inducing de novo triacylglycerol lipid droplets in Saccharomyces cerevisiae using galactose-inducible promoters and conditional yeast mutants in the endoplasmic reticulum.',
+      sourceTrustLevel: 'peer_reviewed'
+    });
+
+    assert.equal(
+      satisfiesCuratedBodyContract(yeastProtocol),
+      false,
+      'Biochemisches Hefe-Laborprotokoll darf den Kuratierungsvertrag nicht passieren'
+    );
+    assert.equal(
+      evaluateSignalVsNoiseDeterministically({
+        title: yeastProtocol.title,
+        subtitle: yeastProtocol.subtitle,
+        feedText: yeastProtocol.feedText,
+        body: yeastProtocol.body
+      }).passed,
+      false,
+      'Laborprotokoll muss vom deterministischen Türsteher abgelehnt werden'
+    );
+  });
+
+  it('Säule 8: Tagesschau-Fetcher lädt Volltext-Absätze über entry.details + 16:9-Bild und besteht Kuratierungsstandard', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = (async (input: RequestInfo | URL) => {
+      const urlStr = typeof input === 'string' ? input : input.toString();
+      if (urlStr.includes('/api2u/news/') && !urlStr.includes('details-')) {
+        return new Response(
+          JSON.stringify({
+            news: [
+              {
+                externalId: 'ts-test-2026',
+                title: 'Bildungsministerium plant Ausbau der Informatik-Fortbildung',
+                topline: 'Kultusministerium Sachsen',
+                firstSentence: 'Mehr Schulen in Dresden und Leipzig erhalten Fördermittel.',
+                ressort: 'inland',
+                date: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+                details: 'https://www.tagesschau.de/api2u/news/details-ts-test-2026.json',
+                detailsweb: 'https://www.tagesschau.de/inland/ts-test-2026.html',
+                teaserImage: {
+                  imageVariants: {
+                    '16x9-960': 'https://images.tagesschau.de/image/example-16x9-960.jpg'
+                  }
+                }
+              }
+            ]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (urlStr.includes('details-ts-test-2026')) {
+        return new Response(
+          JSON.stringify({
+            externalId: 'ts-test-2026',
+            title: 'Bildungsministerium plant Ausbau der Informatik-Fortbildung',
+            content: [
+              {
+                type: 'text',
+                value: '<p>Das sächsische Kultusministerium weitet die Weiterbildung für Lehrkräfte an Gymnasien deutlich aus.</p>'
+              },
+              {
+                type: 'text',
+                value: '<p>Neben medienethischen Grundlagen stehen didaktische Werkzeuge für den kritischen Umgang mit KI im Unterricht im Mittelpunkt.</p>'
+              }
+            ]
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const items = await ContinuousLiveNewsService.fetchTagesschauLiveJson(5);
+      assert.equal(items.length, 1);
+      const art = items[0];
+      assert.ok(art.feedText.length >= 160, `Erwarteter Volltext >= 160 Zeichen, erhalten: ${art.feedText.length}`);
+      assert.equal(art.imageUrl, 'https://images.tagesschau.de/image/example-16x9-960.jpg');
+      assert.equal(satisfiesDefaultCuratedStandard(sanitizeCuratedFeedItem(art)), true);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('Säule 9: "⚡ Heute" schließt alte DOAJ/Crossref/OpenAlex-Papers auch mit Pinning aus und behält aktuelle ARD-News', () => {
+    const now = Date.now();
+    const recentArd = scoreFeedItem(
+      makeArticle('live-tagesschau-fresh-today', {
+        title: 'Bundestag berät über neue KI-Richtlinien für Schulen',
+        publishedAt: new Date(now - 3 * 3600 * 1000).toISOString(),
+        sourceDomain: 'tagesschau.de',
+        sourceBroadcasterName: 'ARD Tagesschau',
+        sourceTrustLevel: 'public_broadcaster',
+        imageUrl: 'https://images.tagesschau.de/image/bundestag-16x9-960.jpg',
+        hasAuthenticImage: true,
+        isDailyEdition: true
+      }),
+      DEFAULT_USER_PROFILE,
+      {}
+    );
+
+    const pinnedOldPaper = scoreFeedItem(
+      makeArticle('openweb-doaj-2021-paper', {
+        title: 'Digital Ethics in European Higher Education Curricula',
+        publishedAt: '2021-06-01T00:00:00.000Z',
+        sourceDomain: 'doaj.org',
+        sourceTrustLevel: 'peer_reviewed',
+        pinnedManualRunAt: now
+      }),
+      DEFAULT_USER_PROFILE,
+      {}
+    );
+
+    const pinnedFreshOpenAlex = scoreFeedItem(
+      makeArticle('openweb-openalex-2026-paper', {
+        title: 'Formal Verification of Autonomous Educational Agents',
+        publishedAt: new Date(now - 5 * 3600 * 1000).toISOString(),
+        sourceDomain: 'openalex.org',
+        sourceTrustLevel: 'peer_reviewed',
+        pinnedManualRunAt: now
+      }),
+      DEFAULT_USER_PROFILE,
+      {}
+    );
+
+    const todayList = sortFeedForDisplay([pinnedOldPaper, pinnedFreshOpenAlex, recentArd], 'today');
+    assert.equal(todayList.some(i => i.id === pinnedOldPaper.id), false, 'Alte 2021 DOAJ-Studie darf nicht in Heute erscheinen');
+    assert.equal(todayList.some(i => i.id === pinnedFreshOpenAlex.id), false, 'Trockene OpenAlex-Papers gehören nicht in Heute-Nachrichten');
+    assert.ok(todayList.some(i => isArdSource(i) && i.id === recentArd.id), 'Aktuelle bebilderte Tagesschau-News müssen in Heute erscheinen');
+  });
+
+  it('Säule 10: Migration v10 entfernt DOAJ/Crossref/Fremdsprachen/Laborprotokolle aus allen lokalen Speicherschlüsseln', async () => {
+    const storage = new AtemStorage(new MemoryStorageDriver());
+    const repo = new LocalFeedRepository(storage);
+
+    const badDoaj = makeArticle('openweb-doaj-legacy-1', {
+      title: 'Cuidados en los equipos profesionales: reflexiones del archivo',
+      sourceDomain: 'doaj.org',
+      sourceTrustLevel: 'peer_reviewed'
+    });
+    const badYeast = makeArticle('openweb-crossref-legacy-2', {
+      title: 'Protocol to induce de novo lipid droplets in Saccharomyces cerevisiae',
+      feedText: 'Step-by-step protocol for triacylglycerol synthesis in yeast mutants.',
+      sourceDomain: 'sciencedirect.com',
+      sourceTrustLevel: 'peer_reviewed'
+    });
+    const cleanNews = makeArticle('live-tagesschau-keep-1', {
+      title: 'Kultusministerkonferenz stärkt politische Bildung in Sachsen',
+      feedText: 'In Dresden wurde heute ein neues Rahmenprogramm für Demokratiebildung und Ethikunterricht an weiterführenden Schulen vorgestellt.',
+      sourceDomain: 'tagesschau.de',
+      sourceBroadcasterName: 'ARD Tagesschau',
+      sourceTrustLevel: 'public_broadcaster'
+    });
+
+    await storage.setItem('@atem:dynamic_items:v1', JSON.stringify([badDoaj, badYeast, cleanNews]));
+    await storage.setItem('@atem:persistent_articles:v1', JSON.stringify([badDoaj, badYeast, cleanNews]));
+    await storage.setItem('@atem:feed_items:v1', JSON.stringify([badDoaj, badYeast, cleanNews]));
+    repo.setItems([badDoaj, badYeast, cleanNews]);
+
+    const res = await runInPlaceDataMigration(storage, repo);
+    assert.equal(res.migrated, true);
+    assert.equal(res.version, '2026-11-13-v10.0-heute-news-images-clean');
+
+    for (const key of ['@atem:dynamic_items:v1', '@atem:persistent_articles:v1', '@atem:feed_items:v1']) {
+      const parsed: FeedItem[] = JSON.parse((await storage.getItem(key)) || '[]');
+      assert.equal(parsed.some(i => i.id === badDoaj.id || i.id === badYeast.id), false, `${key} muss Altlasten restlos entfernen`);
+      assert.equal(parsed.some(i => i.id === cleanNews.id), true, `${key} muss saubere Nachrichten behalten`);
     }
   });
 });

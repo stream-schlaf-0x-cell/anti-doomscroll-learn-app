@@ -1047,8 +1047,18 @@ export const FeedScreen: React.FC = () => {
   const scoredRevealedItems = useMemo(() => {
     if (revealedNewItems.length === 0) return [];
     const currentInteractions = interactionsRef.current;
+    const nowMs = Date.now();
     const scored = revealedNewItems
-      .filter(item => !dismissedSet.has(item.id) && !isDeprecatedShowcaseStarterItem(item) && !(sortMode === 'today' && isHivemindLearningCard(item)))
+      .filter(item => {
+        if (dismissedSet.has(item.id) || isDeprecatedShowcaseStarterItem(item)) return false;
+        if (sortMode === 'today') {
+          if (isHivemindLearningCard(item) || item.isEvergreenGem || item.sourceTrustLevel === 'peer_reviewed') return false;
+          if (item.publicationDateReliable === false) return false;
+          const pubMs = new Date(item.publishedAt).getTime();
+          if (isNaN(pubMs) || nowMs - pubMs > 36 * 3600 * 1000) return false;
+        }
+        return true;
+      })
       .map(item => getCachedSanitizedEntry(item))
       .filter(entry => entry.strictStandardOk && matchesSelectedSpace(entry.item))
       .map(entry => scoreFeedItem(entry.item, profile, currentInteractions));
@@ -1246,9 +1256,52 @@ export const FeedScreen: React.FC = () => {
         });
       }
 
-      if (discoveryResult.items.length > 0) {
+      if (sortMode === 'today') {
+        const refreshedToday = await ContinuousLiveNewsService.refreshLiveFeeds(true).catch(() => [] as FeedItem[]);
+        const repoAll = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+        const repoIdSet = new Set(repoAll.map(i => i.id));
+        const missingLiveToday = refreshedToday.filter(it => !repoIdSet.has(it.id));
+        if (missingLiveToday.length > 0 && feedRepository.addItems) {
+          feedRepository.addItems(missingLiveToday, { operationType: 'background_sync', pinInserted: false });
+        }
+      }
+
+      if (discoveryResult.items.length > 0 || sortMode === 'today') {
+        revealScrollGraceUntilRef.current = Date.now() + 1400;
+        lockedTopItemIdsRef.current = null;
+        hasCommittedInitialViewportRef.current = false;
+        frozenRenderedFreshRef.current = [];
+        newArrivalsQueueRef.current = [];
+        setPendingStreamArrivals([]);
+        setPendingNewItemIds([]);
+        arrivalsBannerStateRef.current = INITIAL_ARRIVALS_BANNER_STATE;
+        setArrivalsBannerState(INITIAL_ARRIVALS_BANNER_STATE);
+        if (discoveryResult.items.length > 0) {
+          const nowRevealMs = Date.now();
+          const immediateReveal = sortMode === 'today'
+            ? discoveryResult.items.filter(it =>
+                !isHivemindLearningCard(it) &&
+                !it.isEvergreenGem &&
+                it.sourceTrustLevel !== 'peer_reviewed' &&
+                it.publicationDateReliable !== false &&
+                nowRevealMs - new Date(it.publishedAt).getTime() <= 36 * 3600 * 1000
+              )
+            : discoveryResult.items;
+          setRevealedNewItems(immediateReveal);
+          for (const it of discoveryResult.items) {
+            surfacedArrivalIdsRef.current.add(it.id);
+          }
+        }
         setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
         await recomputeFeed();
+        scrollToFeedTop(true);
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+          try {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } catch {
+            window.scrollTo(0, 0);
+          }
+        }
       }
 
       const modeText = discoveryResult.usedAI
@@ -1267,7 +1320,7 @@ export const FeedScreen: React.FC = () => {
       setIsRunningManualPipeline(false);
       setManualPipelineStageLabel('');
     }
-  }, [isRunningManualPipeline, recomputeFeed, activeTopic, selectedFilter]);
+  }, [isRunningManualPipeline, recomputeFeed, activeTopic, selectedFilter, sortMode, scrollToFeedTop]);
 
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
@@ -2349,7 +2402,7 @@ export const FeedScreen: React.FC = () => {
                     </TouchableOpacity>
                   </ScrollView>
 
-                  <View style={styles.sortRightInfo}>
+                  <View style={[styles.sortRightInfo, { gap: 8 }]}>
                     <TouchableOpacity
                       onPress={handleRunManualResearchPipeline}
                       disabled={isRunningManualPipeline}
@@ -2378,6 +2431,26 @@ export const FeedScreen: React.FC = () => {
                           : 'Recherche jetzt starten'}
                       </Text>
                     </TouchableOpacity>
+                    {lastOperationResult && (
+                      <TouchableOpacity
+                        onPress={() => setShowReportModal(true)}
+                        style={[
+                          styles.sortTab,
+                          {
+                            backgroundColor: colors.accentSubtle,
+                            borderColor: colors.accent,
+                            paddingVertical: 6,
+                            paddingHorizontal: 10
+                          }
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Recherchereport öffnen"
+                      >
+                        <Text style={[styles.sortTabText, { color: colors.accent, fontSize: 11.5 }]} numberOfLines={1}>
+                          📋 Bericht ({lastOperationResult.insertedCount} neu)
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
 

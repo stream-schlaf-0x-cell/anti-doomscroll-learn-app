@@ -183,7 +183,6 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const [naturalAspectRatio, setNaturalAspectRatio] = useState<number | null>(null);
   const [showSimulatedReplies, setShowSimulatedReplies] = useState(false);
-  const [showDiscourseToggle, setShowDiscourseToggle] = useState(false);
   const [markedHivemindDone, setMarkedHivemindDone] = useState<boolean>(Boolean(resolvedStepCompleted));
   const [dynamicTrackProgress, setDynamicTrackProgress] = useState<number | undefined>(resolvedTrackProgress);
 
@@ -380,6 +379,9 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     if (!item.keyInsight || typeof item.keyInsight !== 'string') return null;
     const cleanKey = item.keyInsight.trim();
     if (cleanKey.length < 15) return null;
+    if (/^(Begutachtete\s+Open-Access-Studie|Open-Access-Forschungsarbeit|Peer-Reviewed\s+(Open-Access|Study)|Aus\s+(der\s+)?Zeitschrift\b|Originalbeitrag\s+veröffentlicht\s+bei)/i.test(cleanKey)) {
+      return null;
+    }
     const normKey = cleanKey.toLowerCase();
     const normTitle = (item.title || '').toLowerCase();
     const normFeed = (displayFeedText || '').toLowerCase();
@@ -539,15 +541,6 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
         </TouchableOpacity>
       )}
 
-      {typeof item.pinnedManualRunAt === 'number' && (Date.now() - item.pinnedManualRunAt) <= 15 * 60 * 1000 && (
-        <View style={[styles.editorialBadgeRow, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}>
-          <Ionicons name="sparkles" size={12} color={colors.accent} style={{ marginRight: 4 }} />
-          <Text style={[styles.editorialBadgeText, { color: colors.accent, fontWeight: '700' }]}>
-            ✨ Frisch aus der Redaktion
-          </Text>
-        </View>
-      )}
-
       {Boolean(item.recommendedBecauseOfTitle) && (
         <View style={[styles.editorialBadgeRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
           <Ionicons name="link-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
@@ -698,7 +691,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
               isQuick20sCard && styles.quick20sFeedText,
               { color: colors.textPrimary }
             ]}
-            numberOfLines={isQuick20sCard ? undefined : !hasValidImage ? 6 : isHero ? 5 : 4}
+            numberOfLines={isQuick20sCard ? 3 : hasValidImage ? 3 : 4}
           >
             {displayFeedText}
           </Text>
@@ -787,71 +780,6 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
           />
         </View>
       )}
-
-      {/* Intellectually Stimulating Collapsible Discourse (These & Gegenposition directly on card) */}
-      {!hivemindTrackId &&
-        Boolean(item.perspectiveDetails?.counterPerspective || item.deepeningOptions?.counterArgument || item.challengePrompt) && (
-          <View style={styles.simulatedRepliesWrapper}>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => setShowDiscourseToggle(prev => !prev)}
-              style={[
-                styles.simulatedRepliesToggleBtn,
-                {
-                  backgroundColor: colors.surfaceSecondary,
-                  borderColor: showDiscourseToggle ? colors.accent : colors.borderSubtle
-                }
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="These und Gegenposition anzeigen"
-            >
-              <Ionicons name="git-compare-outline" size={14} color={colors.accent} style={{ marginRight: 6 }} />
-              <Text style={[styles.simulatedRepliesToggleText, { color: colors.textPrimary }]}>
-                These & Gegenposition
-              </Text>
-              <Ionicons
-                name={showDiscourseToggle ? 'chevron-up' : 'chevron-down'}
-                size={15}
-                color={colors.accent}
-                style={{ marginLeft: 'auto' }}
-              />
-            </TouchableOpacity>
-
-            {showDiscourseToggle && (
-              <View
-                style={[
-                  styles.simulatedReplyCard,
-                  {
-                    marginTop: 8,
-                    backgroundColor: colors.surfaceSecondary,
-                    borderColor: colors.borderSubtle,
-                    borderLeftColor: colors.accent
-                  }
-                ]}
-              >
-                {item.perspectiveDetails?.claim &&
-                  item.perspectiveDetails.claim.trim() !== item.title.trim() && (
-                    <Text style={[styles.simulatedReplyBody, { color: colors.textPrimary, marginBottom: 6 }]}>
-                      <Text style={{ fontWeight: '700' }}>These: </Text>
-                      {item.perspectiveDetails.claim}
-                    </Text>
-                  )}
-                {(item.perspectiveDetails?.counterPerspective || item.deepeningOptions?.counterArgument) && (
-                  <Text style={[styles.simulatedReplyBody, { color: colors.textSecondary, marginBottom: item.challengePrompt ? 6 : 0 }]}>
-                    <Text style={{ fontWeight: '700', color: '#F59E0B' }}>Gegenposition: </Text>
-                    {item.perspectiveDetails?.counterPerspective || item.deepeningOptions?.counterArgument}
-                  </Text>
-                )}
-                {item.challengePrompt && (
-                  <Text style={[styles.simulatedReplyBody, { color: colors.accent, fontStyle: 'italic' }]}>
-                    <Text style={{ fontWeight: '700', fontStyle: 'normal' }}>Denkanstoß: </Text>
-                    {item.challengePrompt}
-                  </Text>
-                )}
-              </View>
-            )}
-          </View>
-        )}
 
       {/* Inline Expandable Community Replies (💬 X Antworten anzeigen) */}
       {simulatedReplies && simulatedReplies.length > 0 && (

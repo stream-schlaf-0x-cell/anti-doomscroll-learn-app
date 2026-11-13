@@ -9,7 +9,8 @@ import {
   satisfiesCuratedBodyContract,
   sanitizeCuratedFeedItem,
   isPoliticalOrProtestNews,
-  stripSyntheticFillerSentences
+  stripSyntheticFillerSentences,
+  IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX
 } from '../enrichment/batchEnricher';
 import { isArdSource } from '../domain/ranking';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
@@ -21,7 +22,23 @@ import {
   SHOWCASE_STARTER_TRACK_IDS
 } from '../learning/hivemindLearningService';
 
-export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-13-v9.0-redaktion-hydrogen-clean';
+export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-13-v10.0-heute-news-images-clean';
+
+function isDeprecatedOrIrrelevantHarvestItem(item: Partial<FeedItem> | null | undefined): boolean {
+  if (!item || typeof item !== 'object') return false;
+  if (isDeprecatedShowcaseStarterItem(item)) return true;
+  const id = String(item.id || '');
+  if (id.startsWith('openweb-doaj-') || id.startsWith('openweb-crossref-')) return true;
+  if (id.startsWith('openweb-openalex-') && item.publishedAt) {
+    const yr = new Date(item.publishedAt).getUTCFullYear();
+    if (!isNaN(yr) && yr < 2026) return true;
+  }
+  const title = String(item.title || '');
+  const context = `${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`;
+  if (title && !isSupportedFeedLanguage(title, context)) return true;
+  if (IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${title} ${context}`)) return true;
+  return false;
+}
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
 
 export interface MigrationResult {
@@ -275,6 +292,10 @@ export async function runInPlaceDataMigration(
     }
 
     if (!isUserProtected) {
+      if (isDeprecatedOrIrrelevantHarvestItem(item)) {
+        purgedCount++;
+        continue;
+      }
       if (!isSupportedFeedLanguage(item.title || '', `${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`)) {
         purgedCount++;
         continue;
@@ -349,7 +370,7 @@ export async function runInPlaceDataMigration(
       const parsedDyn = JSON.parse(rawDyn);
       if (Array.isArray(parsedDyn)) {
         const cleanedDyn = parsedDyn
-          .filter((item: any) => !isDeprecatedShowcaseStarterItem(item))
+          .filter((item: any) => !isDeprecatedOrIrrelevantHarvestItem(item))
           .map((item: any) => sanitizeCuratedFeedItem(item));
         await storage.setItem('@atem:dynamic_items:v1', JSON.stringify(cleanedDyn));
       }
@@ -359,7 +380,7 @@ export async function runInPlaceDataMigration(
   }
 
   const finalItems = Array.from(cleanedMap.values())
-    .filter(item => !isDeprecatedShowcaseStarterItem(item))
+    .filter(item => !isDeprecatedOrIrrelevantHarvestItem(item))
     .map(item => sanitizeCuratedFeedItem(item));
 
   // 5. Save upgraded articles to PersistentArticleStore, storage and repository

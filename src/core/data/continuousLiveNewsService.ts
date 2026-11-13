@@ -280,39 +280,85 @@ export class ContinuousLiveNewsService {
       if (!response.ok) return [];
       const data = await response.json();
       const newsList = Array.isArray(data?.news) ? data.news.slice(0, limit) : [];
-      const items: FeedItem[] = [];
       const nowIso = new Date().toISOString();
+
+      // List entries in Tagesschau API v2 often contain only a ~90-char firstSentence without `content`.
+      // Fetch full article JSON (`entry.details`) in parallel for up to 18 items so ARD news carries rich multi-paragraph prose and 16:9 imagery.
+      const detailMap = new Map<string, any>();
+      await Promise.allSettled(
+        newsList.slice(0, 18).map(async (entry: any) => {
+          if (Array.isArray(entry?.content) && entry.content.length > 0) return;
+          if (!entry?.externalId || typeof entry?.details !== 'string' || !entry.details.startsWith('https://www.tagesschau.de/api2u/')) {
+            return;
+          }
+          try {
+            const detailRes = await this.fetchWithTimeout(entry.details, 2500);
+            if (detailRes.ok) {
+              const detailJson = await detailRes.json();
+              detailMap.set(String(entry.externalId), detailJson);
+            }
+          } catch {
+            // Fall back gracefully to list entry fields
+          }
+        })
+      );
+
+      const items: FeedItem[] = [];
 
       for (const entry of newsList) {
         if (!entry.title || !entry.externalId) continue;
 
-        const firstSentence = (entry.firstSentence || '').trim();
+        const detail = detailMap.get(String(entry.externalId));
+        const firstSentence = (detail?.firstSentence || entry.firstSentence || '').trim();
+        const topline = (detail?.topline || entry.topline || '').trim();
+        const rawContentBlocks = Array.isArray(detail?.content) && detail.content.length > 0
+          ? detail.content
+          : (Array.isArray(entry.content) ? entry.content : []);
+
         let bodyParagraphs = '';
-        if (Array.isArray(entry.content)) {
-          bodyParagraphs = entry.content
+        if (Array.isArray(rawContentBlocks)) {
+          bodyParagraphs = rawContentBlocks
             .filter((c: any) => c.type === 'text' && typeof c.value === 'string')
-            .map((c: any) => c.value.replace(/<[^>]*>/g, '').trim())
+            .map((c: any) => c.value.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim())
             .filter(Boolean)
             .join('\n\n');
         }
 
-        const effectiveBody = bodyParagraphs.length > firstSentence.length
+        const ressortLabel = entry.ressort ? String(entry.ressort).toUpperCase() : 'AKTUELL';
+        const fallbackSummaryParts = [
+          topline && !firstSentence.toLowerCase().includes(topline.toLowerCase()) ? `${topline}: ${entry.title}.` : `${entry.title}.`,
+          firstSentence,
+          bodyParagraphs
+        ].filter(Boolean);
+        let fallbackSummary = fallbackSummaryParts.join(' ').replace(/\s+/g, ' ').trim();
+        if (fallbackSummary.length < 160) {
+          fallbackSummary = `${fallbackSummary} Aktuelle Berichterstattung und Einordnung der ARD-Tagesschau (${ressortLabel}).`.trim();
+        }
+
+        const effectiveBody = bodyParagraphs.length >= 160
           ? bodyParagraphs
-          : (firstSentence || `${entry.title}. Aktuelle Meldung der ARD-Tagesschau.`);
+          : fallbackSummary;
 
-        const subtitle = firstSentence && firstSentence !== effectiveBody
-          ? firstSentence
-          : `ARD Tagesschau (${entry.ressort ? entry.ressort.toUpperCase() : 'AKTUELL'})`;
+        const subtitle = topline && topline.length >= 8 && topline.toLowerCase() !== entry.title.trim().toLowerCase()
+          ? topline
+          : (firstSentence && bodyParagraphs.length >= 160 && firstSentence !== effectiveBody
+              ? firstSentence
+              : `ARD Tagesschau (${ressortLabel})`);
 
-        const feedText = effectiveBody.startsWith(subtitle) && effectiveBody.length > subtitle.length + 20
+        const strippedBody = effectiveBody.startsWith(subtitle) && effectiveBody.length > subtitle.length + 150
           ? effectiveBody.slice(subtitle.length).trim()
           : effectiveBody;
+        const feedText = strippedBody.length >= 140 ? strippedBody : effectiveBody;
 
-        const imageVariants = entry.teaserImage?.imageVariants;
+        const imageVariants = entry.teaserImage?.imageVariants || detail?.teaserImage?.imageVariants;
         const imageUrl =
           imageVariants?.['16x9-960'] ||
-          imageVariants?.['16x9-512'] ||
           imageVariants?.['16x9-640'] ||
+          imageVariants?.['16x9-512'] ||
+          imageVariants?.['16x9-1280'] ||
+          imageVariants?.['1x1-840'] ||
+          imageVariants?.['1x1-640'] ||
+          imageVariants?.['1x1-432'] ||
           undefined;
 
         const ressort = (entry.ressort || '').toLowerCase();
@@ -654,6 +700,13 @@ export class ContinuousLiveNewsService {
             return count;
           })
           .catch(() => 0),
+        this.fetchSaxonyRegionalNews(12)
+          .then(items => {
+            const count = this.integrateProviderItems(items, 'tagesschau');
+            this.lastRefreshNewCount += count;
+            return count;
+          })
+          .catch(() => 0),
         this.fetchHackerNewsLiveJson(25)
           .then(items => {
             const count = this.integrateProviderItems(items, 'hackernews');
@@ -678,33 +731,37 @@ export class ContinuousLiveNewsService {
       ];
 
       const isWebBrowser = typeof window !== 'undefined' && typeof (window as any).document !== 'undefined';
-      if (!isWebBrowser) {
-        tasks.push(
-          (async () => {
-            try {
-              const prioritySources = VERIFIED_FEED_SOURCES.filter(source => getSourceKind(source) === 'feed').slice(0, 12);
-              const results = await fetchAllFeeds(prioritySources, 4, 3500);
-              const today = new Date().toISOString().slice(0, 10);
-              const rssItems: FeedItem[] = [];
-              for (const res of results) {
-                if (!res.success) continue;
-                for (const entry of res.entries.slice(0, 3)) {
-                  try {
-                    rssItems.push(normalizeFeedEntry(entry, res.source, today));
-                  } catch {
-                    // Skip malformed entry
-                  }
+      const browserCorsSafeRssRegex =
+        /(tagesschau\.de|spektrum\.de|nachrichtenfeeds\.br\.de|wired\.com|openculture\.com|feedpress\.me|sketchplanations\.com|dynomight\.net|jalammar\.github\.io|lilianweng\.github\.io)/i;
+      tasks.push(
+        (async () => {
+          try {
+            const feedSources = VERIFIED_FEED_SOURCES.filter(source => getSourceKind(source) === 'feed');
+            const prioritySources = isWebBrowser
+              ? feedSources.filter(source => browserCorsSafeRssRegex.test(source.url)).slice(0, 10)
+              : feedSources.slice(0, 12);
+            if (prioritySources.length === 0) return 0;
+            const results = await fetchAllFeeds(prioritySources, 4, 3500);
+            const today = new Date().toISOString().slice(0, 10);
+            const rssItems: FeedItem[] = [];
+            for (const res of results) {
+              if (!res.success) continue;
+              for (const entry of res.entries.slice(0, 3)) {
+                try {
+                  rssItems.push(normalizeFeedEntry(entry, res.source, today));
+                } catch {
+                  // Skip malformed entry
                 }
               }
-              const count = this.integrateProviderItems(rssItems, 'rss');
-              this.lastRefreshNewCount += count;
-              return count;
-            } catch {
-              return 0;
             }
-          })()
-        );
-      }
+            const count = this.integrateProviderItems(rssItems, 'rss');
+            this.lastRefreshNewCount += count;
+            return count;
+          } catch {
+            return 0;
+          }
+        })()
+      );
 
       await Promise.allSettled(tasks);
 

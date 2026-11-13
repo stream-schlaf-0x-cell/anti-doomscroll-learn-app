@@ -70,7 +70,7 @@ export const FeedOperationBanner: React.FC<FeedOperationBannerProps> = ({
       setShowToast(true);
       const timer = setTimeout(() => {
         setShowToast(false);
-      }, 4200);
+      }, 18000);
 
       return () => clearTimeout(timer);
     }
