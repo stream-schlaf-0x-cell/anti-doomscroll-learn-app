@@ -40,16 +40,21 @@ export class FeedMergeService {
 
     options.onProgress?.('1/3: Artikelkandidaten prüfen …', 0.33);
 
+    const normalizeTitleKey = (title: string): string =>
+      title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    const normalizeUrlKey = (url: string): string =>
+      url.trim().toLowerCase().replace(/\/+$/, '');
+
     const existingMap = new Map<string, FeedItem>();
-    const existingUrlMap = new Map<string, string>(); // canonicalUrl -> id
-    const existingTitleMap = new Map<string, string>(); // clean title -> id
+    const existingUrlMap = new Map<string, string>(); // normalized canonicalUrl -> id
+    const existingTitleMap = new Map<string, string>(); // normalized clean title -> id
 
     for (const item of currentItems) {
       existingMap.set(item.id, item);
       if (item.canonicalUrl) {
-        existingUrlMap.set(item.canonicalUrl.toLowerCase(), item.id);
+        existingUrlMap.set(normalizeUrlKey(item.canonicalUrl), item.id);
       }
-      const cleanTitle = item.title.trim().toLowerCase();
+      const cleanTitle = normalizeTitleKey(item.title);
       if (cleanTitle.length > 5) {
         existingTitleMap.set(cleanTitle, item.id);
       }
@@ -79,10 +84,14 @@ export class FeedMergeService {
 
       // 2. Exact or Canonical Match Check
       const existingById = existingMap.get(validatedItem.id);
-      const existingByUrl = validatedItem.canonicalUrl
-        ? existingMap.get(existingUrlMap.get(validatedItem.canonicalUrl.toLowerCase()) || '')
+      const normUrl = validatedItem.canonicalUrl ? normalizeUrlKey(validatedItem.canonicalUrl) : '';
+      const normTitle = normalizeTitleKey(validatedItem.title);
+      const existingByUrl = normUrl
+        ? existingMap.get(existingUrlMap.get(normUrl) || '')
         : undefined;
-      const existingByTitle = existingMap.get(existingTitleMap.get(validatedItem.title.trim().toLowerCase()) || '');
+      const existingByTitle = normTitle.length > 5
+        ? existingMap.get(existingTitleMap.get(normTitle) || '')
+        : undefined;
 
       const existingMatch = existingById || existingByUrl || existingByTitle;
 
@@ -139,9 +148,12 @@ export class FeedMergeService {
 
         existingMap.set(flaggedItem.id, flaggedItem);
         if (flaggedItem.canonicalUrl) {
-          existingUrlMap.set(flaggedItem.canonicalUrl.toLowerCase(), flaggedItem.id);
+          existingUrlMap.set(normalizeUrlKey(flaggedItem.canonicalUrl), flaggedItem.id);
         }
-        existingTitleMap.set(flaggedItem.title.trim().toLowerCase(), flaggedItem.id);
+        const flaggedTitleKey = normalizeTitleKey(flaggedItem.title);
+        if (flaggedTitleKey.length > 5) {
+          existingTitleMap.set(flaggedTitleKey, flaggedItem.id);
+        }
 
         inserted.push(flaggedItem);
         insertedIds.push(flaggedItem.id);

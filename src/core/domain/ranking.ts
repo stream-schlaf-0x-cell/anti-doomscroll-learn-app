@@ -1254,32 +1254,91 @@ function isEligibleForTodayNews(item: ScoredFeedItem, nowMs: number, maxAgeMs: n
 }
 
 /**
- * Interleaves news domains in "⚡ Heute" without dropping ARD Tagesschau items under a 10% cap.
+ * Interleaves news domains in "⚡ Heute" with true source diversity ("Quellenvielfalt"):
+ * - Caps ARD/Tagesschau to at most ~20-25% (max 5 total when diverse non-ARD sources exist)
+ *   and enforces at least 3 non-ARD items between any two ARD items.
+ * - Enforces round-robin domain rotation (no consecutive identical domains, max 2 per domain
+ *   in the top 12 and max 3 per domain overall while other domains remain).
  */
 export function interleaveTodayNewsStream<T extends FeedItem>(items: T[]): T[] {
   if (items.length <= 2) return items;
-  const pool = [...items];
+
+  const rawNonArd = items.filter(x => !isArdSource(x));
+  const rawArd = items.filter(x => isArdSource(x));
+
+  if (rawNonArd.length === 0) {
+    return rawArd.slice(0, 8);
+  }
+
+  // Round-robin domain interleave for all non-ARD sources (never back-to-back identical domain)
+  const nonArdPool = [...rawNonArd];
+  const wovenNonArd: T[] = [];
+  const domainCounts = new Map<string, number>();
+  const distinctNonArdDomains = new Set(nonArdPool.map(getDomainDiversityKey)).size;
+
+  while (nonArdPool.length > 0) {
+    const recentWindow = wovenNonArd
+      .slice(-Math.min(3, Math.max(1, distinctNonArdDomains - 1)))
+      .map(getDomainDiversityKey);
+    const maxPerDomainNow = wovenNonArd.length < 12 ? 2 : 3;
+
+    let bestIdx = -1;
+    let bestScore = -Infinity;
+    for (let i = 0; i < nonArdPool.length; i++) {
+      const dom = getDomainDiversityKey(nonArdPool[i]);
+      const count = domainCounts.get(dom) || 0;
+      let score = -i * 0.35 - count * 30;
+      if (recentWindow.includes(dom)) score -= 140;
+      if (distinctNonArdDomains >= 4 && count >= maxPerDomainNow) score -= 240;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+    const [picked] = nonArdPool.splice(Math.max(0, bestIdx), 1);
+    const dom = getDomainDiversityKey(picked);
+    domainCounts.set(dom, (domainCounts.get(dom) || 0) + 1);
+    wovenNonArd.push(picked);
+  }
+
+  // Cap ARD/Tagesschau strictly based on available non-ARD items so ARD never forms clusters or tails
+  const maxArdAllowed =
+    wovenNonArd.length >= 6
+      ? Math.min(5, Math.max(2, Math.floor(wovenNonArd.length / 3)))
+      : Math.min(wovenNonArd.length + 1, 4);
+  const keptArd = rawArd.slice(0, maxArdAllowed);
+  if (keptArd.length === 0) return wovenNonArd;
+
+  // Deterministic spacing: >= 3 non-ARD items between any 2 ARD items when wovenNonArd >= 6
+  const minGap = wovenNonArd.length >= 6 ? 3 : 1;
+  const evenGap = Math.max(minGap, Math.floor(wovenNonArd.length / keptArd.length));
   const result: T[] = [];
 
-  while (pool.length > 0) {
-    const lastIsArd = result.length > 0 && isArdSource(result[result.length - 1]);
-    const recentDomains = result.slice(-2).map(getDomainDiversityKey);
-    const hasNonArdLeft = pool.some(x => !isArdSource(x));
+  let nonIdx = 0;
+  let ardIdx = 0;
 
-    let chosenIdx = pool.findIndex(cand => {
-      if (lastIsArd && isArdSource(cand) && hasNonArdLeft) return false;
-      return !recentDomains.includes(getDomainDiversityKey(cand));
-    });
-
-    if (chosenIdx === -1) {
-      chosenIdx = pool.findIndex(cand => !(lastIsArd && isArdSource(cand) && hasNonArdLeft));
+  // Only put ARD first if it's a Saxony local breaking lead and there are non-ARD items to follow
+  if (matchesSaxonyRegion(keptArd[0]) || wovenNonArd.length < 2) {
+    result.push(keptArd[ardIdx++]);
+  } else {
+    const leadCount = Math.min(2, wovenNonArd.length);
+    for (let c = 0; c < leadCount; c++) {
+      result.push(wovenNonArd[nonIdx++]);
     }
-    if (chosenIdx === -1) {
-      chosenIdx = 0;
-    }
+    result.push(keptArd[ardIdx++]);
+  }
 
-    const [chosen] = pool.splice(chosenIdx, 1);
-    result.push(chosen);
+  while (nonIdx < wovenNonArd.length) {
+    for (let step = 0; step < evenGap && nonIdx < wovenNonArd.length; step++) {
+      result.push(wovenNonArd[nonIdx++]);
+    }
+    if (ardIdx < keptArd.length) {
+      // Only place trailing ARD item if either more non-ARD items follow OR previous card wasn't ARD
+      const prevWasArd = result.length > 0 && isArdSource(result[result.length - 1]);
+      if (!prevWasArd) {
+        result.push(keptArd[ardIdx++]);
+      }
+    }
   }
 
   return result;
@@ -1331,7 +1390,7 @@ export function sortFeedForDisplay(
     return [...effectiveTopPins, ...withSerendipity];
   }
 
-  // 2a. "⚡ Heute" (True Today News Contract: current news <= 18h / <= 36h pins, NEVER Hivemind or old papers, keeps ARD news!)
+  // 2a. "⚡ Heute" (True Today News Contract: diverse current news <= 18h / <= 36h, NEVER Hivemind or old papers, capped ARD)
   if (mode === 'today') {
     const now = new Date();
     const eighteenHoursMs = 18 * 3600 * 1000;
@@ -1346,8 +1405,27 @@ export function sortFeedForDisplay(
       return true;
     });
 
+    let todayCandidates = [...strictlyToday];
+
+    // Anti-monoculture safeguard: when ARD Tagesschau heavily dominates the strict < 18h slice
+    // (e.g. >= 4 ARD items while < 8 non-ARD items exist under 18h), blend in recent non-ARD
+    // dispatches up to 36h so "⚡ Heute" preserves multi-source diversity.
+    const ardInStrict = strictlyToday.filter(isArdSource);
+    const nonArdInStrict = strictlyToday.filter(x => !isArdSource(x));
+    if (ardInStrict.length >= 4 && nonArdInStrict.length < 8) {
+      const strictIds = new Set(todayCandidates.map(x => x.id));
+      const nonArd36h = remaining.filter(
+        item =>
+          !strictIds.has(item.id) &&
+          !isArdSource(item) &&
+          isEligibleForTodayNews(item, nowMs, thirtySixHoursMs)
+      );
+      if (nonArd36h.length > 0) {
+        todayCandidates = [...todayCandidates, ...nonArd36h];
+      }
+    }
+
     // Progressive freshness fallback ONLY when 0 items are strictly < 18h (e.g. before live RSS resolves or offline)
-    let todayCandidates = strictlyToday;
     if (todayCandidates.length === 0 && todayTopPins.length === 0) {
       const fortyEightHoursMs = 48 * 3600 * 1000;
       const recent48h = remaining.filter(item =>
@@ -1372,22 +1450,23 @@ export function sortFeedForDisplay(
       }
     }
 
+    // Balanced priority: recency + editorial visuals + local Saxony relevance (never letting ARD bury non-ARD sources)
+    const todayPriorityScore = (item: ScoredFeedItem): number => {
+      const pubTime = new Date(item.publishedAt).getTime() || nowMs;
+      const ageHours = Math.max(0, (nowMs - pubTime) / 3600_000);
+      let pts = Math.max(0, 36 - ageHours) * 1.4;
+      if (hasVerifiedFeedImage(item)) pts += 10;
+      if (matchesSaxonyRegion(item)) pts += 8;
+      if (item.sourceTrustLevel === 'community_curated' || item.sourceTrustLevel === 'deep_essay' || item.sourceTrustLevel === 'verified_creator') {
+        pts += 5;
+      }
+      pts += Math.min(8, (item.curationScore ?? 7.5) * 0.7);
+      return pts;
+    };
+
     const sorted = [...todayCandidates].sort((a, b) => {
-      // 1. Boost regional Saxony / Dresden / Leipzig news in today's stream
-      const saxonyA = matchesSaxonyRegion(a) ? 1 : 0;
-      const saxonyB = matchesSaxonyRegion(b) ? 1 : 0;
-      if (saxonyA !== saxonyB) return saxonyB - saxonyA;
-
-      // 2. Prioritize current news with authentic press/editorial imagery
-      const imgA = hasVerifiedFeedImage(a) ? 1 : 0;
-      const imgB = hasVerifiedFeedImage(b) ? 1 : 0;
-      if (imgA !== imgB) return imgB - imgA;
-
-      // 3. Prioritize ARD / public broadcasters and breaking updates
-      const newsA = isArdSource(a) || a.sourceTrustLevel === 'public_broadcaster' || a.format === 'sourced_update' ? 1 : 0;
-      const newsB = isArdSource(b) || b.sourceTrustLevel === 'public_broadcaster' || b.format === 'sourced_update' ? 1 : 0;
-      if (newsA !== newsB) return newsB - newsA;
-
+      const diff = todayPriorityScore(b) - todayPriorityScore(a);
+      if (Math.abs(diff) > 0.01) return diff;
       const timeA = new Date(a.publishedAt).getTime();
       const timeB = new Date(b.publishedAt).getTime();
       if (timeB !== timeA) return timeB - timeA;

@@ -20,17 +20,50 @@ export function formatCurationLabel(curatedAt?: string): string {
   return `Kuratiert am ${day}.${month}.`;
 }
 
+function normalizePresentationTitle(title?: string): string {
+  return (title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+function normalizePresentationUrl(url?: string): string {
+  return (url || '').trim().toLowerCase().replace(/\/+$/, '');
+}
+
 /**
- * Prepends newly revealed items guaranteed at the top of the feed without duplicate IDs.
+ * Prepends newly revealed items guaranteed at the top of the feed without duplicate IDs,
+ * canonical URLs, or normalized titles.
  */
-export function prependRevealedItems<T extends { id: string }>(
+export function prependRevealedItems<T extends { id: string; title?: string; canonicalUrl?: string }>(
   items: T[],
   revealedItems: T[]
 ): T[] {
   if (revealedItems.length === 0) return items;
-  const revealedIds = new Set(revealedItems.map(i => i.id));
-  const remaining = items.filter(i => !revealedIds.has(i.id));
-  return [...revealedItems, ...remaining];
+  const seenIds = new Set<string>();
+  const seenTitles = new Set<string>();
+  const seenUrls = new Set<string>();
+  const uniqueRevealed: T[] = [];
+
+  for (const rev of revealedItems) {
+    if (seenIds.has(rev.id)) continue;
+    const normTitle = normalizePresentationTitle(rev.title);
+    const normUrl = normalizePresentationUrl(rev.canonicalUrl);
+    if (normTitle.length >= 12 && seenTitles.has(normTitle)) continue;
+    if (normUrl && seenUrls.has(normUrl)) continue;
+    seenIds.add(rev.id);
+    if (normTitle.length >= 12) seenTitles.add(normTitle);
+    if (normUrl) seenUrls.add(normUrl);
+    uniqueRevealed.push(rev);
+  }
+
+  const remaining = items.filter(i => {
+    if (seenIds.has(i.id)) return false;
+    const normTitle = normalizePresentationTitle(i.title);
+    if (normTitle.length >= 12 && seenTitles.has(normTitle)) return false;
+    const normUrl = normalizePresentationUrl(i.canonicalUrl);
+    if (normUrl && seenUrls.has(normUrl)) return false;
+    return true;
+  });
+
+  return [...uniqueRevealed, ...remaining];
 }
 
 export interface ScrollFreezeResult<T extends { id: string }> {

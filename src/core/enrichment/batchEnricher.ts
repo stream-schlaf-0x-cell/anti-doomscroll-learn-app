@@ -1424,15 +1424,16 @@ export class BatchEditionEnricher {
 Deine Aufgabe ist zweistufig:
 1. Signal-vs-Noise Gatekeeper:
    Bewerte jeden eingehenden Beitrag unbestechlich auf einer Skala von 0 bis 10:
-   - Intellektuelle Tiefe, Substanz, Erkenntnisgewinn, Evidenz, zeitlose Relevanz.
-   - Punktabzug (Score < 7) für: Clickbait, Affiliate-Deals/Shopping-Tipps, tagespolitischen Boulevard, Empörung, Parteiengezänk, PR-Meldungen oder einzeilige Stummeltexte ohne Kontext.
+   - Intellektuelle Tiefe, Substanz, Erkenntnisgewinn, Evidenz, zeitlose oder aktuelle Relevanz.
+   - Vergib Score >= 7 für echte Wissenschafts-, Technik-, Kultur-, Politik-, Philosophie-, Bildungs-, Community- (HN/Reddit) und Enzyklopädie-/Kunst-Beiträge mit erkennbarem Erkenntniswert.
+   - Punktabzug (Score < 7) AUSSCHLIESSLICH für: Clickbait, Affiliate-Deals/Shopping-Tipps, Boulevard-Klatsch, reine Sportergebnisse/Transfergerüchte, parteipolitischen Schlagabtausch ohne Sachanalyse, PR-Werbung oder völlig inhaltsleere Stubs (< 20 Wörter ohne Thema).
    - Ein Score von mindestens 7 (7 bis 10) ist die zwingende Hürde für die Aufnahme in Atmen.
 
 2. Veredelung (nur für Beiträge mit curationScore >= 7):
-   - "feedText": Knapper, intellektuell scharfer Kurzpitch im Reddit-Essenz-Stil (45-70 Wörter: zentrale These + warum das relevant ist, null Boilerplate oder Floskeln).
+   - "feedText": Knapper, intellektuell scharfer Kurzpitch im Reddit-Essenz-Stil (45-75 Wörter: zentrale These + warum das relevant ist, null Boilerplate oder Floskeln).
    - "keyInsight": Eigenständige 1-Satz-Kernthese, die Titel und feedText nicht wiederholt.
-   - "counterPerspective": Eine echte Pro-/Contra-Gegenposition, ein blinder Fleck oder ein erkenntnistheoretischer Einwand (25-50 Wörter spezifische Analyse; keine Floskeln).
-   - "challengePrompt": Eine präzise Weiterdenk- oder Seminar-Frage zum Thema (1 Satz, optional ""; bei wichtigen Diskursen immer ausfüllen).
+   - "counterPerspective": Optional eine knappe weiterführende Perspektive oder ein erkenntnistheoretischer Einwand (oder "" falls nicht passend).
+   - "challengePrompt": Eine präzise Weiterdenk- oder Seminar-Frage zum Thema (1 Satz, optional "").
    - "primaryTopic": Exakte semantische Zuordnung aus: ${VALID_TOPICS.join(', ')}.
    - "topics": 1 bis 3 passende Themen-Tags.
    - "didacticTransfer": NUR wenn der Beitrag einen echten pädagogischen, didaktischen oder praktischen Transfer hergibt (~10-15% der Beiträge): Ein konkreter Transfer-Impuls (mindestens 35 Wörter). Sonst leerer String "".

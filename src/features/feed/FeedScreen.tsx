@@ -799,6 +799,7 @@ export const FeedScreen: React.FC = () => {
     ];
     const seen = new Set<string>();
     const seenCanon = new Set<string>();
+    const seenTitle = new Set<string>();
     const allEntries: {
       scoredItem: ScoredFeedItem;
       strictStandardOk: boolean;
@@ -810,10 +811,13 @@ export const FeedScreen: React.FC = () => {
     for (const raw of rawCombined) {
       if (dismissedSet.has(raw.id)) continue;
       if (seen.has(raw.id)) continue;
-      const canon = raw.canonicalUrl?.toLowerCase().trim();
+      const canon = raw.canonicalUrl?.toLowerCase().trim().replace(/\/+$/, '');
       if (canon && seenCanon.has(canon)) continue;
+      const normTitle = (raw.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+      if (normTitle.length >= 12 && seenTitle.has(normTitle)) continue;
       seen.add(raw.id);
       if (canon) seenCanon.add(canon);
+      if (normTitle.length >= 12) seenTitle.add(normTitle);
 
       const cached = getCachedSanitizedEntry(raw);
       const scoredItem = scoreFeedItem(cached.item, profile, currentInteractions);
@@ -1204,8 +1208,12 @@ export const FeedScreen: React.FC = () => {
     const initialOp = defaultFeedOperationManager.startOperation('manual_refresh');
     const operationId = initialOp.operationId;
     try {
-      const existingIds = new Set(
-        (feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id)
+      const repoAll = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+      const existingIds = new Set(repoAll.map(i => i.id));
+      const existingTitles = new Set(
+        repoAll
+          .map(i => (i.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''))
+          .filter(t => t.length >= 6)
       );
       const seenIds = await seenImpressionsService.getSeenIds();
       const creds = await loadAiCredentials().catch(() => undefined);
@@ -1218,8 +1226,9 @@ export const FeedScreen: React.FC = () => {
 
       const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
         existingIds,
+        existingTitles,
         seenIds,
-        targetNewCount: 20,
+        targetNewCount: 18,
         topicHint,
         credentials: creds,
         onStageChange: (_stage: string) => setManualPipelineStageLabel(_stage)

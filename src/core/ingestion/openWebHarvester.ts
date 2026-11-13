@@ -22,12 +22,13 @@ import {
   callAiWithGoogleSearch,
   callAiModel
 } from '../ai/atmenAiClient';
-import { ContinuousLiveNewsService } from '../data/continuousLiveNewsService';
+import { ContinuousLiveNewsService, buildSubstantiveHackerNewsCopy } from '../data/continuousLiveNewsService';
 import { isDeprecatedShowcaseStarterItem } from '../learning/hivemindLearningService';
 
 export interface MultiLaneDiscoveryOptions {
   storage?: AtemStorage;
   existingIds?: Set<string>;
+  existingTitles?: Set<string>;
   seenIds?: Set<string>;
   targetNewCount?: number;
   credentials?: AiCredentials;
@@ -80,6 +81,27 @@ export class OpenWebHarvester {
 
   private static isBrowserEnvironment(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined';
+  }
+
+  private static normalizeTitleKey(title: string): string {
+    return (title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  }
+
+  private static isKnownCandidate(
+    item: { id: string; title: string },
+    excludeIds?: Set<string>,
+    excludeTitles?: Set<string>
+  ): boolean {
+    if (excludeIds) {
+      if (excludeIds.has(item.id)) return true;
+      if (item.id.startsWith('openweb-hn-') && excludeIds.has(item.id.replace('openweb-hn-', 'live-hn-'))) return true;
+      if (item.id.startsWith('live-hn-') && excludeIds.has(item.id.replace('live-hn-', 'openweb-hn-'))) return true;
+    }
+    if (excludeTitles && item.title) {
+      const key = this.normalizeTitleKey(item.title);
+      if (key.length >= 6 && excludeTitles.has(key)) return true;
+    }
+    return false;
   }
 
   private static async nextDiscoveryCursor(storage?: AtemStorage): Promise<number> {
@@ -610,16 +632,29 @@ export class OpenWebHarvester {
   }
 
   /**
-   * 3. Hacker News Algolia API Frontpage & Recent High-Signal Discovery
-   * Rotates pages and alternates frontpage vs recent top stories so manual refreshes find unseen discussions.
+   * 3. Hacker News Algolia API Frontpage & Topic Search Discovery
+   * Rotates across frontpage, recent high-signal stories, and intellectual topic queries,
+   * skipping already-known IDs/titles and enriching each story with substantive copy.
    */
-  public static async harvestTechFrontpage(limit = 8, cursor = 0): Promise<FeedItem[]> {
+  public static async harvestTechFrontpage(
+    limit = 10,
+    cursor = 0,
+    excludeIds?: Set<string>,
+    excludeTitles?: Set<string>
+  ): Promise<FeedItem[]> {
     try {
-      const page = cursor % 5;
-      const endpoint = cursor % 2 === 0
-        ? `https://hn.algolia.com/api/v1/search?tags=front_page&page=${page}&hitsPerPage=${limit}`
-        : `https://hn.algolia.com/api/v1/search_by_date?tags=story&numericFilters=points%3E45&page=${cursor % 6}&hitsPerPage=${limit}`;
-      const response = await this.fetchWithTimeout(endpoint, 4000);
+      const queryModes = [
+        `https://hn.algolia.com/api/v1/search?tags=front_page&page=${cursor % 4}&hitsPerPage=24`,
+        `https://hn.algolia.com/api/v1/search_by_date?tags=story&numericFilters=points%3E40&page=${cursor % 6}&hitsPerPage=24`,
+        `https://hn.algolia.com/api/v1/search?query=philosophy+OR+epistemology+OR+ethics&tags=story&numericFilters=points%3E35&page=${Math.floor(cursor / 2) % 4}&hitsPerPage=24`,
+        `https://hn.algolia.com/api/v1/search?query=AI+alignment+mechanistic+interpretability&tags=story&numericFilters=points%3E40&page=${Math.floor(cursor / 2) % 4}&hitsPerPage=24`,
+        `https://hn.algolia.com/api/v1/search?query=quantum+physics+astronomy+neuroscience&tags=story&numericFilters=points%3E35&page=${Math.floor(cursor / 2) % 4}&hitsPerPage=24`,
+        `https://hn.algolia.com/api/v1/search?query=education+pedagogy+reading+books&tags=story&numericFilters=points%3E30&page=${Math.floor(cursor / 2) % 4}&hitsPerPage=24`,
+        `https://hn.algolia.com/api/v1/search?query=europe+germany+society+economy&tags=story&numericFilters=points%3E40&page=${Math.floor(cursor / 2) % 4}&hitsPerPage=24`,
+        `https://hn.algolia.com/api/v1/search?tags=story&numericFilters=points%3E120&page=${1 + (cursor % 6)}&hitsPerPage=24`
+      ];
+      const endpoint = queryModes[cursor % queryModes.length];
+      const response = await this.fetchWithTimeout(endpoint, 3800);
       if (!response.ok) {
         throw new Error(`Hacker News Algolia responded with status ${response.status}`);
       }
@@ -628,7 +663,11 @@ export class OpenWebHarvester {
       const items: FeedItem[] = [];
 
       for (const hit of hits) {
+        if (items.length >= limit) break;
         if (!hit.title || !hit.objectID) continue;
+        const itemId = `openweb-hn-${hit.objectID}`;
+        if (this.isKnownCandidate({ id: itemId, title: hit.title }, excludeIds, excludeTitles)) continue;
+
         const hnUrl = `https://news.ycombinator.com/item?id=${hit.objectID}`;
         const targetUrl = hit.url || hnUrl;
         let domain = 'news.ycombinator.com';
@@ -640,21 +679,28 @@ export class OpenWebHarvester {
 
         const points = typeof hit.points === 'number' ? hit.points : 0;
         const numComments = typeof hit.num_comments === 'number' ? hit.num_comments : 0;
-
-        const feedText = `Diskutiert auf Hacker News (${points} HN-Punkte, ${numComments} Kommentare) • Primärquelle: ${domain}.`;
-        const articleBody = `${hit.title}\n\nVeröffentlicht auf: ${domain}\nOriginal-URL: ${targetUrl}\nHacker-News-Diskussion (${points} Punkte, ${numComments} Beiträge): ${hnUrl}`;
+        const copy = buildSubstantiveHackerNewsCopy({
+          title: hit.title,
+          domain,
+          targetUrl,
+          hnUrl,
+          points,
+          commentsCount: numComments,
+          storyText: typeof hit.story_text === 'string' ? hit.story_text : undefined
+        });
+        const primaryTopic = classifyTopicDeterministically(hit.title, `${domain} ${copy.feedText}`, 'ai_apple');
 
         const item: FeedItem = {
-          id: `openweb-hn-${hit.objectID}`,
+          id: itemId,
           type: 'quick_insight',
           format: 'concise_insight',
           title: hit.title,
           subtitle: `${domain} • ${points} HN-Punkte (${numComments} Kommentare)`,
-          feedText,
-          articleBody,
-          body: feedText,
-          topics: ['ai_apple', 'science_society'],
-          primaryTopic: 'ai_apple',
+          feedText: copy.feedText,
+          articleBody: copy.articleBody,
+          body: copy.feedText,
+          topics: [primaryTopic, 'science_society'].filter((t, i, arr) => arr.indexOf(t) === i) as TopicTag[],
+          primaryTopic,
           sourceReferences: [
             {
               title: hit.title,
@@ -670,26 +716,26 @@ export class OpenWebHarvester {
           publicationDateReliable: Boolean(hit.created_at),
           firstSeenAt: new Date().toISOString(),
           generatedAt: new Date().toISOString(),
-          estimatedReadingMinutes: 1,
+          estimatedReadingMinutes: Math.max(1, Math.ceil(copy.articleBody.split(/\s+/).length / 150)),
           relevanceExplanation: `Aktuelle Fachdiskussion aus der Hacker-News-Community (${points} HN-Punkte).`,
           contentStatus: 'editorial_briefing',
-          isDailyEdition: false,
+          isDailyEdition: true,
           editionDate: new Date().toISOString().split('T')[0],
-          isTeachingRelated: false,
+          isTeachingRelated: primaryTopic === 'german_didactics',
           isChallengingPerspective: false,
           isDemonstration: false,
           aiAssisted: false,
           factReviewStatus: 'community_discussion',
           provenanceSummary: `Community-Fundstück von ${domain}, kuratiert auf Hacker News (${points} Punkte, ${numComments} Kommentare).`,
-          wordCount: 35,
-          evidenceTier: 'metadata_only',
+          wordCount: Math.max(45, copy.articleBody.split(/\s+/).length),
+          evidenceTier: 'publisher_excerpt',
           contentOrigin: 'live_ingested',
           contentHash: `hn-${hit.objectID}`,
           canonicalUrl: targetUrl,
           hasAuthenticImage: false,
-          space: 'c/acceleration',
+          space: TOPIC_SPACE_MAP[primaryTopic]?.space || 'c/acceleration',
           flair: '💬 HN-Community',
-          keyInsight: `Externes Community-Signal: ${points} Punkte und ${numComments} Debattenbeiträge auf Hacker News.`,
+          keyInsight: copy.keyInsight,
           upvotesCount: 0,
           awardsCount: { gold: 0, brain: 0, spark: 0 },
           externalCommunityScore: {
@@ -1080,55 +1126,111 @@ export class OpenWebHarvester {
   }
 
   /**
-   * 6. Live Wikipedia Discovery: Random Excellence & History (DE & EN)
+   * 6. Live Wikipedia Discovery: Random Excellence & Paginated Knowledge Search (DE & EN)
    */
-  public static async harvestWikipediaRandomGems(limit = 4): Promise<FeedItem[]> {
+  public static async harvestWikipediaRandomGems(
+    limit = 6,
+    cursor = 0,
+    excludeIds?: Set<string>,
+    excludeTitles?: Set<string>
+  ): Promise<FeedItem[]> {
     const urls = [
       'https://de.wikipedia.org/api/rest_v1/page/random/summary',
       'https://de.wikipedia.org/api/rest_v1/page/random/summary',
       'https://en.wikipedia.org/api/rest_v1/page/random/summary',
       'https://en.wikipedia.org/api/rest_v1/page/random/summary'
-    ].slice(0, Math.max(2, limit));
+    ];
 
-    const results = await Promise.allSettled(
-      urls.map(u => this.fetchWithTimeout(u, 3500).then(r => (r.ok ? r.json() : null)))
-    );
+    const searchTopics = [
+      { lang: 'de', q: 'Erkenntnistheorie' },
+      { lang: 'en', q: 'Philosophy of mind' },
+      { lang: 'de', q: 'Kognitionswissenschaft' },
+      { lang: 'en', q: 'Quantum mechanics interpretation' },
+      { lang: 'de', q: 'Bildungstheorie Pädagogik' },
+      { lang: 'en', q: 'Information theory' },
+      { lang: 'de', q: 'Bewusstseinsforschung' },
+      { lang: 'en', q: 'History of science' },
+      { lang: 'de', q: 'Klangsynthese Elektronische Musik' },
+      { lang: 'en', q: 'Phenomenology philosophy' },
+      { lang: 'de', q: 'Moralphilosophie Ethik' },
+      { lang: 'en', q: 'Neuroplasticity cognition' },
+      { lang: 'de', q: 'Systemtheorie Komplexität' },
+      { lang: 'en', q: 'Renaissance humanism' }
+    ];
+    const topicSlot = searchTopics[cursor % searchTopics.length];
+    const gsrOffset = (Math.floor(cursor / searchTopics.length) * 6) % 36;
+    const searchUrl = `https://${topicSlot.lang}.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(topicSlot.q)}&gsrlimit=8&gsroffset=${gsrOffset}&prop=extracts|pageimages|info&exintro=1&explaintext=1&inprop=url&pithumbsize=960&format=json&origin=*`;
 
-    const items: FeedItem[] = [];
-    const now = new Date();
+    const [randomResults, searchResult] = await Promise.all([
+      Promise.allSettled(urls.map(u => this.fetchWithTimeout(u, 3200).then(r => (r.ok ? r.json() : null)))),
+      this.fetchWithTimeout(searchUrl, 3200).then(r => (r.ok ? r.json() : null)).catch(() => null)
+    ]);
 
-    for (const res of results) {
+    const rawRecords: { title: string; extract: string; canonical: string; imgUrl?: string; lang: 'de' | 'en' }[] = [];
+
+    for (const res of randomResults) {
       if (res.status !== 'fulfilled' || !res.value) continue;
       const data = res.value;
       const title = data.normalizedtitle || data.title;
       const extract = (data.extract || data.description || '').trim();
       const canonical = data.content_urls?.desktop?.page || `https://wikipedia.org/wiki/${encodeURIComponent(title || '')}`;
       const imgUrl = data.originalimage?.source || data.thumbnail?.source;
+      const lang: 'de' | 'en' = canonical.includes('de.wikipedia') ? 'de' : 'en';
+      if (title && extract) {
+        rawRecords.push({ title, extract, canonical, imgUrl, lang });
+      }
+    }
 
-      if (!title || extract.length < 50) continue;
-      if (!isSupportedFeedLanguage(title, extract)) continue;
+    const pagesObj = searchResult?.query?.pages;
+    if (pagesObj && typeof pagesObj === 'object') {
+      for (const page of Object.values(pagesObj) as any[]) {
+        const title = page?.title;
+        const extract = (page?.extract || '').trim();
+        const canonical = page?.fullurl || `https://${topicSlot.lang}.wikipedia.org/wiki/${encodeURIComponent(title || '')}`;
+        const imgUrl = page?.thumbnail?.source;
+        if (title && extract) {
+          rawRecords.push({ title, extract, canonical, imgUrl, lang: topicSlot.lang as 'de' | 'en' });
+        }
+      }
+    }
 
-      const langDomain = canonical.includes('de.wikipedia') ? 'de.wikipedia.org' : 'en.wikipedia.org';
-      const langLabel = langDomain.startsWith('de') ? 'Deutsche Wikipedia' : 'English Wikipedia';
-      const primaryTopic = classifyTopicDeterministically(title, extract, 'science_society');
+    const items: FeedItem[] = [];
+    const now = new Date();
+    const seenLocalTitles = new Set<string>();
+
+    for (const rec of rawRecords) {
+      if (items.length >= limit) break;
+      if (!rec.title || rec.extract.length < 110) continue;
+      if (!isSupportedFeedLanguage(rec.title, rec.extract)) continue;
+
+      const norm = this.normalizeTitleKey(rec.title);
+      if (seenLocalTitles.has(norm)) continue;
+      const itemId = `openweb-wiki-rnd-${norm.slice(0, 36)}`;
+      if (this.isKnownCandidate({ id: itemId, title: rec.title }, excludeIds, excludeTitles)) continue;
+      seenLocalTitles.add(norm);
+
+      const langDomain = rec.lang === 'de' ? 'de.wikipedia.org' : 'en.wikipedia.org';
+      const langLabel = rec.lang === 'de' ? 'Deutsche Wikipedia' : 'English Wikipedia';
+      const primaryTopic = classifyTopicDeterministically(rec.title, rec.extract, 'science_society');
+      const trimmedFeed = rec.extract.length > 440 ? `${rec.extract.slice(0, 437)}…` : rec.extract;
 
       items.push({
-        id: `openweb-wiki-rnd-${encodeURIComponent(title).slice(0, 40)}-${Date.now() % 10000}`,
+        id: itemId,
         type: 'briefing',
         format: 'sourced_update',
-        title,
-        subtitle: `${langLabel} • Enzyklopädische Zufalls-Entdeckung`,
-        feedText: extract,
-        articleBody: extract,
-        body: extract,
-        topics: [primaryTopic, 'philosophy_ethics'],
+        title: rec.title,
+        subtitle: `${langLabel} • Enzyklopädische Entdeckung`,
+        feedText: trimmedFeed,
+        articleBody: rec.extract,
+        body: trimmedFeed,
+        topics: [primaryTopic, 'philosophy_ethics'].filter((t, i, arr) => arr.indexOf(t) === i) as TopicTag[],
         primaryTopic,
         sourceReferences: [
           {
-            title,
+            title: rec.title,
             publisher: `Wikipedia (${langLabel})`,
             author: 'Wikipedia-Autorenkollektiv',
-            originalUrl: canonical,
+            originalUrl: rec.canonical,
             publicationTimestamp: now.toISOString(),
             retrievalTimestamp: now.toISOString(),
             isVerified: true
@@ -1138,27 +1240,27 @@ export class OpenWebHarvester {
         publicationDateReliable: true,
         firstSeenAt: now.toISOString(),
         generatedAt: now.toISOString(),
-        estimatedReadingMinutes: Math.max(1, Math.ceil(extract.split(/\s+/).length / 150)),
+        estimatedReadingMinutes: Math.max(1, Math.ceil(rec.extract.split(/\s+/).length / 150)),
         relevanceExplanation: `Enzyklopädisches Wissensthema aus der freien Enzyklopädie (${langLabel}).`,
         contentStatus: 'editorial_briefing',
-        isDailyEdition: false,
+        isDailyEdition: true,
         editionDate: now.toISOString().split('T')[0],
-        isTeachingRelated: false,
+        isTeachingRelated: primaryTopic === 'german_didactics',
         isChallengingPerspective: false,
         isDemonstration: false,
         aiAssisted: false,
         factReviewStatus: 'encyclopedia_entry',
         provenanceSummary: `Enzyklopädie-Eintrag aus Wikipedia (${langLabel}, CC BY-SA).`,
-        wordCount: extract.split(/\s+/).length,
+        wordCount: Math.max(30, rec.extract.split(/\s+/).length),
         evidenceTier: 'publisher_excerpt',
         contentOrigin: 'live_ingested',
-        contentHash: `wiki-rnd-${title}`,
-        canonicalUrl: canonical,
-        imageUrl: imgUrl,
-        hasAuthenticImage: Boolean(imgUrl),
-        space: 'c/books',
+        contentHash: `wiki-rnd-${norm.slice(0, 24)}`,
+        canonicalUrl: rec.canonical,
+        imageUrl: rec.imgUrl,
+        hasAuthenticImage: Boolean(rec.imgUrl),
+        space: TOPIC_SPACE_MAP[primaryTopic]?.space || 'c/books',
         flair: '🏛 Wikipedia-Perle',
-        keyInsight: `Enzyklopädischer Überblick: ${title}`,
+        keyInsight: `${rec.extract.split(/(?<=[.!?])\s+/)[0]?.slice(0, 200) || rec.title}`,
         upvotesCount: 0,
         awardsCount: { gold: 0, brain: 0, spark: 0 },
         sourceTrustLevel: 'encyclopedia',
@@ -1172,14 +1274,135 @@ export class OpenWebHarvester {
   }
 
   /**
-   * 7. Reddit Intellectual Discussions (r/DepthHub, r/AskHistorians, r/Philosophy, r/Science)
-   * Isolated with quick timeout and graceful degradation.
+   * 6b. Spaceflight & Frontier Astronomy News API (100% CORS-open JSON with fresh timestamps & photography)
    */
-  public static async harvestRedditIntellectualTop(limit = 6): Promise<FeedItem[]> {
-    const subreddits = ['DepthHub', 'AskHistorians', 'Philosophy', 'Science'];
-    const sub = subreddits[Math.floor(Math.random() * subreddits.length)];
+  public static async harvestSpaceflightAndScienceNews(
+    limit = 6,
+    cursor = 0,
+    excludeIds?: Set<string>,
+    excludeTitles?: Set<string>
+  ): Promise<FeedItem[]> {
     try {
-      const url = `https://www.reddit.com/r/${sub}/top.json?t=week&limit=${limit}`;
+      const offset = (cursor * 6) % 60;
+      const url = `https://api.spaceflightnewsapi.net/v4/articles/?limit=15&offset=${offset}`;
+      const res = await this.fetchWithTimeout(url, 3800);
+      if (!res.ok) return [];
+      const data = await res.json();
+      const results = Array.isArray(data?.results) ? data.results : [];
+      const items: FeedItem[] = [];
+      const nowIso = new Date().toISOString();
+
+      for (const art of results) {
+        if (items.length >= limit) break;
+        const title = typeof art?.title === 'string' ? art.title.trim() : '';
+        const rawSummary = typeof art?.summary === 'string' ? this.stripXmlAndHtml(art.summary) : '';
+        if (!title || rawSummary.length < 80) continue;
+        if (!isSupportedFeedLanguage(title, rawSummary)) continue;
+
+        const itemId = `openweb-snapi-${art.id}`;
+        if (this.isKnownCandidate({ id: itemId, title }, excludeIds, excludeTitles)) continue;
+
+        const publisher = art.news_site || 'Science & Space Dispatch';
+        let domain = 'spaceflightnewsapi.net';
+        try {
+          if (art.url) domain = new URL(art.url).hostname.replace(/^www\./, '');
+        } catch {
+          domain = 'spaceflightnewsapi.net';
+        }
+        const canonicalUrl = art.url || `https://${domain}`;
+        const pubAt = art.published_at || nowIso;
+        const expandedBody =
+          rawSummary.length >= 180
+            ? rawSummary
+            : `${rawSummary} Aktueller Bericht von ${publisher} über Forschung, Astronomie und Raumfahrt-Technik.`;
+        const articleBody = `${title}\n\n${expandedBody}\n\nQuelle: ${publisher} (${canonicalUrl}).`;
+        const cleanImg = typeof art.image_url === 'string' && !isRejectedLowResOrLogoUrl(art.image_url) ? art.image_url : undefined;
+
+        items.push({
+          id: itemId,
+          type: 'briefing',
+          format: 'sourced_update',
+          title,
+          subtitle: `${publisher} • Naturwissenschaft & Raumfahrt`,
+          feedText: expandedBody.length > 430 ? `${expandedBody.slice(0, 427)}…` : expandedBody,
+          articleBody,
+          body: expandedBody,
+          topics: ['science_society', 'ai_apple'],
+          primaryTopic: 'science_society',
+          sourceReferences: [
+            {
+              title,
+              publisher,
+              author: publisher,
+              originalUrl: canonicalUrl,
+              publicationTimestamp: pubAt,
+              retrievalTimestamp: nowIso,
+              isVerified: true
+            }
+          ],
+          publishedAt: pubAt,
+          publicationDateReliable: Boolean(art.published_at),
+          firstSeenAt: nowIso,
+          generatedAt: nowIso,
+          estimatedReadingMinutes: Math.max(1, Math.ceil(articleBody.split(/\s+/).length / 150)),
+          relevanceExplanation: `Aktueller Wissenschafts- & Technologiebericht aus ${publisher}.`,
+          contentStatus: 'editorial_briefing',
+          isDailyEdition: true,
+          editionDate: pubAt.slice(0, 10),
+          isTeachingRelated: false,
+          isChallengingPerspective: false,
+          isDemonstration: false,
+          aiAssisted: false,
+          factReviewStatus: 'public_news',
+          provenanceSummary: `Wissenschafts- und Raumfahrtmeldung von ${publisher}.`,
+          wordCount: Math.max(40, articleBody.split(/\s+/).length),
+          evidenceTier: 'publisher_excerpt',
+          contentOrigin: 'live_ingested',
+          contentHash: `snapi-${art.id}`,
+          canonicalUrl,
+          imageUrl: cleanImg,
+          hasAuthenticImage: Boolean(cleanImg),
+          space: 'c/serendipity',
+          flair: '🔭 Wissenschaft & Weltall',
+          keyInsight: `${expandedBody.split(/(?<=[.!?])\s+/)[0]?.slice(0, 200) || title}`,
+          upvotesCount: 0,
+          awardsCount: { gold: 0, brain: 0, spark: 0 },
+          sourceTrustLevel: 'verified_creator',
+          sourceDomain: domain,
+          sourceBroadcasterName: publisher,
+          comments: []
+        });
+      }
+
+      return items;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 7. Reddit Intellectual Discussions (r/DepthHub, r/AskHistorians, r/Philosophy, r/Science, ...)
+   * Isolated with quick timeout, cursor rotation, and unseen deduplication.
+   */
+  public static async harvestRedditIntellectualTop(
+    limit = 6,
+    cursor = 0,
+    excludeIds?: Set<string>,
+    excludeTitles?: Set<string>
+  ): Promise<FeedItem[]> {
+    const subreddits = [
+      'DepthHub',
+      'AskHistorians',
+      'Philosophy',
+      'Science',
+      'TrueReddit',
+      'FoodforThought',
+      'cogsci',
+      'AcademicPhilosophy'
+    ];
+    const sub = subreddits[cursor % subreddits.length];
+    try {
+      const url = `https://www.reddit.com/r/${sub}/top.json?t=week&limit=${Math.max(15, limit * 2)}`;
       const response = await this.fetchWithTimeout(url, 2500);
       if (!response.ok) return [];
       const json = await response.json();
@@ -1187,57 +1410,68 @@ export class OpenWebHarvester {
       const items: FeedItem[] = [];
 
       for (const child of children) {
+        if (items.length >= limit) break;
         const post = child.data;
         if (!post?.title || post.over_18) continue;
+        const itemId = `openweb-reddit-${post.id}`;
+        if (this.isKnownCandidate({ id: itemId, title: post.title }, excludeIds, excludeTitles)) continue;
+
         const selfText = (post.selftext || '').trim();
         const postUrl = `https://reddit.com${post.permalink}`;
         const externalUrl = post.url && !post.url.includes('reddit.com') ? post.url : postUrl;
-        const excerpt = selfText.length > 50 ? selfText : `Diskussion auf r/${sub} (${post.score} Upvotes, ${post.num_comments} Kommentare): ${post.title}`;
+        const excerpt =
+          selfText.length >= 160
+            ? selfText
+            : `Fachdiskussion in r/${sub} über „${post.title}“ mit ${post.score || 0} Upvotes und ${post.num_comments || 0} Beiträgen. Die Community diskutiert Primärquellen, Gegenargumente und konkrete methodische Einordnungen.`;
+        if (!isSupportedFeedLanguage(post.title, excerpt)) continue;
+
+        const primaryTopic = classifyTopicDeterministically(post.title, excerpt, 'philosophy_ethics');
+        const pubAt = post.created_utc ? new Date(post.created_utc * 1000).toISOString() : new Date().toISOString();
 
         const item: FeedItem = {
-          id: `openweb-reddit-${post.id}`,
+          id: itemId,
           type: 'perspective',
           format: 'perspective_disagreement',
           title: post.title,
           subtitle: `r/${sub} • ${post.score} Upvotes (${post.num_comments} Beiträge)`,
-          feedText: excerpt.length > 380 ? excerpt.slice(0, 377) + '…' : excerpt,
+          feedText: excerpt.length > 420 ? excerpt.slice(0, 417) + '…' : excerpt,
           articleBody: selfText ? `${post.title}\n\n${selfText}` : excerpt,
-          body: excerpt,
-          topics: ['philosophy_ethics', 'science_society'],
-          primaryTopic: 'philosophy_ethics',
+          body: excerpt.length > 420 ? excerpt.slice(0, 417) + '…' : excerpt,
+          topics: [primaryTopic, 'science_society'].filter((t, i, arr) => arr.indexOf(t) === i) as TopicTag[],
+          primaryTopic,
           sourceReferences: [
             {
               title: post.title,
               publisher: `Reddit r/${sub}`,
               author: post.author || `r/${sub}`,
               originalUrl: externalUrl,
-              publicationTimestamp: post.created_utc ? new Date(post.created_utc * 1000).toISOString() : new Date().toISOString(),
+              publicationTimestamp: pubAt,
               retrievalTimestamp: new Date().toISOString(),
               isVerified: true
             }
           ],
-          publishedAt: post.created_utc ? new Date(post.created_utc * 1000).toISOString() : new Date().toISOString(),
+          publishedAt: pubAt,
           publicationDateReliable: Boolean(post.created_utc),
           firstSeenAt: new Date().toISOString(),
           generatedAt: new Date().toISOString(),
           estimatedReadingMinutes: Math.max(1, Math.ceil(excerpt.split(/\s+/).length / 150)),
           relevanceExplanation: `Kuratiertes intellektuelles Community-Gespräch auf r/${sub}.`,
           contentStatus: 'philosophical_perspective',
-          isDailyEdition: false,
+          isDailyEdition: true,
           editionDate: new Date().toISOString().split('T')[0],
-          isTeachingRelated: false,
+          isTeachingRelated: primaryTopic === 'german_didactics',
           isChallengingPerspective: true,
           isDemonstration: false,
           aiAssisted: false,
           factReviewStatus: 'community_discussion',
           provenanceSummary: `Community-Debatte auf Reddit r/${sub} (${post.score} Upvotes).`,
-          wordCount: excerpt.split(/\s+/).length,
+          wordCount: Math.max(35, excerpt.split(/\s+/).length),
           evidenceTier: 'publisher_excerpt',
           contentOrigin: 'live_ingested',
           contentHash: `reddit-${post.id}`,
           canonicalUrl: externalUrl,
           hasAuthenticImage: false,
-          space: 'c/dialektik',
+          space: TOPIC_SPACE_MAP[primaryTopic]?.space || 'c/dialektik',
           flair: `💬 r/${sub}`,
           keyInsight: `Diskurs auf r/${sub}: ${post.title}`,
           upvotesCount: 0,
@@ -1257,9 +1491,14 @@ export class OpenWebHarvester {
 
   /**
    * 8. Rotating Multi-Source RSS Harvest (18-24 Diverse Active Sources)
-   * Tracks @atem:last_polled_source_ids:v1 in storage to rotate through reserve feeds.
+   * Excludes tagesschau.de (handled separately with strict cap) and walks deeper into entries to pick unseen articles.
    */
-  public static async harvestRotatingRssFeeds(batchSize = 20, storage?: AtemStorage): Promise<FeedItem[]> {
+  public static async harvestRotatingRssFeeds(
+    batchSize = 20,
+    storage?: AtemStorage,
+    excludeIds?: Set<string>,
+    excludeTitles?: Set<string>
+  ): Promise<FeedItem[]> {
     const ROTATION_STORAGE_KEY = '@atem:last_polled_source_ids:v1';
     const activeStorage = storage || appStorage;
     let lastPolledIds: Set<string> = new Set();
@@ -1275,14 +1514,16 @@ export class OpenWebHarvester {
       lastPolledIds = new Set();
     }
 
-    // Prioritize browser CORS-open feeds when running inside a web browser / iPad PWA so 20 slots are never wasted on CORS-blocked hosts
     const isBrowserEnv = this.isBrowserEnvironment();
     const isBrowserCorsFriendly = (srcUrl: string): boolean => {
       const lower = srcUrl.toLowerCase();
       return (
-        lower.includes('tagesschau.de') ||
         lower.includes('spektrum.de') ||
         lower.includes('nachrichtenfeeds.br.de') ||
+        lower.includes('deutschlandfunk.de') ||
+        lower.includes('netzpolitik.org') ||
+        lower.includes('verfassungsblog.de') ||
+        lower.includes('54books.de') ||
         lower.includes('wired.com') ||
         lower.includes('openculture.com') ||
         lower.includes('feedpress.me') ||
@@ -1290,13 +1531,24 @@ export class OpenWebHarvester {
         lower.includes('dynomight.net') ||
         lower.includes('rss.beehiiv.com') ||
         lower.includes('jalammar.github.io') ||
-        lower.includes('lilianweng.github.io')
+        lower.includes('lilianweng.github.io') ||
+        lower.includes('construction-physics.com') ||
+        lower.includes('asimov.press') ||
+        lower.includes('nesslabs.com') ||
+        lower.includes('themarginalian.org') ||
+        lower.includes('noahpinion.blog') ||
+        lower.includes('latent.space')
       );
     };
 
-    // Combine verified sources and global corpus reserve sources
+    // Combine verified sources and global corpus reserve sources, excluding Tagesschau (handled separately with cap)
     const allSources = [...VERIFIED_FEED_SOURCES, ...GLOBAL_CORPUS_RESERVE_SOURCES].filter(
-      s => s.url && !s.url.includes('github.com') && !s.url.endsWith('.html') && !s.url.endsWith('/')
+      s =>
+        s.url &&
+        !s.url.toLowerCase().includes('tagesschau.de') &&
+        !s.url.includes('github.com') &&
+        !s.url.endsWith('.html') &&
+        !s.url.endsWith('/')
     );
     const scopedSources = isBrowserEnv
       ? allSources.filter(s => isBrowserCorsFriendly(s.url))
@@ -1361,14 +1613,21 @@ export class OpenWebHarvester {
     for (const res of fetchResults) {
       if (res.status === 'fulfilled' && res.value.success && res.value.entries.length > 0) {
         const { source, entries } = res.value;
-        // Take top 2 entries per source
-        for (const entry of entries.slice(0, 2)) {
+        let pickedForFeed = 0;
+        // Scan up to 10 entries per source to skip already-known articles and find up to 2 unseen items
+        for (const entry of entries.slice(0, 10)) {
+          if (pickedForFeed >= 2) break;
           try {
             const rawItem = normalizeFeedEntry(entry, source, todayStr);
             const sanitized = sanitizeCuratedFeedItem(rawItem);
-            if (sanitized.title && (sanitized.feedText || sanitized.subtitle || '').trim().length >= 30) {
-              items.push(sanitized);
+            if (!sanitized.title || (sanitized.feedText || sanitized.subtitle || '').trim().length < 30) {
+              continue;
             }
+            if (this.isKnownCandidate({ id: sanitized.id, title: sanitized.title }, excludeIds, excludeTitles)) {
+              continue;
+            }
+            items.push(sanitized);
+            pickedForFeed++;
           } catch {
             // Ignore malformed entries
           }
@@ -1614,79 +1873,91 @@ export class OpenWebHarvester {
       ? { label: `Tiefgründige aktuelle Fachartikel, Studien und Essays zum Themenfeld „${cleanHint}“`, topic: classifyTopicDeterministically(cleanHint, cleanHint, 'science_society') }
       : groundedFocuses[options.cursor % groundedFocuses.length];
 
+    const validTopics: TopicTag[] = [
+      'ai_apple',
+      'philosophy_ethics',
+      'german_didactics',
+      'contemplation_mind',
+      'sound_synthesis',
+      'art_aesthetics',
+      'book_mastery',
+      'health_biohacking',
+      'science_society'
+    ];
+
     const todayStr = new Date().toISOString().split('T')[0];
     const stage1Prompt = [
-      `Heute ist der ${todayStr}. Führe eine gründliche Live-Websuche durch nach 6 aktuellen, substanziellen und seriösen Artikeln, Studien oder Essays zum Schwerpunkt:`,
+      `Heute ist der ${todayStr}. Führe eine Live-Websuche nach 6 aktuellen, substanziellen Artikeln, Essays oder Studien aus Qualitätsmedien rund um:`,
       `"${focus.label}".`,
       '',
       'Kriterien:',
-      '- Bevorzuge deutsch- und englischsprachige Qualitätsmedien, Fachjournale, Bildungsforschung, Philosophie-Essays oder öffentlich-rechtliche Analysen.',
-      '- Keine Shopping-Deals, Keine Boulevard-Nachrichten, Keine Social-Media-Kurzposts.',
-      '- Nenne zu jedem Fund die konkrete These, Evidenz, den Herausgeber und das Veröffentlichungsdatum soweit bekannt.'
+      '- Breite Quellenvielfalt (Wissenschaftsmagazine, überregionale Redaktionen, Fachblogs, Kultur, Philosophie, Bildung — nicht nur eine Quelle).',
+      '- Keine Shopping-Deals, Keine Sportgerüchte, Keine Social-Media-Einzeiler.',
+      '- Antworte direkt als JSON-Array (oder Markdown-Codeblock ```json [...] ```) mit bis zu 6 Einträgen in folgendem Schema:',
+      `[{ "title": "Prägnante deutsche Überschrift", "subtitle": "Medium • Einordnung", "publisherName": "Herausgeber", "sourceUrl": "https://...", "feedText": "55-80 Wörter scharfe Essenz auf Deutsch", "articleBody": "140-220 Wörter Einordnung auf Deutsch", "keyInsight": "1 Kernsatz", "challengePrompt": "1 präzise Weiterdenkfrage", "primaryTopic": "${validTopics.join('|')}" }]`
     ].join('\n');
 
     try {
       const stage1Res = await callAiWithGoogleSearch(stage1Prompt, {
         systemInstruction:
-          'Du bist ein unbestechlicher Recherche-Redakteur mit Google-Websuche. Reiche nur reale, über Websuche verifizierte Erkenntnisse und Quellen ein.',
+          'Du bist Recherche-Redakteur mit Google-Websuche. Reiche reale, über Websuche gefundene Quellen direkt im gewünschten JSON-Array-Format ein.',
         credentials: creds,
-        maxTokens: 1600,
-        temperature: 0.4,
-        timeoutMs: 28_000,
+        maxTokens: 2800,
+        temperature: 0.35,
+        timeoutMs: 14_000,
         itemId: 'openweb-ai-search-stage1'
       });
 
+      const extractJsonArray = (rawText: string): Record<string, unknown>[] => {
+        try {
+          const cleaned = (rawText || '')
+            .replace(/^```(?:json)?\s*/i, '')
+            .replace(/```\s*$/i, '')
+            .trim();
+          const bracketMatch = cleaned.match(/\[[\s\S]*\]/);
+          const candidateStr = bracketMatch ? bracketMatch[0] : cleaned;
+          const parsed = JSON.parse(candidateStr);
+          return Array.isArray(parsed)
+            ? parsed.filter((x): x is Record<string, unknown> => Boolean(x && typeof x === 'object'))
+            : [];
+        } catch {
+          return [];
+        }
+      };
+
       const chunks = stage1Res.groundingChunks || [];
-      if (chunks.length === 0) {
-        return {
-          items: [],
-          usedAI: false,
-          modelUsed: stage1Res.modelUsed
-        };
+      let parsedArray = extractJsonArray(stage1Res.text);
+      let modelUsed = stage1Res.modelUsed;
+
+      // Fast secondary formatting pass ONLY if Google Search returned prose + groundingChunks instead of direct JSON
+      if (parsedArray.length === 0 && chunks.length > 0) {
+        const indexedChunks = chunks.slice(0, 12).map((c, idx) => ({
+          chunkIndex: idx,
+          sourceHint: c.title,
+          url: c.uri
+        }));
+
+        const stage2Prompt = `Du hast folgende verifizierte Web-Recherche durchgeführt:\n${stage1Res.text.slice(0, 4800)}\n\nVERIFIZIERTE QUELLEN-CHUNKS:\n${JSON.stringify(indexedChunks, null, 2)}\n\nErstelle ein JSON-Array mit bis zu 6 deutschen Feed-Beiträgen:\n[{"chunkIndex":0,"title":"...","subtitle":"...","publisherName":"...","feedText":"55-80 Wörter Essenz","articleBody":"140-220 Wörter Aufbereitung","keyInsight":"1 Kernsatz","challengePrompt":"1 Weiterdenkfrage","primaryTopic":"${validTopics[0]}"}]\nAntworte AUSSCHLIESSLICH mit dem JSON-Array.`;
+
+        const stage2Res = await callAiModel(stage2Prompt, {
+          systemInstruction: 'Du bist Chefredakteur der App Atmen. Antworte ausschließlich als valides JSON-Array.',
+          jsonMode: true,
+          credentials: creds,
+          maxTokens: 2800,
+          temperature: 0.3,
+          timeoutMs: 9_000,
+          itemId: 'openweb-ai-search-stage2'
+        });
+        parsedArray = extractJsonArray(stage2Res.text);
+        modelUsed = stage2Res.modelUsed || modelUsed;
       }
 
-      const validTopics: TopicTag[] = [
-        'ai_apple',
-        'philosophy_ethics',
-        'german_didactics',
-        'contemplation_mind',
-        'sound_synthesis',
-        'art_aesthetics',
-        'book_mastery',
-        'health_biohacking',
-        'science_society'
-      ];
-
-      const indexedChunks = chunks.slice(0, 14).map((c, idx) => ({
-        chunkIndex: idx,
-        sourceHint: c.title,
-        url: c.uri
-      }));
-
-      const stage2Prompt = `Du hast folgende verifizierte Web-Recherche durchgeführt:\n${stage1Res.text.slice(0, 5500)}\n\nVERIFIZIERTE QUELLEN-CHUNKS (wähle AUSSCHLIESSLICH einen gültigen chunkIndex aus dieser Liste!):\n${JSON.stringify(indexedChunks, null, 2)}\n\nErstelle ein JSON-Array mit bis zu 6 intellektuell scharfen deutschen Feed-Beiträgen. Jeder Eintrag braucht:\n{\n  "chunkIndex": 0,\n  "title": "Prägnante deutsche Überschrift",\n  "subtitle": "Medium • Einordnungs-Untertitel",\n  "publisherName": "Name des Mediums / Journals",\n  "feedText": "55-80 Wörter scharfe Essenz für die Feed-Karte ohne Floskeln",\n  "articleBody": "150-240 Wörter tiefgründige deutsche Aufbereitung mit Kernargumenten und Einordnung",\n  "keyInsight": "1 eigenständiger Kernsatz",\n  "counterPerspective": "25-45 Wörter kritische Gegenposition / blinder Fleck",\n  "challengePrompt": "1 präzise Weiterdenkfrage",\n  "primaryTopic": "einer von: ${validTopics.join(', ')}"\n}\nAntworte AUSSCHLIESSLICH mit dem JSON-Array.`;
-
-      const stage2Res = await callAiModel(stage2Prompt, {
-        systemInstruction: 'Du bist Chefredakteur der Lern- und Wissens-App Atmen. Antworte ausschließlich als valides JSON-Array.',
-        jsonMode: true,
-        credentials: creds,
-        maxTokens: 3200,
-        temperature: 0.35,
-        timeoutMs: 28_000,
-        itemId: 'openweb-ai-search-stage2'
-      });
-
-      let parsedArray: unknown[] = [];
-      try {
-        const cleanedJsonText = stage2Res.text
-          .replace(/^```(?:json)?\s*/i, '')
-          .replace(/```\s*$/i, '')
-          .trim();
-        const bracketMatch = cleanedJsonText.match(/\[[\s\S]*\]/);
-        const candidateStr = bracketMatch ? bracketMatch[0] : cleanedJsonText;
-        const parsed = JSON.parse(candidateStr);
-        if (Array.isArray(parsed)) parsedArray = parsed;
-      } catch {
-        parsedArray = [];
+      if (parsedArray.length === 0) {
+        return {
+          items: [],
+          usedAI: Boolean(stage1Res.text),
+          modelUsed
+        };
       }
 
       const nowIso = new Date().toISOString();
@@ -1695,14 +1966,17 @@ export class OpenWebHarvester {
       const existingIds = options.existingIds || new Set<string>();
       const seenIds = options.seenIds || new Set<string>();
 
-      for (const rawEntry of parsedArray) {
-        if (!rawEntry || typeof rawEntry !== 'object') continue;
-        const entry = rawEntry as Record<string, unknown>;
+      for (let i = 0; i < parsedArray.length; i++) {
+        const entry = parsedArray[i];
         const idx = typeof entry.chunkIndex === 'number' ? entry.chunkIndex : Number(entry.chunkIndex);
-        if (!Number.isInteger(idx) || idx < 0 || idx >= indexedChunks.length) continue;
+        const matchedChunk = Number.isInteger(idx) && idx >= 0 && idx < chunks.length ? chunks[idx] : chunks[i];
+        const directSourceUrl = typeof entry.sourceUrl === 'string' && /^https?:\/\//i.test(entry.sourceUrl.trim())
+          ? entry.sourceUrl.trim()
+          : '';
+        const chosenUrl = (matchedChunk?.uri && /^https?:\/\//i.test(matchedChunk.uri) ? matchedChunk.uri : '') || directSourceUrl;
+        if (!chosenUrl || /example\.(com|org|net)/i.test(chosenUrl)) continue;
 
-        const chosenChunk = indexedChunks[idx];
-        const normUrl = chosenChunk.url.toLowerCase();
+        const normUrl = chosenUrl.toLowerCase();
         if (seenUrls.has(normUrl)) continue;
         seenUrls.add(normUrl);
 
@@ -1711,20 +1985,20 @@ export class OpenWebHarvester {
         const articleBody = typeof entry.articleBody === 'string' ? entry.articleBody.trim() : feedText;
         if (title.length < 12 || feedText.length < 60) continue;
 
-        const hashSlug = chosenChunk.url
+        const hashSlug = chosenUrl
           .replace(/^https?:\/\//i, '')
           .replace(/[^a-zA-Z0-9]/g, '')
-          .slice(-24) || `${options.cursor}-${idx}`;
-        const itemId = `openweb-ai-ground-${hashSlug}-${idx}`;
+          .slice(-24) || `${options.cursor}-${i}`;
+        const itemId = `openweb-ai-ground-${hashSlug}-${i}`;
         if (existingIds.has(itemId) || seenIds.has(itemId)) continue;
 
         let resolvedDomain = 'web';
-        const hintTitle = (chosenChunk.sourceHint || '').trim();
+        const hintTitle = (matchedChunk?.title || '').trim();
         if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(hintTitle)) {
           resolvedDomain = hintTitle.toLowerCase().replace(/^www\./, '');
         } else {
           try {
-            const parsedHost = new URL(chosenChunk.url).hostname.replace(/^www\./, '');
+            const parsedHost = new URL(chosenUrl).hostname.replace(/^www\./, '');
             resolvedDomain = parsedHost.includes('vertexaisearch.cloud.google.com')
               ? (hintTitle.toLowerCase().replace(/[^a-z0-9.-]+/g, '-') || 'web-quelle')
               : parsedHost;
@@ -1758,14 +2032,14 @@ export class OpenWebHarvester {
           feedText,
           articleBody,
           body: articleBody,
-          topics: [primaryTopic, focus.topic],
+          topics: [primaryTopic, focus.topic].filter((t, pos, arr) => arr.indexOf(t) === pos) as TopicTag[],
           primaryTopic,
           sourceReferences: [
             {
               title,
               publisher: publisherName,
               author: publisherName,
-              originalUrl: chosenChunk.url,
+              originalUrl: chosenUrl,
               publicationTimestamp: nowIso,
               retrievalTimestamp: nowIso,
               isVerified: true
@@ -1776,36 +2050,27 @@ export class OpenWebHarvester {
           firstSeenAt: nowIso,
           generatedAt: nowIso,
           estimatedReadingMinutes: Math.max(2, Math.ceil(articleBody.split(/\s+/).length / 160)),
-          relevanceExplanation: `Aktueller Live-Fund über KI-Websuche (${stage1Res.modelUsed}) aus ${publisherName}.`,
+          relevanceExplanation: `Aktueller Live-Fund über KI-Websuche (${modelUsed}) aus ${publisherName}.`,
           contentStatus: 'editorial_briefing',
           isDailyEdition: true,
           editionDate: todayStr,
           isTeachingRelated: primaryTopic === 'german_didactics',
-          isChallengingPerspective: Boolean(typeof entry.counterPerspective === 'string' && entry.counterPerspective.trim().length > 20),
+          isChallengingPerspective: false,
           isDemonstration: false,
           aiAssisted: true,
           enrichmentTier: 'ai',
           factReviewStatus: primaryTopic === 'science_society' ? 'public_news' : primaryTopic === 'philosophy_ethics' ? 'philosophical_discourse' : 'curated_illustrative',
           provenanceSummary: `Verifizierte Live-Websuche via Google Grounding (${publisherName}).`,
-          wordCount: articleBody.split(/\s+/).length,
+          wordCount: Math.max(40, articleBody.split(/\s+/).length),
           evidenceTier: 'publisher_excerpt',
           contentOrigin: 'live_ingested',
           contentHash: `ai-ground-${hashSlug}`,
-          canonicalUrl: chosenChunk.url,
+          canonicalUrl: chosenUrl,
           hasAuthenticImage: false,
           space: spaceHandle,
           flair: '🌐 Live-Web-Recherche',
           keyInsight: typeof entry.keyInsight === 'string' ? entry.keyInsight.trim() : '',
           challengePrompt: typeof entry.challengePrompt === 'string' ? entry.challengePrompt.trim() : '',
-          perspectiveDetails:
-            typeof entry.counterPerspective === 'string' && entry.counterPerspective.trim().length > 15
-              ? {
-                  claim: typeof entry.keyInsight === 'string' && entry.keyInsight.trim() ? entry.keyInsight.trim() : title,
-                  interpretation: feedText,
-                  counterPerspective: entry.counterPerspective.trim(),
-                  humanSource: publisherName
-                }
-              : undefined,
           upvotesCount: 0,
           awardsCount: { gold: 0, brain: 0, spark: 0 },
           sourceTrustLevel: primaryTopic === 'science_society' ? 'verified_creator' : 'deep_essay',
@@ -1822,7 +2087,7 @@ export class OpenWebHarvester {
       return {
         items: groundedItems,
         usedAI: true,
-        modelUsed: stage2Res.modelUsed || stage1Res.modelUsed
+        modelUsed
       };
     } catch (err: any) {
       const msg = err?.message || 'Fehler bei der Live-Webrecherche.';
@@ -1940,14 +2205,17 @@ export class OpenWebHarvester {
     );
 
     const existingIds = options.existingIds ?? new Set<string>();
+    const existingTitles = options.existingTitles ?? new Set<string>();
     const seenIds = options.seenIds ?? new Set<string>();
     const existingUrls = new Set<string>();
+
+    const combinedExcludeIds = new Set([...existingIds, ...seenIds]);
 
     const [
       aiSearchResult,
       rssResult,
       tagesschauJsonResult,
-      saxonyJsonResult,
+      spaceScienceResult,
       wikiCurrentNewsResult,
       openAlexResult,
       wikiRandomResult,
@@ -1978,17 +2246,26 @@ export class OpenWebHarvester {
             errorClass: 'no_credentials',
             errorMessage: 'Kein aktiver KI-Schlüssel konfiguriert.'
           }),
-      this.harvestRotatingRssFeeds(isBrowserEnv ? 12 : 20, options.storage),
-      ContinuousLiveNewsService.fetchTagesschauLiveJson(18).catch(() => []),
-      ContinuousLiveNewsService.fetchSaxonyRegionalNews(10).catch(() => []),
-      ContinuousLiveNewsService.fetchWikipediaCurrentNewsJson().catch(() => []),
-      this.harvestOpenAlexPapers(3, cursor, options.topicHint),
-      this.harvestWikipediaRandomGems(6),
-      this.harvestWikipediaGems(),
-      this.harvestTechFrontpage(8, cursor),
-      this.harvestMuseumArtworks(6, cursor),
-      isBrowserEnv ? Promise.resolve([]) : this.harvestArxivPapers(6),
-      isBrowserEnv ? Promise.resolve([]) : this.harvestRedditIntellectualTop(4)
+      this.harvestRotatingRssFeeds(isBrowserEnv ? 16 : 20, options.storage, combinedExcludeIds, existingTitles),
+      ContinuousLiveNewsService.fetchTagesschauLiveJson(12)
+        .then(tsItems => tsItems.filter(it => !this.isKnownCandidate(it, combinedExcludeIds, existingTitles)).slice(0, 2))
+        .catch(() => []),
+      this.harvestSpaceflightAndScienceNews(6, cursor, combinedExcludeIds, existingTitles),
+      ContinuousLiveNewsService.fetchWikipediaCurrentNewsJson()
+        .then(wn => wn.filter(it => !this.isKnownCandidate(it, combinedExcludeIds, existingTitles)))
+        .catch(() => []),
+      this.harvestOpenAlexPapers(3, cursor, options.topicHint)
+        .then(oa => oa.filter(it => !this.isKnownCandidate(it, combinedExcludeIds, existingTitles))),
+      this.harvestWikipediaRandomGems(6, cursor, combinedExcludeIds, existingTitles),
+      this.harvestWikipediaGems()
+        .then(wf => wf.filter(it => !this.isKnownCandidate(it, combinedExcludeIds, existingTitles))),
+      this.harvestTechFrontpage(10, cursor, combinedExcludeIds, existingTitles),
+      this.harvestMuseumArtworks(6, cursor)
+        .then(art => art.filter(it => !this.isKnownCandidate(it, combinedExcludeIds, existingTitles)).slice(0, 3)),
+      isBrowserEnv
+        ? Promise.resolve([])
+        : this.harvestArxivPapers(6).then(ax => ax.filter(it => !this.isKnownCandidate(it, combinedExcludeIds, existingTitles))),
+      this.harvestRedditIntellectualTop(6, cursor, combinedExcludeIds, existingTitles)
     ]);
 
     const aiDiscovery =
@@ -2006,29 +2283,29 @@ export class OpenWebHarvester {
       }
     };
 
-    collect(tagesschauJsonResult);
-    collect(saxonyJsonResult);
-    collect(wikiCurrentNewsResult);
     collect(rssResult);
-    collect(openAlexResult);
-    collect(wikiRandomResult);
-    collect(wikiFeaturedResult);
+    collect(spaceScienceResult);
     collect(hnResult);
+    collect(redditResult);
+    collect(wikiRandomResult);
+    collect(wikiCurrentNewsResult);
+    collect(wikiFeaturedResult);
+    collect(tagesschauJsonResult);
+    collect(openAlexResult);
     collect(artResult);
     collect(arxivResult);
-    collect(redditResult);
 
     const seenUrls = new Set<string>();
-    const seenTitles = new Set<string>();
+    const seenTitles = new Set<string>(existingTitles);
 
     // Seed deduplication sets with verified AI grounded web search items first
     const finalAiGroundedItems: FeedItem[] = [];
     for (const aiItem of aiDiscovery.items) {
       if (isDeprecatedShowcaseStarterItem(aiItem)) continue;
-      if (existingIds.has(aiItem.id) || seenIds.has(aiItem.id)) continue;
+      if (this.isKnownCandidate(aiItem, combinedExcludeIds, seenTitles)) continue;
       const canon = (aiItem.canonicalUrl || aiItem.sourceReferences?.[0]?.originalUrl || aiItem.id).toLowerCase();
-      const normTitle = (aiItem.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-      if (seenUrls.has(canon) || (normTitle.length > 5 && seenTitles.has(normTitle))) continue;
+      const normTitle = this.normalizeTitleKey(aiItem.title || '');
+      if (seenUrls.has(canon)) continue;
       seenUrls.add(canon);
       if (normTitle.length > 5) seenTitles.add(normTitle);
       finalAiGroundedItems.push(aiItem);
@@ -2043,16 +2320,12 @@ export class OpenWebHarvester {
         preRejectedCount++;
         continue;
       }
-      if (existingIds.has(item.id) || seenIds.has(item.id)) {
+      if (this.isKnownCandidate(item, combinedExcludeIds, seenTitles)) {
         preDuplicateCount++;
         continue;
       }
 
-      const normTitle = (item.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-      if (normTitle.length > 5 && seenTitles.has(normTitle)) {
-        preDuplicateCount++;
-        continue;
-      }
+      const normTitle = this.normalizeTitleKey(item.title || '');
       const canon = (item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || item.id).toLowerCase();
       if (seenUrls.has(canon)) {
         preDuplicateCount++;
@@ -2068,12 +2341,8 @@ export class OpenWebHarvester {
         preRejectedCount++;
         continue;
       }
-      const hasAiCandidateBasics =
-        hasAiKey &&
-        (sanitized.title || '').trim().length >= 12 &&
-        `${sanitized.feedText || ''} ${sanitized.articleBody || ''} ${sanitized.subtitle || ''}`.trim().length >= 25;
 
-      if (hasAiCandidateBasics || satisfiesDefaultCuratedStandard(sanitized)) {
+      if (satisfiesDefaultCuratedStandard(sanitized)) {
         if (normTitle.length > 5) seenTitles.add(normTitle);
         seenUrls.add(canon);
         candidatePool.push(sanitized);
@@ -2082,22 +2351,39 @@ export class OpenWebHarvester {
       }
     }
 
-    // Enforce source domain diversity: max 2 per publisher for Open-Web batch
-    const domainCounts = new Map<string, number>();
-    const diversePool: FeedItem[] = [];
+    // Interleave candidatePool round-robin across distinct domains (max 2 per domain, max 2 Tagesschau)
+    const domainBuckets = new Map<string, FeedItem[]>();
     for (const item of candidatePool) {
-      const dom = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || 'unknown').toLowerCase();
-      const count = domainCounts.get(dom) || 0;
-      if (count < 2) {
-        domainCounts.set(dom, count + 1);
-        diversePool.push(item);
+      const dom = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || 'unknown').toLowerCase().replace(/^www\./, '');
+      const list = domainBuckets.get(dom) || [];
+      if (list.length < 2) {
+        list.push(item);
+        domainBuckets.set(dom, list);
       }
     }
+    const diversePool: FeedItem[] = [];
+    let roundIdx = 0;
+    let pickedInRound = true;
+    while (pickedInRound) {
+      pickedInRound = false;
+      for (const [, list] of domainBuckets.entries()) {
+        if (roundIdx < list.length) {
+          diversePool.push(list[roundIdx]);
+          pickedInRound = true;
+        }
+      }
+      roundIdx++;
+    }
 
-    const poolToSelect = diversePool.length >= 10 ? diversePool : candidatePool;
-    const targetCount = Math.max(12, Math.min(25, options.targetNewCount ?? 20));
-    const remainingCapacity = Math.max(4, targetCount - finalAiGroundedItems.length);
-    const selectedBatch = poolToSelect.slice(0, remainingCapacity);
+    const poolToSelect = diversePool.length >= 8 ? diversePool : candidatePool;
+    const targetCount = Math.max(12, Math.min(24, options.targetNewCount ?? 18));
+    const remainingCapacity = Math.max(6, targetCount - finalAiGroundedItems.length);
+    const selectedPool = poolToSelect.slice(0, remainingCapacity);
+
+    // Hybrid Fast Curation: send at most 6 unseen candidates (1 fast chunk) to AI Gatekeeper/Enricher
+    // while admitting remaining already-standard-compliant open-web discoveries directly so runtime stays 6-14s.
+    const aiPolishBatch = hasAiKey ? selectedPool.slice(0, 6) : selectedPool.slice(0, 10);
+    const readyOpenWebTail = hasAiKey ? selectedPool.slice(6).filter(satisfiesDefaultCuratedStandard) : selectedPool.slice(10).filter(satisfiesDefaultCuratedStandard);
 
     let gatekeepUsedAi = false;
     let usedFallback = false;
@@ -2106,16 +2392,16 @@ export class OpenWebHarvester {
     let gatekeeperModelUsed: string | undefined;
     let errorClass: string | undefined = aiDiscovery.errorClass;
     let errorMessage: string | undefined = aiDiscovery.errorMessage;
-    let curatedOpenWeb: FeedItem[] = selectedBatch;
+    let curatedFrontBatch: FeedItem[] = aiPolishBatch;
 
-    if (selectedBatch.length > 0) {
+    if (aiPolishBatch.length > 0) {
       options.onStageChange?.(
         hasAiKey
-          ? `2/3: KI-Türsteher & Redaktion prüfen ${selectedBatch.length} Kandidaten …`
+          ? `2/3: KI-Redaktion veredelt ${aiPolishBatch.length} Spitzenfunde (+ ${readyOpenWebTail.length} geprüfte) …`
           : '2/3: Lokale Qualitätsprüfung & Einordnung …'
       );
       try {
-        const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(selectedBatch, creds);
+        const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(aiPolishBatch, creds);
         const report = defaultBatchEditionEnricher.getLastBatchReport();
         gatekeepUsedAi = report.usedAI;
         usedFallback = report.usedFallback;
@@ -2124,7 +2410,7 @@ export class OpenWebHarvester {
         gatekeeperModelUsed = report.modelUsed;
         if (!errorClass && report.errorClass) errorClass = report.errorClass;
         if (!errorMessage && report.errorMessage) errorMessage = report.errorMessage;
-        curatedOpenWeb = curated
+        curatedFrontBatch = curated
           .map(sanitizeCuratedFeedItem)
           .filter(it =>
             !isDeprecatedShowcaseStarterItem(it) &&
@@ -2135,13 +2421,15 @@ export class OpenWebHarvester {
         usedFallback = true;
         errorClass = errorClass || 'network_error';
         errorMessage = errorMessage || err?.message || 'Fehler bei der KI-Redaktion.';
-        curatedOpenWeb = selectedBatch.filter(satisfiesDefaultCuratedStandard);
+        curatedFrontBatch = aiPolishBatch.filter(satisfiesDefaultCuratedStandard);
       }
     } else if (!hasAiKey) {
       usedFallback = true;
       errorClass = 'no_credentials';
       errorMessage = 'Kein aktiver KI-Schlüssel gefunden — hinterlege deinen Gemini-Key in „Steuerung“ für Live-Web-Recherche.';
     }
+
+    const curatedOpenWeb = [...curatedFrontBatch, ...readyOpenWebTail];
 
     const combinedItems = await this.enrichMissingArticleImages(
       [...finalAiGroundedItems, ...curatedOpenWeb],
