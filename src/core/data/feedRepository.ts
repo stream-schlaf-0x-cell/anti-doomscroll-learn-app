@@ -133,6 +133,24 @@ export class LocalFeedRepository implements IFeedRepository {
   private storage: AtemStorage;
   private articleIndex: ArticleIndex;
   private relatedService: RelatedContentService;
+  private indexTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private scheduleIndexBuild(): void {
+    const isBrowserRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
+    if (!isBrowserRuntime) {
+      this.articleIndex.buildIndex(this.items);
+      this.relatedService.setIndex(this.articleIndex);
+      return;
+    }
+    if (this.indexTimer) {
+      clearTimeout(this.indexTimer);
+    }
+    this.indexTimer = setTimeout(() => {
+      this.indexTimer = null;
+      this.articleIndex.buildIndex(this.items);
+      this.relatedService.setIndex(this.articleIndex);
+    }, 120);
+  }
 
   constructor(customItemsOrStorage?: FeedItem[] | AtemStorage, storage: AtemStorage = appStorage) {
     if (
@@ -176,8 +194,7 @@ export class LocalFeedRepository implements IFeedRepository {
       this.items = this.purgeDemoFixturesIfSufficient(Array.from(map.values()));
     }
 
-    this.articleIndex.buildIndex(this.items);
-    this.relatedService.setIndex(this.articleIndex);
+    this.scheduleIndexBuild();
     this.initDynamicItems();
   }
 
@@ -267,8 +284,7 @@ export class LocalFeedRepository implements IFeedRepository {
             map.set(dyn.id, dyn);
           }
           this.items = this.purgeDemoFixturesIfSufficient(Array.from(map.values()));
-          this.articleIndex.buildIndex(this.items);
-          this.relatedService.setIndex(this.articleIndex);
+          this.scheduleIndexBuild();
         }
       }
     } catch {
@@ -307,9 +323,25 @@ export class LocalFeedRepository implements IFeedRepository {
         if (canon) canonicalMap.set(canon, item.id);
       }
     }
+    const nowMs = Date.now();
+    const isStaleDynamic = (dyn: FeedItem): boolean => {
+      if (
+        dyn.publicationDateReliable === false ||
+        dyn.format === 'art_showcase' ||
+        dyn.format === 'meme' ||
+        dyn.space === 'c/kunst_galerie' ||
+        dyn.space === 'c/memes'
+      ) {
+        return false;
+      }
+      const pubTime = new Date(dyn.publishedAt).getTime();
+      return !isNaN(pubTime) && nowMs - pubTime > 14 * 86400 * 1000;
+    };
+
     const survivingDynamic: FeedItem[] = [];
     for (const dyn of this.dynamicItems) {
       if (isRejectedCachedItem(dyn)) continue;
+      if (!map.has(dyn.id) && isStaleDynamic(dyn)) continue;
       const canon = dyn.canonicalUrl?.toLowerCase();
       const existingIdForCanon = canon ? canonicalMap.get(canon) : undefined;
       if (map.has(dyn.id)) {
@@ -327,8 +359,7 @@ export class LocalFeedRepository implements IFeedRepository {
     }
     this.dynamicItems = survivingDynamic;
     this.items = this.purgeDemoFixturesIfSufficient(Array.from(map.values()));
-    this.articleIndex.buildIndex(this.items);
-    this.relatedService.setIndex(this.articleIndex);
+    this.scheduleIndexBuild();
   }
 
   addItems(newItems: FeedItem[], options?: { operationType?: FeedOperationType; pinInserted?: boolean; telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry }): void {

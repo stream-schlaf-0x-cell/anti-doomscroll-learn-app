@@ -22,7 +22,33 @@ import {
   SHOWCASE_STARTER_TRACK_IDS
 } from '../learning/hivemindLearningService';
 
-export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-15-v11.0-main-feed-masterplan-clean';
+export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-15-v12.0-fresh-relevant-main-feed';
+
+function isUndatedVisualFormat(item: Partial<FeedItem>): boolean {
+  return (
+    item.publicationDateReliable === false ||
+    item.format === 'art_showcase' ||
+    item.format === 'meme' ||
+    item.format === 'comic' ||
+    item.space === 'c/memes' ||
+    item.space === 'c/kunst_galerie' ||
+    item.primaryTopic === 'memes_satire' ||
+    item.primaryTopic === 'art_aesthetics'
+  );
+}
+
+function isStaleOver14Days(item: Partial<FeedItem> | null | undefined, nowMs = Date.now()): boolean {
+  if (!item || typeof item !== 'object') return false;
+  if (isUndatedVisualFormat(item)) return false;
+  const pubTime = new Date(String(item.publishedAt || '')).getTime();
+  if (isNaN(pubTime)) return false;
+  const ageMs = nowMs - pubTime;
+  if (ageMs > 14 * 86400 * 1000) return true;
+  if (isArdSource(item as FeedItem) && (item.wordCount || 0) < 110 && ageMs > 5 * 86400 * 1000) {
+    return true;
+  }
+  return false;
+}
 
 function isDeprecatedOrIrrelevantHarvestItem(item: Partial<FeedItem> | null | undefined): boolean {
   if (!item || typeof item !== 'object') return false;
@@ -314,13 +340,10 @@ export async function runInPlaceDataMigration(
         purgedCount++;
         continue;
       }
-      // Purge stale unbookmarked mid-October ARD ticker filler (> 7 days old)
-      if (isArdSource(preSanitized)) {
-        const pubTime = new Date(preSanitized.publishedAt).getTime();
-        if (!isNaN(pubTime) && Date.now() - pubTime > 7 * 86400 * 1000) {
-          purgedCount++;
-          continue;
-        }
+      // Purge stale unbookmarked articles > 14 days old and short wire tickers > 5 days old
+      if (isStaleOver14Days(preSanitized)) {
+        purgedCount++;
+        continue;
       }
       Object.assign(item, preSanitized);
     }
@@ -378,8 +401,15 @@ export async function runInPlaceDataMigration(
       const parsedDyn = JSON.parse(rawDyn);
       if (Array.isArray(parsedDyn)) {
         const cleanedDyn = parsedDyn
-          .filter((item: any) => !isDeprecatedOrIrrelevantHarvestItem(item))
-          .map((item: any) => sanitizeCuratedFeedItem(item));
+          .filter((item: any) => item && typeof item === 'object')
+          .map((item: any) => sanitizeCuratedFeedItem(item))
+          .filter((item: any) => {
+            if (protectedUserItemIds.has(String(item.id || ''))) return true;
+            if (isDeprecatedOrIrrelevantHarvestItem(item)) return false;
+            if (!satisfiesCuratedBodyContract(item)) return false;
+            if (isStaleOver14Days(item)) return false;
+            return true;
+          });
         await storage.setItem('@atem:dynamic_items:v1', JSON.stringify(cleanedDyn));
       }
     }

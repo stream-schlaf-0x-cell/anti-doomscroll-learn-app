@@ -1,4 +1,5 @@
-import { FeedItem, FeedItemFormat, ContentType, FactReviewStatus } from '../domain/types';
+import { FeedItem, FeedItemFormat, ContentType, FactReviewStatus, TOPIC_SPACE_MAP, TopicTag } from '../domain/types';
+import { classifyTopicDeterministically, isDomesticPartyPolitics } from '../enrichment/batchEnricher';
 import { RawFeedEntry, RawFeedSource } from './types';
 import { buildKnowledgeContextForEntry } from '../synthesis/backgroundResearchPipeline';
 import { ZERO_WIDTH_REGEX, sanitizeImageUrl } from './rssParser';
@@ -496,6 +497,15 @@ export function normalizeFeedEntry(
       : undefined;
 
   const isTimelessFormat = format === 'meme' || format === 'art_showcase' || source.primaryTopic === 'memes_satire' || source.primaryTopic === 'art_aesthetics';
+  const resolvedPrimaryTopic: TopicTag = isTimelessFormat
+    ? source.primaryTopic
+    : classifyTopicDeterministically(cleanTitle, `${subtitle} ${feedText}`, source.primaryTopic);
+  const resolvedTopics = Array.from(new Set<TopicTag>([resolvedPrimaryTopic, ...source.topics]));
+  const explicitSpace =
+    !isTimelessFormat && isDomesticPartyPolitics(cleanTitle, `${subtitle} ${feedText}`)
+      ? 'c/gesellschaft_politik'
+      : TOPIC_SPACE_MAP[resolvedPrimaryTopic]?.space || TOPIC_SPACE_MAP[source.primaryTopic]?.space || 'c/serendipity';
+
   const publicationDateReliable = entry.publicationDateReliable !== undefined
     ? (isTimelessFormat ? false : entry.publicationDateReliable)
     : (!isTimelessFormat);
@@ -505,13 +515,14 @@ export function normalizeFeedEntry(
     id: deterministicId,
     type,
     format,
+    space: explicitSpace,
     title: cleanTitle,
     subtitle,
     feedText,
     articleBody,
     body: feedText,
-    topics: source.topics,
-    primaryTopic: source.primaryTopic,
+    topics: resolvedTopics,
+    primaryTopic: resolvedPrimaryTopic,
     sourceReferences: [
       {
         publisher: source.name,

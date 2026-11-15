@@ -13,9 +13,17 @@ import {
   getEffectiveSpaceHandle,
   isAggregatorItem,
   isDailyDigestNewsletter,
+  isWithin14DayRelevanceWindow,
   enforceCuratedStreamDiversity,
+  rankBloomScrollFeed,
+  scoreFeedItem,
+  applyVoteFeedbackToProfile,
+  applyDismissFeedbackToProfile,
+  revertDismissFeedbackFromProfile,
+  computeUpvoteSimilarityBoost,
   sortFeedForDisplay
 } from '../src/core/domain/ranking';
+import { DEFAULT_USER_PROFILE } from '../src/core/data/fixtures';
 import {
   classifyTopicDeterministically,
   sanitizeCuratedFeedItem,
@@ -421,5 +429,191 @@ describe('Main Feed Masterplan: Clean Parsing, Honest Channels, Choreography & Z
     const snapshotJson = JSON.parse(fs.readFileSync(snapshotPath, 'utf8')) as { items?: FeedItem[] } | FeedItem[];
     const snapshotItems = Array.isArray(snapshotJson) ? snapshotJson : (snapshotJson.items || []);
     checkItems('public/feed-snapshot.json', snapshotItems);
+  });
+
+  it('7. 14-Day Relevance-Gated Window keeps relevant 4-14d items while excluding >14d and low-score 4-14d items', () => {
+    const now = Date.now();
+    const daysAgoIso = (days: number) => new Date(now - days * 86400 * 1000).toISOString();
+
+    const highRel10d = makeScoredTestItem({
+      id: 'rel-10d',
+      title: 'Kants Freiheitsbegriff und moderne Kognitionswissenschaft',
+      publishedAt: daysAgoIso(10),
+      publicationDateReliable: true,
+      score: 0.91,
+      space: 'c/dialektik',
+      sourceDomain: 'kant-journal.de'
+    });
+    const lowRel10d = makeScoredTestItem({
+      id: 'low-10d',
+      title: 'Beliebige Randnotiz von vor zehn Tagen',
+      publishedAt: daysAgoIso(10),
+      publicationDateReliable: true,
+      score: 0.58,
+      space: 'c/serendipity',
+      sourceDomain: 'low-signal.de'
+    });
+    const ancient30d = makeScoredTestItem({
+      id: 'ancient-30d',
+      title: 'Baltikum - Luftalarm in Litauen vor einem Monat',
+      publishedAt: daysAgoIso(30),
+      publicationDateReliable: true,
+      score: 0.95,
+      space: 'c/serendipity',
+      sourceDomain: 'deutschlandfunk.de'
+    });
+    const oldArd7dShort = makeScoredTestItem({
+      id: 'ard-7d-short',
+      title: 'Kurze Ticker-Meldung vor 7 Tagen',
+      publishedAt: daysAgoIso(7),
+      publicationDateReliable: true,
+      wordCount: 65,
+      score: 0.85,
+      space: 'c/dialektik',
+      sourceDomain: 'tagesschau.de',
+      sourceReferences: [makeSourceRef('Ticker', 'ARD Tagesschau', 'https://tagesschau.de/1', daysAgoIso(7))]
+    });
+
+    assert.equal(isWithin14DayRelevanceWindow(highRel10d, now), true);
+    assert.equal(isWithin14DayRelevanceWindow(lowRel10d, now), false);
+    assert.equal(isWithin14DayRelevanceWindow(ancient30d, now), false);
+    assert.equal(isWithin14DayRelevanceWindow(oldArd7dShort, now), false);
+
+    // Seed >= 6 fresh 14d items so rankBloomScrollFeed activates the 14-day window filter
+    const pool: ScoredFeedItem[] = [
+      highRel10d,
+      lowRel10d,
+      ancient30d,
+      oldArd7dShort,
+      makeScoredTestItem({ id: 'fresh-1', title: 'Aktuelle Philosophie-Debatte', publishedAt: daysAgoIso(1), space: 'c/books', primaryTopic: 'book_mastery', sourceDomain: 'zeit.de', score: 0.85 }),
+      makeScoredTestItem({ id: 'fresh-2', title: 'Neue Meditation & Vipassana Forschung', publishedAt: daysAgoIso(2), space: 'c/kontemplation', primaryTopic: 'contemplation_mind', sourceDomain: 'tricycle.org', score: 0.84 }),
+      makeScoredTestItem({ id: 'fresh-3', title: 'Modulare Klangsynthese mit Buchla', publishedAt: daysAgoIso(2), space: 'c/synth_alchemie', primaryTopic: 'sound_synthesis', sourceDomain: 'soundonsound.com', score: 0.83 }),
+      makeScoredTestItem({ id: 'fresh-4', title: 'Frontier LLM Alignment Analyse', publishedAt: daysAgoIso(1), space: 'c/acceleration', primaryTopic: 'ai_apple', sourceDomain: 'latent.space', score: 0.86 }),
+      makeScoredTestItem({ id: 'fresh-5', title: 'Ethikunterricht und Aufgabenkultur', publishedAt: daysAgoIso(3), space: 'c/didaktik_labor', primaryTopic: 'german_didactics', sourceDomain: 'didaktik.de', score: 0.85 })
+    ];
+
+    const ranked = rankBloomScrollFeed(pool);
+    const rankedIds = new Set(ranked.map(i => i.id));
+    assert.ok(rankedIds.has('rel-10d'), 'High-relevance 10d article must stay in Für dich');
+    assert.ok(!rankedIds.has('low-10d'), 'Low-relevance 10d article must be gated out');
+    assert.ok(!rankedIds.has('ancient-30d'), '30d stale article must be excluded');
+    assert.ok(!rankedIds.has('ard-7d-short'), 'Short breaking-news ticker >5d must be excluded');
+  });
+
+  it('8. Organic self-learning evolves derivedWeights and similarity boost across upvotes, downvotes, and Weniger davon', () => {
+    const aiArticle = makeTestItem({
+      id: 'learn-ai-1',
+      title: 'Epistemic Agency in Frontier Reasoning LLMs',
+      subtitle: 'Alignment, interpretability, and metacognitive verification in modern AI systems.',
+      primaryTopic: 'ai_apple',
+      topics: ['ai_apple'],
+      space: 'c/acceleration',
+      sourceDomain: 'alignment-research.org',
+      sourceReferences: [makeSourceRef('Epistemic Agency', 'Alignment Lab', 'https://alignment-research.org/1')]
+    });
+    const similarUnseenAi = makeTestItem({
+      id: 'learn-ai-2',
+      title: 'Metacognitive Verification for Frontier Reasoning LLMs',
+      subtitle: 'Deep analysis of alignment and interpretability protocols.',
+      primaryTopic: 'ai_apple',
+      topics: ['ai_apple'],
+      space: 'c/acceleration',
+      sourceDomain: 'alignment-research.org',
+      sourceReferences: [makeSourceRef('Metacognitive', 'Alignment Lab', 'https://alignment-research.org/2')]
+    });
+    const annoyingFitnessItem = makeTestItem({
+      id: 'learn-annoy-1',
+      title: 'Hype-Supplement Protocol for Extreme Biohacking',
+      primaryTopic: 'health_biohacking',
+      topics: ['health_biohacking'],
+      space: 'c/health_longevity',
+      sourceDomain: 'hype-longevity.example',
+      sourceReferences: [makeSourceRef('Hype Protocol', 'Hype Site', 'https://hype-longevity.example/1')]
+    });
+
+    const beforeScore = scoreFeedItem(similarUnseenAi, DEFAULT_USER_PROFILE, {}).score;
+    const afterUp = applyVoteFeedbackToProfile(DEFAULT_USER_PROFILE, aiArticle, 'up');
+    const simBoost = computeUpvoteSimilarityBoost(similarUnseenAi, afterUp);
+    assert.ok(simBoost >= 0.15, `Expected strong positive similarity boost (>= 0.15), got ${simBoost}`);
+    const afterUpScore = scoreFeedItem(similarUnseenAi, afterUp, {}).score;
+    assert.ok(afterUpScore > beforeScore + 0.08, `Expected organic upvote score lift (${beforeScore} -> ${afterUpScore})`);
+
+    // Downvoting shifts weight down and counters previous boost
+    const afterDown = applyVoteFeedbackToProfile(afterUp, annoyingFitnessItem, 'down');
+    assert.ok(
+      (afterDown.derivedWeights?.health_biohacking ?? 1) < (afterUp.derivedWeights?.health_biohacking ?? DEFAULT_USER_PROFILE.explicitInterests.health_biohacking),
+      'Downvote must organically lower derivedWeights for the downvoted topic'
+    );
+    const annoyingPenalty = computeUpvoteSimilarityBoost(annoyingFitnessItem, afterDown);
+    assert.ok(annoyingPenalty <= -0.25, `Expected strong downvote penalty (<= -0.25), got ${annoyingPenalty}`);
+
+    // Hard "Weniger davon" mutes domain and lowers weight, and revert restores it
+    const dismissed = applyDismissFeedbackToProfile(DEFAULT_USER_PROFILE, annoyingFitnessItem);
+    assert.ok(dismissed.mutedSources?.includes('hype-longevity.example'), 'Weniger davon must mute offending source domain');
+    assert.ok(
+      (dismissed.derivedWeights?.health_biohacking ?? 1) < DEFAULT_USER_PROFILE.explicitInterests.health_biohacking,
+      'Weniger davon must reduce derivedWeight'
+    );
+    const reverted = revertDismissFeedbackFromProfile(dismissed, annoyingFitnessItem);
+    assert.ok(!reverted.mutedSources?.includes('hype-longevity.example'), 'Revert must unmute source domain');
+  });
+
+  it('9. Geopolitics, LLM routing, c/kunst_galerie protection, and NFL/hardware-PR noise rejection work deterministically', () => {
+    const balticNews = sanitizeCuratedFeedItem(
+      makeTestItem({
+        id: 'dlf-baltic-test',
+        title: 'Baltikum - Luftalarm in Litauen - Warnung auch in Lettland',
+        feedText: 'Verteidigungsminister Kaunas sagte, bei dem Objekt habe es sich wahrscheinlich um eine aus dem benachbarten Polen eingedrungene Drohne gehandelt.',
+        primaryTopic: 'science_society',
+        space: 'c/serendipity',
+        sourceDomain: 'deutschlandfunk.de',
+        sourceReferences: [makeSourceRef('Baltikum - Luftalarm', 'Deutschlandfunk Nachrichten', 'https://deutschlandfunk.de/baltikum')]
+      })
+    );
+    assert.notStrictEqual(balticNews.space, 'c/serendipity', 'Baltic air-raid/drone defense news must not land in c/serendipity');
+
+    const heilNews = sanitizeCuratedFeedItem(
+      makeTestItem({
+        id: 'tag-heil-test',
+        title: 'Hubertus Heil verteidigt Arbeitszeitreform gegen Kritik der Union',
+        feedText: 'Bundesarbeitsminister Hubertus Heil betonte im Bundestag die Bedeutung tariflicher Spielräume für Beschäftigte und Unternehmen.',
+        primaryTopic: 'philosophy_ethics',
+        space: 'c/dialektik',
+        sourceDomain: 'tagesschau.de',
+        sourceReferences: [makeSourceRef('Hubertus Heil', 'ARD Tagesschau', 'https://tagesschau.de/heil')]
+      })
+    );
+    assert.strictEqual(heilNews.space, 'c/gesellschaft_politik', 'Domestic ministerial/party news must route to c/gesellschaft_politik');
+
+    const llmInGallery = sanitizeCuratedFeedItem(
+      makeTestItem({
+        id: 'ai-misplaced-gallery',
+        title: 'Why score-seeking in LLMs undermines multi-turn reliability',
+        feedText: 'Detailed empirical evaluation of score-seeking behavior in frontier LLM agents across coding and reasoning benchmarks.',
+        primaryTopic: 'art_aesthetics',
+        format: 'concise_insight',
+        space: 'c/kunst_galerie'
+      })
+    );
+    assert.strictEqual(llmInGallery.primaryTopic, 'ai_apple', 'Score-seeking/LLM post must classify as ai_apple');
+    assert.strictEqual(llmInGallery.space, 'c/acceleration', 'AI/LLM post must be rescued out of c/kunst_galerie into c/acceleration');
+
+    const nflItem = makeTestItem({
+      id: 'noise-nfl',
+      title: 'NFL Quarterback Ratings soar during Super Bowl Playoffs broadcast',
+      feedText: 'An overview of sports TV ratings and quarterback stats from the Sunday night football matchup.',
+      primaryTopic: 'science_society',
+      space: 'c/serendipity'
+    });
+    assert.equal(satisfiesDefaultCuratedStandard(nflItem), false, 'NFL ratings fluff must fail curated quality standard');
+
+    const meloftyItem = makeTestItem({
+      id: 'noise-melofty',
+      title: 'Test: Melofty Pro – Compact Mini-PC im Alltagstest',
+      feedText: 'Wir haben den kompakten Mini-PC von Melofty im Alltag mit USB-C Hub und Office-Benchmarks ausprobiert.',
+      primaryTopic: 'ai_apple',
+      space: 'c/acceleration'
+    });
+    assert.equal(satisfiesDefaultCuratedStandard(meloftyItem), false, 'Trivial Melofty gadget review must fail curated quality standard');
   });
 });

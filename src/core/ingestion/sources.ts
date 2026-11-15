@@ -22,10 +22,10 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "deutschlandfunk-nachrichten",
     "name": "Deutschlandfunk Nachrichten",
     "url": "https://www.deutschlandfunk.de/nachrichten-100.rss",
-    "primaryTopic": "science_society",
+    "primaryTopic": "philosophy_ethics",
     "topics": [
-      "science_society",
-      "philosophy_ethics"
+      "philosophy_ethics",
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "Deutschlandfunk Redaktion",
@@ -35,10 +35,10 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "tagesschau-inland",
     "name": "ARD Tagesschau",
     "url": "https://www.tagesschau.de/infoservices/alle-meldungen-100~rss2.xml",
-    "primaryTopic": "science_society",
+    "primaryTopic": "philosophy_ethics",
     "topics": [
-      "science_society",
-      "philosophy_ethics"
+      "philosophy_ethics",
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "ARD-aktuell",

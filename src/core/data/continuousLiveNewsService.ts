@@ -178,6 +178,7 @@ export class ContinuousLiveNewsService {
   private static lastFormattedUpdate: string = 'Offline · gespeicherte Inhalte';
   private static snapshotStatus: 'live_snapshot' | 'stale_snapshot' | 'cached_snapshot' | 'offline_fallback' = 'offline_fallback';
   private static readonly CACHE_TTL_MS = 1000 * 60 * 5; // 5 minutes
+  private static rssRotationCursor = 0;
 
   public static getLastRefreshNewCount(): number {
     return this.lastRefreshNewCount;
@@ -910,18 +911,35 @@ export class ContinuousLiveNewsService {
             const feedSources = VERIFIED_FEED_SOURCES.filter(
               source => getSourceKind(source) === 'feed' && !source.url.toLowerCase().includes('tagesschau.de')
             );
-            const prioritySources = isWebBrowser
-              ? feedSources.filter(source => browserCorsSafeRssRegex.test(source.url)).slice(0, 14)
-              : feedSources.slice(0, 14);
-            if (prioritySources.length === 0) return 0;
+            const eligibleSources = isWebBrowser
+              ? feedSources.filter(source => browserCorsSafeRssRegex.test(source.url))
+              : feedSources;
+            if (eligibleSources.length === 0) return 0;
+            const batchSize = Math.min(14, eligibleSources.length);
+            const startIdx = this.rssRotationCursor % eligibleSources.length;
+            const prioritySources: typeof eligibleSources = [];
+            for (let idx = 0; idx < batchSize; idx++) {
+              prioritySources.push(eligibleSources[(startIdx + idx) % eligibleSources.length]);
+            }
+            this.rssRotationCursor = (startIdx + 7) % eligibleSources.length;
+
             const results = await fetchAllFeeds(prioritySources, 4, 3500);
             const today = new Date().toISOString().slice(0, 10);
+            const fourteenDaysMs = 14 * 86400 * 1000;
+            const nowTimestamp = Date.now();
             const rssItems: FeedItem[] = [];
             for (const res of results) {
               if (!res.success) continue;
               for (const entry of res.entries.slice(0, 3)) {
                 try {
-                  rssItems.push(normalizeFeedEntry(entry, res.source, today));
+                  const normalized = normalizeFeedEntry(entry, res.source, today);
+                  if (normalized.publicationDateReliable !== false) {
+                    const pubMs = new Date(normalized.publishedAt).getTime();
+                    if (!isNaN(pubMs) && nowTimestamp - pubMs > fourteenDaysMs) {
+                      continue;
+                    }
+                  }
+                  rssItems.push(normalized);
                 } catch {
                   // Skip malformed entry
                 }

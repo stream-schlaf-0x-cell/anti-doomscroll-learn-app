@@ -549,15 +549,26 @@ export class AutonomousResearcherService {
    */
   public static researchVerifiedRssLane(query: string, limit = 3): FeedItem[] {
     const cleanQuery = query.toLowerCase().replace(/^c\//, '').trim();
-    const words = cleanQuery.split(/[_\-\s]+/).filter(w => w.length > 2);
-    if (words.length === 0) return [];
+    const rawWords = cleanQuery.split(/[_\-\s]+/).filter(w => w.length > 2);
+    if (rawWords.length === 0) return [];
+
+    const synonymMap: Record<string, string[]> = {
+      philosophie: ['philosophie', 'philosophy', 'kant', 'sokrates', 'epistem', 'erkenntnis', 'dialectic', 'dialektik'],
+      ethik: ['ethik', 'ethics', 'moral', 'normativ', 'tugend', 'gerechtigkeit'],
+      didaktik: ['didaktik', 'didactics', 'unterricht', 'schule', 'pädagogik', 'education'],
+      kontemplation: ['kontemplation', 'meditation', 'achtsamkeit', 'mindfulness', 'buddhis', 'zen'],
+      ki: ['künstliche intelligenz', 'llm', 'artificial intelligence', 'openai', 'anthropic']
+    };
+    const expandedWords = Array.from(
+      new Set(rawWords.flatMap(w => synonymMap[w] ? synonymMap[w] : [w]))
+    );
 
     const matches: FeedItem[] = [];
     const allPool = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
 
     for (const item of allPool) {
       const text = `${item.title} ${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`.toLowerCase();
-      const matchCount = words.filter(w => text.includes(w)).length;
+      const matchCount = expandedWords.filter(w => text.includes(w)).length;
       if (matchCount > 0) {
         matches.push({
           ...item,

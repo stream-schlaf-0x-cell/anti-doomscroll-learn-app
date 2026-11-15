@@ -276,24 +276,24 @@ export function scoreFeedItem(
   }
   const durationMatch = readingTimeFit;
 
-  // 4. Freshness Score (7-Day Rolling Quality Window: treats the entire past week as active high-value pool)
+  // 4. Freshness Score (14-Day Relevance-Gated Window: keeps substantive items up to 14 days fresh for personal ranking)
   const isReliableDate = item.publicationDateReliable !== false;
   const pubTime = isReliableDate ? new Date(item.publishedAt).getTime() : NaN;
   const nowTime = Date.now();
   const hoursOld = isNaN(pubTime) ? 200 : Math.max(0, (nowTime - pubTime) / (1000 * 60 * 60));
   let freshness = 0.70;
   if (!isReliableDate) {
-    freshness = item.isEvergreenGem ? 0.75 : 0.65;
-  } else if (hoursOld <= 12) {
+    freshness = item.isEvergreenGem ? 0.74 : 0.64;
+  } else if (hoursOld <= 24) {
     freshness = 0.98;
-  } else if (hoursOld <= 48) {
-    freshness = 0.95;
-  } else if (hoursOld <= 120) {
-    freshness = 0.91;
+  } else if (hoursOld <= 72) {
+    freshness = 0.94;
   } else if (hoursOld <= 168) {
-    freshness = 0.87;
+    freshness = 0.89;
+  } else if (hoursOld <= 336) {
+    freshness = 0.82;
   } else {
-    freshness = item.isEvergreenGem ? 0.74 : 0.62;
+    freshness = item.isEvergreenGem ? 0.52 : 0.32;
   }
 
   // 5. Editorial & Source Value (substance over raw recency + Tier A/B Credibility Bonus)
@@ -429,16 +429,16 @@ export function scoreFeedItem(
   }
   behavioralAdjustment = Math.max(0, Math.min(1, behavioralAdjustment));
 
-  // Weighted Composite Score (Explicit feedback has 0.20 weight vs 0.04 for passive behavior; durationMatch 0.18)
+  // Weighted Composite Score (Organic feedback & similarity carry strong adaptive leverage)
   let rawScore =
     topicMatch * 0.24 +
     goalAlignment * 0.14 +
-    freshness * 0.16 +
-    readingTimeFit * 0.18 +
+    freshness * 0.14 +
+    readingTimeFit * 0.16 +
     editorialValue * 0.06 +
-    feedbackAdjustment * 0.18 +
+    feedbackAdjustment * 0.22 +
     behavioralAdjustment * 0.04 +
-    similarityDelta * 0.35;
+    similarityDelta * 0.45;
 
   // Direct explicit interaction overrides on the item itself
   if (interaction?.feedback === 'less_like_this' || interaction?.voteScore === -1) {
@@ -861,6 +861,58 @@ export function isFormattingToGesternOrOlder(isoString?: string, now: Date = new
   return false;
 }
 
+/**
+ * Enforces the 14-day (336h) relevance-gated recency contract for `Für dich`:
+ * - Timeless formats (art showcases, comics/memes, reliable=false gems) remain eligible.
+ * - Articles > 14 days (336h) are strictly excluded from the active Discovery stream.
+ * - Short breaking-news ticker dispatches (< 110 words) cap at 5 days (120h).
+ * - Days 4..14 (72h..336h) remain eligible only when they carry high personal relevance (score >= 0.72 or evergreenGem).
+ */
+export function isWithin14DayRelevanceWindow(
+  item: Pick<
+    FeedItem,
+    | 'id'
+    | 'publishedAt'
+    | 'publicationDateReliable'
+    | 'format'
+    | 'primaryTopic'
+    | 'space'
+    | 'isEvergreenGem'
+    | 'wordCount'
+    | 'sourceReferences'
+    | 'sourceBroadcasterName'
+  > & { score?: number },
+  nowMs = Date.now()
+): boolean {
+  const isTimeless =
+    item.publicationDateReliable === false ||
+    item.format === 'art_showcase' ||
+    item.format === 'meme' ||
+    item.primaryTopic === 'art_aesthetics' ||
+    item.primaryTopic === 'memes_satire' ||
+    item.space === 'c/kunst_galerie' ||
+    item.space === 'c/memes' ||
+    Boolean(item.isEvergreenGem && String(item.id || '').startsWith('vault-gem-'));
+  if (isTimeless) return true;
+
+  const pubTime = new Date(item.publishedAt).getTime();
+  if (isNaN(pubTime)) return Boolean(item.isEvergreenGem);
+
+  const hoursOld = Math.max(0, (nowMs - pubTime) / (1000 * 60 * 60));
+  if (hoursOld > 336) return false;
+
+  const wordCount = item.wordCount || 0;
+  if (isArdSource(item as FeedItem) && wordCount < 110) {
+    return hoursOld <= 120;
+  }
+
+  if (hoursOld > 72 && typeof item.score === 'number') {
+    return Boolean(item.isEvergreenGem) || item.score >= 0.72;
+  }
+
+  return true;
+}
+
 export function rankBloomScrollFeed(
   items: ScoredFeedItem[],
   options?: {
@@ -871,10 +923,27 @@ export function rankBloomScrollFeed(
   if (items.length <= 2) return [...items];
 
   // Pre-filter daily digest newsletters (max 1 newest issue <= 7d per publisher) & deduplicate by id
+  const nowMs = Date.now();
   const freshDigests = dedupeDailyDigestNewsletters(items, 7);
+  const fresh14dPoolCount = freshDigests.filter(it => {
+    if (
+      it.publicationDateReliable === false ||
+      isArtShowcaseItem(it) ||
+      it.format === 'meme'
+    ) {
+      return false;
+    }
+    const pub = new Date(it.publishedAt).getTime();
+    return !isNaN(pub) && Math.max(0, (nowMs - pub) / (1000 * 60 * 60)) <= 336;
+  }).length;
+  const apply14DayWindow = fresh14dPoolCount >= 6;
+
   const seenKeys = new Set<string>();
   const remaining: ScoredFeedItem[] = [];
   for (const item of freshDigests) {
+    if (apply14DayWindow && !isWithin14DayRelevanceWindow(item, nowMs)) {
+      continue;
+    }
     const key = item.id;
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
@@ -973,7 +1042,7 @@ export function rankBloomScrollFeed(
       const isCandAgg = isAggregatorItem(cand);
       const isLastArd = lastCard ? isArdSource(lastCard) : false;
 
-      let utility = cand.score || 0.7;
+      let utility = (cand.score || 0.7) * 2.5;
 
       // 0. Main-feed choreography: strictly avoid consecutive identical space & cap aggregators
       if (lastSpace && candSpace === lastSpace) {
@@ -983,7 +1052,7 @@ export function rankBloomScrollFeed(
         utility -= 220.0;
       }
       if (spaceCountIn30 === 0) {
-        utility += 0.85;
+        utility += 0.55;
       } else if (spaceCountIn30 >= 4) {
         utility -= 2.2;
       }
@@ -1014,9 +1083,9 @@ export function rankBloomScrollFeed(
         utility -= 8.0;
       }
       if (pubCountIn30 === 0) {
-        utility += 0.52; // Strong bonus for bringing a fresh voice
+        utility += 0.35; // Balanced bonus for bringing a fresh voice without overriding strong relevance
       } else if (pubCountIn30 === 1) {
-        utility += 0.15;
+        utility += 0.10;
       } else if (pubCountIn30 >= 2) {
         utility -= 80.0; // Strictly cap normal publishers at <= 2 per 30 cards
       }
@@ -2147,7 +2216,7 @@ export function applyVoteFeedbackToProfile(
   const isUp = direction === 'up';
   const primaryTopic = item.primaryTopic || 'philosophy_ethics';
   const secondaryTopics = (item.topics || []).filter(t => t !== primaryTopic);
-  const author = item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '';
+  const author = (item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '').trim();
   const domain = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || '').toLowerCase().trim();
   const space = item.space ? item.space.toLowerCase().trim() : '';
   const keywords = extractConceptKeywords(item);
@@ -2165,42 +2234,84 @@ export function applyVoteFeedbackToProfile(
     penalizedKeywords: { ...(profile.feedbackMemory?.penalizedKeywords || {}) }
   };
 
+  const decayKey = (map: Record<string, number>, key: string, step = 1) => {
+    if (!key || !(key in map)) return;
+    const next = (map[key] || 0) - step;
+    if (next <= 0) delete map[key];
+    else map[key] = next;
+  };
+
+  const baseWeights: Record<TopicTag, number> = {
+    ...(profile.explicitInterests || {}),
+    ...(profile.derivedWeights || {})
+  } as Record<TopicTag, number>;
+  const clampWeight = (w: number) => Math.max(0.10, Math.min(0.98, Math.round(w * 1000) / 1000));
+
   if (isUp) {
     mem.boostedTopics[primaryTopic] = (mem.boostedTopics[primaryTopic] || 0) + 2;
+    decayKey(mem.penalizedTopics, primaryTopic, 1);
+    baseWeights[primaryTopic] = clampWeight((baseWeights[primaryTopic] ?? 0.5) + 0.04);
+
     for (const sec of secondaryTopics) {
       mem.boostedTopics[sec] = (mem.boostedTopics[sec] || 0) + 1;
+      decayKey(mem.penalizedTopics, sec, 1);
+      baseWeights[sec] = clampWeight((baseWeights[sec] ?? 0.5) + 0.02);
     }
-    if (author) mem.boostedAuthors[author] = (mem.boostedAuthors[author] || 0) + 1;
-    if (domain) mem.boostedDomains[domain] = (mem.boostedDomains[domain] || 0) + 2;
-    if (space) mem.boostedSpaces[space] = (mem.boostedSpaces[space] || 0) + 2;
+    if (author) {
+      mem.boostedAuthors[author] = (mem.boostedAuthors[author] || 0) + 1;
+      decayKey(mem.penalizedAuthors, author, 1);
+    }
+    if (domain) {
+      mem.boostedDomains[domain] = (mem.boostedDomains[domain] || 0) + 2;
+      decayKey(mem.penalizedDomains, domain, 1);
+    }
+    if (space) {
+      mem.boostedSpaces[space] = (mem.boostedSpaces[space] || 0) + 2;
+      decayKey(mem.penalizedSpaces, space, 1);
+    }
     for (const kw of keywords) {
       mem.boostedKeywords[kw] = (mem.boostedKeywords[kw] || 0) + 2;
+      decayKey(mem.penalizedKeywords, kw, 1);
     }
   } else {
     mem.penalizedTopics[primaryTopic] = (mem.penalizedTopics[primaryTopic] || 0) + 2;
+    decayKey(mem.boostedTopics, primaryTopic, 1);
+    baseWeights[primaryTopic] = clampWeight((baseWeights[primaryTopic] ?? 0.5) - 0.05);
+
     for (const sec of secondaryTopics) {
       mem.penalizedTopics[sec] = (mem.penalizedTopics[sec] || 0) + 1;
+      decayKey(mem.boostedTopics, sec, 1);
+      baseWeights[sec] = clampWeight((baseWeights[sec] ?? 0.5) - 0.025);
     }
-    if (author) mem.penalizedAuthors[author] = (mem.penalizedAuthors[author] || 0) + 1;
-    if (domain) mem.penalizedDomains[domain] = (mem.penalizedDomains[domain] || 0) + 2;
-    if (space) mem.penalizedSpaces[space] = (mem.penalizedSpaces[space] || 0) + 2;
+    if (author) {
+      mem.penalizedAuthors[author] = (mem.penalizedAuthors[author] || 0) + 1;
+      decayKey(mem.boostedAuthors, author, 1);
+    }
+    if (domain) {
+      mem.penalizedDomains[domain] = (mem.penalizedDomains[domain] || 0) + 2;
+      decayKey(mem.boostedDomains, domain, 1);
+    }
+    if (space) {
+      mem.penalizedSpaces[space] = (mem.penalizedSpaces[space] || 0) + 2;
+      decayKey(mem.boostedSpaces, space, 1);
+    }
     for (const kw of keywords) {
       mem.penalizedKeywords[kw] = (mem.penalizedKeywords[kw] || 0) + 2;
+      decayKey(mem.boostedKeywords, kw, 1);
     }
   }
 
   return {
     ...profile,
+    derivedWeights: baseWeights,
     feedbackMemory: mem
   };
 }
 
 /**
- * Computes a concept, keyword, subchannel, and domain similarity adjustment for an unseen article
+ * Computes a concept, keyword, subchannel, author, and domain similarity adjustment for an unseen article
  * based on the user's upvoted/downvoted feedbackMemory and mutedSources.
- * - Unseen articles sharing >= 2 core concepts/keywords or strong channel/domain affinity with upvoted items
- *   receive a clear positive boost (+0.12 to +0.30).
- * - Unseen articles matching downregulated keywords/domains receive a decisive negative penalty (-0.25 to -0.45).
+ * Organic accumulation strengthens relevant themes/authors/domains over time without perturbing unrelated items (0).
  */
 export function computeUpvoteSimilarityBoost(
   item: FeedItem,
@@ -2216,7 +2327,7 @@ export function computeUpvoteSimilarityBoost(
   let penalty = 0;
 
   if (domain && mutedSources.some(m => domain.includes(m.toLowerCase()))) {
-    penalty += 0.35;
+    penalty += 0.42;
   }
 
   if (!memory) {
@@ -2227,23 +2338,27 @@ export function computeUpvoteSimilarityBoost(
   const fullSearchText = `${item.title || ''} ${item.subtitle || ''} ${item.keyInsight || ''} ${item.feedText || ''}`.toLowerCase();
 
   let matchedBoostKeywords = 0;
+  let matchedBoostWeight = 0;
   if (memory.boostedKeywords) {
     for (const [kw, count] of Object.entries(memory.boostedKeywords)) {
       if ((count || 0) <= 0) continue;
       const kwNorm = kw.toLowerCase();
       if (itemKeywords.includes(kwNorm) || fullSearchText.includes(kwNorm)) {
         matchedBoostKeywords += 1;
+        matchedBoostWeight += Math.min(4, count || 1);
       }
     }
   }
 
   let matchedPenaltyKeywords = 0;
+  let matchedPenaltyWeight = 0;
   if (memory.penalizedKeywords) {
     for (const [kw, count] of Object.entries(memory.penalizedKeywords)) {
       if ((count || 0) <= 0) continue;
       const kwNorm = kw.toLowerCase();
       if (itemKeywords.includes(kwNorm) || fullSearchText.includes(kwNorm)) {
         matchedPenaltyKeywords += 1;
+        matchedPenaltyWeight += Math.min(4, count || 1);
       }
     }
   }
@@ -2254,32 +2369,32 @@ export function computeUpvoteSimilarityBoost(
   const domainPenCount = domain ? (memory.penalizedDomains?.[domain] ?? 0) : 0;
 
   if (matchedBoostKeywords >= 2) {
-    boost += Math.min(0.24, 0.12 + (matchedBoostKeywords - 2) * 0.04);
-  } else if (matchedBoostKeywords === 1 && (spaceBoostCount > 0 || domainBoostCount > 0)) {
-    boost += 0.14;
+    boost += Math.min(0.30, 0.14 + (matchedBoostKeywords - 2) * 0.04 + (matchedBoostWeight > matchedBoostKeywords * 2 ? 0.04 : 0));
+  } else if (matchedBoostKeywords === 1) {
+    boost += (spaceBoostCount > 0 || domainBoostCount > 0) ? 0.15 : 0.08;
   }
 
   if (spaceBoostCount > 0) {
-    boost += Math.min(0.08, spaceBoostCount * 0.04);
+    boost += Math.min(0.12, spaceBoostCount * 0.04);
   }
   if (domainBoostCount > 0) {
-    boost += Math.min(0.08, domainBoostCount * 0.04);
+    boost += Math.min(0.16, domainBoostCount * 0.045);
   }
 
   if (matchedPenaltyKeywords >= 2) {
-    penalty += Math.min(0.35, 0.25 + (matchedPenaltyKeywords - 2) * 0.05);
+    penalty += Math.min(0.42, 0.26 + (matchedPenaltyKeywords - 2) * 0.05 + (matchedPenaltyWeight > matchedPenaltyKeywords * 2 ? 0.04 : 0));
   } else if (matchedPenaltyKeywords === 1) {
-    penalty += 0.15;
+    penalty += 0.16;
   }
 
   if (spacePenCount > 0) {
-    penalty += Math.min(0.20, spacePenCount * 0.08);
+    penalty += Math.min(0.24, spacePenCount * 0.08);
   }
   if (domainPenCount > 0) {
-    penalty += Math.min(0.28, domainPenCount * 0.12);
+    penalty += Math.min(0.35, domainPenCount * 0.13);
   }
 
-  const net = Math.min(0.30, boost) - Math.min(0.45, penalty);
+  const net = Math.min(0.42, boost) - Math.min(0.60, penalty);
   return Math.round(net * 1000) / 1000;
 }
 

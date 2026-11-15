@@ -70,33 +70,41 @@ export function applyDismissFeedbackToProfile(
   item: FeedItem
 ): { updatedProfile: UserProfile; domain: string; keywords: string[] } {
   const primaryTopic = item.primaryTopic || 'philosophy_ethics';
-  const author = item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '';
+  const author = (item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '').trim();
   const domain = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || '').toLowerCase().trim();
   const space = item.space ? item.space.toLowerCase() : '';
-  const keywords = extractSalientKeywords(item.title);
+  const keywords = extractSalientKeywords(item);
 
   const mem = { ...profile.feedbackMemory };
-  mem.penalizedTopics = { ...mem.penalizedTopics, [primaryTopic]: (mem.penalizedTopics[primaryTopic] || 0) + 1 };
+  mem.penalizedTopics = { ...mem.penalizedTopics, [primaryTopic]: (mem.penalizedTopics[primaryTopic] || 0) + 2 };
   if (author) {
-    mem.penalizedAuthors = { ...mem.penalizedAuthors, [author]: (mem.penalizedAuthors[author] || 0) + 1 };
+    mem.penalizedAuthors = { ...mem.penalizedAuthors, [author]: (mem.penalizedAuthors[author] || 0) + 2 };
   }
   if (domain) {
-    mem.penalizedDomains = { ...mem.penalizedDomains, [domain]: (mem.penalizedDomains[domain] || 0) + 2 };
+    mem.penalizedDomains = { ...mem.penalizedDomains, [domain]: (mem.penalizedDomains[domain] || 0) + 3 };
   }
   if (space) {
-    mem.penalizedSpaces = { ...mem.penalizedSpaces, [space]: (mem.penalizedSpaces[space] || 0) + 1 };
+    mem.penalizedSpaces = { ...mem.penalizedSpaces, [space]: (mem.penalizedSpaces[space] || 0) + 2 };
   }
   if (keywords.length > 0) {
     const kwMap = { ...mem.penalizedKeywords };
     keywords.forEach(kw => {
-      kwMap[kw] = (kwMap[kw] || 0) + 2;
+      kwMap[kw] = (kwMap[kw] || 0) + 3;
     });
     mem.penalizedKeywords = kwMap;
   }
 
+  const nextDerivedWeights = {
+    ...(profile.explicitInterests || {}),
+    ...(profile.derivedWeights || {})
+  } as Record<TopicTag, number>;
+  const currentTopicWeight = nextDerivedWeights[primaryTopic] ?? 0.5;
+  nextDerivedWeights[primaryTopic] = Math.max(0.10, Math.round((currentTopicWeight - 0.05) * 1000) / 1000);
+
   return {
     updatedProfile: {
       ...profile,
+      derivedWeights: nextDerivedWeights,
       feedbackMemory: mem
     },
     domain,
@@ -106,10 +114,10 @@ export function applyDismissFeedbackToProfile(
 
 export function revertDismissFeedbackFromProfile(profile: UserProfile, item: FeedItem): UserProfile {
   const primaryTopic = item.primaryTopic || 'philosophy_ethics';
-  const author = item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '';
+  const author = (item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '').trim();
   const domain = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || '').toLowerCase().trim();
   const space = item.space ? item.space.toLowerCase() : '';
-  const keywords = extractSalientKeywords(item.title);
+  const keywords = extractSalientKeywords(item);
 
   const mem = { ...profile.feedbackMemory };
   const dec = (rec: Record<string, number>, k: string, delta: number) => {
@@ -119,20 +127,28 @@ export function revertDismissFeedbackFromProfile(profile: UserProfile, item: Fee
     else next[k] = val;
     return next;
   };
-  mem.penalizedTopics = dec(mem.penalizedTopics, primaryTopic, 1);
-  if (author) mem.penalizedAuthors = dec(mem.penalizedAuthors, author, 1);
-  if (domain) mem.penalizedDomains = dec(mem.penalizedDomains, domain, 2);
-  if (space) mem.penalizedSpaces = dec(mem.penalizedSpaces, space, 1);
+  mem.penalizedTopics = dec(mem.penalizedTopics, primaryTopic, 2);
+  if (author) mem.penalizedAuthors = dec(mem.penalizedAuthors, author, 2);
+  if (domain) mem.penalizedDomains = dec(mem.penalizedDomains, domain, 3);
+  if (space) mem.penalizedSpaces = dec(mem.penalizedSpaces, space, 2);
   if (keywords.length > 0) {
     let kwMap = { ...mem.penalizedKeywords };
     keywords.forEach(kw => {
-      kwMap = dec(kwMap, kw, 2);
+      kwMap = dec(kwMap, kw, 3);
     });
     mem.penalizedKeywords = kwMap;
   }
 
+  const nextDerivedWeights = {
+    ...(profile.explicitInterests || {}),
+    ...(profile.derivedWeights || {})
+  } as Record<TopicTag, number>;
+  const currentTopicWeight = nextDerivedWeights[primaryTopic] ?? 0.5;
+  nextDerivedWeights[primaryTopic] = Math.min(0.98, Math.round((currentTopicWeight + 0.05) * 1000) / 1000);
+
   return {
     ...profile,
+    derivedWeights: nextDerivedWeights,
     feedbackMemory: mem
   };
 }
@@ -899,7 +915,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })();
       }, 3000);
 
-      // 4. Delayed background live harvest (8000ms after mount; stores silently into repository without disruptive recomputation)
+      // 4. Delayed background live harvest (8000ms after mount; auto-curates multi-lane discoveries when < 40 fresh unseen items exist)
       setTimeout(() => {
         void (async () => {
           try {
@@ -913,8 +929,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               }
               return item;
             });
-            if (safeLive.length > 0 && (feedRepository as any).addItems) {
-              (feedRepository as any).addItems(safeLive);
+
+            const repoPool = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+            const fourteenDaysAgoMs = Date.now() - 14 * 86400 * 1000;
+            const unseenFreshCount = repoPool.filter(item => {
+              if (seenIds.has(item.id)) return false;
+              const t = new Date(item.publishedAt).getTime();
+              return !isNaN(t) && t >= fourteenDaysAgoMs;
+            }).length;
+
+            let autoHarvested: FeedItem[] = [];
+            if (unseenFreshCount < 40) {
+              try {
+                const creds = await loadAiCredentials(appStorage).catch(() => undefined);
+                const discovery = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
+                  existingIds: new Set(repoPool.map(i => i.id)),
+                  seenIds,
+                  targetNewCount: 8,
+                  credentials: creds
+                });
+                autoHarvested = discovery.items
+                  .map(sanitizeCuratedFeedItem)
+                  .filter(satisfiesDefaultCuratedStandard)
+                  .map(item => {
+                    const { pinnedManualRunAt, ...rest } = item;
+                    return rest;
+                  });
+              } catch {
+                // Non-fatal auto-discovery fallback
+              }
+            }
+
+            const combinedNew = [...safeLive, ...autoHarvested];
+            if (combinedNew.length > 0 && (feedRepository as any).addItems) {
+              (feedRepository as any).addItems(combinedNew);
               await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
             }
           } catch {

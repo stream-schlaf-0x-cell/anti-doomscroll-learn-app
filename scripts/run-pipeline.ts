@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { VERIFIED_FEED_SOURCES } from '../src/core/ingestion/sources';
-import { FeedItem } from '../src/core/domain/types';
+import { FeedItem, TOPIC_SPACE_MAP } from '../src/core/domain/types';
 import { fetchAllFeeds } from '../src/core/ingestion/feedFetcher';
 import { deduplicateFeedItems } from '../src/core/ingestion/deduplicator';
 import { normalizePipelineResults } from '../src/core/ingestion/pipelineCandidates';
@@ -14,7 +14,7 @@ import {
   sanitizeCuratedFeedItem
 } from '../src/core/enrichment/batchEnricher';
 import { enrichStubItemWithFulltext, harvestWebPageContent } from '../src/core/ingestion/webContentExtractor';
-import { enforceCuratedStreamDiversity } from '../src/core/domain/ranking';
+import { enforceCuratedStreamDiversity, isWithin14DayRelevanceWindow } from '../src/core/domain/ranking';
 import { defaultUsageLedger } from '../src/core/enrichment/ledger';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from '../src/core/ai/atmenAiClient';
 
@@ -158,25 +158,64 @@ async function runIngestionPipeline() {
     const itemsToEnrich = preCurated.slice(0, 30);
     const tailItems = preCurated.slice(30);
     const enriched = await enricher.enrichBatch(itemsToEnrich);
+    const nowMs = Date.now();
     const combinedCurated = [...enriched, ...tailItems]
       .map(sanitizeCuratedFeedItem)
-      .filter(item => !String(item.publishedAt).startsWith('2026-10-18') && item.id !== 'live-schwitzgebel-splintered-mind-1238336654')
+      .map(item => ({
+        ...item,
+        space:
+          item.space && String(item.space).startsWith('c/')
+            ? item.space
+            : TOPIC_SPACE_MAP[item.primaryTopic]?.space || 'c/serendipity'
+      }))
+      .filter(
+        item =>
+          !String(item.publishedAt).startsWith('2026-10-18') &&
+          item.id !== 'live-schwitzgebel-splintered-mind-1238336654'
+      )
       .filter(satisfiesDefaultCuratedStandard);
-    const finalItems = enforceCuratedStreamDiversity(combinedCurated);
+
+    const galleryKeep = combinedCurated
+      .filter(i => i.space === 'c/kunst_galerie')
+      .slice(0, 22);
+    const editorialPool = combinedCurated.filter(
+      i => i.space !== 'c/kunst_galerie' && isWithin14DayRelevanceWindow(i, nowMs)
+    );
+    const editorialDiversified = enforceCuratedStreamDiversity(editorialPool).slice(
+      0,
+      Math.max(0, 140 - galleryKeep.length)
+    );
+
+    // Interleave gallery artworks evenly (every ~5 editorial cards) so all <= 140 snapshot items keep consecutive-space purity
+    const finalItems: FeedItem[] = [];
+    const stride = galleryKeep.length > 0 ? Math.max(4, Math.floor(editorialDiversified.length / galleryKeep.length)) : 999;
+    let gIdx = 0;
+    for (let idx = 0; idx < editorialDiversified.length; idx++) {
+      finalItems.push(editorialDiversified[idx]);
+      if ((idx + 1) % stride === 0 && gIdx < galleryKeep.length && finalItems[finalItems.length - 1]?.space !== 'c/kunst_galerie') {
+        finalItems.push(galleryKeep[gIdx++]);
+      }
+    }
+    while (gIdx < galleryKeep.length && finalItems.length < 140) {
+      if (finalItems[finalItems.length - 1]?.space === 'c/kunst_galerie') break;
+      finalItems.push(galleryKeep[gIdx++]);
+    }
+    const cappedFinalItems = finalItems.slice(0, 140);
 
     fs.mkdirSync(path.dirname(PIPELINE_OUTPUT_PATH), { recursive: true });
-    fs.writeFileSync(PIPELINE_OUTPUT_PATH, JSON.stringify(finalItems, null, 2), 'utf-8');
-    console.log(`Wrote ${finalItems.length} items to ${PIPELINE_OUTPUT_PATH}`);
+    fs.writeFileSync(PIPELINE_OUTPUT_PATH, JSON.stringify(cappedFinalItems, null, 2), 'utf-8');
+    console.log(`Wrote ${cappedFinalItems.length} items to ${PIPELINE_OUTPUT_PATH}`);
 
     fs.mkdirSync(path.dirname(PUBLIC_SNAPSHOT_PATH), { recursive: true });
     const snapshotPayload = parseSnapshotPayload({
       generatedAt: nowIso,
       totalCandidateSources: VERIFIED_FEED_SOURCES.length,
       activeDeliveringSources: successFeedCount,
-      items: finalItems,
+      items: cappedFinalItems,
       sourceHealth: sourceHealthMap
     });
     if (!snapshotPayload) throw new Error('No valid items fit the startup snapshot budget');
+    snapshotPayload.items = cappedFinalItems.filter(it => snapshotPayload.items.some(p => p.id === it.id));
     fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(snapshotPayload), 'utf-8');
     console.log(`Wrote public snapshot to ${PUBLIC_SNAPSHOT_PATH}`);
   } else {

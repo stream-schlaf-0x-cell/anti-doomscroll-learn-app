@@ -481,8 +481,8 @@ export function stripSyntheticFillerSentences(text: string): string {
     .trim();
 }
 
-const PARTY_POLITICS_CASE_SENSITIVE = /\b(SPD|AfD|CDU|CSU|FDP|BSW|Linke|Grüne|Grünen)\b/g;
-const PARTY_POLITICS_REGEX = /\b(linkspartei|linkskoalition|bündnis 90|koalitionsvertrag|koalitionsverhandlung\w*|regierungsbildung|wahlkampf|landtagswahl|bundestagswahl|wahlparty|kampfplatz berlin|bundestag|landtag|ampel-koalition|groko)\b/gi;
+const PARTY_POLITICS_CASE_SENSITIVE = /\b(SPD|AfD|CDU|CSU|FDP|BSW|Linke|Grüne|Grünen|Hubertus Heil|Pistorius)\b/g;
+const PARTY_POLITICS_REGEX = /\b(linkspartei|linkskoalition|bündnis 90|koalitionsvertrag|koalitionsverhandlung\w*|regierungsbildung|wahlkampf|landtagswahl|bundestagswahl|wahlparty|kampfplatz berlin|bundestag|landtag|ampel-koalition|groko|bundesarbeitsminister\w*|arbeitsminister\w*|bundeskanzler\w*)\b/gi;
 
 /** Detects domestic party-politics articles so they never land in c/serendipity or c/dialektik. */
 export function isDomesticPartyPolitics(title: string, text: string = ''): boolean {
@@ -495,7 +495,7 @@ export function isDomesticPartyPolitics(title: string, text: string = ''): boole
 }
 
 export const POLITICAL_PROTEST_SOCIETY_REGEX =
-  /\b(protest\w*|demonstrier\w*|ausschreitung\w*|polizei|regierung\w*|koalition\w*|wahl\w*|bundestagswahl|landtagswahl|krieg\w*|streik\w*|bundestag|landtag|gericht|verfassungsgericht|afd|spd|cdu|csu|fdp|bsw|grüne|grünen|linkspartei|linke|habeck|politician\w*|green party|minister\w*|government\w*|election\w*|parliament\w*|klima\w*|wirtschaft\w*|geopolitics|geopolitik)\b/i;
+  /\b(protest\w*|demonstrier\w*|ausschreitung\w*|polizei|regierung\w*|koalition\w*|wahl\w*|bundestagswahl|landtagswahl|krieg\w*|streik\w*|bundestag|landtag|gericht|verfassungsgericht|afd|spd|cdu|csu|fdp|bsw|grüne|grünen|linkspartei|linke|habeck|politician\w*|green party|minister\w*|verteidigungsminister\w*|bundesarbeitsminister\w*|government\w*|election\w*|parliament\w*|klima\w*|wirtschaft\w*|geopolitics|geopolitik|luftalarm|drohne\w*|baltikum|litauen|lettland|estland|nato|bundeswehr|rakete\w*|ukraine|russland|sicherheitspolitik)\b/i;
 
 /** Detects protest, political conflict, legal, or societal disruption articles. */
 export function isPoliticalOrProtestNews(title: string, text: string = ''): boolean {
@@ -539,7 +539,10 @@ export function stripPublisherBoilerplate(raw: string, title?: string): string {
     .replace(/Give\s+Your\s+AI\s+Agents\s+the\s+Full\s+Page[\s\S]*?(?:with\s+one\s+provider\.|crawl\s+the\s+web[!.]*|Extract\s+API\.[^\n]*)/gi, '')
     .replace(/Retrieve\s+public\s+web\s+pages\s+by\s+URL[\s\S]*?(?:with\s+one\s+provider\.|\.\.\.|…|$)/gi, '')
     .replace(/Thanks\s+to\s+SerpApi\s+for\s+working\s+with[^\n]*[!.]?/gi, '')
-    .replace(/\bSerpApi\b[^.\n]*(?:read\s+and\s+crawl\s+the\s+web|web\s+scraping|sponsored|Extract\s+API)[^.\n]*[.!…]*/gi, '')
+    .replace(/OUR\s+PARTNER[\s\S]*?(?:Try\s+[^\n]+?for\s+free\s*(?:->|→)?|Learn\s+more\b[^\n]*)/gi, '')
+    .replace(/We['’]?re\s+constantly\s+expanding\s+the\s+SerpApi[\s\S]*?(?:Try\s+SerpApi[^\n]*|Legal\s+Shield\.)/gi, '')
+    .replace(/(?:^|\n)Other\s+news\s*&\s*articles\s+you\s+might\s+like[\s\S]*$/gi, '')
+    .replace(/\bSerpApi\b[^.\n]*(?:read\s+and\s+crawl\s+the\s+web|web\s+scraping|sponsored|Extract\s+API|Search\s+APIs|ecosystem|free\s*->)[^.\n]*[.!…]*/gi, '')
     .replace(/Sponsored by [^.\n]+(\.|\.\.\.|…|$)/gi, '')
     .replace(/This page contains [^.\n]*links\.?/gi, '')
     .replace(/When you make a purchase through (these|the) links[^.\n]*\.\s*/gi, '')
@@ -625,7 +628,8 @@ export function getCardRenderableText(item: {
   return displayFeedText;
 }
 
-const SPORTS_GOSSIP_REGEX = /\b(bundesliga|dfb-pokal|champions league|eintracht frankfurt|matchplan|pokalduell|ligapartie|torjäger|spieltag|transfermarkt|tabellenführer|trainerwechsel)\b/i;
+const SPORTS_GOSSIP_REGEX = /\b(bundesliga|dfb-pokal|champions league|eintracht frankfurt|matchplan|pokalduell|ligapartie|torjäger|spieltag|transfermarkt|tabellenführer|trainerwechsel|nfl|quarterback|super bowl|touchdown|nba|mlb|nhl|tv ratings)\b/i;
+const TRIVIAL_PR_OR_GADGET_REVIEW_REGEX = /(?:^test:\s*melofty\b|\bmelofty\s+pro\b|\bexpert-powered self-improvement with\b|\bsponsored\s+review\b|\baffordable\s+mini-?pc\b)/i;
 const CLINICAL_PATHOLOGY_JARGON_REGEX = /\b(carcinoma|oncology|chemotherapy|metastasis|randomized clinical trial|placebo-controlled|mortality rate|myocardial infarction|histopathology|adenocarcinoma)\b/i;
 export const IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX = /\b(saccharomyces cerevisiae|lipid droplets?|triacylglycerol|sterol esters?|gene knockout|yeast mutants?|galactose-inducible|protocol to induce|western blot|qrt-pcr|rt-pcr|histopathology|adenocarcinoma|carcinoma|oncology|chemotherapy|metastasis|peritoneal|mouse model|rat model|murine|in vitro assay|cell line|transfected|plasmid|primer sequence|escherichia coli|endoplasmic reticulum|hepg2|hela cells?|zebrafish|drosophila|protein that drives ageing|drives ageing without unleashing inflammation|interleukin-11|il-11|monoclonal antibod\w*|kinase inhibitor|phosphorylation|transcriptom\w*|proteom\w*|caenorhabditis elegans|arabidopsis|mrna expression|oligomer\w*|ribosom\w*)\b/i;
 const GENERIC_PAPER_METADATA_REGEX = /^(Begutachtete\s+Open-Access-Studie|Open-Access-Forschungsarbeit|Peer-Reviewed\s+(Open-Access|Study)|Aus\s+(der\s+)?Zeitschrift\b|Originalbeitrag\s+veröffentlicht\s+bei)/i;
@@ -725,7 +729,11 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
 
   const combinedText = `${title} ${proseContext}`;
   const wetlabCheckText = `${title} ${item.subtitle || ''} ${item.feedText || item.body || ''}`;
-  if (SPORTS_GOSSIP_REGEX.test(combinedText) || isIncomprehensibleWetLabPaper(title, wetlabCheckText)) {
+  if (
+    SPORTS_GOSSIP_REGEX.test(combinedText) ||
+    TRIVIAL_PR_OR_GADGET_REVIEW_REGEX.test(combinedText) ||
+    isIncomprehensibleWetLabPaper(title, wetlabCheckText)
+  ) {
     return false;
   }
 
@@ -817,26 +825,38 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     );
 
   const routingText = `${item.subtitle || ''} ${cleanedFeedText}`;
-  const isPartyPolitics = isDomesticPartyPolitics(title, routingText);
-  const isProtestOrPolitical = isPoliticalOrProtestNews(title, routingText);
+  const isGenuineArtShowcase = item.format === 'art_showcase';
+  const isPartyPolitics = !isGenuineArtShowcase && isDomesticPartyPolitics(title, routingText);
+  const isProtestOrPolitical = !isGenuineArtShowcase && isPoliticalOrProtestNews(title, routingText);
   const isCelebrity = isCelebrityFluff(title);
   const currentSpace = (item.space || '').toLowerCase();
+  const isExplicitAiOrCodePost = /\b(html|css|javascript|typescript|llms?|score-?seeking|gpt[-\s]?\d*|claude|gemini|openai|anthropic|reasoning model\w*|frontier ai|coding|programming|compiler|neural network)\b/i.test(`${title} ${routingText}`);
+  const hasAuthenticArtSignal =
+    item.format === 'art_showcase' ||
+    /\b(painting|gemälde|sculpture|skulptur|museum|exhibition|ausstellung|architektur|architecture|fotografie|photography|canvas|oil on|renaissance|barock|impressionis|modernism|installation)\b/i.test(`${title} ${routingText}`);
+  const isMisplacedInKunstGalerie =
+    currentSpace === 'c/kunst_galerie' &&
+    item.format !== 'art_showcase' &&
+    (isExplicitAiOrCodePost || !hasAuthenticArtSignal);
   const isRoutableSpace = !currentSpace || currentSpace === 'c/serendipity' || currentSpace === 'c/dialektik' || currentSpace === 'c/kunst_galerie' || currentSpace === 'c/books';
   const preserveCuratedTopic =
     !isAggregatorItem &&
     !isPartyPolitics &&
     !isProtestOrPolitical &&
+    !isMisplacedInKunstGalerie &&
     Boolean(item.primaryTopic) &&
     Boolean(currentSpace) &&
     currentSpace !== 'c/serendipity';
   const classificationFallback: TopicTag =
     isAggregatorItem && item.primaryTopic === 'contemplation_mind'
       ? 'ai_apple'
+      : isMisplacedInKunstGalerie
+      ? 'ai_apple'
       : item.primaryTopic || 'science_society';
 
   let correctedTopic: TopicTag = isPartyPolitics && isRoutableSpace
     ? 'science_society'
-    : isProtestOrPolitical
+    : isProtestOrPolitical && !/\b(llms?|score-?seeking|gpt|claude|gemini|openai|anthropic|frontier ai)\b/i.test(title)
     ? 'philosophy_ethics'
     : preserveCuratedTopic
     ? item.primaryTopic
@@ -849,6 +869,8 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
   let routedSpace: string | undefined = item.space;
   if (isAggregatorItem && currentSpace === 'c/kontemplation' && correctedTopic !== 'contemplation_mind') {
     routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/dialektik';
+  } else if (isMisplacedInKunstGalerie) {
+    routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/acceleration';
   } else if (isPartyPolitics && isRoutableSpace) {
     routedSpace = 'c/gesellschaft_politik';
   } else if (isProtestOrPolitical && (currentSpace === 'c/serendipity' || currentSpace === 'c/kunst_galerie' || currentSpace === 'c/books' || !currentSpace)) {
@@ -859,6 +881,9 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
 
   if ((isProtestOrPolitical || isPartyPolitics) && routedSpace === 'c/books') {
     routedSpace = 'c/dialektik';
+  }
+  if (!routedSpace || !String(routedSpace).startsWith('c/')) {
+    routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/serendipity';
   }
 
   const isVisualArtOrMeme =
@@ -1206,8 +1231,19 @@ export function classifyTopicDeterministically(
   fallback: TopicTag = 'philosophy_ethics'
 ): TopicTag {
   const combined = `${title} ${body}`.toLowerCase();
+  const titleLower = (title || '').toLowerCase();
 
-  // Political, Protest, Legal or Societal Conflict -> Philosophy & Ethics / Discourse
+  // Strong explicit AI / LLM signal in title takes precedence over generic policy words in body
+  if (
+    /\b(llms?|score-?seeking|gpt[-\s]?\d*|claude|gemini|openai|anthropic|frontier ai|reasoning model\w*|alignment|mlx|apple silicon|m4 chip)\b/i.test(
+      titleLower
+    ) &&
+    !isPoliticalOrProtestNews(title, '')
+  ) {
+    return 'ai_apple';
+  }
+
+  // Political, Protest, Geopolitics, Defense or Societal Conflict -> Philosophy & Ethics / Discourse
   if (isPoliticalOrProtestNews(title, body)) {
     return 'philosophy_ethics';
   }
@@ -1268,7 +1304,7 @@ export function classifyTopicDeterministically(
 
   // AI & Apple Systems
   if (
-    /\b(llm|gpt|transformer|mlx|apple silicon|m4|macos|ios|inference|neural network|diffusion|agent)\b/i.test(
+    /\b(llms?|score-?seeking|gpt[-\s]?\d*|claude|gemini|openai|anthropic|frontier ai|reasoning model\w*|transformer|mlx|apple silicon|m4|macos|ios|inference|neural network|diffusion|agent\w*|multi-?agent)\b/i.test(
       combined
     )
   ) {

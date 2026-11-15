@@ -981,6 +981,22 @@ export const FeedScreen: React.FC = () => {
     const lockedSet = new Set(lockedIds);
     const itemMap = new Map(infiniteInterleavedBase.map(i => [i.id, i]));
 
+    const withinBootWindow =
+      hydratedAtRef.current === null || Date.now() < hydratedAtRef.current + 3000;
+    const lockedSurvivingCount = lockedIds.filter(id => itemMap.has(id)).length;
+    if (
+      infiniteInterleavedBase.length > 0 &&
+      ((withinBootWindow && scrollOffsetYRef.current < 40) ||
+        lockedSurvivingCount < Math.min(6, lockedIds.length))
+    ) {
+      lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
+      return {
+        items: infiniteInterleavedBase,
+        resetArrivals: false,
+        validIncoming: [] as ScoredFeedItem[]
+      };
+    }
+
     // Identify new items arriving in the top 12 of infiniteInterleavedBase after initial boot has settled
     const incomingTop12New = infiniteInterleavedBase.slice(0, 12).filter(i => !lockedSet.has(i.id));
     let validIncoming: ScoredFeedItem[] = [];
@@ -1400,18 +1416,39 @@ export const FeedScreen: React.FC = () => {
 
   const flushVisibleCardsToChronik = useCallback(() => {
     if (activeFeedOption === 'history') return;
-    const vTop = scrollYRef.current;
-    const vBottom = vTop + viewportHeightRef.current;
+    const vTop = Math.max(0, scrollYRef.current);
+    const measuredH =
+      viewportHeightRef.current > 0
+        ? viewportHeightRef.current
+        : Platform.OS === 'web' && typeof window !== 'undefined'
+        ? window.innerHeight
+        : 820;
+    const vBottom = vTop + Math.max(320, measuredH);
     const newlyVisibleIds: string[] = [];
 
+    let hasAnyMeasuredLayout = false;
     for (const item of currentFeedItems) {
       if (recordedViewportIdsRef.current.has(item.id)) continue;
       const layout = cardLayoutsRef.current[item.id];
       if (!layout) continue;
+      hasAnyMeasuredLayout = true;
       // Card is visible if at least 45px of the card is inside the current viewport window
       const cardTop = layout.y;
       const cardBottom = layout.y + Math.max(layout.height, 80);
       if (cardTop + 45 <= vBottom && cardBottom - 45 >= vTop) {
+        recordedViewportIdsRef.current.add(item.id);
+        newlyVisibleIds.push(item.id);
+      }
+    }
+
+    // Web omits per-card onLayout for zero-jank scrolling; estimate visible cards from scrollY & viewport height
+    if (!hasAnyMeasuredLayout && Platform.OS === 'web' && currentFeedItems.length > 0) {
+      const EST_CARD_HEIGHT = 380;
+      const startIdx = Math.max(0, Math.floor(vTop / EST_CARD_HEIGHT));
+      const endIdx = Math.min(currentFeedItems.length - 1, Math.ceil(vBottom / EST_CARD_HEIGHT));
+      for (let idx = startIdx; idx <= endIdx; idx++) {
+        const item = currentFeedItems[idx];
+        if (!item || recordedViewportIdsRef.current.has(item.id)) continue;
         recordedViewportIdsRef.current.add(item.id);
         newlyVisibleIds.push(item.id);
       }
@@ -1438,6 +1475,14 @@ export const FeedScreen: React.FC = () => {
     cardLayoutsRef.current[itemId] = { y, height };
     scheduleChronikFlush();
   }, [scheduleChronikFlush]);
+
+  React.useEffect(() => {
+    if (!isHydrated || activeFeedOption === 'history' || currentFeedItems.length === 0) return;
+    const timer = setTimeout(() => {
+      flushVisibleCardsToChronik();
+    }, 650);
+    return () => clearTimeout(timer);
+  }, [isHydrated, activeFeedOption, currentFeedItems.length, flushVisibleCardsToChronik]);
 
   const totalInfiniteAvailable = infiniteInterleavedBase.length + evergreenFallbackItems.length;
 
