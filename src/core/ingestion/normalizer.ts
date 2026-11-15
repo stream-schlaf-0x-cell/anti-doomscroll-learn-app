@@ -2,8 +2,9 @@ import { FeedItem, FeedItemFormat, ContentType, FactReviewStatus, TOPIC_SPACE_MA
 import { classifyTopicDeterministically, isDomesticPartyPolitics } from '../enrichment/batchEnricher';
 import { RawFeedEntry, RawFeedSource } from './types';
 import { buildKnowledgeContextForEntry } from '../synthesis/backgroundResearchPipeline';
-import { ZERO_WIDTH_REGEX, sanitizeImageUrl } from './rssParser';
+import { ZERO_WIDTH_REGEX, sanitizeImageUrl, hasEditorialMarkdownStructure } from './rssParser';
 import { isLikelyBannerOrLogoUrl } from '../utils/imageQuality';
+import { stripMarkdownFormatting } from '../utils/markdownUtils';
 
 /**
  * Pure TypeScript SHA-256 implementation (FIPS 180-4).
@@ -277,7 +278,9 @@ export const BOILERPLATE_PATTERNS: RegExp[] = [
   /Für Links auf dieser Seite.*?Provision.*?Partner/gi,
   /Hier geht['']?s zu unseren Affiliate-Links/gi,
   /Hinweis: Für diesen Artikel.*?Provision/gi,
-  /Folgen Sie uns auf.*?(?:Telegram|WhatsApp|Facebook|Twitter|X|Instagram)/gi
+  /Folgen Sie uns auf.*?(?:Telegram|WhatsApp|Facebook|Twitter|X|Instagram)/gi,
+  /^[^\n]*Join Free\s*\|\s*Upgrade[^\n]*$/gim,
+  /^\s*Hi there,? this is your daily[^\n]*$/gim
 ];
 
 export function stripBoilerplate(text: string): string {
@@ -465,7 +468,18 @@ export function normalizeFeedEntry(
     honestTier = 'publisher_excerpt';
   }
 
-  const articleBody = effectiveText;
+  // Reader body: prefer the structure-preserving Markdown (sub-headings, lists, quotes, source links)
+  // whenever it carries real structure and does not lose content compared to the plain-text body.
+  const markdownBody = entry.fullContentMarkdown
+    ? stripBoilerplate(entry.fullContentMarkdown.replace(ZERO_WIDTH_REGEX, '').trim())
+    : '';
+  const markdownPlainLength = markdownBody ? stripMarkdownFormatting(markdownBody).length : 0;
+  const articleBody =
+    markdownBody &&
+    hasEditorialMarkdownStructure(markdownBody) &&
+    markdownPlainLength >= Math.max(120, rawBodyText.length * 0.7)
+      ? markdownBody
+      : effectiveText;
 
   const knowledgeContext = buildKnowledgeContextForEntry({
     title: cleanTitle,

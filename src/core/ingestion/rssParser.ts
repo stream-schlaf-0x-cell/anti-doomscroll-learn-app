@@ -30,7 +30,16 @@ export function decodeXmlEntities(input: string): string {
     '&ldquo;': '“',
     '&rdquo;': '”',
     '&laquo;': '«',
-    '&raquo;': '»'
+    '&raquo;': '»',
+    '&copy;': '©',
+    '&reg;': '®',
+    '&trade;': '™',
+    '&bull;': '•',
+    '&middot;': '·',
+    '&shy;': '',
+    '&zwnj;': '',
+    '&sbquo;': '‚',
+    '&bdquo;': '„'
   };
 
   let decoded = input;
@@ -96,6 +105,236 @@ export function stripHtml(input: string): string {
     .trim()
     .replace(/^(?:in today['’]s newsletter\s*:?\s*|view in browser\s*[|·:-]?\s*|read online\s*[|·:-]?\s*)+/i, '')
     .trim();
+}
+
+/**
+ * Removes sponsor/advertising containers that newsletter platforms (Beehiiv, Substack, Mailchimp)
+ * embed into the full-text RSS payload, e.g. Techpresso's "FROM OUR PARTNER" boxes.
+ * Works on raw HTML so that the real editorial stories between two ad boxes are never swallowed.
+ */
+export function stripNewsletterAdBlocks(html: string): string {
+  if (!html) return '';
+  let out = html;
+  // Beehiiv / Dupple ad containers: <div id="main-ad-copy">, <div id="spotlight-ad-headline"> …
+  out = out.replace(/<div\b[^>]*\bid=["'][^"']*-ad-[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, ' ');
+  // Ad labels (<p id="main-ad-partner-label"> / <p><b>FROM OUR PARTNER</b></p>)
+  out = out.replace(/<p\b[^>]*\bid=["'][^"']*-ad-[^"']*["'][^>]*>[\s\S]*?<\/p>/gi, ' ');
+  out = out.replace(/<(p|div|td|h[1-6])\b[^>]*>\s*(?:<(?:b|strong|span)\b[^>]*>\s*)*(?:from\s+our\s+partners?|together\s+with|sponsored\s+by|presented\s+by|anzeige|werbung)\b[^<]{0,60}(?:<\/(?:b|strong|span)>\s*)*<\/\1>/gi, ' ');
+  // Every link/image explicitly flagged as ad slot
+  out = out.replace(/<a\b[^>]*\bdata-ad-[a-z-]+=["'][^"']*["'][^>]*>[\s\S]*?<\/a>/gi, ' ');
+  out = out.replace(/<img\b[^>]*(?:alt=["']sponsor["']|data-ad-role)[^>]*>/gi, ' ');
+  out = out.replace(/<div\b[^>]*\bid=["']beehiiv-ad-slot["'][^>]*>[\s\S]*?<\/div>/gi, ' ');
+  return out;
+}
+
+const LINK_ONLY_ANCHOR_TEXT = /^(?:link|read more|mehr|weiterlesen|mehr lesen|here|hier|source|quelle|→|↗|»|more|full story|continue reading)$/i;
+
+function hostnameLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return 'Quelle';
+  }
+}
+
+function isSkippableHref(href: string): boolean {
+  const lower = href.trim().toLowerCase();
+  return (
+    !/^https?:\/\//.test(lower) ||
+    /unsubscribe|manage[-_ ]?preferences|subscribe\?|\/subscribe\b|view[-_ ]?in[-_ ]?browser|mailto:|utm_campaign=referral|\/advertise\b|beehiiv\.com\/\?|share\.|twitter\.com\/intent|facebook\.com\/sharer|linkedin\.com\/share/.test(lower)
+  );
+}
+
+/**
+ * Structure-preserving HTML → Markdown converter for the Reader.
+ * Keeps sub-headings (##/###), block quotes (>), bullet lists (-), bold/italic emphasis and
+ * real source links ([text](url)) instead of flattening everything into plain text.
+ * Newsletter story titles rendered as bold table cells (Beehiiv/Techpresso) become ### headings,
+ * and their trailing "LINK" anchors become a dedicated "↗ Primärquelle" line under the heading.
+ */
+export function htmlToEditorialMarkdown(input: string): string {
+  if (!input) return '';
+  let html = unwrapCdata(input);
+  // Entity-escaped HTML (RSS without CDATA): decode once so tags become real tags
+  if (!/<[a-z][^>]*>/i.test(html) && /&lt;[a-z]/i.test(html)) {
+    html = decodeXmlEntities(html);
+  }
+  html = stripEmbeddedStyleAndScriptBlocks(html);
+  html = stripNewsletterAdBlocks(html);
+
+  const LINK_OPEN = '\uE000';
+  const LINK_MID = '\uE001';
+  const LINK_CLOSE = '\uE002';
+  const SRC_OPEN = '\uE003';
+
+  // 1. Anchors → link markers (before any other tag stripping)
+  html = html.replace(/<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, rawHref: string, inner: string) => {
+    const href = decodeXmlEntities(rawHref).trim();
+    const text = decodeXmlEntities(inner.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+    if (!text) return ' ';
+    if (isSkippableHref(href)) return text;
+    if (LINK_ONLY_ANCHOR_TEXT.test(text)) return ` ${SRC_OPEN}${href}${LINK_CLOSE} `;
+    return `${LINK_OPEN}${text}${LINK_MID}${href}${LINK_CLOSE}`;
+  });
+
+  // 2. Drop media
+  html = html.replace(/<(img|picture|source|video|audio|iframe)\b[^>]*>/gi, ' ').replace(/<\/(picture|video|audio|iframe)>/gi, ' ');
+
+  const innerText = (s: string) => s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // 3. Headings
+  html = html.replace(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi, (_m, level: string, inner: string) => {
+    const text = innerText(inner);
+    if (!text) return '\n\n';
+    const hashes = level === '1' || level === '2' ? '##' : level === '3' ? '###' : '####';
+    return `\n\n${hashes} ${text}\n\n`;
+  });
+
+  // 4. Bold-styled short table cells / paragraphs act as section headings (newsletter story titles)
+  html = html.replace(
+    /<(td|p|div)\b([^>]*\bstyle=(?:"[^"]*font-weight:\s*(?:bold|[6-9]00)[^"]*"|'[^']*font-weight:\s*(?:bold|[6-9]00)[^']*')[^>]*)>([\s\S]*?)<\/\1>/gi,
+    (match, _tag: string, _attrs: string, inner: string) => {
+      if (/<(?:p|div|td|table|ul|ol|li|h[1-6])\b/i.test(inner)) return match;
+      const text = innerText(inner);
+      const visible = text.replace(new RegExp(`${SRC_OPEN}[\\s\\S]*?${LINK_CLOSE}`, 'g'), '').trim();
+      if (visible.length < 4 || visible.length > 150 || /[.!?:;]$/.test(visible)) return match;
+      return `\n\n### ${text}\n\n`;
+    }
+  );
+
+  // 5. Block quotes
+  html = html.replace(/<blockquote\b[^>]*>([\s\S]*?)<\/blockquote>/gi, (_m, inner: string) => {
+    const text = inner
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div)>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ');
+    const lines = text
+      .split('\n')
+      .map(l => l.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .map(l => `> ${l}`);
+    return lines.length ? `\n\n${lines.join('\n')}\n\n` : '\n\n';
+  });
+
+  // 6. Lists
+  html = html.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (_m, inner: string) => {
+    const text = innerText(inner.replace(/<\/(p|div)>/gi, ' '));
+    return text ? `\n- ${text}\n` : '\n';
+  });
+
+  // 7. Inline emphasis
+  html = html.replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_m, _t: string, inner: string) => {
+    const text = innerText(inner);
+    if (!text || text.includes('*')) return ` ${text} `;
+    return ` **${text}** `;
+  });
+  html = html.replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_m, _t: string, inner: string) => {
+    const text = innerText(inner);
+    if (!text || text.includes('*') || text.length > 220) return ` ${text} `;
+    return ` *${text}* `;
+  });
+
+  // 8. Block boundaries
+  html = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(p|div|tr|table|tbody|thead|section|article|figure|figcaption|header|footer|ul|ol|hr|center)\b[^>]*>/gi, '\n\n')
+    .replace(/<[^>]+>/g, ' ');
+
+  let text = decodeXmlEntities(html)
+    .replace(ZERO_WIDTH_REGEX, '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r\n?/g, '\n');
+
+  // 9. Line-level normalization
+  const rawLines = text.split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim());
+  const lines: string[] = [];
+  for (let line of rawLines) {
+    if (!line) {
+      lines.push('');
+      continue;
+    }
+    if (/^(?:link|★+|☆+|\*+)$/i.test(line)) continue;
+    line = line.replace(/^[•·▪◦‣]\s*/, '- ');
+    // Fix emphasis spacing artifacts: "** text **" → "**text**", stray " ." after emphasis
+    line = line.replace(/\*\*\s+([^*]+?)\s+\*\*/g, '**$1**').replace(/\s+([.,;:!?])/g, '$1');
+
+    if (/^#{2,4}\s/.test(line)) {
+      // Pull source links out of headings into a dedicated line beneath
+      const sources: string[] = [];
+      line = line.replace(new RegExp(`${SRC_OPEN}([\\s\\S]*?)${LINK_CLOSE}`, 'g'), (_m, url: string) => {
+        sources.push(url);
+        return '';
+      });
+      line = line
+        .replace(new RegExp(`${LINK_OPEN}([\\s\\S]*?)${LINK_MID}([\\s\\S]*?)${LINK_CLOSE}`, 'g'), (_m, t: string, url: string) => {
+          sources.push(url);
+          return t;
+        })
+        .replace(/\*\*/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (/^#{2,4}$/.test(line)) continue;
+      lines.push('', line, '');
+      if (sources.length > 0) {
+        const url = sources[0];
+        lines.push(`[↗ Primärquelle: ${hostnameLabel(url)}](${url})`, '');
+      }
+      continue;
+    }
+
+    line = line
+      .replace(new RegExp(`${SRC_OPEN}([\\s\\S]*?)${LINK_CLOSE}`, 'g'), (_m, url: string) => `[↗ ${hostnameLabel(url)}](${url})`)
+      .replace(new RegExp(`${LINK_OPEN}([\\s\\S]*?)${LINK_MID}([\\s\\S]*?)${LINK_CLOSE}`, 'g'), (_m, t: string, url: string) => `[${t.replace(/[[\]]/g, '')}](${url})`)
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!line || line === '-' || line === '>' || line === '**' || line === '****') continue;
+    lines.push(line);
+  }
+
+  // 10. Re-join: collapse blank lines, keep consecutive list items together
+  const merged: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === '') {
+      const prev = merged[merged.length - 1];
+      let j = i + 1;
+      while (j < lines.length && lines[j] === '') j++;
+      const next = lines[j];
+      if (prev !== undefined && next !== undefined && /^- /.test(prev) && /^- /.test(next)) continue;
+      if (prev === '' || merged.length === 0) continue;
+      merged.push('');
+      continue;
+    }
+    merged.push(line);
+  }
+
+  return cleanNewsletterDigestMarkdown(merged.join('\n').replace(/\n{3,}/g, '\n\n').trim());
+}
+
+/**
+ * Removes newsletter chrome around digest editions (greeting, date bar, duplicated table of contents,
+ * feedback/rating footer, subscribe CTA) while keeping every real story, tool and paper section.
+ */
+export function cleanNewsletterDigestMarkdown(md: string): string {
+  if (!md) return '';
+  let out = md;
+  out = out.replace(/^[^\n]*Join Free[^\n]*Upgrade[^\n]*$/gim, '');
+  out = out.replace(/^Hi there,? this is your daily[^\n]*$/gim, '');
+  out = out.replace(/^You can check the previous tools[^\n]*$/gim, '');
+  // Duplicated table of contents ("In today's newsletter:" … "Plus: …") when real sections follow
+  if (/\n#{2,4} /.test(out)) {
+    out = out.replace(/(?:^|\n)\**In today['’]s (?:newsletter|edition|issue)\**:?\**\s*\n[\s\S]*?(?:\n\**Plus:?\**[^\n]*\n|(?=\n#{2,4} ))/i, '\n');
+  }
+  // Footer: community spotlight, academy upsell, rating widget, subscribe CTA
+  out = out.replace(/\n(?:#{2,4}\s*)?[^\n]{0,6}\s*\**(?:From our community|Want to master the AI tools|How did you find today['’]s edition|Not subscribed to|Was this forwarded to you|Share this newsletter)[\s\S]*$/i, '');
+  out = out.replace(/\n(?:Subscribe for free|Advertise|Feedback|Read Online|Unsubscribe)\s*(?=\n|$)/gi, '\n');
+  return out.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Returns true when markdown carries real structure worth rendering (headings, lists, quotes, links). */
+export function hasEditorialMarkdownStructure(md: string): boolean {
+  if (!md) return false;
+  return /(^|\n)(#{2,4} |> |- )\S/.test(md) || /\[[^\]]+\]\(https?:\/\/[^)\s]+\)/.test(md);
 }
 
 /**
@@ -340,9 +579,10 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
       const cleanId = decodeXmlEntities(id.trim());
 
       const summaryRaw = getTagContent(block, 'summary') || getTagContent(block, 'content');
-      const { cleanSummary: summary, imageCredit } = extractCreditAndCleanSummary(stripHtml(summaryRaw));
+      const { cleanSummary: summary, imageCredit } = extractCreditAndCleanSummary(stripHtml(stripNewsletterAdBlocks(summaryRaw)));
       const fullContentRaw = getTagContent(block, 'content');
-      const fullContent = fullContentRaw ? stripHtml(fullContentRaw) : undefined;
+      const fullContent = fullContentRaw ? stripHtml(stripNewsletterAdBlocks(fullContentRaw)) : undefined;
+      const fullContentMarkdown = fullContentRaw ? htmlToEditorialMarkdown(fullContentRaw) : undefined;
 
       const author =
         getTagContent(block, 'name') ||
@@ -365,6 +605,7 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
           link,
           summary,
           fullContent,
+          fullContentMarkdown,
           author: author ? stripHtml(author) : undefined,
           publishedAt: dateInfo.iso,
           publicationDateReliable: dateInfo.reliable,
@@ -387,10 +628,11 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
       const title = stripHtml(titleRaw);
 
       const descRaw = getTagContent(block, 'description');
-      const { cleanSummary: summary, imageCredit } = extractCreditAndCleanSummary(stripHtml(descRaw));
+      const { cleanSummary: summary, imageCredit } = extractCreditAndCleanSummary(stripHtml(stripNewsletterAdBlocks(descRaw)));
 
       const contentEncodedRaw = getTagContent(block, 'content:encoded');
-      const fullContent = contentEncodedRaw ? stripHtml(contentEncodedRaw) : undefined;
+      const fullContent = contentEncodedRaw ? stripHtml(stripNewsletterAdBlocks(contentEncodedRaw)) : undefined;
+      const fullContentMarkdown = contentEncodedRaw ? htmlToEditorialMarkdown(contentEncodedRaw) : undefined;
 
       const author =
         getTagContent(block, 'dc:creator') ||
@@ -412,6 +654,7 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
           link,
           summary,
           fullContent,
+          fullContentMarkdown,
           author: author ? stripHtml(author) : undefined,
           publishedAt: dateInfo.iso,
           publicationDateReliable: dateInfo.reliable,

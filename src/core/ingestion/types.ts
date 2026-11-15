@@ -38,6 +38,8 @@ export interface RawFeedEntry {
   link: string;
   summary: string;
   fullContent?: string;
+  /** Structure-preserving Markdown version of the full content (headings, lists, quotes, links) for the Reader. */
+  fullContentMarkdown?: string;
   author?: string;
   publishedAt: string;
   publicationDateReliable?: boolean;

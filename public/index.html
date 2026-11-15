@@ -25,21 +25,33 @@
 
     <!-- The `react-native-web` recommended style reset -->
     <style id="expo-reset">
-      /* Full-height viewport-fit cover for iOS/iPadOS standalone PWA across portrait & landscape */
-      html,
-      body {
+      /* Full-height viewport-fit cover for iOS/iPadOS standalone PWA across portrait & landscape.
+         IMPORTANT: never pin body to height: 100dvh. In iOS standalone mode with a black-translucent
+         status bar, WebKit reports 100dvh minus the top safe area (~59pt), which leaves a dead gap
+         below the tab bar. A fixed body stretched with inset: 0 always reaches the physical bottom edge. */
+      html {
         background-color: #0E1424 !important;
         margin: 0;
         padding: 0;
         width: 100%;
         height: 100%;
-        height: 100dvh;
+        min-height: 100vh;
         min-height: 100dvh;
         overflow: hidden;
       }
       body {
+        background-color: #0E1424 !important;
+        margin: 0;
+        padding: 0;
         position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
         inset: 0;
+        width: 100%;
+        height: auto;
+        overflow: hidden;
         -webkit-tap-highlight-color: transparent;
       }
       #root {

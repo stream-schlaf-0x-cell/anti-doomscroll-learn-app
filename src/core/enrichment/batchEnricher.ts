@@ -511,16 +511,72 @@ export function isCelebrityFluff(title: string): boolean {
 }
 
 /**
+ * Decodes HTML entities that slipped through older ingestion runs (e.g. "&copy; NOAA …").
+ */
+export function decodeLingeringHtmlEntities(text: string): string {
+  if (!text || text.indexOf('&') === -1) return text || '';
+  return text
+    .replace(/&amp;(?=[a-z#][a-z0-9]{1,7};)/gi, '&')
+    .replace(/&copy;/gi, '©')
+    .replace(/&reg;/gi, '®')
+    .replace(/&trade;/gi, '™')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&(?:#39|apos);/gi, "'")
+    .replace(/&hellip;/gi, '…')
+    .replace(/&ndash;/gi, '–')
+    .replace(/&mdash;/gi, '—')
+    .replace(/&(?:lsquo|rsquo);/gi, '’')
+    .replace(/&ldquo;/gi, '“')
+    .replace(/&rdquo;/gi, '”')
+    .replace(/&bdquo;/gi, '„')
+    .replace(/&bull;/gi, '•');
+}
+
+const IMAGE_CREDIT_PLATFORMS =
+  /^(Wikimedia Commons|Wikimedia|Flickr|Unsplash|Pixabay|Pexels|Shutterstock|Adobe Stock|iStock(?:photo)?|Getty Images|KI-Bild|NASA|ESA|ESO|picture alliance|dpa|imago|Reuters|AFP|AP)\b[,.:;]?\s*/i;
+
+/**
+ * Removes photo credits that publishers prepend or inline into teaser text
+ * ("© NOAA's National Ocean Service / Wikimedia Commons Zwei Mantelzonen …",
+ *  "… © National Museums Scotland / National Museums Scotland").
+ */
+export function stripLeadingImageCredit(text: string): string {
+  if (!text || text.indexOf('©') === -1) return text || '';
+  let out = text;
+  const lead = out.match(/^\s*©\s*([^\n/]{2,80}?)\s*\/\s*/);
+  if (lead) {
+    const rest = out.slice(lead[0].length);
+    const source = lead[1].trim();
+    const platform = rest.match(IMAGE_CREDIT_PLATFORMS);
+    if (platform) {
+      out = rest.slice(platform[0].length);
+    } else if (source.length >= 3 && rest.toLowerCase().startsWith(source.toLowerCase())) {
+      out = rest.slice(source.length).replace(/^[\s,.:;]+/, '');
+    }
+  }
+  // Inline duplicated credits: "© National Museums Scotland / National Museums Scotland"
+  out = out.replace(/\s*©\s*([^\n/©]{3,80}?)\s*\/\s*\1(?=\s|$|[.,;])/g, '');
+  out = out.replace(
+    /\s*©\s*[^\n/©]{2,80}?\s*\/\s*(?:Wikimedia Commons|Flickr|Unsplash|Pixabay|Pexels|Shutterstock|Adobe Stock|Getty Images|KI-Bild)(?=\s|$|[.,;])/gi,
+    ''
+  );
+  return out.trim();
+}
+
+/**
  * Strips affiliate footers, donation banners, and generic publisher boilerplate from raw text.
  */
 export function stripPublisherBoilerplate(raw: string, title?: string): string {
   if (!raw || typeof raw !== 'string') return '';
-  let text = raw
+  let text = stripLeadingImageCredit(decodeLingeringHtmlEntities(raw))
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
     .replace(/([.#][a-zA-Z0-9_-]+(?:\s*,\s*[.#]?[a-zA-Z0-9_-]+)*\s*\{[^}]*\}\s*)+/g, ' ')
     .replace(/\.bh__[a-zA-Z0-9_-]+[^\n.]*/gi, ' ')
     .replace(/(?:^|\n)\s*(?:In today['’]s newsletter|View in browser|Read online)\s*:?\s*/gi, '\n')
+    .replace(/^[^\n]*Join Free\s*\|\s*Upgrade[^\n]*$/gim, '')
+    .replace(/^\s*Hi there,? this is your daily[^\n]*$/gim, '')
     .replace(/Originalbeitrag bei [^\n]{1,120}?zum Thema [„"'][^“"']+[“"']\.(?:\s+|$)/gi, '')
     .replace(/(?:Die technische und wissenschaftliche Community hebt den Bericht|In der internationalen Fachdebatte zählt der Beitrag)[^\n]*?\.(?:\s+|$)/gi, '')
     .replace(/Der Fokus liegt auf den strukturellen Hintergründen[^\n]*?(?:\.(?:\s+|$)|$)/gi, '')
@@ -539,7 +595,8 @@ export function stripPublisherBoilerplate(raw: string, title?: string): string {
     .replace(/Give\s+Your\s+AI\s+Agents\s+the\s+Full\s+Page[\s\S]*?(?:with\s+one\s+provider\.|crawl\s+the\s+web[!.]*|Extract\s+API\.[^\n]*)/gi, '')
     .replace(/Retrieve\s+public\s+web\s+pages\s+by\s+URL[\s\S]*?(?:with\s+one\s+provider\.|\.\.\.|…|$)/gi, '')
     .replace(/Thanks\s+to\s+SerpApi\s+for\s+working\s+with[^\n]*[!.]?/gi, '')
-    .replace(/OUR\s+PARTNER[\s\S]*?(?:Try\s+[^\n]+?for\s+free\s*(?:->|→)?|Learn\s+more\b[^\n]*)/gi, '')
+    .replace(/OUR\s+PARTNER[\s\S]{0,1400}?(?:Try\s+[^\n]+?for\s+free\s*(?:->|→)?|Learn\s+more\b[^\n]*|Download\s+the\s+[^\n]*|Get\s+(?:the|your)\s+free\s+[^\n]*)/gi, '')
+    .replace(/(?:^|\n)(?:#{2,4}\s*|\*\*)?FROM\s+OUR\s+PARTNERS?\**\s*(?=\n|$)/gi, '\n')
     .replace(/We['’]?re\s+constantly\s+expanding\s+the\s+SerpApi[\s\S]*?(?:Try\s+SerpApi[^\n]*|Legal\s+Shield\.)/gi, '')
     .replace(/(?:^|\n)Other\s+news\s*&\s*articles\s+you\s+might\s+like[\s\S]*$/gi, '')
     .replace(/\bSerpApi\b[^.\n]*(?:read\s+and\s+crawl\s+the\s+web|web\s+scraping|sponsored|Extract\s+API|Search\s+APIs|ecosystem|free\s*->)[^.\n]*[.!…]*/gi, '')
@@ -550,6 +607,7 @@ export function stripPublisherBoilerplate(raw: string, title?: string): string {
     .replace(/Join our mailing list and get weekly tips[\s\S]*$/i, '')
     .replace(/Come back for more\.[\s\S]*$/i, '')
     .replace(/The post .* first appeared on [\s\S]*$/i, '')
+    .replace(/(?:^|\n)[^\n]{0,20}The post [^\n]{0,240}? appeared first on [^\n]*/gi, '')
     .replace(/Over \d+,\d+ teachers have already joined[\s\S]*$/i, '')
     .trim();
   text = cleanArticleBodyFormatting(text, title);
@@ -630,6 +688,13 @@ export function getCardRenderableText(item: {
 
 const SPORTS_GOSSIP_REGEX = /\b(bundesliga|dfb-pokal|champions league|eintracht frankfurt|matchplan|pokalduell|ligapartie|torjäger|spieltag|transfermarkt|tabellenführer|trainerwechsel|nfl|quarterback|super bowl|touchdown|nba|mlb|nhl|tv ratings)\b/i;
 const TRIVIAL_PR_OR_GADGET_REVIEW_REGEX = /(?:^test:\s*melofty\b|\bmelofty\s+pro\b|\bexpert-powered self-improvement with\b|\bsponsored\s+review\b|\baffordable\s+mini-?pc\b)/i;
+/** Pure shopping / price-drop posts (Amazon Blitzangebote, "50 percent off this weekend") never belong in the feed. */
+export const SHOPPING_DEAL_TITLE_REGEX =
+  /(?:\bblitzangebote?\b|\bangebote?\s+des\s+tages\b|\bdeals?\s+des\s+tages\b|\btagesdeals?\b|\bprime\s+day\b|\bcyber\s+monday\b|\bblack\s+friday[-\s]+(?:deals?|angebote?)\b|\brabattcode\b|\bgutscheincode\b|\bschnäppchen\b|\b\d{1,2}\s*(?:%|percent|prozent)\s+(?:off|rabatt|reduziert|günstiger)\b|\bup\s+to\s+\d{1,2}\s*(?:%|percent)\s+off\b|\ball-time\s+low\b|\blowest\s+price\b|\bprice\s+drop\b|\bdeal\s+alert\b|\bbest\s+deals?\b)/i;
+
+export function isShoppingDealTitle(title: string): boolean {
+  return SHOPPING_DEAL_TITLE_REGEX.test(title || '');
+}
 const CLINICAL_PATHOLOGY_JARGON_REGEX = /\b(carcinoma|oncology|chemotherapy|metastasis|randomized clinical trial|placebo-controlled|mortality rate|myocardial infarction|histopathology|adenocarcinoma)\b/i;
 export const IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX = /\b(saccharomyces cerevisiae|lipid droplets?|triacylglycerol|sterol esters?|gene knockout|yeast mutants?|galactose-inducible|protocol to induce|western blot|qrt-pcr|rt-pcr|histopathology|adenocarcinoma|carcinoma|oncology|chemotherapy|metastasis|peritoneal|mouse model|rat model|murine|in vitro assay|cell line|transfected|plasmid|primer sequence|escherichia coli|endoplasmic reticulum|hepg2|hela cells?|zebrafish|drosophila|protein that drives ageing|drives ageing without unleashing inflammation|interleukin-11|il-11|monoclonal antibod\w*|kinase inhibitor|phosphorylation|transcriptom\w*|proteom\w*|caenorhabditis elegans|arabidopsis|mrna expression|oligomer\w*|ribosom\w*)\b/i;
 const GENERIC_PAPER_METADATA_REGEX = /^(Begutachtete\s+Open-Access-Studie|Open-Access-Forschungsarbeit|Peer-Reviewed\s+(Open-Access|Study)|Aus\s+(der\s+)?Zeitschrift\b|Originalbeitrag\s+veröffentlicht\s+bei)/i;
@@ -732,6 +797,7 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
   if (
     SPORTS_GOSSIP_REGEX.test(combinedText) ||
     TRIVIAL_PR_OR_GADGET_REVIEW_REGEX.test(combinedText) ||
+    isShoppingDealTitle(title) ||
     isIncomprehensibleWetLabPaper(title, wetlabCheckText)
   ) {
     return false;

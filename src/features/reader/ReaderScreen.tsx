@@ -24,7 +24,11 @@ import {
   formatVerifiedProvenanceLabel,
   SocraticSalonPerspectives
 } from '../../core/domain/types';
-import { synthesizeEditorialAbstract } from '../../core/synthesis/backgroundResearchPipeline';
+import {
+  synthesizeEditorialAbstract,
+  isTemplatedEditorialText,
+  selectEssenceSentences
+} from '../../core/synthesis/backgroundResearchPipeline';
 import {
   enrichArticleOnDemandWithAi,
   hasSubstantiveEditorialSection,
@@ -33,7 +37,11 @@ import {
 import { ReadingTimeBadge } from '../../ui/components/ReadingTimeBadge';
 import { DeepeningCard } from '../../ui/components/DeepeningCard';
 import { typography, radius, spacing } from '../../ui/theme';
-import { optimizeImageUrl } from '../../core/utils/imageQuality';
+import {
+  optimizeImageUrl,
+  extractLoadedImageDimensions,
+  isLowResolutionEditorialImage
+} from '../../core/utils/imageQuality';
 import { RaindropService } from '../../core/raindrop/raindropService';
 import { copyToClipboard } from '../../core/export/craftExport';
 import { MarkdownContent } from '../../ui/components/MarkdownContent';
@@ -41,7 +49,7 @@ import { RabbitHoleService, RabbitHoleEntry } from '../../core/synthesis/rabbitH
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { QuizCheckpointCard } from '../../ui/components/QuizCheckpointCard';
 import {
-  generateQuizForArticle,
+  buildTextGroundedQuiz,
   generateSingleArticleQuizWithAi,
   isPlausibleNonMetadataQuiz
 } from '../../core/quiz/quizGenerator';
@@ -82,6 +90,8 @@ export const ReaderScreen: React.FC = () => {
   const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
   const [readerImageAspectRatio, setReaderImageAspectRatio] = useState<number | null>(null);
   const [showReaderImageLightbox, setShowReaderImageLightbox] = useState<boolean>(false);
+  const [readerImageUseRawUrl, setReaderImageUseRawUrl] = useState<boolean>(false);
+  const [readerImageHidden, setReaderImageHidden] = useState<boolean>(false);
 
   // Web Escape key listener to exit fullscreen lightbox effortlessly
   useEffect(() => {
@@ -167,6 +177,8 @@ export const ReaderScreen: React.FC = () => {
   }, [selectedArticle]);
 
   useEffect(() => {
+    setReaderImageUseRawUrl(false);
+    setReaderImageHidden(false);
     const uri = selectedArticle?.artMeta?.highResImageUrl || selectedArticle?.imageUrl;
     if (!uri) {
       setReaderImageAspectRatio(null);
@@ -296,15 +308,51 @@ export const ReaderScreen: React.FC = () => {
   const hasAuthenticReaderImage = Boolean(
     activeArticle.imageUrl &&
       activeArticle.hasAuthenticImage !== false &&
-      !activeArticle.imageUrl.includes('images.unsplash.com')
+      !activeArticle.imageUrl.includes('images.unsplash.com') &&
+      !readerImageHidden
   );
+  const readerPhotoUri = activeArticle.imageUrl
+    ? (readerImageUseRawUrl ? activeArticle.imageUrl : (optimizeImageUrl(activeArticle.imageUrl) || activeArticle.imageUrl))
+    : '';
+  const handleReaderPhotoError = () => {
+    if (!readerImageUseRawUrl && readerPhotoUri !== activeArticle.imageUrl) {
+      setReaderImageUseRawUrl(true);
+    } else {
+      setReaderImageHidden(true);
+    }
+  };
+
+  // Abstract box: AI synthesis when available, otherwise a real "at a glance" digest from the whole text.
+  // Canned source-type labels and excerpt disclaimers are never shown as if they were a summary.
+  const hasAiAbstract = isAiSynthesized && Boolean(activeArticle.editorialAbstract);
+  const essenceSentences = hasAiAbstract ? [] : selectEssenceSentences(activeArticle, 3);
+  const showAbstractBox = hasAiAbstract || essenceSentences.length >= 2;
+  const showAbstractRelevance = Boolean(abstract.relevanceWhy) && !isTemplatedEditorialText(abstract.relevanceWhy);
+  const showAbstractLimitation = Boolean(abstract.limitation) && !isTemplatedEditorialText(abstract.limitation);
+
+  // Quiz: AI quiz or a quiz built from the article's own statements; hidden for texts too thin for a fair question
+  const storedQuiz =
+    activeArticle.quiz && isPlausibleNonMetadataQuiz(activeArticle.quiz) ? activeArticle.quiz : undefined;
+  const readerQuiz =
+    (aiQuizOverride && isPlausibleNonMetadataQuiz(aiQuizOverride) ? aiQuizOverride : undefined) ||
+    storedQuiz ||
+    buildTextGroundedQuiz(activeArticle) ||
+    undefined;
   const provenanceLabel = formatVerifiedProvenanceLabel(activeArticle);
+  const normalizeForCompare = (t: string) =>
+    t.toLowerCase().replace(/[#*_>\[\]()`]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const subtitleNorm = normalizeForCompare((selectedArticle.subtitle || '').replace(/…$/, ''));
+  const bodyHeadNorm = normalizeForCompare(fullArticleText.slice(0, 600));
+  const isSubtitleRepeatedInBody =
+    !subtitleNorm ||
+    subtitleNorm === normalizeForCompare(fullArticleText) ||
+    (subtitleNorm.length >= 24 && bodyHeadNorm.includes(subtitleNorm.slice(0, Math.min(60, subtitleNorm.length))));
 
   const validKeyInsight = hasSubstantiveEditorialSection(activeArticle.keyInsight, 10)
     ? activeArticle.keyInsight
     : undefined;
   const rawTransfer = activeArticle.didacticTransfer || activeArticle.didacticSeed;
-  const validDidacticTransfer = hasSubstantiveEditorialSection(rawTransfer, 35)
+  const validDidacticTransfer = hasSubstantiveEditorialSection(rawTransfer, 35) && !isTemplatedEditorialText(rawTransfer)
     ? rawTransfer
     : undefined;
   const rawCounterPerspective =
@@ -1015,7 +1063,7 @@ export const ReaderScreen: React.FC = () => {
               </Text>
 
               {/* Magazine Subtitle / Deck */}
-              {selectedArticle.subtitle && selectedArticle.subtitle.trim() !== fullArticleText.trim() && (
+              {selectedArticle.subtitle && !isSubtitleRepeatedInBody && (
                 <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
                   {selectedArticle.subtitle}
                 </Text>
@@ -1078,9 +1126,9 @@ export const ReaderScreen: React.FC = () => {
                       style={styles.readerArtFullImage}
                       resizeMode="contain"
                       onLoad={(e) => {
-                        const { width, height } = e.nativeEvent.source;
-                        if (width > 0 && height > 0) {
-                          setReaderImageAspectRatio(width / height);
+                        const dims = extractLoadedImageDimensions(e);
+                        if (dims) {
+                          setReaderImageAspectRatio(dims.width / dims.height);
                         }
                       }}
                     />
@@ -1145,13 +1193,20 @@ export const ReaderScreen: React.FC = () => {
                       ]}
                     >
                       <Image
-                        source={{ uri: optimizeImageUrl(selectedArticle.imageUrl!) || selectedArticle.imageUrl! }}
+                        source={{ uri: readerPhotoUri }}
                         style={{ width: '100%', height: '100%' }}
                         resizeMode="contain"
+                        onError={handleReaderPhotoError}
                         onLoad={(e) => {
-                          const { width, height } = e.nativeEvent.source;
-                          if (width > 0 && height > 0) {
-                            setReaderImageAspectRatio(width / height);
+                          const dims = extractLoadedImageDimensions(e);
+                          if (dims) {
+                            const isVisualFormat =
+                              selectedArticle.format === 'meme' || Boolean(selectedArticle.memeMeta);
+                            if (!isVisualFormat && isLowResolutionEditorialImage(dims.width, dims.height)) {
+                              setReaderImageHidden(true);
+                              return;
+                            }
+                            setReaderImageAspectRatio(dims.width / dims.height);
                           }
                         }}
                       />
@@ -1190,14 +1245,40 @@ export const ReaderScreen: React.FC = () => {
                 )
               )}
 
-              {/* ELEGANTER ABSTRACT (REDAKTIONELLES ATMEN-ABSTRACT OHNE EMOJI-ÜBERLADUNG) */}
-              {abstract && (
+              {/* AUF EINEN BLICK: KI-Synthese oder echte Text-Essenz (keine Schablonen, keine Wiederholung des Einstiegs) */}
+              {showAbstractBox && !hasAiAbstract && (
+                <View style={[styles.abstractBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                  <View style={styles.abstractHeaderRow}>
+                    <View style={[styles.ebeneTag, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Ionicons name="list-outline" size={12} color={colors.accent} style={{ marginRight: 5 }} />
+                      <Text style={[styles.ebeneTagText, { color: colors.accent }]}>
+                        AUF EINEN BLICK
+                      </Text>
+                    </View>
+                    <View style={[styles.synthesisTypeBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                      <Text style={[styles.synthesisTypeBadgeText, { color: colors.textSecondary, fontWeight: '700' }]}>
+                        📄 Kernsätze aus dem Text
+                      </Text>
+                    </View>
+                  </View>
+                  {essenceSentences.map((sentence, idx) => (
+                    <View key={`essence-${idx}`} style={styles.essenceRow}>
+                      <Text style={[styles.essenceBullet, { color: colors.accent }]}>•</Text>
+                      <Text style={[styles.abstractText, styles.essenceText, { color: colors.textSecondary }]}>
+                        {sentence}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {showAbstractBox && hasAiAbstract && (
                 <View style={[styles.abstractBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
                   <View style={styles.abstractHeaderRow}>
                     <View style={[styles.ebeneTag, { backgroundColor: colors.surfaceSecondary }]}>
                       <Ionicons name="sparkles-outline" size={12} color={colors.accent} style={{ marginRight: 5 }} />
                       <Text style={[styles.ebeneTagText, { color: colors.accent }]}>
-                        REDAKTIONELLES ATMEN-ABSTRACT
+                        AUF EINEN BLICK
                       </Text>
                     </View>
                     <View style={[styles.synthesisTypeBadge, { backgroundColor: isAiSynthesized ? colors.accentSubtle : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
@@ -1235,7 +1316,7 @@ export const ReaderScreen: React.FC = () => {
                     </View>
                   ) : null}
 
-                  {abstract.relevanceWhy ? (
+                  {showAbstractRelevance ? (
                     <View style={styles.abstractSection}>
                       <View style={styles.abstractLabelRow}>
                         <View style={[styles.abstractIconBadge, { backgroundColor: '#10B98120' }]}>
@@ -1249,7 +1330,7 @@ export const ReaderScreen: React.FC = () => {
                     </View>
                   ) : null}
 
-                  {abstract.limitation ? (
+                  {showAbstractLimitation ? (
                     <View style={styles.abstractSection}>
                       <View style={styles.abstractLabelRow}>
                         <View style={[styles.abstractIconBadge, { backgroundColor: colors.surfaceSecondary }]}>
@@ -1339,6 +1420,7 @@ export const ReaderScreen: React.FC = () => {
                       bodyFontSize={bodyFontSize}
                       bodyLineHeight={bodyLineHeight}
                       colors={colors}
+                      enableLede={true}
                     />
                   </View>
                 </>
@@ -1370,11 +1452,13 @@ export const ReaderScreen: React.FC = () => {
 
               {/* 5. INTERAKTIVER WISSEN-CHECK / REFLEXIONS-QUIZ (IMMER OFFEN DIREKT UNTER DEM ARTIKEL) */}
               <View style={{ marginVertical: spacing.md }}>
+                {readerQuiz && (
                 <QuizCheckpointCard
-                  questions={[aiQuizOverride || activeArticle.quiz || generateQuizForArticle(activeArticle)]}
+                  questions={[readerQuiz]}
                   title="Wissen testen: Kernverständnis"
                   subtitle="Überprüfe deine Erkenntnis aus diesem Beitrag mit einer schnellen Frage"
                 />
+                )}
               </View>
 
               {/* 6. WEITERE WERKZEUGE & PERSPEKTIVEN (COLLAPSED BY DEFAULT) */}
@@ -1949,6 +2033,20 @@ export const ReaderScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  essenceRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 8
+  },
+  essenceBullet: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginRight: 8,
+    lineHeight: 22
+  },
+  essenceText: {
+    flex: 1
+  },
   safeArea: {
     flex: 1,
     minHeight: 0,

@@ -35,8 +35,57 @@ const REJECTED_IMAGE_PATTERNS = [
   'newsletter-header',
   'newsletter_header',
   'top-banner',
-  'header-banner'
+  'header-banner',
+  '404bild',
+  '/404.jpg',
+  '/404.png',
+  '/no-image.',
+  '/noimage.',
+  '/default-image.',
+  'static.dupplemedia.com'
 ];
+
+/** Minimum real pixel size for editorial photos; anything smaller looks pixelated on retina screens. */
+export const MIN_EDITORIAL_IMAGE_WIDTH = 380;
+export const MIN_EDITORIAL_IMAGE_HEIGHT = 200;
+
+/**
+ * Reads the decoded pixel size of a loaded image from an `<Image onLoad>` event on every platform.
+ * - Native (iOS/Android): `nativeEvent.source.width/height`
+ * - react-native-web: `nativeEvent` is the DOM load event, so the size lives on `target.naturalWidth/naturalHeight`
+ */
+export function extractLoadedImageDimensions(event: unknown): { width: number; height: number } | null {
+  if (!event || typeof event !== 'object') return null;
+  const nativeEvent = (event as { nativeEvent?: unknown }).nativeEvent;
+  if (!nativeEvent || typeof nativeEvent !== 'object') return null;
+
+  const source = (nativeEvent as { source?: { width?: unknown; height?: unknown } }).source;
+  if (source && typeof source.width === 'number' && typeof source.height === 'number' && source.width > 0 && source.height > 0) {
+    return { width: source.width, height: source.height };
+  }
+
+  const candidates: unknown[] = [
+    (nativeEvent as { target?: unknown }).target,
+    (nativeEvent as { currentTarget?: unknown }).currentTarget,
+    (nativeEvent as { srcElement?: unknown }).srcElement
+  ];
+  for (const cand of candidates) {
+    if (cand && typeof cand === 'object') {
+      const w = (cand as { naturalWidth?: unknown }).naturalWidth;
+      const h = (cand as { naturalHeight?: unknown }).naturalHeight;
+      if (typeof w === 'number' && typeof h === 'number' && w > 0 && h > 0) {
+        return { width: w, height: h };
+      }
+    }
+  }
+  return null;
+}
+
+/** True when a decoded editorial photo is too small to be shown crisply in a full-width card. */
+export function isLowResolutionEditorialImage(width: number, height: number): boolean {
+  if (!(width > 0) || !(height > 0)) return false;
+  return width < MIN_EDITORIAL_IMAGE_WIDTH || height < MIN_EDITORIAL_IMAGE_HEIGHT;
+}
 
 const TRUSTED_MUSEUM_OR_ART_DOMAINS = [
   'artic.edu',
@@ -79,6 +128,14 @@ export function isRejectedLowResOrLogoUrl(url?: string, allowMemeSvg = false): b
     }
   }
 
+  // Amazon product thumbnails (_SL160_, _AC_US200_ …) are tiny shop icons, never editorial photos
+  if (clean.includes('media-amazon.com') || clean.includes('images-amazon.com')) {
+    const amazonSize = clean.match(/_(?:sl|ac_us|ac_sl|sx|sy|us)(\d{2,4})_/);
+    if (!amazonSize || parseInt(amazonSize[1], 10) < 600) {
+      return true;
+    }
+  }
+
   // Reject explicit tiny dimension patterns in path like /50x50/ or /100x100/ (unless iTunes mzstatic which can be upgraded)
   if (!clean.includes('mzstatic.com')) {
     const dimMatch = clean.match(/[/-](\d{2,3})x(\d{2,3})[/_.-]/);
@@ -108,7 +165,7 @@ export function isLikelyBannerOrLogoUrl(url?: string, publisher?: string, allowM
   if (
     publisher &&
     /techpresso/i.test(publisher) &&
-    (clean.includes('media.beehiiv.com') || clean.includes('beehiiv.com'))
+    (clean.includes('media.beehiiv.com') || clean.includes('beehiiv.com') || clean.includes('webflow.com'))
   ) {
     return true;
   }
@@ -181,8 +238,38 @@ export function upgradeImageResolutionUrl(url?: string, targetWidth = 1080): str
     }
 
     // 6. ZDF & ZDFheute: upgrade downsampled thumbnails to 1920x1080
-    if (upgraded.includes('zdf.de')) {
+    if (/zdf(?:heute)?\.de/.test(upgraded)) {
       upgraded = upgraded.replace(/-(768x768|1280x1280|512x512|384x216|640x360)\.jpg$/i, '-1920x1080.jpg');
+      // zdfheute asset URLs use a tilde size suffix: .../bild-100~384x216?cb=...
+      upgraded = upgraded.replace(/~(\d{2,4})x(\d{2,4})(?=$|[?#])/, (match, wStr) => {
+        return parseInt(wStr, 10) < 1280 ? '~1280x720' : match;
+      });
+    }
+
+    // 6b. Phys.org / TechXplore / MedicalXpress (b-cdn): /csz/news/tmb/ is a ~90px thumbnail, /800a/ is the 800px master
+    if (upgraded.includes('scx1.b-cdn.net') || upgraded.includes('scx2.b-cdn.net')) {
+      upgraded = upgraded.replace(/\/csz\/news\/(?:tmb|thumbnails|200|400)\//, '/csz/news/800a/');
+    }
+
+    // 6c. ArchDaily (adsttc): newsletter / thumb / medium crops → large_jpg master
+    if (upgraded.includes('images.adsttc.com')) {
+      upgraded = upgraded.replace(/\/(?:newsletter|thumb_jpg|medium_jpg|small_jpg|slideshow)\//, '/large_jpg/');
+    }
+
+    // 6d. Atlas Obscura uses signed imgproxy URLs (resizing them yields 403), so small thumbnails are
+    //     filtered by the decoded-size gate in FeedCard/Reader instead of being upscaled here.
+
+    // 6e. WordPress intermediate sizes (-300x220.webp, -360x270.png, -500x500.jpeg) → original upload.
+    //     FeedCard / Reader fall back to the raw URL automatically if a site removed its original file.
+    if (upgraded.includes('/wp-content/uploads/')) {
+      upgraded = upgraded.replace(
+        /-(\d{2,4})x(\d{2,4})(\.(?:jpe?g|png|webp|gif|avif))(?=$|[?#])/i,
+        (match, wStr, hStr, ext) => {
+          const w = parseInt(wStr, 10);
+          const h = parseInt(hStr, 10);
+          return w < 700 && h < 700 ? ext : match;
+        }
+      );
     }
 
     // 7. Generic URL query parameter upscaling (w=150, width=240, size=small, quality=50, etc.)

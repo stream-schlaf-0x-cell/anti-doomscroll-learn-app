@@ -30,7 +30,9 @@ import {
   upgradeImageResolutionUrl,
   assessEditorialImage,
   isTrustedMuseumOrArtDomain,
-  isLikelyBannerOrLogoUrl
+  isLikelyBannerOrLogoUrl,
+  extractLoadedImageDimensions,
+  isLowResolutionEditorialImage
 } from '../../core/utils/imageQuality';
 import { detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { SubchannelBadge } from './SubchannelBadge';
@@ -236,8 +238,10 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
 
   const originalUrl = item.canonicalUrl || item.sourceReferences[0]?.originalUrl;
 
+  // Curated listening tip only on evergreen/vault sound cards — never glued onto live news
+  // (e.g. a Yamaha VOCALOID product update must not get a Ram Dass meditation track attached).
   const matchedMusicTrack: MusicTrackItem | undefined =
-    item.primaryTopic === 'sound_synthesis'
+    item.primaryTopic === 'sound_synthesis' && item.contentOrigin !== 'live_ingested' && !item.id.startsWith('live-')
       ? CURATED_SOUND_MASTERS[
           Math.abs(item.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) %
             CURATED_SOUND_MASTERS.length
@@ -387,7 +391,8 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
       /\.bh__|{\s*[^}]*:|padding\s*:|background-color\s*:|in today'?s newsletter/i.test(cleanKey) ||
       /^(Begutachtete\s+Open-Access-Studie|Open-Access-Forschungsarbeit|Peer-Reviewed\s+(Open-Access|Study)|Aus\s+(der\s+)?Zeitschrift\b|Originalbeitrag\s+(veröffentlicht\s+)?bei)/i.test(
         cleanKey
-      )
+      ) ||
+      /—\s*Quell-Fundstück im Bereich|&(?:copy|amp|nbsp|quot);|^©/i.test(cleanKey)
     ) {
       return null;
     }
@@ -655,10 +660,16 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
             ]}
             resizeMode={isMemeCard || isArtCard || editorialAssessment.category === 'comic' || editorialAssessment.category === 'square_photo' ? 'contain' : 'cover'}
             onLoad={(e) => {
-              const { width: loadedW, height: loadedH } = e.nativeEvent.source;
-              if (loadedW > 0 && loadedH > 0) {
+              const dims = extractLoadedImageDimensions(e);
+              if (dims) {
+                const { width: loadedW, height: loadedH } = dims;
                 const ratio = loadedW / loadedH;
-                if (!isMemeCard && !isArtCard && !isTrustedArtImage && (loadedW < 320 || loadedH < 160 || ratio > 2.35)) {
+                if (
+                  !isMemeCard &&
+                  !isArtCard &&
+                  !isTrustedArtImage &&
+                  (isLowResolutionEditorialImage(loadedW, loadedH) || ratio > 2.35)
+                ) {
                   setImageRejected(true);
                   return;
                 }

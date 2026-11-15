@@ -1,13 +1,16 @@
 import React from 'react';
-import { View, Text, StyleSheet, TextStyle } from 'react-native';
+import { View, Text, StyleSheet, TextStyle, Linking, Platform } from 'react-native';
 import { ThemeColors } from '../theme';
 import {
   InlineToken,
   parseInlineFormatting,
-  stripMarkdownFormatting
+  stripMarkdownFormatting,
+  buildMarkdownBlocks,
+  BULLET_LINE,
+  NUMBERED_LINE
 } from '../../core/utils/markdownUtils';
 
-export { stripMarkdownFormatting, parseInlineFormatting };
+export { stripMarkdownFormatting, parseInlineFormatting, buildMarkdownBlocks };
 
 interface MarkdownContentProps {
   content: string;
@@ -15,28 +18,61 @@ interface MarkdownContentProps {
   bodyLineHeight?: number;
   colors: ThemeColors;
   style?: TextStyle;
+  /** Renders the first regular paragraph as a slightly larger magazine lede. */
+  enableLede?: boolean;
+}
+
+function openExternalUrl(url: string) {
+  try {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.open) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } else {
+      void Linking.openURL(url).catch(() => {});
+    }
+  } catch {
+    // non-fatal
+  }
 }
 
 /**
  * High-performance, native-friendly Markdown Renderer tailored for editorial readability.
- * Renders H1, H2, H3, H4, blockquotes, lists, bold, and paragraphs with magazine-grade typography.
+ * Renders H1–H4, block quotes, lists, links, bold/italic, dividers and a magazine lede.
  */
 export const MarkdownContent: React.FC<MarkdownContentProps> = ({
   content,
   bodyFontSize = 18,
   bodyLineHeight = 32,
   colors,
-  style
+  style,
+  enableLede = false
 }) => {
   if (!content || !content.trim()) {
     return null;
   }
 
-  // Split into structural blocks separated by blank lines
-  const rawBlocks = content.split(/\n\s*\n/);
+  const blocks = buildMarkdownBlocks(content);
+  let ledeRendered = !enableLede;
 
   const renderInlineTokens = (tokens: InlineToken[], baseStyle: TextStyle, keyPrefix: string) => {
     return tokens.map((token, idx) => {
+      if (token.url) {
+        const url = token.url;
+        return (
+          <Text
+            key={`${keyPrefix}-${idx}`}
+            style={{
+              color: colors.accent,
+              fontWeight: '600',
+              textDecorationLine: 'underline',
+              textDecorationColor: colors.accent
+            }}
+            onPress={() => openExternalUrl(url)}
+            accessibilityRole="link"
+          >
+            {token.text}
+          </Text>
+        );
+      }
       const tokenStyle: TextStyle = {
         fontWeight: token.bold ? '700' : baseStyle.fontWeight || '400',
         fontStyle: token.italic ? 'italic' : baseStyle.fontStyle || 'normal',
@@ -55,9 +91,11 @@ export const MarkdownContent: React.FC<MarkdownContentProps> = ({
 
   return (
     <View style={styles.container}>
-      {rawBlocks.map((block, blockIndex) => {
-        const trimmed = block.trim();
-        if (!trimmed) return null;
+      {blocks.map((trimmed, blockIndex) => {
+        // Divider
+        if (trimmed === '---') {
+          return <View key={blockIndex} style={[styles.divider, { backgroundColor: colors.borderSubtle }]} />;
+        }
 
         // Heading 1: # Title
         if (trimmed.startsWith('# ')) {
@@ -179,17 +217,18 @@ export const MarkdownContent: React.FC<MarkdownContentProps> = ({
           );
         }
 
-        // Bullet list: - or *
-        if (/^[-*]\s+/m.test(trimmed)) {
-          const items = trimmed.split('\n').filter((l) => /^[-*]\s+/.test(l.trim()));
+        const blockLines = trimmed.split('\n').map((l) => l.trim()).filter(Boolean);
+
+        // Bullet list: -, * or •
+        if (blockLines.length > 0 && blockLines.every((l) => BULLET_LINE.test(l))) {
           return (
             <View key={blockIndex} style={styles.listContainer}>
-              {items.map((item, itemIdx) => {
-                const itemText = item.trim().replace(/^[-*]\s+/, '');
+              {blockLines.map((item, itemIdx) => {
+                const itemText = item.replace(BULLET_LINE, '');
                 const tokens = parseInlineFormatting(itemText);
                 return (
                   <View key={itemIdx} style={styles.listItemRow}>
-                    <Text style={[styles.listBullet, { color: colors.accent }]}>•</Text>
+                    <Text style={[styles.listBullet, { color: colors.accent, lineHeight: bodyLineHeight }]}>•</Text>
                     <Text
                       style={[
                         styles.listItemText,
@@ -210,18 +249,17 @@ export const MarkdownContent: React.FC<MarkdownContentProps> = ({
         }
 
         // Numbered list: 1. 2.
-        if (/^\d+\.\s+/m.test(trimmed)) {
-          const items = trimmed.split('\n').filter((l) => /^\d+\.\s+/.test(l.trim()));
+        if (blockLines.length > 0 && blockLines.every((l) => NUMBERED_LINE.test(l))) {
           return (
             <View key={blockIndex} style={styles.listContainer}>
-              {items.map((item, itemIdx) => {
-                const numMatch = item.trim().match(/^(\d+)\.\s+(.*)$/);
+              {blockLines.map((item, itemIdx) => {
+                const numMatch = item.match(/^(\d+)[.)]\s+(.*)$/);
                 const num = numMatch ? numMatch[1] : `${itemIdx + 1}`;
-                const itemText = numMatch ? numMatch[2] : item.trim();
+                const itemText = numMatch ? numMatch[2] : item;
                 const tokens = parseInlineFormatting(itemText);
                 return (
                   <View key={itemIdx} style={styles.listItemRow}>
-                    <Text style={[styles.listNumber, { color: colors.accent }]}>{num}.</Text>
+                    <Text style={[styles.listNumber, { color: colors.accent, lineHeight: bodyLineHeight }]}>{num}.</Text>
                     <Text
                       style={[
                         styles.listItemText,
@@ -241,8 +279,37 @@ export const MarkdownContent: React.FC<MarkdownContentProps> = ({
           );
         }
 
-        // Regular Paragraph
-        const tokens = parseInlineFormatting(trimmed);
+        // Mixed block (paragraph lines + list lines): render line by line
+        if (blockLines.some((l) => BULLET_LINE.test(l)) && blockLines.length > 1) {
+          return (
+            <View key={blockIndex} style={styles.listContainer}>
+              {blockLines.map((line, lineIdx) => {
+                const isBullet = BULLET_LINE.test(line);
+                const tokens = parseInlineFormatting(isBullet ? line.replace(BULLET_LINE, '') : line);
+                return (
+                  <View key={lineIdx} style={isBullet ? styles.listItemRow : styles.mixedParagraphRow}>
+                    {isBullet && (
+                      <Text style={[styles.listBullet, { color: colors.accent, lineHeight: bodyLineHeight }]}>•</Text>
+                    )}
+                    <Text
+                      style={[
+                        styles.listItemText,
+                        { color: colors.textPrimary, fontSize: bodyFontSize, lineHeight: bodyLineHeight }
+                      ]}
+                    >
+                      {renderInlineTokens(tokens, { color: colors.textPrimary }, `mx-${blockIndex}-${lineIdx}`)}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          );
+        }
+
+        // Regular Paragraph (first one optionally rendered as a magazine lede)
+        const tokens = parseInlineFormatting(blockLines.join('\n'));
+        const isLede = !ledeRendered && trimmed.length >= 60;
+        if (isLede) ledeRendered = true;
         return (
           <Text
             key={blockIndex}
@@ -250,9 +317,10 @@ export const MarkdownContent: React.FC<MarkdownContentProps> = ({
               styles.paragraph,
               {
                 color: colors.textPrimary,
-                fontSize: bodyFontSize,
-                lineHeight: bodyLineHeight
+                fontSize: isLede ? bodyFontSize + 2 : bodyFontSize,
+                lineHeight: isLede ? bodyLineHeight + 3 : bodyLineHeight
               },
+              isLede && styles.lede,
               style
             ]}
           >
@@ -306,6 +374,7 @@ const styles = StyleSheet.create({
   blockquote: {
     borderLeftWidth: 3.5,
     paddingLeft: 16,
+    paddingRight: 12,
     paddingVertical: 10,
     marginVertical: 14,
     borderRadius: 4
@@ -314,22 +383,25 @@ const styles = StyleSheet.create({
     fontStyle: 'italic'
   },
   listContainer: {
-    marginVertical: 10
+    marginTop: 4,
+    marginBottom: 16
   },
   listItemRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     marginBottom: 8
   },
+  mixedParagraphRow: {
+    flexDirection: 'row',
+    marginBottom: 10
+  },
   listBullet: {
     fontSize: 18,
-    lineHeight: 28,
     marginRight: 10,
     fontWeight: '700'
   },
   listNumber: {
     fontSize: 15,
-    lineHeight: 28,
     marginRight: 8,
     fontWeight: '700'
   },
@@ -339,5 +411,15 @@ const styles = StyleSheet.create({
   paragraph: {
     marginBottom: 18,
     letterSpacing: -0.15
+  },
+  lede: {
+    fontWeight: '500',
+    marginBottom: 22
+  },
+  divider: {
+    height: 1,
+    marginVertical: 22,
+    width: '40%',
+    alignSelf: 'center'
   }
 });

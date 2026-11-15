@@ -207,11 +207,71 @@ function cleanMarkdownForSummary(text: string): string {
 }
 
 /**
+ * Detects canned template copy (source-type relevance labels, excerpt disclaimers, generic transfer prompts)
+ * so the Reader never presents it as if it were an editorial summary of the concrete article.
+ */
+export function isTemplatedEditorialText(text?: string): boolean {
+  if (!text || !text.trim()) return true;
+  const t = text.trim();
+  return (
+    /^(Gedankengang zur ethischen|Einblick in KI-Architektur|Impuls für Klangsynthese|Perspektive für Achtsamkeit|Visuelle Kultur & ästhetische|Spielerischer Perspektivwechsel|Literarischer Essay & Buch|Aktuelle Einordnung aus Wissenschaft|Relevant für Unterricht & Didaktik|Philosophische oder gesellschaftliche Gegenperspektive|Ausgewählter Beitrag aus)/i.test(t) ||
+    /^(System-Einordnung|Begriffsanalyse|Klang- & Praxisbezug|Kontemplative Einordnung|Ästhetische Betrachtung|Perspektivwechsel|Weiterführende Perspektive|Schule & Unterricht)\b/i.test(t) ||
+    /(Kompakter Quell-Hinweis \(Metadaten|Autorisierter Herausgeber-Auszug \(RSS\/API\)|— Quell-Fundstück im Bereich)/i.test(t)
+  );
+}
+
+function splitEssenceSentences(text: string): string[] {
+  return cleanMarkdownForSummary(
+    (text || '')
+      .replace(/^#{1,6}\s+.*$/gm, ' ')
+      .replace(/^\[↗[^\n]*$/gm, ' ')
+      .replace(/^\s*[-*•]\s+(.*?)([^.!?])\s*$/gm, '$1$2.')
+  )
+    .split(/(?<=[.!?])\s+(?=[A-ZÄÖÜ0-9„"“])/)
+    .map(s => s.trim())
+    .filter(s => s.length >= 40 && s.length <= 260 && /[.!]$/.test(s) && !/https?:\/\//.test(s));
+}
+
+/**
+ * Picks up to `max` information-dense sentences from the WHOLE article (not just the opening),
+ * skipping the lede (which the Reader shows right below anyway) and anything duplicating the subtitle.
+ * Returns [] for short texts that are faster to read in full than to summarise.
+ */
+export function selectEssenceSentences(item: FeedItem, max = 3): string[] {
+  const body = item.articleBody || item.feedText || item.body || '';
+  const sentences = splitEssenceSentences(body);
+  if (sentences.length < 6) return [];
+  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const exclude = new Set<string>([norm(item.subtitle || ''), norm(item.title || ''), norm(sentences[0]), norm(sentences[1] || '')]);
+  const scored = sentences
+    .map((s, idx) => {
+      let score = 0;
+      if (/\d/.test(s)) score += 2;
+      if (KEY_INSIGHT_PATTERNS.some(p => p.test(s))) score += 2;
+      if (/(weil|daher|deshalb|dadurch|jedoch|allerdings|because|therefore|however|which means)/i.test(s)) score += 1;
+      if (/^(er|sie|es|dies|das|he|she|it|they|this|these|but|aber|und|and)\b/i.test(s)) score -= 3;
+      if (s.length > 200) score -= 1;
+      return { s, idx, score };
+    })
+    .filter(x => x.idx >= 2 && !exclude.has(norm(x.s)));
+  const picked = scored
+    .sort((a, b) => b.score - a.score || a.idx - b.idx)
+    .slice(0, max)
+    .sort((a, b) => a.idx - b.idx)
+    .map(x => x.s);
+  return picked.length >= 2 ? picked : [];
+}
+
+/**
  * Synthesizes an honest, content-derived Editorial Abstract for the Reader view.
  */
 export function synthesizeEditorialAbstract(item: FeedItem): EditorialAbstract {
   const primaryTopic = item.primaryTopic || 'philosophy_ethics';
-  const rawText = cleanMarkdownForSummary(item.articleBody || item.feedText || item.body || '');
+  const rawText = cleanMarkdownForSummary(
+    (item.articleBody || item.feedText || item.body || '')
+      .replace(/^#{1,6}\s+.*$/gm, ' ')
+      .replace(/^\[↗[^\n]*$/gm, ' ')
+  );
   const sentences = rawText
     .split(/(?<=[.!?])\s+/)
     .map(s => s.trim())
