@@ -821,38 +821,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Non-fatal
       }
 
-      // Work Package 1: In-Place Version Auto-Migration for already-onboarded devices
+      // 1. Instant Cache-First Boot Hydration: pre-warm fast local stores and unlock UI immediately (<50ms)
       try {
-        await runInPlaceDataMigration(appStorage, feedRepository);
-      } catch (migErr) {
-        console.warn('In-place auto-migration skipped:', migErr);
-      }
-
-      // 1. Atomic Boot Hydration: Pre-warm seenImpressionsService, Hivemind tracks and public snapshot (bounded 1200ms)
-      // before computing the initial feed ONCE so the top viewport never reloads on startup!
-      try {
-        await Promise.race([
-          Promise.all([
-            seenImpressionsService.getSeenIds().catch(() => new Set<string>()),
-            hivemindLearningService.getTracks().catch(() => []),
-            (async () => {
-              const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(currentSnapshotUrl);
-              if (res?.success) {
-                const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
-                setSnapshotSyncInfo(syncText);
-              }
-            })().catch(() => {})
-          ]),
-          new Promise<void>(resolve => setTimeout(resolve, 1200))
+        await Promise.all([
+          seenImpressionsService.getSeenIds().catch(() => new Set<string>()),
+          hivemindLearningService.getTracks().catch(() => [])
         ]);
       } catch {
         // Non-blocking fallback
       }
 
-      // 2. Single atomic feed computation & UI unlock
       await scheduleFeedRecompute(loadedProfile, loadedInteractions, initialEdition);
       setStartupState({ status: 'ready' });
       setIsHydrated(true);
+
+      // 2. Non-blocking post-hydration migration & public snapshot sync (recomputes once only if items changed)
+      void (async () => {
+        const beforeCount = feedRepository.getAllItems ? feedRepository.getAllItems().length : 0;
+        let snapshotInserted = 0;
+        let migMutated = false;
+
+        try {
+          const migResult = await runInPlaceDataMigration(appStorage, feedRepository);
+          if (migResult && typeof migResult === 'object' && ('migrated' in migResult || 'updatedCount' in migResult)) {
+            const m = migResult as { migrated?: boolean; updatedCount?: number };
+            if (m.migrated || (m.updatedCount ?? 0) > 0) {
+              migMutated = true;
+            }
+          }
+        } catch (migErr) {
+          console.warn('In-place auto-migration skipped:', migErr);
+        }
+
+        try {
+          await Promise.race([
+            (async () => {
+              const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(currentSnapshotUrl);
+              if (res?.success) {
+                const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+                setSnapshotSyncInfo(syncText);
+                snapshotInserted = Number(res.insertedCount || 0);
+              }
+            })().catch(() => {}),
+            new Promise<void>(resolve => setTimeout(resolve, 1200))
+          ]);
+        } catch {
+          // Non-blocking fallback
+        }
+
+        const afterCount = feedRepository.getAllItems ? feedRepository.getAllItems().length : beforeCount;
+        if (migMutated || snapshotInserted > 0 || afterCount !== beforeCount) {
+          await scheduleFeedRecompute(
+            latestProfileRef.current,
+            latestInteractionsRef.current,
+            selectedEditionTypeRef.current
+          );
+        }
+      })();
 
       // 3. Autonomous AI Editorial Newsroom Worker (3s after boot; stores silently in repository without recomputing visible stream)
       setTimeout(() => {

@@ -398,8 +398,8 @@ export class SubchannelFlourishService {
             highResImageUrl: imageUrl,
             aestheticImpulse: `Langsames Sehen: Wie lenken Licht, Farbe und Komposition in „${title}“ den Blick?`
           },
-          upvotesCount: 18,
-          awardsCount: { gold: 1, brain: 1, spark: 2 },
+          upvotesCount: 0,
+          awardsCount: { gold: 0, brain: 0, spark: 0 },
           sourceTrustLevel: 'museum_collection',
           sourceDomain: 'artic.edu',
           sourceBroadcasterName: 'Art Institute of Chicago',
@@ -879,8 +879,8 @@ export class SubchannelFlourishService {
           humanSource: bp.publisher,
           counterPerspective: bp.counter
         },
-        upvotesCount: 14 + idx * 3,
-        awardsCount: { gold: idx % 3 === 0 ? 1 : 0, brain: 1, spark: 1 },
+        upvotesCount: 0,
+        awardsCount: { gold: 0, brain: 0, spark: 0 },
         sourceTrustLevel: 'deep_essay',
         sourceDomain: bp.domain,
         sourceBroadcasterName: bp.publisher,

@@ -9,7 +9,11 @@ import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPi
 import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
 import { parseSnapshotPayload } from '../feed/snapshotPayload';
 import { getSourceKind } from '../ingestion/sourceHealth';
-import { classifyTopicDeterministically, isSupportedFeedLanguage } from '../enrichment/batchEnricher';
+import {
+  classifyTopicDeterministically,
+  isIncomprehensibleWetLabPaper,
+  isSupportedFeedLanguage
+} from '../enrichment/batchEnricher';
 
 let staticPipelineItems: FeedItem[] = [];
 if (typeof process !== 'undefined' && process.versions?.node) {
@@ -84,6 +88,31 @@ export function mapTagesschauRessortToTopic(ressort: string, title = '', content
  * Builds substantive, non-boilerplate editorial card & article copy for Hacker News discoveries
  * so community tech/science findings satisfy Atmen's quality contract out of the box.
  */
+/**
+ * Filters out cryptic Hacker News aggregator stubs (e.g. bare version releases like "Ggml v1.0.0",
+ * micro tool/terminal release notes, or dense wet-lab molecular biology papers) that lack
+ * readable intellectual depth for an editorial discovery stream.
+ */
+export function isEditorialQualityHackerNewsStory(title: string, domain = ''): boolean {
+  const cleanTitle = (title || '').replace(/\s+/g, ' ').trim();
+  if (cleanTitle.length < 24) return false;
+  const words = cleanTitle.split(/\s+/).filter(Boolean);
+  if (words.length < 4) return false;
+
+  if (/^(?:show|ask|tell)\s+hn:\s*v?\d/i.test(cleanTitle)) return false;
+  if (cleanTitle.length < 60 && /\bv?\d+\.\d+(?:\.\d+)?\b/i.test(cleanTitle)) return false;
+  if (/\b(?:release\s+notes?|changelog|hotfix|patch\s+notes?)\b/i.test(cleanTitle) && cleanTitle.length < 70) {
+    return false;
+  }
+  if (/\b(?:terminal borders?|dotfiles|tmux\b|neovim plugin|crate\s+v?\d|segfault)\b/i.test(cleanTitle)) {
+    return false;
+  }
+  if (isIncomprehensibleWetLabPaper(cleanTitle, domain)) {
+    return false;
+  }
+  return true;
+}
+
 export function buildSubstantiveHackerNewsCopy(params: {
   title: string;
   domain: string;
@@ -111,18 +140,18 @@ export function buildSubstantiveHackerNewsCopy(params: {
     };
   }
 
-  const resonanceNote =
+  const engagementContext =
     params.commentsCount >= 80
-      ? `In der internationalen Fachdebatte zählt der Beitrag mit ${params.points} Upvotes und ${params.commentsCount} tiefgehenden Kommentaren zu den meistdiskutierten Einordnungen des Tages.`
-      : `Die technische und wissenschaftliche Community hebt den Bericht von ${params.domain} mit ${params.points} Punkten und ${params.commentsCount} Kommentaren hervor.`;
+      ? `In der Fachcommunity löst diese Veröffentlichung (${params.domain}) eine breite Debatte mit ${params.commentsCount} Diskussionsbeiträgen aus.`
+      : `Beitrag aus der internationalen Wissens- und Technikdebatte bei ${params.domain} mit ${params.commentsCount} Diskussionsbeiträgen.`;
 
-  const feedText = `Originalbeitrag bei ${params.domain} zum Thema „${cleanTitle}“. ${resonanceNote} Der Fokus liegt auf den strukturellen Hintergründen, technischen Grundlagen und langfristigen Konsequenzen hinter der Entwicklung.`;
-  const articleBody = `${cleanTitle}\n\nVeröffentlicht bei: ${params.domain}\n${resonanceNote}\n\nQuellen-Kontext: Atmen kuratiert diesen Beitrag aufgrund der hohen fachlichen Resonanz als Anstoß zur vertieften Lektüre im Originalartikel (${params.targetUrl}) sowie den technischen Gegenargumenten in den Community-Kommentaren (${params.hnUrl}).`;
+  const feedText = `Aktuelle Analyse bei ${params.domain} zu „${cleanTitle}“. ${engagementContext} Im Originalartikel werden Hintergründe, Einordnung und weiterführende Perspektiven im Zusammenhang entfaltet.`;
+  const articleBody = `${cleanTitle}\n\nQuelle: ${params.domain}\n${engagementContext}\n\nLesekontext: Dieser Beitrag verbindet Einordnung mit kontroversen Sichtweisen aus der Originalpublikation (${params.targetUrl}) sowie vertiefenden Argumenten der Fachdiskussion (${params.hnUrl}).`;
 
   return {
     feedText,
     articleBody,
-    keyInsight: `${params.domain} liefert mit ${params.points} Community-Punkten einen wichtigen Impuls zu „${cleanTitle.slice(0, 120)}“.`
+    keyInsight: `${params.domain}: Weiterführende Analyse und Fachdebatte zu „${cleanTitle.slice(0, 120)}“.`
   };
 }
 
@@ -513,6 +542,8 @@ export class ContinuousLiveNewsService {
         const points = typeof hit.points === 'number' ? hit.points : 0;
         const commentsCount = typeof hit.num_comments === 'number' ? hit.num_comments : 0;
 
+        if (!isEditorialQualityHackerNewsStory(hit.title, domain)) continue;
+
         const copy = buildSubstantiveHackerNewsCopy({
           title: hit.title,
           domain,
@@ -522,8 +553,8 @@ export class ContinuousLiveNewsService {
           commentsCount,
           storyText: typeof hit.story_text === 'string' ? hit.story_text : undefined
         });
-        const primaryTopic = classifyTopicDeterministically(hit.title, `${domain} ${copy.feedText}`, 'ai_apple');
-        const subtitle = `${domain} • ${points} HN-Punkte • ${commentsCount} Kommentare`;
+        const primaryTopic = classifyTopicDeterministically(hit.title, domain, 'ai_apple');
+        const subtitle = '';
         const feedText = copy.feedText;
         const articleBody = copy.articleBody;
 
@@ -794,12 +825,10 @@ export class ContinuousLiveNewsService {
               const post = child?.data;
               if (!post?.title || post.over_18) continue;
               const selfText = (post.selftext || '').trim();
+              if (selfText.length < 160) continue;
               const postUrl = `https://reddit.com${post.permalink}`;
               const extUrl = post.url && !post.url.includes('reddit.com') ? post.url : postUrl;
-              const bodyText =
-                selfText.length >= 160
-                  ? selfText
-                  : `Beitrag aus der Community r/${sub} zu „${post.title}“ mit ${post.score || 0} Upvotes und ${post.num_comments || 0} Diskussionsbeiträgen. Die Debatte beleuchtet Hintergründe, Primärquellen und kontroverse Argumente.`;
+              const bodyText = selfText;
               const pubAt = post.created_utc ? new Date(post.created_utc * 1000).toISOString() : nowIso;
               const primaryTopic = classifyTopicDeterministically(post.title, bodyText, 'philosophy_ethics');
               redditItems.push({
@@ -807,7 +836,7 @@ export class ContinuousLiveNewsService {
                 type: 'perspective',
                 format: 'perspective_disagreement',
                 title: post.title,
-                subtitle: `r/${sub} • ${post.score || 0} Upvotes (${post.num_comments || 0} Beiträge)`,
+                subtitle: '',
                 feedText: bodyText.length > 420 ? `${bodyText.slice(0, 417)}…` : bodyText,
                 articleBody: bodyText,
                 body: bodyText.length > 420 ? `${bodyText.slice(0, 417)}…` : bodyText,

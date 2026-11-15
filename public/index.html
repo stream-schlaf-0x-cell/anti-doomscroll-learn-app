@@ -3,6 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <!-- viewport-fit=cover enables edge-to-edge rendering into the iPhone notch & dynamic island -->
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>%WEB_TITLE%</title>
@@ -63,5 +66,48 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
+    <script>
+      (function () {
+        var BUNDLE_RE = /_expo\/static\/js\/web\/([^"'\s>?]+\.js)/;
+        var lastCheck = 0;
+        function getCurrentBundle() {
+          var scripts = document.scripts || [];
+          for (var i = 0; i < scripts.length; i++) {
+            var m = (scripts[i].src || '').match(BUNDLE_RE);
+            if (m && m[1]) return m[1];
+          }
+          return null;
+        }
+        function checkForAppUpdate() {
+          var now = Date.now();
+          if (now - lastCheck < 45000) return;
+          var current = getCurrentBundle();
+          if (!current) return;
+          lastCheck = now;
+          fetch('./index.html?_v=' + now, { cache: 'no-store' })
+            .then(function (res) { return res.ok ? res.text() : ''; })
+            .then(function (html) {
+              if (!html) return;
+              var m = html.match(BUNDLE_RE);
+              var latest = m && m[1];
+              if (latest && latest !== current) {
+                try {
+                  if (sessionStorage.getItem('atem_updated_bundle') === latest) return;
+                  sessionStorage.setItem('atem_updated_bundle', latest);
+                } catch (e) {}
+                window.location.reload();
+              }
+            })
+            .catch(function () {});
+        }
+        setTimeout(checkForAppUpdate, 1500);
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') checkForAppUpdate();
+        });
+        window.addEventListener('pageshow', function (ev) {
+          if (ev.persisted) checkForAppUpdate();
+        });
+      })();
+    </script>
   </body>
 </html>

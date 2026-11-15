@@ -5035,6 +5035,19 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "defaultAuthor": "Lobsters Law",
     "language": "en",
     "isChallengingPerspective": true
+  },
+  {
+    "id": "buddhistdoor-global",
+    "name": "Buddhistdoor Global",
+    "url": "https://www.buddhistdoor.net/feed/",
+    "primaryTopic": "contemplation_mind",
+    "topics": [
+      "contemplation_mind",
+      "philosophy_ethics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Buddhistdoor Global",
+    "language": "en"
   }
 ];
 

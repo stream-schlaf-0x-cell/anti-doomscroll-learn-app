@@ -4,7 +4,8 @@ import {
   TopicTag,
   ReadingInteraction,
   PersonalGoal,
-  DayEditionType
+  DayEditionType,
+  TOPIC_SPACE_MAP
 } from './types';
 import { SeenImpressionRecord } from '../data/seenImpressionsService';
 import { isSupportedFeedLanguage, IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX } from '../enrichment/batchEnricher';
@@ -638,29 +639,115 @@ export function isArtShowcaseItem(item: Pick<FeedItem, 'format' | 'primaryTopic'
   );
 }
 
+export function isDailyDigestNewsletter(
+  item: Pick<FeedItem, 'id' | 'sourceReferences' | 'sourceBroadcasterName'>
+): boolean {
+  const pub = `${item.id || ''} ${item.sourceBroadcasterName || ''} ${item.sourceReferences?.[0]?.publisher || ''}`.toLowerCase();
+  return /\b(techpresso|tldr|ben'?s\s*bites|bens-bites|rundown\s*ai|import\s*ai|ahead\s*of\s*ai)\b/i.test(pub);
+}
+
+function getDailyDigestPublisherKey(
+  item: Pick<FeedItem, 'id' | 'sourceReferences' | 'sourceBroadcasterName'>
+): string {
+  const pub = `${item.id || ''} ${item.sourceBroadcasterName || ''} ${item.sourceReferences?.[0]?.publisher || ''}`.toLowerCase();
+  if (/techpresso/.test(pub)) return 'techpresso';
+  if (/tldr/.test(pub)) return 'tldr';
+  if (/ben'?s\s*bites|bens-bites/.test(pub)) return 'bens-bites';
+  if (/rundown\s*ai/.test(pub)) return 'rundown-ai';
+  if (/import\s*ai/.test(pub)) return 'import-ai';
+  if (/ahead\s*of\s*ai/.test(pub)) return 'ahead-of-ai';
+  return getNormalizedPublisherKey(item as FeedItem);
+}
+
 /**
- * Hard Sliding-Window Diversity & Anti-ARD Filter (`enforceCuratedStreamDiversity`):
- * - Max 1 ARD/Tagesschau item per 10 cards (<= 10% of the resulting stream).
- * - Never two items from the same domain within 4 cards of each other (minimum index gap >= 4).
- * - Museum & Artwork diversity in mixed streams: prevents museum/art_showcase clusters
- *   from crowding out essays and news (min 4 cards apart, max ~12% in mixed feeds).
+ * Keeps at most 1 newest issue (<= maxAgeDays old) per daily digest newsletter publisher.
  */
-export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T[] {
-  if (items.length <= 6) {
-    return enforceArdsSpacing(items, 7);
+export function dedupeDailyDigestNewsletters<T extends FeedItem>(
+  items: T[],
+  maxAgeDays = 7
+): T[] {
+  const nowMs = Date.now();
+  const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+  const newestByDigest = new Map<string, { item: T; timeMs: number; idx: number }>();
+
+  items.forEach((item, idx) => {
+    if (!isDailyDigestNewsletter(item)) return;
+    const rawTime = item.publishedAt ? new Date(item.publishedAt).getTime() : NaN;
+    const timeMs = isNaN(rawTime) ? nowMs : rawTime;
+    if (!isNaN(rawTime) && (nowMs - rawTime) > maxAgeMs) {
+      return;
+    }
+    const key = getDailyDigestPublisherKey(item);
+    const prev = newestByDigest.get(key);
+    if (!prev || timeMs > prev.timeMs) {
+      newestByDigest.set(key, { item, timeMs, idx });
+    }
+  });
+
+  const winningIds = new Set<string>();
+  for (const entry of newestByDigest.values()) {
+    winningIds.add(entry.item.id);
   }
 
-  const nonArdTotal = items.filter(i => !isArdSource(i)).length;
-  // Guarantee ARD <= 10% of the final stream: ARD / (nonArd + ARD) <= 0.10 => ARD <= floor(nonArd / 9)
-  const maxArdAllowed = Math.max(0, Math.floor(nonArdTotal / 9));
+  return items.filter(item => !isDailyDigestNewsletter(item) || winningIds.has(item.id));
+}
 
-  const nonArtTotal = items.filter(i => !isArtShowcaseItem(i)).length;
-  const enforceMixedArtCap = nonArtTotal >= items.length * 0.45 && items.length >= 10;
+export function getEffectiveSpaceHandle(
+  item: Pick<FeedItem, 'space' | 'primaryTopic'>
+): string {
+  const mapped = TOPIC_SPACE_MAP[item.primaryTopic as TopicTag]?.space;
+  const rawSpace = (item.space || '').trim().toLowerCase();
+  if (!rawSpace) {
+    return (mapped || `c/${item.primaryTopic}`).toLowerCase();
+  }
+  if (
+    (rawSpace === 'c/dialektik' || rawSpace === 'c/philosophie') &&
+    item.primaryTopic &&
+    item.primaryTopic !== 'philosophy_ethics' &&
+    mapped
+  ) {
+    return mapped.toLowerCase();
+  }
+  return rawSpace;
+}
+
+export function isAggregatorItem(
+  item: Pick<FeedItem, 'id' | 'sourceReferences' | 'sourceBroadcasterName'>
+): boolean {
+  const pub = `${item.sourceBroadcasterName || ''} ${item.sourceReferences?.[0]?.publisher || ''}`.toLowerCase();
+  return (
+    /^(?:openweb-)?(?:hn|reddit)-/i.test(item.id || '') ||
+    /\((?:via\s+)?(?:hn|hacker news|reddit)\)|^r\//i.test(pub)
+  );
+}
+
+/**
+ * Hard Sliding-Window Diversity & Anti-ARD Filter (`enforceCuratedStreamDiversity`):
+ * - Max 1 newest issue (<= 7d) per daily digest newsletter publisher.
+ * - Strictly no consecutive cards from the same space (`c/...`) when multi-space candidates exist.
+ * - Aggregators (`HN` / `Reddit`) spaced by >= 3 intervening cards when alternatives exist.
+ * - Max 1 ARD/Tagesschau item per 10 cards (<= 10% of the resulting stream).
+ * - Never two items from the same domain within 4 cards of each other (minimum index gap >= 4).
+ * - Museum & Artwork diversity in mixed streams.
+ */
+export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T[] {
+  const deduped = dedupeDailyDigestNewsletters(items, 7);
+  if (deduped.length <= 2) {
+    return deduped;
+  }
+
+  const enforceArdCap = deduped.length > 6;
+  const nonArdTotal = deduped.filter(i => !isArdSource(i)).length;
+  // Guarantee ARD <= 10% of the final stream: ARD / (nonArd + ARD) <= 0.10 => ARD <= floor(nonArd / 9)
+  const maxArdAllowed = enforceArdCap ? Math.max(0, Math.floor(nonArdTotal / 9)) : deduped.length;
+
+  const nonArtTotal = deduped.filter(i => !isArtShowcaseItem(i)).length;
+  const enforceMixedArtCap = nonArtTotal >= deduped.length * 0.45 && deduped.length >= 10;
   const maxArtAllowed = enforceMixedArtCap
     ? Math.max(2, Math.floor(nonArtTotal / 7))
-    : items.length;
+    : deduped.length;
 
-  const pool = [...items];
+  const pool = [...deduped];
   const result: T[] = [];
   let ardPlaced = 0;
   let artPlaced = 0;
@@ -670,17 +757,28 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
     const recent9 = result.slice(-9);
     const recent4 = result.slice(-4); // at least 4 intervening cards => >= 5 card gap for artworks
     const recent3 = result.slice(-3); // 3 intervening cards => index difference >= 4
+    const lastSpace = result.length > 0 ? getEffectiveSpaceHandle(result[result.length - 1]) : null;
     const ardInRecent9 = recent9.some(x => isArdSource(x));
     const artInRecent4 = recent4.some(x => isArtShowcaseItem(x));
+    const aggInRecent3 = recent3.some(x => isAggregatorItem(x));
+    const isNonVault = (x: T) => !x.isStaticFallback && !x.id.startsWith('vault-gem-');
     const hasNonArtLeft = pool.some(x => !isArtShowcaseItem(x));
+    const hasAltNonVaultSpaceLeft = lastSpace
+      ? pool.some(x => isNonVault(x) && getEffectiveSpaceHandle(x) !== lastSpace)
+      : false;
+    const hasAltAnySpaceLeft = lastSpace
+      ? pool.some(x => getEffectiveSpaceHandle(x) !== lastSpace)
+      : false;
+    const hasNonAggLeft = aggInRecent3 ? pool.some(x => !isAggregatorItem(x)) : false;
 
     for (let i = 0; i < pool.length; i++) {
       const cand = pool[i];
       const candIsArd = isArdSource(cand);
       const candIsArt = isArtShowcaseItem(cand);
+      const candIsVaultOrStatic = !isNonVault(cand);
 
       if (candIsArd) {
-        if (ardPlaced >= maxArdAllowed || ardInRecent9) {
+        if (ardPlaced >= maxArdAllowed || (enforceArdCap && ardInRecent9)) {
           continue;
         }
       }
@@ -691,9 +789,18 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
         }
       }
 
+      const relevantAltSpaceLeft = candIsVaultOrStatic ? hasAltAnySpaceLeft : hasAltNonVaultSpaceLeft;
+      if (lastSpace && relevantAltSpaceLeft && getEffectiveSpaceHandle(cand) === lastSpace) {
+        continue;
+      }
+
+      if (aggInRecent3 && hasNonAggLeft && isAggregatorItem(cand)) {
+        continue;
+      }
+
       const domKey = getDomainDiversityKey(cand);
       const domainCollisionIn4 = recent3.some(x => getDomainDiversityKey(x) === domKey);
-      if (domainCollisionIn4) {
+      if (domainCollisionIn4 && (enforceArdCap || pool.some(x => !recent3.some(r => getDomainDiversityKey(r) === getDomainDiversityKey(x))))) {
         continue;
       }
 
@@ -702,7 +809,7 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
     }
 
     if (pickedIdx === -1) {
-      // No remaining candidate can be placed without violating diversity constraints
+      // No remaining candidate can be placed without violating strict diversity constraints
       break;
     }
 
@@ -717,16 +824,18 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
   }
 
   // Final safety check: ensure ardPlaced / result.length <= 0.10
-  while (result.length > 0) {
-    const currentArdCount = result.filter(i => isArdSource(i)).length;
-    if (currentArdCount / result.length <= 0.100001) {
-      break;
-    }
-    // Remove the last ARD item if truncated tail pushed ratio above 10%
-    for (let k = result.length - 1; k >= 0; k--) {
-      if (isArdSource(result[k])) {
-        result.splice(k, 1);
+  if (enforceArdCap) {
+    while (result.length > 0) {
+      const currentArdCount = result.filter(i => isArdSource(i)).length;
+      if (currentArdCount / result.length <= 0.100001) {
         break;
+      }
+      // Remove the last ARD item if truncated tail pushed ratio above 10%
+      for (let k = result.length - 1; k >= 0; k--) {
+        if (isArdSource(result[k])) {
+          result.splice(k, 1);
+          break;
+        }
       }
     }
   }
@@ -761,10 +870,11 @@ export function rankBloomScrollFeed(
 ): ScoredFeedItem[] {
   if (items.length <= 2) return [...items];
 
-  // Deduplicate input by canonicalUrl or id
+  // Pre-filter daily digest newsletters (max 1 newest issue <= 7d per publisher) & deduplicate by id
+  const freshDigests = dedupeDailyDigestNewsletters(items, 7);
   const seenKeys = new Set<string>();
   const remaining: ScoredFeedItem[] = [];
-  for (const item of items) {
+  for (const item of freshDigests) {
     const key = item.id;
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
@@ -785,11 +895,14 @@ export function rankBloomScrollFeed(
     const lastCard = pos > 0 ? selected[pos - 1] : null;
     const secondLastCard = pos > 1 ? selected[pos - 2] : null;
 
-    // Count publishers in the last 30 cards
+    // Count publishers & spaces in the last 30 cards
     const pubCounts30 = new Map<string, number>();
+    const spaceCounts30 = new Map<string, number>();
     for (const s of window30) {
       const pk = getNormalizedPublisherKey(s);
       pubCounts30.set(pk, (pubCounts30.get(pk) || 0) + 1);
+      const sk = getEffectiveSpaceHandle(s);
+      spaceCounts30.set(sk, (spaceCounts30.get(sk) || 0) + 1);
     }
 
     // Count topics in recent 6-card window & 30-card window
@@ -811,8 +924,10 @@ export function rankBloomScrollFeed(
 
     const lastRhythm = lastCard ? getCardRhythmFormat(lastCard) : null;
     const lastPub = lastCard ? getNormalizedPublisherKey(lastCard) : null;
+    const lastSpace = lastCard ? getEffectiveSpaceHandle(lastCard) : null;
     const secondLastPub = secondLastCard ? getNormalizedPublisherKey(secondLastCard) : null;
     const recent3Domains = selected.slice(-3).map(s => getDomainDiversityKey(s));
+    const recent3HasAggregator = selected.slice(-3).some(s => isAggregatorItem(s));
     const recent9HasArd = selected.slice(-9).some(s => isArdSource(s));
 
     let bestIdx = 0;
@@ -848,14 +963,30 @@ export function rankBloomScrollFeed(
       const cand = remaining[i];
       const pubKey = getNormalizedPublisherKey(cand);
       const domKey = getDomainDiversityKey(cand);
+      const candSpace = getEffectiveSpaceHandle(cand);
       const pubCountIn30 = pubCounts30.get(pubKey) || 0;
+      const spaceCountIn30 = spaceCounts30.get(candSpace) || 0;
       const topicCountIn6 = topicCounts6.get(cand.primaryTopic) || 0;
       const topicCountIn30 = topicCounts30.get(cand.primaryTopic) || 0;
       const candRhythm = getCardRhythmFormat(cand);
       const isCandArd = isArdSource(cand);
+      const isCandAgg = isAggregatorItem(cand);
       const isLastArd = lastCard ? isArdSource(lastCard) : false;
 
       let utility = cand.score || 0.7;
+
+      // 0. Main-feed choreography: strictly avoid consecutive identical space & cap aggregators
+      if (lastSpace && candSpace === lastSpace) {
+        utility -= 300.0;
+      }
+      if (isCandAgg && recent3HasAggregator) {
+        utility -= 220.0;
+      }
+      if (spaceCountIn30 === 0) {
+        utility += 0.85;
+      } else if (spaceCountIn30 >= 4) {
+        utility -= 2.2;
+      }
 
       // 1. Strict ARD Cap: Max 10% (at most 1 per 10 cards), NEVER consecutive
       if (isCandArd) {
@@ -876,7 +1007,7 @@ export function rankBloomScrollFeed(
         utility -= 80.0;
       }
 
-      // Publisher Diversity for other sources
+      // Publisher Diversity & <= 2 per 30-card publisher cap
       if (pubKey === lastPub) {
         utility -= 15.0; // Never repeat same publisher back-to-back if avoidable
       } else if (pubKey === secondLastPub) {
@@ -886,12 +1017,8 @@ export function rankBloomScrollFeed(
         utility += 0.52; // Strong bonus for bringing a fresh voice
       } else if (pubCountIn30 === 1) {
         utility += 0.15;
-      } else if (pubCountIn30 === 2) {
-        utility -= 0.35;
-      } else if (pubCountIn30 === 3) {
-        utility -= 1.20;
-      } else if (pubCountIn30 >= 4) {
-        utility -= 6.0;
+      } else if (pubCountIn30 >= 2) {
+        utility -= 80.0; // Strictly cap normal publishers at <= 2 per 30 cards
       }
 
       // Balancing international & quality source boost (DLF, ZEIT, Spiegel, Guardian, Politico, Eurozine, etc.)
@@ -1097,10 +1224,14 @@ export function interleaveSerendipitySlot(
     }
 
     // Look ahead for a high-quality mind-expanding unseen item outside dominantTop2Topics and recentTopics
+    const prevSpace = slotIdx > 0 ? getEffectiveSpaceHandle(result[slotIdx - 1]) : null;
+    const nextSpace = slotIdx < result.length ? getEffectiveSpaceHandle(result[slotIdx]) : null;
     let swapCandidateIdx = -1;
     for (let j = slotIdx + 1; j < result.length; j++) {
       const cand = result[j];
       if (!isEligibleSerendipityCandidate(cand)) continue;
+      const candSpace = getEffectiveSpaceHandle(cand);
+      if (candSpace === prevSpace || candSpace === nextSpace) continue;
       const score = cand.curationScore ?? 7.8;
       const isSerendipitousFormat =
         cand.format === 'surprising_connection' ||
@@ -1120,13 +1251,28 @@ export function interleaveSerendipitySlot(
       }
     }
 
-    // Fallback: any eligible unseen item with score >= 7.5 not in recentTopics
+    // Fallback 1: any eligible unseen item with score >= 7.5 not in recentTopics avoiding space collision
+    if (swapCandidateIdx === -1) {
+      for (let j = slotIdx + 1; j < result.length; j++) {
+        const cand = result[j];
+        if (!isEligibleSerendipityCandidate(cand)) continue;
+        const candSpace = getEffectiveSpaceHandle(cand);
+        if (candSpace === prevSpace || candSpace === nextSpace) continue;
+        const score = cand.curationScore ?? 7.8;
+        if (score >= 7.5 && !recentTopics.has(cand.primaryTopic)) {
+          swapCandidateIdx = j;
+          break;
+        }
+      }
+    }
+
+    // Fallback 2: if no space-distinct candidate exists, still place eligible serendipity outside dominantTop2/recentTopics
     if (swapCandidateIdx === -1) {
       for (let j = slotIdx + 1; j < result.length; j++) {
         const cand = result[j];
         if (!isEligibleSerendipityCandidate(cand)) continue;
         const score = cand.curationScore ?? 7.8;
-        if (score >= 7.5 && !recentTopics.has(cand.primaryTopic)) {
+        if (score >= 7.5 && !dominantTop2Topics.has(cand.primaryTopic) && !recentTopics.has(cand.primaryTopic)) {
           swapCandidateIdx = j;
           break;
         }
@@ -2250,4 +2396,13 @@ export function computeOptimisticVoteState<T extends FeedItem>(
     nextItems: changed ? nextItems : items,
     deltaUpvotes
   };
+}
+
+/**
+ * Formats the personal vote pill label without fake or confusing external upvote numbers.
+ */
+export function formatPersonalVoteLabel(voteScore: number): string {
+  if (voteScore > 0) return '+1';
+  if (voteScore < 0) return '-1';
+  return 'Vote';
 }

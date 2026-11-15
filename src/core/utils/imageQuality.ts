@@ -26,7 +26,16 @@ const REJECTED_IMAGE_PATTERNS = [
   'blank.gif',
   'images.unsplash.com',
   's.w.org/images/core/emoji',
-  'wp-includes/images/smilies'
+  'wp-includes/images/smilies',
+  'techpresso',
+  'wordmark',
+  'masthead',
+  'email-header',
+  'email_header',
+  'newsletter-header',
+  'newsletter_header',
+  'top-banner',
+  'header-banner'
 ];
 
 const TRUSTED_MUSEUM_OR_ART_DOMAINS = [
@@ -80,6 +89,32 @@ export function isRejectedLowResOrLogoUrl(url?: string, allowMemeSvg = false): b
         return true;
       }
     }
+  }
+
+  return false;
+}
+
+/**
+ * Detects generic newsletter masthead banners, Beehiiv/Substack logos, or wide header graphics
+ * that crop poorly inside standard editorial card frames.
+ */
+export function isLikelyBannerOrLogoUrl(url?: string, publisher?: string, allowMemeSvg = false): boolean {
+  if (!url || typeof url !== 'string') return true;
+  if (isRejectedLowResOrLogoUrl(url, allowMemeSvg)) return true;
+
+  const clean = url.trim().toLowerCase();
+  if (isTrustedMuseumOrArtDomain(clean)) return false;
+
+  if (
+    publisher &&
+    /techpresso/i.test(publisher) &&
+    (clean.includes('media.beehiiv.com') || clean.includes('beehiiv.com'))
+  ) {
+    return true;
+  }
+
+  if (/(?:header|banner|masthead|wordmark|logo)[-_.]|(?:[-_.]banner\b)/i.test(clean)) {
+    return true;
   }
 
   return false;
@@ -252,12 +287,12 @@ export function assessEditorialImage(
     url.toLowerCase().includes('smbc-comics.com')
   );
 
-  if (isRejectedLowResOrLogoUrl(url, isComicOrMeme)) {
+  if (isRejectedLowResOrLogoUrl(url, isComicOrMeme) || (!isComicOrMeme && isLikelyBannerOrLogoUrl(url, undefined, isComicOrMeme))) {
     return {
       isValid: false,
       category: 'suppressed',
       objectPosition: 'center center',
-      reason: 'Logo, Favicon, Platzhalter-SVG oder Tracking-Pixel verworfen'
+      reason: 'Logo, Newsletter-Banner, Platzhalter-SVG oder Tracking-Pixel verworfen'
     };
   }
 

@@ -770,7 +770,7 @@ describe('Masterplan 1000%-Reparatur: Alle 6 Säulen', () => {
 
     const res = await runInPlaceDataMigration(storage, repo);
     assert.equal(res.migrated, true);
-    assert.equal(res.version, '2026-11-13-v10.0-heute-news-images-clean');
+    assert.equal(res.version, CURRENT_DATA_MIGRATION_VERSION);
 
     for (const key of ['@atem:dynamic_items:v1', '@atem:persistent_articles:v1', '@atem:feed_items:v1']) {
       const parsed: FeedItem[] = JSON.parse((await storage.getItem(key)) || '[]');

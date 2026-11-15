@@ -1,4 +1,4 @@
-import { FeedItem, TopicTag, TopicTagSchema, SocraticSalonPerspectives } from '../domain/types';
+import { FeedItem, TopicTag, TopicTagSchema, TOPIC_SPACE_MAP, SocraticSalonPerspectives } from '../domain/types';
 import { detectChannelArchetype, ChannelArchetype } from '../ingestion/subchannelFlourishService';
 import {
   callAiModel,
@@ -20,7 +20,11 @@ import {
   getEffectiveBudgetCeilingEur
 } from './ledger';
 import { synthesizeDidacticTransfer } from '../synthesis/backgroundResearchPipeline';
-import { upgradeImageResolutionUrl, isRejectedLowResOrLogoUrl } from '../utils/imageQuality';
+import {
+  upgradeImageResolutionUrl,
+  isRejectedLowResOrLogoUrl,
+  isLikelyBannerOrLogoUrl
+} from '../utils/imageQuality';
 import { extractCleanArticleFromHtml, enrichStubItemWithFulltext } from '../ingestion/webContentExtractor';
 export { upgradeImageResolutionUrl, extractCleanArticleFromHtml, enrichStubItemWithFulltext };
 
@@ -512,6 +516,14 @@ export function isCelebrityFluff(title: string): boolean {
 export function stripPublisherBoilerplate(raw: string, title?: string): string {
   if (!raw || typeof raw !== 'string') return '';
   let text = raw
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/([.#][a-zA-Z0-9_-]+(?:\s*,\s*[.#]?[a-zA-Z0-9_-]+)*\s*\{[^}]*\}\s*)+/g, ' ')
+    .replace(/\.bh__[a-zA-Z0-9_-]+[^\n.]*/gi, ' ')
+    .replace(/(?:^|\n)\s*(?:In today['’]s newsletter|View in browser|Read online)\s*:?\s*/gi, '\n')
+    .replace(/Originalbeitrag bei [^\n]{1,120}?zum Thema [„"'][^“"']+[“"']\.(?:\s+|$)/gi, '')
+    .replace(/(?:Die technische und wissenschaftliche Community hebt den Bericht|In der internationalen Fachdebatte zählt der Beitrag)[^\n]*?\.(?:\s+|$)/gi, '')
+    .replace(/Der Fokus liegt auf den strukturellen Hintergründen[^\n]*?(?:\.(?:\s+|$)|$)/gi, '')
     .replace(/Amazon Blitzangebote:[\s\S]*$/i, '')
     .replace(/Bei einem Kauf über diesen Link unterstützt ihr uns[\s\S]*$/i, '')
     .replace(/Wenn ihr über folgende Links kauft[\s\S]*$/i, '')
@@ -615,8 +627,46 @@ export function getCardRenderableText(item: {
 
 const SPORTS_GOSSIP_REGEX = /\b(bundesliga|dfb-pokal|champions league|eintracht frankfurt|matchplan|pokalduell|ligapartie|torjäger|spieltag|transfermarkt|tabellenführer|trainerwechsel)\b/i;
 const CLINICAL_PATHOLOGY_JARGON_REGEX = /\b(carcinoma|oncology|chemotherapy|metastasis|randomized clinical trial|placebo-controlled|mortality rate|myocardial infarction|histopathology|adenocarcinoma)\b/i;
-export const IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX = /\b(saccharomyces cerevisiae|lipid droplets?|triacylglycerol|sterol esters?|gene knockout|yeast mutants?|galactose-inducible|protocol to induce|western blot|qrt-pcr|rt-pcr|histopathology|adenocarcinoma|carcinoma|oncology|chemotherapy|metastasis|peritoneal|mouse model|rat model|murine|in vitro assay|cell line|transfected|plasmid|primer sequence|escherichia coli|endoplasmic reticulum|hepg2|hela cells?|zebrafish|drosophila)\b/i;
+export const IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX = /\b(saccharomyces cerevisiae|lipid droplets?|triacylglycerol|sterol esters?|gene knockout|yeast mutants?|galactose-inducible|protocol to induce|western blot|qrt-pcr|rt-pcr|histopathology|adenocarcinoma|carcinoma|oncology|chemotherapy|metastasis|peritoneal|mouse model|rat model|murine|in vitro assay|cell line|transfected|plasmid|primer sequence|escherichia coli|endoplasmic reticulum|hepg2|hela cells?|zebrafish|drosophila|protein that drives ageing|drives ageing without unleashing inflammation|interleukin-11|il-11|monoclonal antibod\w*|kinase inhibitor|phosphorylation|transcriptom\w*|proteom\w*|caenorhabditis elegans|arabidopsis|mrna expression|oligomer\w*|ribosom\w*)\b/i;
 const GENERIC_PAPER_METADATA_REGEX = /^(Begutachtete\s+Open-Access-Studie|Open-Access-Forschungsarbeit|Peer-Reviewed\s+(Open-Access|Study)|Aus\s+(der\s+)?Zeitschrift\b|Originalbeitrag\s+veröffentlicht\s+bei)/i;
+
+/**
+ * Detects specialized wet-lab / molecular / protein / genetics papers that do not provide
+ * understandable everyday health or longevity guidance.
+ */
+export function isIncomprehensibleWetLabPaper(title: string, text = ''): boolean {
+  return IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${title || ''} ${text || ''}`);
+}
+
+/**
+ * Rejects robotic Hacker News templates, bare version release notes (e.g. "Ggml v1.0.0"),
+ * and obscure CLI/terminal micro-posts without general intellectual value.
+ */
+export function isCrypticOrLowValueAggregatorStub(item: Partial<FeedItem> | null | undefined): boolean {
+  if (!item) return true;
+  const title = (item.title || '').trim();
+  const rawBlob = `${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`;
+
+  if (
+    /Originalbeitrag bei [^\n]+? zum Thema/i.test(rawBlob) ||
+    /Der Fokus liegt auf den strukturellen Hintergründen, technischen Grundlagen und langfristigen Konsequenzen/i.test(rawBlob)
+  ) {
+    return true;
+  }
+
+  const words = title.split(/\s+/).filter(Boolean);
+  if (/^[a-z0-9._-]+\s+v?\d+\.\d+(?:\.\d+)?(?:-[a-z0-9.]+)?$/i.test(title)) {
+    return true;
+  }
+  if (/\bv\d+\.\d+(?:\.\d+)?\b/i.test(title) && words.length < 5) {
+    return true;
+  }
+  if (/\b(terminal borders|don['’]?t cost a cell|dotfiles|vim config|tmux\.conf)\b/i.test(title)) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Directive 1: Hard Substance Gate & Zero Empty Cards Contract
@@ -675,7 +725,11 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
 
   const combinedText = `${title} ${proseContext}`;
   const wetlabCheckText = `${title} ${item.subtitle || ''} ${item.feedText || item.body || ''}`;
-  if (SPORTS_GOSSIP_REGEX.test(combinedText) || IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(wetlabCheckText)) {
+  if (SPORTS_GOSSIP_REGEX.test(combinedText) || isIncomprehensibleWetLabPaper(title, wetlabCheckText)) {
+    return false;
+  }
+
+  if (isCrypticOrLowValueAggregatorStub(item)) {
     return false;
   }
 
@@ -688,7 +742,9 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
     return false;
   }
 
-  const insight = stripPublisherBoilerplate((item.keyInsight || item.subtitle || '').trim());
+  const pubLower = `${item.id || ''} ${item.sourceReferences?.[0]?.publisher || ''} ${item.sourceBroadcasterName || ''}`.toLowerCase();
+  const isDigestNewsletter = /techpresso|tldr|bens-bites|rundown-ai|beehiiv/.test(pubLower);
+  const insight = stripPublisherBoilerplate((item.keyInsight || item.subtitle || (isDigestNewsletter ? renderableText : '')).trim());
   if (!insight || /^originalbeitrag veröffentlicht bei/i.test(insight)) {
     return false;
   }
@@ -751,25 +807,49 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
   let cleanedBody = stripSyntheticFillerSentences(slopClean(stripPublisherBoilerplate(item.body || cleanedFeedText, title)));
   const cleanedArticleBody = item.articleBody ? stripSyntheticFillerSentences(stripPublisherBoilerplate(item.articleBody, title)) : undefined;
 
+  const publisherName = (item.sourceReferences?.[0]?.publisher || '').trim();
+  const isAggregatorItem =
+    /^(?:openweb-)?(?:hn|reddit)-/i.test(item.id || '') ||
+    /\((?:hn|reddit)\)|^r\//i.test(publisherName);
+  const isDigestNewsletter =
+    /\b(techpresso|tldr|ben'?s\s*bites|bens-bites|rundown\s*ai|import\s*ai|ahead\s*of\s*ai)\b/i.test(
+      `${item.id || ''} ${publisherName}`
+    );
+
   const routingText = `${item.subtitle || ''} ${cleanedFeedText}`;
   const isPartyPolitics = isDomesticPartyPolitics(title, routingText);
   const isProtestOrPolitical = isPoliticalOrProtestNews(title, routingText);
   const isCelebrity = isCelebrityFluff(title);
   const currentSpace = (item.space || '').toLowerCase();
   const isRoutableSpace = !currentSpace || currentSpace === 'c/serendipity' || currentSpace === 'c/dialektik' || currentSpace === 'c/kunst_galerie' || currentSpace === 'c/books';
+  const preserveCuratedTopic =
+    !isAggregatorItem &&
+    !isPartyPolitics &&
+    !isProtestOrPolitical &&
+    Boolean(item.primaryTopic) &&
+    Boolean(currentSpace) &&
+    currentSpace !== 'c/serendipity';
+  const classificationFallback: TopicTag =
+    isAggregatorItem && item.primaryTopic === 'contemplation_mind'
+      ? 'ai_apple'
+      : item.primaryTopic || 'science_society';
 
   let correctedTopic: TopicTag = isPartyPolitics && isRoutableSpace
     ? 'science_society'
     : isProtestOrPolitical
     ? 'philosophy_ethics'
-    : classifyTopicDeterministically(title, routingText, item.primaryTopic);
+    : preserveCuratedTopic
+    ? item.primaryTopic
+    : classifyTopicDeterministically(title, routingText, classificationFallback);
 
   if ((isProtestOrPolitical || isPartyPolitics) && correctedTopic === 'book_mastery') {
     correctedTopic = 'philosophy_ethics';
   }
 
   let routedSpace: string | undefined = item.space;
-  if (isPartyPolitics && isRoutableSpace) {
+  if (isAggregatorItem && currentSpace === 'c/kontemplation' && correctedTopic !== 'contemplation_mind') {
+    routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/dialektik';
+  } else if (isPartyPolitics && isRoutableSpace) {
     routedSpace = 'c/gesellschaft_politik';
   } else if (isProtestOrPolitical && (currentSpace === 'c/serendipity' || currentSpace === 'c/kunst_galerie' || currentSpace === 'c/books' || !currentSpace)) {
     routedSpace = 'c/dialektik';
@@ -834,33 +914,65 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     }
   }
 
-  let cleanedInsight = stripSyntheticFillerSentences(stripPublisherBoilerplate(item.keyInsight || item.subtitle || '', cleanedTitle));
+  const hasCssOrDigestGibberish = (text: string): boolean =>
+    /\.bh__|{\s*[^}]*:|padding\s*:|background-color\s*:|border\s*:\s*\d+px|in today'?s newsletter\s*:?/i.test(
+      text
+    );
+
+  let cleanedInsight = isDigestNewsletter
+    ? ''
+    : stripSyntheticFillerSentences(stripPublisherBoilerplate(item.keyInsight || item.subtitle || '', cleanedTitle));
   if (
-    !cleanedInsight ||
-    cleanedInsight.length < 15 ||
-    GENERIC_PAPER_METADATA_REGEX.test(cleanedInsight) ||
-    PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedInsight) ||
-    SPONSOR_BOILERPLATE_REGEX.test(cleanedInsight) ||
-    /\b(Philip Oltermann|Peter Jackson|theguardian\.com|Read by)\b/i.test(cleanedInsight)
+    !isDigestNewsletter &&
+    (!cleanedInsight ||
+      cleanedInsight.length < 15 ||
+      hasCssOrDigestGibberish(cleanedInsight) ||
+      GENERIC_PAPER_METADATA_REGEX.test(cleanedInsight) ||
+      PODCAST_OR_VIDEO_INTRO_REGEX.test(cleanedInsight) ||
+      SPONSOR_BOILERPLATE_REGEX.test(cleanedInsight) ||
+      /\b(Philip Oltermann|Peter Jackson|theguardian\.com|Read by)\b/i.test(cleanedInsight))
   ) {
     const candidateSentence = cleanedFeedText
       .replace(/^(Summary|Abstract|Zusammenfassung)\s*:\s*/i, '')
       .split(/(?<=[.!?])\s+/)
-      .find(s => s.trim().length >= 25 && !GENERIC_PAPER_METADATA_REGEX.test(s.trim())) || cleanedTitle;
+      .find(
+        s =>
+          s.trim().length >= 25 &&
+          !GENERIC_PAPER_METADATA_REGEX.test(s.trim()) &&
+          !hasCssOrDigestGibberish(s.trim())
+      ) || cleanedTitle;
     cleanedInsight = stripSyntheticFillerSentences(candidateSentence.slice(0, 220));
   }
 
   const rawSubtitle = stripSyntheticFillerSentences(stripPublisherBoilerplate(item.subtitle || '', title));
+  const normalizedTitleCmp = cleanedTitle.toLowerCase().replace(/[^a-z0-9äöüß]+/gi, '');
+  const normalizedSubCmp = rawSubtitle.toLowerCase().replace(/[^a-z0-9äöüß]+/gi, '');
+  const isDuplicateOfTitle =
+    normalizedTitleCmp.length > 0 &&
+    normalizedSubCmp.length > 0 &&
+    (normalizedSubCmp === normalizedTitleCmp ||
+      normalizedSubCmp.startsWith(normalizedTitleCmp.slice(0, 24)));
   const isBadSub =
     !rawSubtitle ||
     rawSubtitle.length < 15 ||
+    hasCssOrDigestGibberish(rawSubtitle) ||
+    isDuplicateOfTitle ||
     GENERIC_PAPER_METADATA_REGEX.test(rawSubtitle) ||
     PODCAST_OR_VIDEO_INTRO_REGEX.test(rawSubtitle) ||
     SPONSOR_BOILERPLATE_REGEX.test(rawSubtitle) ||
     /\b(Philip Oltermann|Peter Jackson|theguardian\.com|Read by)\b/i.test(rawSubtitle);
 
+  const fallbackSubCandidate = isDigestNewsletter
+    ? ''
+    : stripSyntheticFillerSentences(
+        (cleanedInsight || cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || '').slice(0, 220)
+      );
   const finalSubtitle = isBadSub
-    ? stripSyntheticFillerSentences((cleanedInsight || cleanedFeedText.split(/(?<=[.!?])\s+/)[0] || cleanedTitle).slice(0, 220))
+    ? !fallbackSubCandidate ||
+      hasCssOrDigestGibberish(fallbackSubCandidate) ||
+      fallbackSubCandidate.toLowerCase().trim() === cleanedTitle.toLowerCase().trim()
+      ? ''
+      : fallbackSubCandidate
     : rawSubtitle;
 
   const cleanedChallengePrompt = item.challengePrompt
@@ -891,9 +1003,19 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     ? item.topics
     : [correctedTopic, ...(item.topics || []).filter(t => t !== correctedTopic)].slice(0, 3);
 
+  const safeImageCandidate =
+    item.imageUrl &&
+    isLikelyBannerOrLogoUrl(
+      item.imageUrl,
+      publisherName,
+      item.space === 'c/memes' || item.format === 'meme'
+    )
+      ? undefined
+      : item.imageUrl;
+
   const upgradedImageUrl = isVisualArtOrMeme
-    ? item.imageUrl
-    : upgradeImageResolutionUrl(item.imageUrl);
+    ? safeImageCandidate
+    : upgradeImageResolutionUrl(safeImageCandidate);
 
   const isSupportedLang = isSupportedFeedLanguage(
     cleanedTitle || '',
@@ -910,8 +1032,8 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     subtitle: finalSubtitle,
     primaryTopic: correctedTopic,
     topics: updatedTopics,
-    feedText: isSupportedLang ? (cleanedFeedText || item.feedText) : '',
-    body: isSupportedLang ? (cleanedBody || item.body) : '',
+    feedText: isSupportedLang ? (cleanedFeedText || cleanedBody || '') : '',
+    body: isSupportedLang ? (cleanedBody || cleanedFeedText || '') : '',
     wordCount: computedWordCount > (item.wordCount || 0) ? computedWordCount : item.wordCount,
     estimatedReadingMinutes:
       computedReadingMinutes > (item.estimatedReadingMinutes || 0)
@@ -1108,9 +1230,9 @@ export function classifyTopicDeterministically(
     return 'sound_synthesis';
   }
 
-  // Contemplation & Mind
+  // Contemplation, Buddhism, Meditation & Wisdom Traditions
   if (
-    /\b(meditat|achtsam|stoisch|stoiz|gelassen|atem|ruhe|entschleunig|fokus|kontemplat|zen|buddhis)\b/i.test(
+    /\b(meditat|achtsam|mindful|buddhis|dhamma|dharma|vipassana|dzogchen|zazen|koan|zen-?meditation|zen buddh|sutras?|sutta|sangha|plum village|thich nhat hanh|dalai lama|taoism|daoism|sufism|vedanta|advaita|upanishad|bhagavad|kontemplat|spiritualit|mystik|metta|karuna|bodhisattva|nirvana|erleuchtung|enlightenment|qi gong|qigong|tricycle|lion'?s roar|buddhistdoor)\b/i.test(
       combined
     )
   ) {

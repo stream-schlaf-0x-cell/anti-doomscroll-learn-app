@@ -12,7 +12,7 @@ import {
   Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { ScoredFeedItem, areFeedCardPropsEqual } from '../../core/domain/ranking';
+import { ScoredFeedItem, areFeedCardPropsEqual, formatPersonalVoteLabel } from '../../core/domain/ranking';
 import {
   formatVerifiedProvenanceLabel,
   ReadingInteraction,
@@ -29,7 +29,8 @@ import {
   optimizeImageUrl,
   upgradeImageResolutionUrl,
   assessEditorialImage,
-  isTrustedMuseumOrArtDomain
+  isTrustedMuseumOrArtDomain,
+  isLikelyBannerOrLogoUrl
 } from '../../core/utils/imageQuality';
 import { detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { SubchannelBadge } from './SubchannelBadge';
@@ -37,7 +38,7 @@ import { formatRelativeTime } from '../../core/feed/feedPresentation';
 import { hivemindLearningService } from '../../core/learning/hivemindLearningService';
 import { QuizCheckpointCard } from './QuizCheckpointCard';
 
-export { areFeedCardPropsEqual, stripLeadingTitleDuplicate, formatRelativeTime };
+export { areFeedCardPropsEqual, formatPersonalVoteLabel, stripLeadingTitleDuplicate, formatRelativeTime };
 
 const ESCALATION_VISUAL_THEMES: Record<1 | 2 | 3 | 4, {
   bg: string;
@@ -314,6 +315,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     !imageRejected &&
     isAuthenticCardImage(item) &&
     editorialAssessment.isValid &&
+    !isLikelyBannerOrLogoUrl(item.imageUrl, publisherName, isMemeCard) &&
     Boolean(upgradedItemUri);
 
   const activeVisualUri = isArtCard
@@ -334,52 +336,59 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     }
   };
 
-  // Dynamically measure real image dimensions; reject blurry low-res thumbnails (< 380x200)
-  useEffect(() => {
-    if (!activeVisualUri) return;
-    let cancelled = false;
-    Image.getSize(
-      activeVisualUri,
-      (w, h) => {
-        if (!cancelled && w > 0 && h > 0) {
-          if (!isMemeCard && !isArtCard && !isTrustedArtImage && (w < 380 || h < 200)) {
-            setImageRejected(true);
-            return;
-          }
-          setNaturalAspectRatio(w / h);
-        }
-      },
-      () => {
-        // Handled by onError / onLoad on <Image>
-      }
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [activeVisualUri, isMemeCard, isArtCard, isTrustedArtImage]);
+  // Hide boilerplate feedText when it merely repeats HN metadata or comic alt-text punchline
+  const shouldShowBodyText = Boolean(displayFeedText);
 
-  // Defensive check: hide subtitle if feedText, title, or metadata already says the same thing
+  // Defensive check: hide subtitle if feedText, title, CSS/digest gibberish, or redundant on image cards
   const isSubtitleRedundant = useMemo(() => {
     if (!item.subtitle) return true;
-    const cleanSub = item.subtitle.replace(/[.…\s]+$/, '').trim().toLowerCase();
-    if (cleanSub.length < 12) return true;
+    const rawSub = item.subtitle.trim();
+    const cleanSub = rawSub.replace(/[.…\s]+$/, '').trim().toLowerCase();
+    if (cleanSub.length < 15) return true;
+    if (
+      /\.bh__|{\s*[^}]*:|padding\s*:|background-color\s*:|border\s*:\s*\d+px|in today'?s newsletter/i.test(
+        rawSub
+      )
+    ) {
+      return true;
+    }
     if (cleanSub.includes('hn-punkte') || cleanSub.includes('hacker news') || cleanSub.includes('redaktion')) {
       return true;
     }
-    const cleanTitle = item.title.trim().toLowerCase();
-    if (cleanTitle.includes(cleanSub.slice(0, Math.min(30, cleanSub.length)))) return true;
+    if (hasValidImage && shouldShowBodyText) return true;
+    const cleanTitle = (item.title || '').trim().toLowerCase();
+    if (
+      cleanTitle.includes(cleanSub.slice(0, Math.min(24, cleanSub.length))) ||
+      cleanSub.startsWith(cleanTitle.slice(0, Math.min(24, cleanTitle.length)))
+    ) {
+      return true;
+    }
     if (!displayFeedText) return false;
     const cleanFeed = displayFeedText.trim().toLowerCase();
     const prefixLen = Math.min(36, cleanSub.length);
     return cleanFeed.startsWith(cleanSub.slice(0, prefixLen));
-  }, [item.subtitle, item.title, displayFeedText]);
+  }, [item.subtitle, item.title, displayFeedText, hasValidImage, shouldShowBodyText]);
 
-  // Essence + Key Takeaway Highlight: Distinct keyInsight that does not duplicate title or feedText
+  // Essence + Key Takeaway Highlight: Distinct, complete-sentence keyInsight that adds value
   const distinctKeyInsight = useMemo(() => {
     if (!item.keyInsight || typeof item.keyInsight !== 'string') return null;
+    if (
+      /\b(techpresso|tldr|ben'?s\s*bites|bens-bites|rundown\s*ai|import\s*ai)\b/i.test(
+        `${item.id} ${publisherName}`
+      )
+    ) {
+      return null;
+    }
     const cleanKey = item.keyInsight.trim();
-    if (cleanKey.length < 15) return null;
-    if (/^(Begutachtete\s+Open-Access-Studie|Open-Access-Forschungsarbeit|Peer-Reviewed\s+(Open-Access|Study)|Aus\s+(der\s+)?Zeitschrift\b|Originalbeitrag\s+veröffentlicht\s+bei)/i.test(cleanKey)) {
+    if (cleanKey.length < 40 || cleanKey.length > 220) return null;
+    if (/(\.\.\.|…)$/.test(cleanKey) || !/[.!?»)"]$/.test(cleanKey)) return null;
+    if (/^[\u{1F300}-\u{1FAFF}]/u.test(cleanKey)) return null;
+    if (
+      /\.bh__|{\s*[^}]*:|padding\s*:|background-color\s*:|in today'?s newsletter/i.test(cleanKey) ||
+      /^(Begutachtete\s+Open-Access-Studie|Open-Access-Forschungsarbeit|Peer-Reviewed\s+(Open-Access|Study)|Aus\s+(der\s+)?Zeitschrift\b|Originalbeitrag\s+(veröffentlicht\s+)?bei)/i.test(
+        cleanKey
+      )
+    ) {
       return null;
     }
     const normKey = cleanKey.toLowerCase();
@@ -388,10 +397,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     if (normTitle.includes(normKey) || normKey.includes(normTitle)) return null;
     if (normFeed.includes(normKey) || (normKey.length > 25 && normFeed.slice(0, 80).includes(normKey.slice(0, 30)))) return null;
     return cleanKey;
-  }, [item.keyInsight, item.title, displayFeedText]);
-
-  // Hide boilerplate feedText when it merely repeats HN metadata or comic alt-text punchline
-  const shouldShowBodyText = Boolean(displayFeedText);
+  }, [item.id, item.keyInsight, item.title, displayFeedText, publisherName]);
 
   const handleCardPress = () => {
     openArticle(item.id);
@@ -637,13 +643,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
             isMemeCard ? styles.comicStageContainer : styles.imageContainer,
             isMemeCard
               ? { aspectRatio: naturalAspectRatio || 1.25 }
-              : naturalAspectRatio
-              ? naturalAspectRatio >= 1.15
-                ? { height: undefined, aspectRatio: Math.min(2.2, naturalAspectRatio), maxHeight: isDesktop ? 400 : 320 }
-                : naturalAspectRatio >= 0.85
-                ? { height: undefined, aspectRatio: naturalAspectRatio, maxHeight: 340, width: '100%', alignSelf: 'center' }
-                : { height: undefined, aspectRatio: Math.max(0.65, naturalAspectRatio), maxHeight: 380, width: '100%', alignSelf: 'center' }
-              : { height: undefined, aspectRatio: 16 / 9, maxHeight: 300, backgroundColor: colors.surfaceSecondary }
+              : { height: undefined, aspectRatio: 16 / 9, maxHeight: isDesktop ? 340 : 260, backgroundColor: colors.surfaceSecondary }
           ]}
         >
           <Image
@@ -657,11 +657,14 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
             onLoad={(e) => {
               const { width: loadedW, height: loadedH } = e.nativeEvent.source;
               if (loadedW > 0 && loadedH > 0) {
-                if (!isMemeCard && !isArtCard && !isTrustedArtImage && (loadedW < 380 || loadedH < 200)) {
+                const ratio = loadedW / loadedH;
+                if (!isMemeCard && !isArtCard && !isTrustedArtImage && (loadedW < 320 || loadedH < 160 || ratio > 2.35)) {
                   setImageRejected(true);
                   return;
                 }
-                setNaturalAspectRatio(loadedW / loadedH);
+                if (isMemeCard) {
+                  setNaturalAspectRatio(ratio);
+                }
               }
             }}
             onError={handleImageError}
@@ -909,11 +912,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
             ]}
             numberOfLines={1}
           >
-            {item.externalCommunityScore && item.externalCommunityScore.points > 0
-              ? `${item.externalCommunityScore.points + voteScore}`
-              : ((item.upvotesCount ?? 0) > 0 || voteScore !== 0)
-              ? `${Math.max(0, (item.upvotesCount ?? 0) + (voteScore === 1 ? 1 : voteScore === -1 ? -1 : 0))}`
-              : 'Vote'}
+            {formatPersonalVoteLabel(voteScore)}
           </Text>
 
           <TouchableOpacity

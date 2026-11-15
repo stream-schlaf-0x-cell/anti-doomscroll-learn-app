@@ -2,6 +2,7 @@ import { FeedItem, FeedItemFormat, ContentType, FactReviewStatus } from '../doma
 import { RawFeedEntry, RawFeedSource } from './types';
 import { buildKnowledgeContextForEntry } from '../synthesis/backgroundResearchPipeline';
 import { ZERO_WIDTH_REGEX, sanitizeImageUrl } from './rssParser';
+import { isLikelyBannerOrLogoUrl } from '../utils/imageQuality';
 
 /**
  * Pure TypeScript SHA-256 implementation (FIPS 180-4).
@@ -280,11 +281,18 @@ export const BOILERPLATE_PATTERNS: RegExp[] = [
 
 export function stripBoilerplate(text: string): string {
   if (!text) return '';
-  let cleaned = text;
+  let cleaned = text
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/([.#]?[a-zA-Z0-9_-]+(?:\s*,\s*[.#]?[a-zA-Z0-9_-]+)*\s*\{[^}]*\}\s*)+/g, ' ')
+    .replace(/\.bh__[a-zA-Z0-9_-]+[^\n.]*/gi, ' ');
   for (const pattern of BOILERPLATE_PATTERNS) {
     cleaned = cleaned.replace(pattern, '');
   }
-  return cleaned.trim();
+  return cleaned
+    .replace(/^(?:in today['’]s newsletter\s*:?\s*|view in browser\s*[|·:-]?\s*|read online\s*[|·:-]?\s*)+/i, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }
 
 /**
@@ -347,7 +355,20 @@ export function isSubstantialSubtitle(text: string): boolean {
   if (!text) return false;
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
-  if (lower === 'comments' || lower.startsWith('comments (') || lower === 'kommentare' || lower.startsWith('kommentare (')) {
+  if (
+    lower === 'comments' ||
+    lower.startsWith('comments (') ||
+    lower === 'kommentare' ||
+    lower.startsWith('kommentare (') ||
+    lower.includes('.bh__') ||
+    lower.includes('{') ||
+    lower.includes('}') ||
+    lower.includes('border:') ||
+    lower.includes('padding:') ||
+    lower.includes('background-color:') ||
+    lower.startsWith("in today's newsletter") ||
+    lower.startsWith('in today’s newsletter')
+  ) {
     return false;
   }
   if (trimmed.length < 35) return false;
@@ -428,6 +449,14 @@ export function normalizeFeedEntry(
       : effectiveText;
   }
 
+  const normalizeComp = (s: string) => s.replace(/[\p{Extended_Pictographic}\s.,:;!?'"„“”()—–-]+/gu, '').toLowerCase();
+  const titleNorm = normalizeComp(cleanTitle);
+  const subNorm = normalizeComp(subtitle);
+  const feedNorm = normalizeComp(feedText);
+  if (subNorm && (subNorm === titleNorm || titleNorm.includes(subNorm) || (feedNorm && feedNorm.startsWith(subNorm.slice(0, 32))))) {
+    subtitle = '';
+  }
+
   let honestTier = source.defaultEvidenceTier;
   if (rawBodyText.length < 120) {
     honestTier = 'metadata_only';
@@ -452,7 +481,10 @@ export function normalizeFeedEntry(
     sourceDomain = undefined;
   }
 
-  const authenticImageUrl = sanitizeImageUrl(entry.imageUrl);
+  const rawSafeImageUrl = sanitizeImageUrl(entry.imageUrl);
+  const authenticImageUrl = rawSafeImageUrl && !isLikelyBannerOrLogoUrl(rawSafeImageUrl, source.name)
+    ? rawSafeImageUrl
+    : undefined;
 
   const memeMeta =
     format === 'meme' && entry.imageAltText

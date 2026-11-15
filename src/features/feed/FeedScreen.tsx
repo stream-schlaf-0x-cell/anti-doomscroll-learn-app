@@ -367,8 +367,9 @@ export const FeedScreen: React.FC = () => {
     setArrivalsBannerState(nextBanner);
   }, [pendingBannerTotal]);
 
-  // Progressive live news provider updates: feed live arrivals into Heute + Live News immediately
+  // Progressive live news provider updates: feed live arrivals into Heute + Live News (debounced 450ms)
   React.useEffect(() => {
+    let recomputeTimer: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = ContinuousLiveNewsService.subscribe(event => {
       if (event.items.length === 0) return;
       if (activeFeedOption === 'live_news' || sortMode === 'today') {
@@ -382,10 +383,17 @@ export const FeedScreen: React.FC = () => {
           lockedTopItemIdsRef.current = null;
           hasCommittedInitialViewportRef.current = false;
         }
-        void recomputeFeed();
+        if (recomputeTimer) clearTimeout(recomputeTimer);
+        recomputeTimer = setTimeout(() => {
+          recomputeTimer = null;
+          void recomputeFeed();
+        }, 450);
       }
     });
-    return unsubscribe;
+    return () => {
+      if (recomputeTimer) clearTimeout(recomputeTimer);
+      unsubscribe();
+    };
   }, [activeFeedOption, sortMode, recomputeFeed]);
 
   // Step 2: Switching to "⚡ Heute" actively refreshes fresh live news without blocking
@@ -714,7 +722,7 @@ export const FeedScreen: React.FC = () => {
   }>>(new Map());
 
   const getCachedSanitizedEntry = useCallback((rawItem: FeedItem) => {
-    const signature = `${rawItem.feedText?.length ?? 0}:${rawItem.body?.length ?? 0}:${rawItem.aiAssisted ? 1 : 0}:${rawItem.enrichmentTier || ''}:${rawItem.didacticTransfer?.length ?? 0}`;
+    const signature = `${rawItem.title}:${rawItem.subtitle ?? ''}:${rawItem.imageUrl ?? ''}:${rawItem.space ?? ''}:${rawItem.feedText?.length ?? 0}:${rawItem.body?.length ?? 0}:${rawItem.aiAssisted ? 1 : 0}:${rawItem.enrichmentTier || ''}:${rawItem.didacticTransfer?.length ?? 0}`;
     const existing = sanitizedItemCacheRef.current.get(rawItem.id);
     if (existing && existing.signature === signature) return existing;
     const cleaned = sanitizeCuratedFeedItem(rawItem);
@@ -2011,25 +2019,33 @@ export const FeedScreen: React.FC = () => {
         );
       }
 
+      const cardElement = (
+        <FeedCard
+          item={row.item}
+          interaction={interactions[row.item.id]}
+          isDark={isDark}
+          palette={palette}
+          enableSoundGrounding={soundGroundingEnabled}
+          isHero={row.isHero}
+          isFocused={row.isFocused}
+          isExpanded={Boolean(expandedCardIds[row.item.id])}
+          onToggleKurzCheck={() => handleToggleKurzCheck(row.item.id)}
+          onInvestigateTopic={handleInvestigateTopic}
+          onDismissItem={row.allowDismiss ? handleDismissCard : undefined}
+          onOpenHivemindTrack={row.enableHivemindActions ? handleStartFocusTrack : undefined}
+          onCompleteHivemindStep={row.enableHivemindActions ? handleCompleteHivemindStep : undefined}
+          hivemindTrackProgressPercent={row.trackProgressPercent}
+          isHivemindStepCompleted={row.isTrackStepCompleted}
+        />
+      );
+
+      if (Platform.OS === 'web') {
+        return cardElement;
+      }
+
       return (
         <View onLayout={(e) => handleCardLayout(row.item.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}>
-          <FeedCard
-            item={row.item}
-            interaction={interactions[row.item.id]}
-            isDark={isDark}
-            palette={palette}
-            enableSoundGrounding={soundGroundingEnabled}
-            isHero={row.isHero}
-            isFocused={row.isFocused}
-            isExpanded={Boolean(expandedCardIds[row.item.id])}
-            onToggleKurzCheck={() => handleToggleKurzCheck(row.item.id)}
-            onInvestigateTopic={handleInvestigateTopic}
-            onDismissItem={row.allowDismiss ? handleDismissCard : undefined}
-            onOpenHivemindTrack={row.enableHivemindActions ? handleStartFocusTrack : undefined}
-            onCompleteHivemindStep={row.enableHivemindActions ? handleCompleteHivemindStep : undefined}
-            hivemindTrackProgressPercent={row.trackProgressPercent}
-            isHivemindStepCompleted={row.isTrackStepCompleted}
-          />
+          {cardElement}
         </View>
       );
     },
@@ -2146,11 +2162,11 @@ export const FeedScreen: React.FC = () => {
             onScroll={handleScroll}
             scrollEventThrottle={32}
             keyboardShouldPersistTaps="handled"
-            initialNumToRender={6}
-            maxToRenderPerBatch={6}
-            windowSize={7}
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            windowSize={9}
             removeClippedSubviews={Platform.OS !== 'web'}
-            maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+            maintainVisibleContentPosition={Platform.OS === 'web' ? undefined : { minIndexForVisible: 0 }}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}

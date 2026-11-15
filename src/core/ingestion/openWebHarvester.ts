@@ -22,7 +22,11 @@ import {
   callAiWithGoogleSearch,
   callAiModel
 } from '../ai/atmenAiClient';
-import { ContinuousLiveNewsService, buildSubstantiveHackerNewsCopy } from '../data/continuousLiveNewsService';
+import {
+  ContinuousLiveNewsService,
+  buildSubstantiveHackerNewsCopy,
+  isEditorialQualityHackerNewsStory
+} from '../data/continuousLiveNewsService';
 import { isDeprecatedShowcaseStarterItem } from '../learning/hivemindLearningService';
 
 export interface MultiLaneDiscoveryOptions {
@@ -679,6 +683,8 @@ export class OpenWebHarvester {
 
         const points = typeof hit.points === 'number' ? hit.points : 0;
         const numComments = typeof hit.num_comments === 'number' ? hit.num_comments : 0;
+        if (!isEditorialQualityHackerNewsStory(hit.title, domain)) continue;
+
         const copy = buildSubstantiveHackerNewsCopy({
           title: hit.title,
           domain,
@@ -688,14 +694,14 @@ export class OpenWebHarvester {
           commentsCount: numComments,
           storyText: typeof hit.story_text === 'string' ? hit.story_text : undefined
         });
-        const primaryTopic = classifyTopicDeterministically(hit.title, `${domain} ${copy.feedText}`, 'ai_apple');
+        const primaryTopic = classifyTopicDeterministically(hit.title, domain, 'ai_apple');
 
         const item: FeedItem = {
           id: itemId,
           type: 'quick_insight',
           format: 'concise_insight',
           title: hit.title,
-          subtitle: `${domain} • ${points} HN-Punkte (${numComments} Kommentare)`,
+          subtitle: '',
           feedText: copy.feedText,
           articleBody: copy.articleBody,
           body: copy.feedText,

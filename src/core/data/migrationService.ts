@@ -22,7 +22,7 @@ import {
   SHOWCASE_STARTER_TRACK_IDS
 } from '../learning/hivemindLearningService';
 
-export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-13-v10.0-heute-news-images-clean';
+export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-15-v11.0-main-feed-masterplan-clean';
 
 function isDeprecatedOrIrrelevantHarvestItem(item: Partial<FeedItem> | null | undefined): boolean {
   if (!item || typeof item !== 'object') return false;
@@ -111,6 +111,13 @@ export async function runInPlaceDataMigration(
       'civic-fallback-sachsen-ki-1',
       'civic-pulse-saxony-edu-v1'
     ]);
+  } catch {
+    // Non-fatal
+  }
+
+  // Clear cached public snapshot so every device fetches the latest feed-snapshot.json after upgrade
+  try {
+    await storage.removeItem('@atem:public_feed_snapshot:v1');
   } catch {
     // Non-fatal
   }
@@ -330,6 +337,7 @@ export async function runInPlaceDataMigration(
     const sanitized = isUserProtected ? item : sanitizeCuratedFeedItem(item);
     const normalizedItem: FeedItem = {
       ...sanitized,
+      upvotesCount: 0,
       publicationDateReliable: isUndatedVisual ? false : (sanitized.publicationDateReliable ?? true),
       firstSeenAt: sanitized.firstSeenAt || sanitized.publishedAt || new Date().toISOString()
     };

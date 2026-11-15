@@ -1,4 +1,5 @@
 import { RawFeedEntry } from './types';
+import { assessEditorialImage, isLikelyBannerOrLogoUrl } from '../utils/imageQuality';
 
 /**
  * Decodes common XML/HTML entities into plain characters.
@@ -63,22 +64,37 @@ export function unwrapCdata(input: string): string {
 
 export const ZERO_WIDTH_REGEX = /[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF\u00AD]/g;
 
+function stripEmbeddedStyleAndScriptBlocks(raw: string): string {
+  return raw
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, ' ');
+}
+
 /**
- * Strips HTML tags, preserves paragraph breaks as double newlines, and trims excess whitespace.
- * Decodes XML entities before tag stripping so escaped tags (&lt;p&gt;) are properly detected and removed.
+ * Strips HTML tags, embedded CSS/script blocks, orphaned stylesheet rules, and newsletter preambles,
+ * preserving paragraph breaks as double newlines and trimming excess whitespace.
+ * Decodes XML entities before tag stripping so escaped tags (&lt;p&gt;, &lt;style&gt;) are properly detected and removed.
  */
 export function stripHtml(input: string): string {
   if (!input) return '';
   const unwrapped = unwrapCdata(input);
-  const decoded = decodeXmlEntities(unwrapped);
+  const preDecodedClean = stripEmbeddedStyleAndScriptBlocks(unwrapped);
+  const decoded = stripEmbeddedStyleAndScriptBlocks(decodeXmlEntities(preDecodedClean));
   const textWithLineBreaks = decoded
     .replace(/<\/?(p|div|br|li|h[1-6])[^>]*>/gi, '\n')
     .replace(/<[^>]+>/g, '');
   return decodeXmlEntities(textWithLineBreaks)
+    .replace(/([.#]?[a-zA-Z0-9_-]+(?:\s*,\s*[.#]?[a-zA-Z0-9_-]+)*\s*\{[^}]*\}\s*)+/g, ' ')
+    .replace(/\.bh__[a-zA-Z0-9_-]+[^\n.]*/gi, ' ')
     .replace(ZERO_WIDTH_REGEX, '')
     .replace(/\r\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]+/g, ' ')
+    .trim()
+    .replace(/^(?:in today['’]s newsletter\s*:?\s*|view in browser\s*[|·:-]?\s*|read online\s*[|·:-]?\s*)+/i, '')
     .trim();
 }
 
@@ -218,16 +234,38 @@ function extractImageUrl(block: string, itemLink?: string): string | undefined {
     }
   }
 
-  // 4. <img> tag in HTML content/description (handle both raw and XML-escaped HTML e.g. xkcd, forschung-und-wissen.de)
-  if (!candidate) {
-    const decodedBlock = decodeXmlEntities(block);
-    const imgMatch = decodedBlock.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i);
-    if (imgMatch && imgMatch[1]) {
-      candidate = resolveMaybeRelativeUrl(imgMatch[1], itemLink);
+  if (candidate) {
+    const cleanMedia = sanitizeImageUrl(candidate);
+    if (cleanMedia && !isLikelyBannerOrLogoUrl(cleanMedia)) {
+      return cleanMedia;
+    }
+    candidate = undefined;
+  }
+
+  // 4. <img> tags in HTML content/description: scan all candidates and skip newsletter header/logo banners
+  const decodedBlock = decodeXmlEntities(block);
+  for (const imgMatch of decodedBlock.matchAll(/<img\b[^>]*>/gi)) {
+    const tag = imgMatch[0];
+    const srcAttr = tag.match(/\bsrc=["']([^"']+)["']/i)?.[1];
+    if (!srcAttr) continue;
+    const altAttr = tag.match(/\balt=["']([^"']+)["']/i)?.[1] || '';
+    const classAttr = tag.match(/\bclass=["']([^"']+)["']/i)?.[1] || '';
+    if (/(?:techpresso|banner|header|logo|wordmark|masthead|avatar|pixel|spacer|sponsor)/i.test(`${srcAttr} ${altAttr} ${classAttr}`)) {
+      continue;
+    }
+    const widthVal = parseInt(tag.match(/\bwidth=["']?(\d+)/i)?.[1] || '0', 10);
+    const heightVal = parseInt(tag.match(/\bheight=["']?(\d+)/i)?.[1] || '0', 10);
+    if (widthVal > 0 && heightVal > 0 && (widthVal / heightVal > 2.35 || widthVal < 200 || heightVal < 100)) {
+      continue;
+    }
+    const resolved = resolveMaybeRelativeUrl(srcAttr, itemLink);
+    const sanitized = sanitizeImageUrl(resolved);
+    if (sanitized && !isLikelyBannerOrLogoUrl(sanitized) && assessEditorialImage(sanitized).isValid) {
+      return sanitized;
     }
   }
 
-  return sanitizeImageUrl(candidate);
+  return undefined;
 }
 
 /**
