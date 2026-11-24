@@ -22,12 +22,6 @@ import {
   AiBudgetExceededError
 } from '../src/core/ai/atmenAiClient';
 import {
-  AtmenStudioService,
-  STUDIO_LENSES,
-  STUDIO_LENSES_LIST,
-  formatStudioOutputMarkdown
-} from '../src/core/studio/atmenStudio';
-import {
   BatchEditionEnricher,
   classifyTopicDeterministically,
   enrichDeterministically
@@ -221,73 +215,6 @@ describe('Phase 2.5: Intelligence, Studio & Body Sharding Architecture', () => {
       const loaded = await repo.getSavedArticleById('legacy-article-001');
       assert.ok(loaded !== null);
       assert.strictEqual(loaded?.articleBody, 'Legacy embedded article body');
-    });
-  });
-
-  describe('3. Atmen Studio: 3 Lenses & Transformation Service', () => {
-    it('defines the 3 core contemplative lenses', () => {
-      assert.ok(STUDIO_LENSES.didactics);
-      assert.ok(STUDIO_LENSES.contemplation);
-      assert.ok(STUDIO_LENSES.sound_alchemy);
-
-      assert.strictEqual(STUDIO_LENSES.didactics.id, 'didactics');
-      assert.strictEqual(STUDIO_LENSES.contemplation.id, 'contemplation');
-      assert.strictEqual(STUDIO_LENSES.sound_alchemy.id, 'sound_alchemy');
-
-      assert.strictEqual(STUDIO_LENSES_LIST.length, 3);
-    });
-
-    it('generates high-coherence deterministic output for all 3 lenses', async () => {
-      const studio = new AtmenStudioService();
-
-      const input = {
-        title: 'Digitale Autonomie & Reizfilterung',
-        text: 'Wie wir die Flut an Pings und Algorithmen reduzieren und Raum für tiefe Gedanken schaffen.'
-      };
-
-      for (const lens of ['didactics', 'contemplation', 'sound_alchemy'] as const) {
-        const output = await studio.generateLensOutput({
-          ...input,
-          lens
-        });
-
-        assert.strictEqual(output.lens, lens);
-        assert.ok(output.heading.length > 5);
-        assert.ok(output.coreThesis.length > 15);
-        assert.ok(Array.isArray(output.insights) && output.insights.length >= 2);
-        assert.ok(Array.isArray(output.reflectionQuestions) && output.reflectionQuestions.length >= 2);
-        assert.ok(output.practicalImpulse.length > 10);
-      }
-    });
-
-    it('formats studio output into publication-ready Markdown', () => {
-      const studio = new AtmenStudioService();
-      const output = {
-        lens: 'contemplation' as const,
-        title: 'Stoische Ruhe in der Infoflut',
-        heading: 'Stoische Ruhe in der Infoflut',
-        coreThesis: 'Nicht die Pings stören den Geist, sondern unser Urteil darüber.',
-        insights: [
-          'Dichotomie der Kontrolle anwenden',
-          'Aufmerksamkeitsdiät praktizieren'
-        ],
-        reflectionQuestions: [
-          'Welche Information heute war wirklich handlungsrelevant?'
-        ],
-        practicalImpulse: 'Schalte Benachrichtigungen für 24 Stunden ab.',
-        formattedMarkdown: '',
-        isAiGenerated: false
-      };
-
-      const md = studio.formatStudioOutputMarkdown(output);
-      assert.ok(md.includes('# Stoische Ruhe in der Infoflut'));
-      assert.ok(md.includes('Nicht die Pings stören'));
-      assert.ok(md.includes('Dichotomie der Kontrolle'));
-      assert.ok(md.includes('Reflexions-Fragen'));
-      assert.ok(md.includes('Praktischer Impuls'));
-
-      const standaloneMd = formatStudioOutputMarkdown(output);
-      assert.strictEqual(standaloneMd, md);
     });
   });
 

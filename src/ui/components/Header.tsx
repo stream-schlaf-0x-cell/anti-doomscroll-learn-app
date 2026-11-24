@@ -1,12 +1,19 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import { typography, spacing } from '../theme';
-import { UltraMasterModal } from './UltraMasterModal';
-import { MobilePublishModal } from './MobilePublishModal';
-import { AtmenBreathingPortal } from '../../features/breathing/AtmenBreathingPortal';
 import { AtmenSymbol } from './AtmenSymbol';
+
+const UltraMasterModal = React.lazy(() =>
+  import('./UltraMasterModal').then(m => ({ default: m.UltraMasterModal }))
+);
+const MobilePublishModal = React.lazy(() =>
+  import('./MobilePublishModal').then(m => ({ default: m.MobilePublishModal }))
+);
+const AtmenBreathingPortal = React.lazy(() =>
+  import('../../features/breathing/AtmenBreathingPortal').then(m => ({ default: m.AtmenBreathingPortal }))
+);
 
 interface HeaderProps {
   title?: string;
@@ -137,9 +144,21 @@ export const Header: React.FC<HeaderProps> = ({
         </View>
       </View>
 
-      <UltraMasterModal visible={showMaster} onClose={() => setShowMaster(false)} />
-      <MobilePublishModal visible={showMobile} onClose={() => setShowMobile(false)} />
-      <AtmenBreathingPortal visible={showBreathing} onClose={() => setShowBreathing(false)} mode="modal" />
+      {showMaster && (
+        <Suspense fallback={null}>
+          <UltraMasterModal visible={true} onClose={() => setShowMaster(false)} />
+        </Suspense>
+      )}
+      {showMobile && (
+        <Suspense fallback={null}>
+          <MobilePublishModal visible={true} onClose={() => setShowMobile(false)} />
+        </Suspense>
+      )}
+      {showBreathing && (
+        <Suspense fallback={null}>
+          <AtmenBreathingPortal visible={true} onClose={() => setShowBreathing(false)} mode="modal" />
+        </Suspense>
+      )}
     </>
   );
 };

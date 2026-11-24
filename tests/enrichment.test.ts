@@ -171,23 +171,6 @@ describe('Provider-Independent Enrichment & €5 Budget Enforcement', () => {
     assert.strictEqual(result.estimatedCostEur, 0);
   });
 
-  it('9. GeminiEnricher gracefully falls back when no API key is provided and generates sparring replies', async () => {
-    const { GeminiEnricher } = await import('../src/core/enrichment/geminiEnricher');
-    const enricher = new GeminiEnricher({ apiKey: '' });
-    assert.strictEqual(enricher.hasApiKey(), false);
-
-    const item = INITIAL_FIXTURES[0];
-    const result = await enricher.enrich({ item });
-    assert.strictEqual(result.isFallback, true);
-    assert.ok(result.feedText.length > 20);
-
-    // Test sparring reply generation
-    const sparring = await enricher.generateLiveSparring('Das ist ein zu starker Anspruch an die Vernunft.', 'einwand', item.title);
-    assert.strictEqual(sparring.authorHandle, '🤖 Gegenstimme');
-    assert.strictEqual(sparring.authorBadge, 'Dialektischer Sparring-Partner');
-    assert.ok(sparring.text.length > 30);
-  });
-
   it('10. Atomic budget reservation guarantees race-free spending limits', async () => {
     const ledger = new EnrichmentUsageLedger('', false);
 

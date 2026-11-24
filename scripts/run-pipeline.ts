@@ -5,7 +5,12 @@ import { FeedItem, TOPIC_SPACE_MAP } from '../src/core/domain/types';
 import { fetchAllFeeds } from '../src/core/ingestion/feedFetcher';
 import { deduplicateFeedItems } from '../src/core/ingestion/deduplicator';
 import { normalizePipelineResults } from '../src/core/ingestion/pipelineCandidates';
-import { parseSnapshotPayload, parseReservoirPayload } from '../src/core/feed/snapshotPayload';
+import {
+  compactItemForSnapshot,
+  compactSourceHealthForSnapshot,
+  parseSnapshotPayload,
+  parseReservoirPayload
+} from '../src/core/feed/snapshotPayload';
 import { SourceHealthInfo, getSourceKind } from '../src/core/ingestion/sourceHealth';
 import {
   BatchEditionEnricher,
@@ -25,8 +30,85 @@ const SOURCE_HEALTH_PATH = path.resolve(__dirname, '../src/core/data/source-heal
 const PUBLIC_SNAPSHOT_PATH = path.resolve(__dirname, '../public/feed-snapshot.json');
 const PUBLIC_RESERVOIR_PATH = path.resolve(__dirname, '../public/feed-reservoir.json');
 
-const STARTUP_SNAPSHOT_CAP = 152; // Strictly <= 160 for instant <50ms startup & Gordian-Knot budget invariant
-const DEEP_RESERVOIR_CAP = 900;   // Rolling 14-day deep endless reservoir lazy-loaded as user scrolls
+const STARTUP_SNAPSHOT_CAP = 120; // Rich, diverse startup edition (100-130 items, < 850 KB compacted)
+const DEEP_RESERVOIR_CAP = 650;   // Rolling 14-day deep endless reservoir lazy-loaded as user scrolls (< 4.5 MB compacted)
+const SNAPSHOT_MAX_BODY_CHARS = 6000;
+const RESERVOIR_MAX_BODY_CHARS = 7000;
+
+const PRIORITY_SPACES = [
+  'c/didaktik_labor',
+  'c/books',
+  'c/kontemplation',
+  'c/synth_alchemie',
+  'c/acceleration',
+  'c/dialektik',
+  'c/serendipity',
+  'c/health_longevity',
+  'c/chancen'
+];
+
+function selectBalancedStartupItems(pool: FeedItem[], nowMs: number, cap = STARTUP_SNAPSHOT_CAP): FeedItem[] {
+  const gallerySourcePool = pool.filter(i => i.space === 'c/kunst_galerie');
+  const galleryKeep = gallerySourcePool.slice(0, 22);
+  const editorialCandidates = pool.filter(
+    i => i.space !== 'c/kunst_galerie' && isWithin14DayRelevanceWindow(i, nowMs)
+  );
+
+  // Reserve floor slots for specialist knowledge spaces so Didaktik, Books, Contemplation & Synth always flourish
+  const floorSelected: FeedItem[] = [];
+  const floorIds = new Set<string>();
+  for (const sp of PRIORITY_SPACES) {
+    const matching = editorialCandidates
+      .filter(i => i.space === sp)
+      .sort((a, b) => {
+        const relA = a.publicationDateReliable !== false ? 1 : 0;
+        const relB = b.publicationDateReliable !== false ? 1 : 0;
+        if (relA !== relB) return relB - relA;
+        return (new Date(b.publishedAt).getTime() || 0) - (new Date(a.publishedAt).getTime() || 0);
+      })
+      .slice(0, 8);
+    for (const m of matching) {
+      if (!floorIds.has(m.id)) {
+        floorIds.add(m.id);
+        floorSelected.push(m);
+      }
+    }
+  }
+
+  const remainingFreshFirst = editorialCandidates
+    .filter(i => !floorIds.has(i.id))
+    .sort((a, b) => {
+      const relA = a.publicationDateReliable !== false ? 1 : 0;
+      const relB = b.publicationDateReliable !== false ? 1 : 0;
+      if (relA !== relB) return relB - relA;
+      return (new Date(b.publishedAt).getTime() || 0) - (new Date(a.publishedAt).getTime() || 0);
+    });
+
+  const targetEditorialCount = Math.max(0, cap - galleryKeep.length);
+  const editorialDiversified = enforceCuratedStreamDiversity([
+    ...interleaveByPublisherAndSpace(floorSelected),
+    ...remainingFreshFirst
+  ]).slice(0, targetEditorialCount);
+
+  const finalItems: FeedItem[] = [];
+  const stride = galleryKeep.length > 0 ? Math.max(3, Math.floor(editorialDiversified.length / galleryKeep.length)) : 999;
+  let gIdx = 0;
+  for (let idx = 0; idx < editorialDiversified.length; idx++) {
+    finalItems.push(editorialDiversified[idx]);
+    if (
+      (idx + 1) % stride === 0 &&
+      gIdx < galleryKeep.length &&
+      finalItems[finalItems.length - 1]?.space !== 'c/kunst_galerie'
+    ) {
+      finalItems.push(galleryKeep[gIdx++]);
+    }
+  }
+  while (gIdx < galleryKeep.length && finalItems.length < cap) {
+    if (finalItems[finalItems.length - 1]?.space === 'c/kunst_galerie') break;
+    finalItems.push(galleryKeep[gIdx++]);
+  }
+  return finalItems.slice(0, cap);
+}
 
 function normalizeTitleKey(title: string): string {
   return (title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
@@ -289,7 +371,13 @@ async function runIngestionPipeline() {
   const reservoirEditorial = interleaveByPublisherAndSpace(
     mergedReservoirPool.filter(i => i.space !== 'c/kunst_galerie')
   );
-  const cappedReservoirItems = [...reservoirEditorial, ...reservoirGallery].slice(0, DEEP_RESERVOIR_CAP);
+  const cappedReservoirItems = [
+    ...reservoirEditorial.slice(0, Math.max(0, DEEP_RESERVOIR_CAP - reservoirGallery.length)),
+    ...reservoirGallery
+  ].slice(0, DEEP_RESERVOIR_CAP);
+  const compactReservoirItems = cappedReservoirItems.map(item =>
+    compactItemForSnapshot(item, { maxBodyChars: RESERVOIR_MAX_BODY_CHARS })
+  );
 
   fs.mkdirSync(path.dirname(PUBLIC_RESERVOIR_PATH), { recursive: true });
   const reservoirPayload = parseReservoirPayload({
@@ -297,104 +385,170 @@ async function runIngestionPipeline() {
     totalCandidateSources: VERIFIED_FEED_SOURCES.length,
     activeDeliveringSources: successFeedCount,
     totalAvailableItems: mergedReservoirPool.length,
-    items: cappedReservoirItems,
+    items: compactReservoirItems,
     sourceHealth: {}
   });
   if (reservoirPayload) {
-    fs.writeFileSync(PUBLIC_RESERVOIR_PATH, JSON.stringify(reservoirPayload), 'utf-8');
-    console.log(`Wrote Tier-2 Deep Endless Reservoir (${reservoirPayload.items.length} items) to ${PUBLIC_RESERVOIR_PATH}`);
+    const reservoirAllowedIds = new Set(reservoirPayload.items.map(p => p.id));
+    const serializedReservoir = {
+      ...reservoirPayload,
+      items: compactReservoirItems.filter(it => reservoirAllowedIds.has(it.id))
+    };
+    const serializedJson = JSON.stringify(serializedReservoir);
+    fs.writeFileSync(PUBLIC_RESERVOIR_PATH, serializedJson, 'utf-8');
+    console.log(
+      `Wrote Tier-2 Deep Endless Reservoir (${serializedReservoir.items.length} items, ${(Buffer.byteLength(serializedJson, 'utf8') / 1024).toFixed(1)} KB) to ${PUBLIC_RESERVOIR_PATH}`
+    );
   }
 
-  // 7. Build Tier-1 Fast Startup Snapshot (`public/feed-snapshot.json` & `pipeline-output.json`, <= 156 items)
+  // 7. Build Tier-1 Fast Startup Snapshot (`public/feed-snapshot.json` & `pipeline-output.json`, ~120 items)
   // Guarantee strong representation across Founder core spaces + >= 22 gallery artworks + 70% < 48h freshness
-  const gallerySourcePool = mergedReservoirPool.filter(i => i.space === 'c/kunst_galerie');
-  const galleryKeep = gallerySourcePool.slice(0, 22);
-  const editorialCandidates = mergedReservoirPool.filter(
-    i => i.space !== 'c/kunst_galerie' && isWithin14DayRelevanceWindow(i, nowMs)
-  );
-
-  // Reserve floor slots for specialist knowledge spaces so Didaktik, Books, Contemplation & Synth always flourish
-  const prioritySpaces = [
-    'c/didaktik_labor',
-    'c/books',
-    'c/kontemplation',
-    'c/synth_alchemie',
-    'c/acceleration',
-    'c/dialektik',
-    'c/serendipity',
-    'c/health_longevity',
-    'c/chancen'
-  ];
-  const floorSelected: FeedItem[] = [];
-  const floorIds = new Set<string>();
-  for (const sp of prioritySpaces) {
-    const matching = editorialCandidates
-      .filter(i => i.space === sp)
-      .sort((a, b) => {
-        const relA = a.publicationDateReliable !== false ? 1 : 0;
-        const relB = b.publicationDateReliable !== false ? 1 : 0;
-        if (relA !== relB) return relB - relA;
-        return (new Date(b.publishedAt).getTime() || 0) - (new Date(a.publishedAt).getTime() || 0);
-      })
-      .slice(0, 10);
-    for (const m of matching) {
-      if (!floorIds.has(m.id)) {
-        floorIds.add(m.id);
-        floorSelected.push(m);
-      }
-    }
-  }
-
-  const remainingFreshFirst = editorialCandidates
-    .filter(i => !floorIds.has(i.id))
-    .sort((a, b) => {
-      const relA = a.publicationDateReliable !== false ? 1 : 0;
-      const relB = b.publicationDateReliable !== false ? 1 : 0;
-      if (relA !== relB) return relB - relA;
-      return (new Date(b.publishedAt).getTime() || 0) - (new Date(a.publishedAt).getTime() || 0);
-    });
-
-  const targetEditorialCount = Math.max(0, STARTUP_SNAPSHOT_CAP - galleryKeep.length);
-  const editorialDiversified = enforceCuratedStreamDiversity([
-    ...interleaveByPublisherAndSpace(floorSelected),
-    ...remainingFreshFirst
-  ]).slice(0, targetEditorialCount);
-
-  const finalItems: FeedItem[] = [];
-  const stride = galleryKeep.length > 0 ? Math.max(4, Math.floor(editorialDiversified.length / galleryKeep.length)) : 999;
-  let gIdx = 0;
-  for (let idx = 0; idx < editorialDiversified.length; idx++) {
-    finalItems.push(editorialDiversified[idx]);
-    if ((idx + 1) % stride === 0 && gIdx < galleryKeep.length && finalItems[finalItems.length - 1]?.space !== 'c/kunst_galerie') {
-      finalItems.push(galleryKeep[gIdx++]);
-    }
-  }
-  while (gIdx < galleryKeep.length && finalItems.length < STARTUP_SNAPSHOT_CAP) {
-    if (finalItems[finalItems.length - 1]?.space === 'c/kunst_galerie') break;
-    finalItems.push(galleryKeep[gIdx++]);
-  }
-  const cappedFinalItems = finalItems.slice(0, STARTUP_SNAPSHOT_CAP);
+  const cappedFinalItems = selectBalancedStartupItems(mergedReservoirPool, nowMs, STARTUP_SNAPSHOT_CAP);
 
   fs.mkdirSync(path.dirname(PIPELINE_OUTPUT_PATH), { recursive: true });
   fs.writeFileSync(PIPELINE_OUTPUT_PATH, JSON.stringify(cappedFinalItems, null, 2), 'utf-8');
   console.log(`Wrote Tier-1 Startup Edition (${cappedFinalItems.length} items) to ${PIPELINE_OUTPUT_PATH}`);
 
   fs.mkdirSync(path.dirname(PUBLIC_SNAPSHOT_PATH), { recursive: true });
+  const compactHealth = compactSourceHealthForSnapshot(sourceHealthMap);
+  const compactSnapshotItems = cappedFinalItems.map(item =>
+    compactItemForSnapshot(item, { maxBodyChars: SNAPSHOT_MAX_BODY_CHARS })
+  );
   const snapshotPayload = parseSnapshotPayload({
     generatedAt: nowIso,
     totalCandidateSources: VERIFIED_FEED_SOURCES.length,
     activeDeliveringSources: successFeedCount,
     totalAvailableItems: reservoirPayload?.items.length ?? cappedFinalItems.length,
-    items: cappedFinalItems,
-    sourceHealth: sourceHealthMap
+    items: compactSnapshotItems,
+    sourceHealth: compactHealth
   });
   if (!snapshotPayload) throw new Error('No valid items fit the startup snapshot budget');
-  snapshotPayload.items = cappedFinalItems.filter(it => snapshotPayload.items.some(p => p.id === it.id));
-  fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(snapshotPayload), 'utf-8');
-  console.log(`Wrote Tier-1 Public Snapshot (${snapshotPayload.items.length} items) to ${PUBLIC_SNAPSHOT_PATH}`);
+  const snapshotAllowedIds = new Set(snapshotPayload.items.map(p => p.id));
+  const serializedSnapshot = {
+    ...snapshotPayload,
+    sourceHealth: compactHealth,
+    items: compactSnapshotItems.filter(it => snapshotAllowedIds.has(it.id))
+  };
+  const serializedSnapshotJson = JSON.stringify(serializedSnapshot);
+  fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, serializedSnapshotJson, 'utf-8');
+  console.log(
+    `Wrote Tier-1 Public Snapshot (${serializedSnapshot.items.length} items, ${(Buffer.byteLength(serializedSnapshotJson, 'utf8') / 1024).toFixed(1)} KB) to ${PUBLIC_SNAPSHOT_PATH}`
+  );
 }
 
-runIngestionPipeline().catch(err => {
-  console.error('Fatal pipeline error:', err);
-  process.exit(1);
-});
+/**
+ * Offline compaction pass for existing public/feed-snapshot.json and public/feed-reservoir.json.
+ * Preserves today's fresh items and generatedAt timestamps without running a live 460-feed scrape.
+ */
+function compactExistingPublicSnapshots(): void {
+  console.log('=== atmen Offline Snapshot & Reservoir Compaction ===');
+
+  let compactedReservoirCount = 0;
+
+  if (fs.existsSync(PUBLIC_RESERVOIR_PATH)) {
+    const beforeRaw = fs.readFileSync(PUBLIC_RESERVOIR_PATH, 'utf-8');
+    const beforeBytes = Buffer.byteLength(beforeRaw, 'utf8');
+    const parsedRaw = JSON.parse(beforeRaw) as Record<string, unknown>;
+    const parsedRes = parseReservoirPayload(parsedRaw, { skipByteBudget: true });
+    if (parsedRes && parsedRes.items.length > 0) {
+      const refMs = parsedRes.generatedAt ? Date.parse(parsedRes.generatedAt) : Date.now();
+      const freshPool = parsedRes.items.filter(
+        it => it.space === 'c/kunst_galerie' || isWithin14DayRelevanceWindow(it, refMs)
+      );
+      const resGallery = freshPool.filter(it => it.space === 'c/kunst_galerie').slice(0, 60);
+      const resEditorial = interleaveByPublisherAndSpace(
+        freshPool.filter(it => it.space !== 'c/kunst_galerie')
+      );
+      const selectedRes = [
+        ...resEditorial.slice(0, Math.max(0, DEEP_RESERVOIR_CAP - resGallery.length)),
+        ...resGallery
+      ].slice(0, DEEP_RESERVOIR_CAP);
+      const compactResItems = selectedRes.map(item =>
+        compactItemForSnapshot(item, { maxBodyChars: RESERVOIR_MAX_BODY_CHARS })
+      );
+      const validatedRes = parseReservoirPayload({
+        generatedAt: parsedRes.generatedAt,
+        totalCandidateSources: parsedRes.totalCandidateSources,
+        activeDeliveringSources: parsedRes.activeDeliveringSources,
+        totalAvailableItems: parsedRes.totalAvailableItems,
+        items: compactResItems,
+        sourceHealth: {}
+      });
+      if (validatedRes) {
+        const allowed = new Set(validatedRes.items.map(i => i.id));
+        const finalResItems = compactResItems.filter(i => allowed.has(i.id));
+        const outRes = {
+          generatedAt: parsedRes.generatedAt,
+          totalCandidateSources: parsedRes.totalCandidateSources,
+          activeDeliveringSources: parsedRes.activeDeliveringSources,
+          totalAvailableItems: Math.max(parsedRes.totalAvailableItems, finalResItems.length),
+          items: finalResItems,
+          sourceHealth: {}
+        };
+        const outJson = JSON.stringify(outRes);
+        const afterBytes = Buffer.byteLength(outJson, 'utf8');
+        fs.writeFileSync(PUBLIC_RESERVOIR_PATH, outJson, 'utf-8');
+        compactedReservoirCount = finalResItems.length;
+        console.log(
+          `✓ feed-reservoir.json: ${parsedRes.items.length} -> ${finalResItems.length} items | ${(beforeBytes / 1024).toFixed(1)} KB -> ${(afterBytes / 1024).toFixed(1)} KB (${(afterBytes / (1024 * 1024)).toFixed(2)} MB)`
+        );
+      }
+    }
+  }
+
+  if (fs.existsSync(PUBLIC_SNAPSHOT_PATH)) {
+    const beforeRaw = fs.readFileSync(PUBLIC_SNAPSHOT_PATH, 'utf-8');
+    const beforeBytes = Buffer.byteLength(beforeRaw, 'utf8');
+    const parsedRaw = JSON.parse(beforeRaw) as Record<string, unknown>;
+    const parsedSnap = parseSnapshotPayload(parsedRaw, { skipByteBudget: true });
+    if (parsedSnap && parsedSnap.items.length > 0) {
+      const refMs = parsedSnap.generatedAt ? Date.parse(parsedSnap.generatedAt) : Date.now();
+      const selectedSnap = selectBalancedStartupItems(parsedSnap.items, refMs, STARTUP_SNAPSHOT_CAP);
+      const compactHealth = compactSourceHealthForSnapshot(parsedSnap.sourceHealth);
+      const compactSnapItems = selectedSnap.map(item =>
+        compactItemForSnapshot(item, { maxBodyChars: SNAPSHOT_MAX_BODY_CHARS })
+      );
+      const validatedSnap = parseSnapshotPayload({
+        generatedAt: parsedSnap.generatedAt,
+        totalCandidateSources: parsedSnap.totalCandidateSources,
+        activeDeliveringSources: parsedSnap.activeDeliveringSources,
+        totalAvailableItems: compactedReservoirCount || parsedSnap.totalAvailableItems,
+        items: compactSnapItems,
+        sourceHealth: compactHealth
+      });
+      if (!validatedSnap) {
+        throw new Error('Offline compaction produced no valid startup snapshot items');
+      }
+      const allowed = new Set(validatedSnap.items.map(i => i.id));
+      const finalSnapItems = compactSnapItems.filter(i => allowed.has(i.id));
+      const outSnap = {
+        generatedAt: validatedSnap.generatedAt,
+        totalCandidateSources: validatedSnap.totalCandidateSources,
+        activeDeliveringSources: validatedSnap.activeDeliveringSources,
+        totalAvailableItems: Math.max(compactedReservoirCount || validatedSnap.totalAvailableItems, finalSnapItems.length),
+        items: finalSnapItems,
+        sourceHealth: compactHealth
+      };
+      const outJson = JSON.stringify(outSnap);
+      const afterBytes = Buffer.byteLength(outJson, 'utf8');
+      fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, outJson, 'utf-8');
+      console.log(
+        `✓ feed-snapshot.json:  ${parsedSnap.items.length} -> ${finalSnapItems.length} items | ${(beforeBytes / 1024).toFixed(1)} KB -> ${(afterBytes / 1024).toFixed(1)} KB`
+      );
+    }
+  }
+}
+
+if (process.argv.includes('--compact-existing')) {
+  try {
+    compactExistingPublicSnapshots();
+  } catch (err) {
+    console.error('Fatal offline compaction error:', err);
+    process.exit(1);
+  }
+} else {
+  runIngestionPipeline().catch(err => {
+    console.error('Fatal pipeline error:', err);
+    process.exit(1);
+  });
+}

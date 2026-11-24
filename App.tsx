@@ -1,20 +1,35 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator, useWindowDimensions, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppProvider, useApp } from './src/core/context/AppContext';
-import { OnboardingScreen } from './src/features/onboarding/OnboardingScreen';
 import { FeedScreen } from './src/features/feed/FeedScreen';
-import { ReaderScreen } from './src/features/reader/ReaderScreen';
-import { LibraryScreen } from './src/features/library/LibraryScreen';
-import { SettingsScreen } from './src/features/settings/SettingsScreen';
-import { NetworkScreen } from './src/features/network/NetworkScreen';
-import { WhyThisModal } from './src/ui/components/WhyThisModal';
-import { InvestigationModal } from './src/features/investigation/InvestigationModal';
 import { AtmenLogo } from './src/ui/components/AtmenLogo';
 import { typography, radius } from './src/ui/theme';
+
+const OnboardingScreen = React.lazy(() =>
+  import('./src/features/onboarding/OnboardingScreen').then(m => ({ default: m.OnboardingScreen }))
+);
+const ReaderScreen = React.lazy(() =>
+  import('./src/features/reader/ReaderScreen').then(m => ({ default: m.ReaderScreen }))
+);
+const LibraryScreen = React.lazy(() =>
+  import('./src/features/library/LibraryScreen').then(m => ({ default: m.LibraryScreen }))
+);
+const SettingsScreen = React.lazy(() =>
+  import('./src/features/settings/SettingsScreen').then(m => ({ default: m.SettingsScreen }))
+);
+const NetworkScreen = React.lazy(() =>
+  import('./src/features/network/NetworkScreen').then(m => ({ default: m.NetworkScreen }))
+);
+const WhyThisModal = React.lazy(() =>
+  import('./src/ui/components/WhyThisModal').then(m => ({ default: m.WhyThisModal }))
+);
+const InvestigationModal = React.lazy(() =>
+  import('./src/features/investigation/InvestigationModal').then(m => ({ default: m.InvestigationModal }))
+);
 
 const MainNavigator: React.FC = () => {
   const {
@@ -100,7 +115,9 @@ const MainNavigator: React.FC = () => {
     return (
       <>
         <StatusBar style={isDark ? 'light' : 'dark'} />
-        <OnboardingScreen />
+        <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
+          <OnboardingScreen />
+        </Suspense>
       </>
     );
   }
@@ -297,17 +314,23 @@ const MainNavigator: React.FC = () => {
         </View>
         {activeTab === 'library' && (
           <View style={styles.tabPane}>
-            <LibraryScreen />
+            <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
+              <LibraryScreen />
+            </Suspense>
           </View>
         )}
         {activeTab === 'settings' && (
           <View style={styles.tabPane}>
-            <SettingsScreen />
+            <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
+              <SettingsScreen />
+            </Suspense>
           </View>
         )}
         {activeTab === 'network' && (
           <View style={styles.tabPane}>
-            <NetworkScreen />
+            <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
+              <NetworkScreen />
+            </Suspense>
           </View>
         )}
       </View>
@@ -315,21 +338,27 @@ const MainNavigator: React.FC = () => {
       {/* Fullscreen Reader Overlay: Renders on top of tabs so originating tab & scroll are preserved */}
       {selectedArticleId && (
         <View style={styles.readerOverlay}>
-          <ReaderScreen />
+          <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
+            <ReaderScreen />
+          </Suspense>
         </View>
       )}
 
       {/* Transparent "Why This" Modal (lazily mounted) */}
-      {whyModalItem && <WhyThisModal />}
+      <Suspense fallback={null}>
+        {whyModalItem && <WhyThisModal />}
+      </Suspense>
 
       {/* Epistemic Investigation Modal (lazily mounted) */}
       {isInvestigationOpen && (
-        <InvestigationModal
-          visible={true}
-          onClose={closeInvestigation}
-          initialArticle={investigationTargetArticle}
-          initialQuestion={investigationInitialQuestion}
-        />
+        <Suspense fallback={null}>
+          <InvestigationModal
+            visible={true}
+            onClose={closeInvestigation}
+            initialArticle={investigationTargetArticle}
+            initialQuestion={investigationInitialQuestion}
+          />
+        </Suspense>
       )}
 
       {/* Bottom Tab Bar with Inset Padding (Mobile/Tablet only) */}

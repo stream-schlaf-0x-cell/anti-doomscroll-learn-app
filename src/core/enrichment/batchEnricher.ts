@@ -873,6 +873,8 @@ export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefine
   return true;
 }
 
+const sanitizedFeedItemCache = new WeakSet<FeedItem>();
+
 /**
  * Sanitizes and normalizes a FeedItem for the default curated stream:
  * - Strips affiliate/donation boilerplate
@@ -880,6 +882,9 @@ export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefine
  * - Ensures a genuine conceptual keyInsight
  */
 export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
+  if (item && typeof item === 'object' && sanitizedFeedItemCache.has(item)) {
+    return item;
+  }
   let cleanedTitle = (item.title || '')
     .replace(/^From the archive:\s*/i, '')
     .replace(/\s*[–-]\s*podcast$/i, '')
@@ -1151,7 +1156,7 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
   const computedWordCount = (cleanedBody || '').split(/\s+/).filter(Boolean).length;
   const computedReadingMinutes = Math.max(1, Math.ceil(computedWordCount / 200));
 
-  return {
+  const sanitized: T = {
     ...item,
     format: sanitizedFormat,
     title: cleanedTitle,
@@ -1174,6 +1179,8 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     imageUrl: upgradedImageUrl,
     hasAuthenticImage: Boolean(upgradedImageUrl)
   };
+  sanitizedFeedItemCache.add(sanitized);
+  return sanitized;
 }
 
 /**

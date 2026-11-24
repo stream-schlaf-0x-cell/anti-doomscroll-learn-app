@@ -20,14 +20,23 @@ export type SourceCategory =
   | 'open_source'
   | 'custom';
 
+// Dynamic, non-static load of CI source health telemetry in Node.js test / CLI environments.
+// Uses eval('require') so Metro / Expo Web bundler DOES NOT bundle 216 KB of JSON into the client JS.
 let bundledSourceHealth: Record<string, SourceHealthInfo> = {};
-try {
-  const loaded = require('./source-health.json');
-  if (loaded && typeof loaded === 'object') {
-    bundledSourceHealth = parseSourceHealth(loaded);
+if (typeof process !== 'undefined' && process.versions?.node && !(process as any).browser) {
+  try {
+    const fsMod = eval('require')('fs');
+    const pathMod = eval('require')('path');
+    const healthPath = pathMod.resolve(__dirname, 'source-health.json');
+    if (fsMod.existsSync(healthPath)) {
+      const loaded = JSON.parse(fsMod.readFileSync(healthPath, 'utf-8'));
+      if (loaded && typeof loaded === 'object') {
+        bundledSourceHealth = parseSourceHealth(loaded);
+      }
+    }
+  } catch {
+    bundledSourceHealth = {};
   }
-} catch {
-  bundledSourceHealth = {};
 }
 
 export interface FeedSourceItem {

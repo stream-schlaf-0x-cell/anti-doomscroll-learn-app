@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { FeedItem, FeedItemSchema, TOPIC_SPACE_MAP, TopicTag } from '../src/core/domain/types';
+import { FeedItem, FeedItemSchema, TOPIC_SPACE_MAP } from '../src/core/domain/types';
 import { REAL_KNOWLEDGE_VAULT } from '../src/core/data/realKnowledgeVault';
 import { resolveItemSpaceHandle } from '../src/core/spaces/spaceRepository';
 import { ZERO_WIDTH_REGEX, sanitizeImageUrl } from '../src/core/ingestion/rssParser';
@@ -15,6 +15,7 @@ import {
 } from '../src/core/enrichment/batchEnricher';
 import { ContinuousLiveNewsService } from '../src/core/data/continuousLiveNewsService';
 import { isDeprecatedShowcaseStarterItem } from '../src/core/learning/hivemindLearningService';
+import { compactItemForSnapshot } from '../src/core/feed/snapshotPayload';
 
 const PUBLIC_SNAPSHOT_PATH = path.resolve(__dirname, '../public/feed-snapshot.json');
 const PIPELINE_OUTPUT_PATH = path.resolve(__dirname, '../src/core/data/pipeline-output.json');
@@ -314,7 +315,9 @@ async function runSanitization() {
     round++;
   }
 
-  const snapshotItems: FeedItem[] = [...prunedPipeline, ...galleryArtworks];
+  const snapshotItems: FeedItem[] = [...prunedPipeline, ...galleryArtworks].map(item =>
+    compactItemForSnapshot(item, { maxBodyChars: 6000 })
+  );
   const snapshotDate = new Date().toISOString().slice(0, 10);
   const snapshotData = {
     generatedAt: new Date().toISOString(),
@@ -322,8 +325,8 @@ async function runSanitization() {
     itemCount: snapshotItems.length,
     items: snapshotItems
   };
-  fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(snapshotData, null, 2), 'utf8');
-  console.log(`✓ public/feed-snapshot.json written (${snapshotItems.length} items).`);
+  fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(snapshotData), 'utf8');
+  console.log(`✓ public/feed-snapshot.json written (${snapshotItems.length} items, ${Buffer.byteLength(JSON.stringify(snapshotData), 'utf8')} bytes).`);
 }
 
 void runSanitization();

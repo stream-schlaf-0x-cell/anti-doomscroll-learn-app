@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { Suspense, useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -22,8 +22,6 @@ import { TopicTag, FeedItem, TOPIC_SPACE_MAP } from '../../core/domain/types';
 import { appStorage } from '../../core/data/storage';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
-import { DesktopRedditHeader } from '../../ui/components/DesktopRedditHeader';
-import { DesktopSidebar } from '../../ui/components/DesktopSidebar';
 import { FeedCard } from '../../ui/components/FeedCard';
 import { typography, radius, spacing } from '../../ui/theme';
 import { ScoredFeedItem, scoreFeedItem, sortFeedForDisplay, FeedSortMode, isHivemindLearningCard } from '../../core/domain/ranking';
@@ -34,14 +32,10 @@ import {
   canonicalSpaceHandle,
   resolveItemSpaceHandle
 } from '../../core/spaces/spaceRepository';
-import { UltraMasterModal, MasterTab } from '../../ui/components/UltraMasterModal';
+import type { MasterTab } from '../../ui/components/UltraMasterModal';
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
-import { StreamGenerationProgressModal } from '../../ui/components/StreamGenerationProgressModal';
-import { AtmenBreathingPortal } from '../breathing/AtmenBreathingPortal';
-import { HivemindStreamModal } from '../../ui/components/HivemindStreamModal';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { ContinuousLiveNewsService, NewsHubFilterCategory } from '../../core/data/continuousLiveNewsService';
-import { NewsHubModal } from '../../ui/components/NewsHubModal';
 import {
   defaultBatchEditionEnricher,
   satisfiesCuratedBodyContract,
@@ -54,7 +48,6 @@ import { loadAiCredentials, hasAiConfiguration } from '../../core/ai/atmenAiClie
 import { feedRepository } from '../../core/data/feedRepository';
 import { SubchannelFlourishService, detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
-import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
 import { PullToRefreshIndicator } from '../../ui/components/PullToRefreshIndicator';
 import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
 import {
@@ -74,14 +67,41 @@ import {
   evaluatePullToRefreshGesture,
   shouldUnlockFallbackTopLock
 } from '../../core/feed/scrollUxController';
-import { NewsEvolutionModal } from '../../ui/components/NewsEvolutionModal';
-import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
+import type { NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
 import {
   HivemindLearningTrack,
   hivemindLearningService,
   isDeprecatedShowcaseStarterItem,
   generateNextHivemindChapter
 } from '../../core/learning/hivemindLearningService';
+
+const DesktopRedditHeader = React.lazy(() =>
+  import('../../ui/components/DesktopRedditHeader').then(m => ({ default: m.DesktopRedditHeader }))
+);
+const DesktopSidebar = React.lazy(() =>
+  import('../../ui/components/DesktopSidebar').then(m => ({ default: m.DesktopSidebar }))
+);
+const UltraMasterModal = React.lazy(() =>
+  import('../../ui/components/UltraMasterModal').then(m => ({ default: m.UltraMasterModal }))
+);
+const StreamGenerationProgressModal = React.lazy(() =>
+  import('../../ui/components/StreamGenerationProgressModal').then(m => ({ default: m.StreamGenerationProgressModal }))
+);
+const AtmenBreathingPortal = React.lazy(() =>
+  import('../breathing/AtmenBreathingPortal').then(m => ({ default: m.AtmenBreathingPortal }))
+);
+const HivemindStreamModal = React.lazy(() =>
+  import('../../ui/components/HivemindStreamModal').then(m => ({ default: m.HivemindStreamModal }))
+);
+const NewsHubModal = React.lazy(() =>
+  import('../../ui/components/NewsHubModal').then(m => ({ default: m.NewsHubModal }))
+);
+const NewsEvolutionModal = React.lazy(() =>
+  import('../../ui/components/NewsEvolutionModal').then(m => ({ default: m.NewsEvolutionModal }))
+);
+const FeedOperationReportModal = React.lazy(() =>
+  import('../../ui/components/FeedOperationReportModal').then(m => ({ default: m.FeedOperationReportModal }))
+);
 
 function useReadingStableFeed(items: ScoredFeedItem[], reading: boolean, scope: string): ScoredFeedItem[] {
   const latest = useMemo(() => ({ items, scope }), [items, scope]);
@@ -463,6 +483,7 @@ export const FeedScreen: React.FC = () => {
     if (!evolutionBriefing || forceRefresh) {
       setEvolutionLoading(true);
       try {
+        const { NewsEvolutionService } = await import('../../core/news/newsEvolutionService');
         const briefing = await NewsEvolutionService.generateEvolutionBriefing(liveNewsItems, { forceRefresh });
         setEvolutionBriefing(briefing);
       } catch (err) {
@@ -1809,6 +1830,21 @@ export const FeedScreen: React.FC = () => {
 
     scheduleChronikFlush();
 
+    // Gentle one-time scroll trigger to hydrate the deep endless reservoir in the background
+    if (contentOffset.y > 900 && !reservoirHydratedInFeedRef.current) {
+      reservoirHydratedInFeedRef.current = true;
+      void feedRepository
+        .hydrateFromReservoir?.()
+        .then((res) => {
+          if (res?.success && res.insertedCount > 0) {
+            void recomputeFeed();
+          }
+        })
+        .catch(() => {
+          // Non-blocking background reservoir hydration
+        });
+    }
+
     const scrollBottom = layoutMeasurement.height + contentOffset.y;
     const reachedThreshold = contentSize.height > 0 && (
       scrollBottom >= contentSize.height * 0.65 ||
@@ -1824,7 +1860,7 @@ export const FeedScreen: React.FC = () => {
         return next;
       });
     }
-  }, [setHorizonBarVisibility, scheduleChronikFlush, totalInfiniteAvailable, curateNextStreamBatch]);
+  }, [setHorizonBarVisibility, scheduleChronikFlush, totalInfiniteAvailable, curateNextStreamBatch, recomputeFeed]);
 
   // Interactive Pull-to-Refresh for Web (Touch Pull on iOS/iPadOS PWA + Desktop Trackpad Overscroll)
   React.useEffect(() => {
@@ -2641,14 +2677,27 @@ export const FeedScreen: React.FC = () => {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Top Header: Reddit Desktop Header vs Mobile Header */}
       {isDesktop ? (
-        <DesktopRedditHeader
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          activeSpaceName={activeSpaceName}
-          selectedFilter={selectedFilter}
-          onSelectSpace={handleFilterChange}
-          onOpenHivemind={() => setShowHivemindModal(true)}
-        />
+        <Suspense
+          fallback={
+            <View
+              style={{
+                height: 52,
+                backgroundColor: colors.surface,
+                borderBottomWidth: 1,
+                borderBottomColor: colors.borderSubtle
+              }}
+            />
+          }
+        >
+          <DesktopRedditHeader
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            activeSpaceName={activeSpaceName}
+            selectedFilter={selectedFilter}
+            onSelectSpace={handleFilterChange}
+            onOpenHivemind={() => setShowHivemindModal(true)}
+          />
+        </Suspense>
       ) : (
         <Header onOpenHivemind={() => setShowHivemindModal(true)} />
       )}
@@ -3814,7 +3863,9 @@ export const FeedScreen: React.FC = () => {
                     <>
                       {isFeatureEnabled(profile, 'breathing_portal') && (
                         <View style={{ marginVertical: spacing.lg }}>
-                          <AtmenBreathingPortal mode="inline" height={380} />
+                          <Suspense fallback={<View style={{ height: 380 }} />}>
+                            <AtmenBreathingPortal mode="inline" height={380} />
+                          </Suspense>
                         </View>
                       )}
 
@@ -3899,11 +3950,13 @@ export const FeedScreen: React.FC = () => {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: spacing.xxl }}
             >
-              <DesktopSidebar
-                articleCount={infiniteInterleavedBase.length}
-                selectedTopicFilter={selectedFilter}
-                onSelectTopicFilter={handleFilterChange}
-              />
+              <Suspense fallback={<View style={{ width: 300 }} />}>
+                <DesktopSidebar
+                  articleCount={infiniteInterleavedBase.length}
+                  selectedTopicFilter={selectedFilter}
+                  onSelectTopicFilter={handleFilterChange}
+                />
+              </Suspense>
             </ScrollView>
           </View>
         )}
@@ -3911,89 +3964,103 @@ export const FeedScreen: React.FC = () => {
 
       {/* Ultra Master Studio Modal */}
       {showMasterModal && (
-        <UltraMasterModal
-          visible={true}
-          initialTab={masterModalTab}
-          onClose={() => {
-            setShowMasterModal(false);
-            void loadSubchannels();
-          }}
-        />
+        <Suspense fallback={null}>
+          <UltraMasterModal
+            visible={true}
+            initialTab={masterModalTab}
+            onClose={() => {
+              setShowMasterModal(false);
+              void loadSubchannels();
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Epistemic On-The-Fly Stream Progress Modal */}
       {showProgressModal && (
-        <StreamGenerationProgressModal
-          visible={true}
-          spaceName={progressSpaceName}
-          progress={streamProgress}
-          statusMessage={streamStatusText}
-          isFinished={streamFinished}
-          error={streamError}
-          onCompleted={() => setShowProgressModal(false)}
-          onCancel={() => setShowProgressModal(false)}
-        />
+        <Suspense fallback={null}>
+          <StreamGenerationProgressModal
+            visible={true}
+            spaceName={progressSpaceName}
+            progress={streamProgress}
+            statusMessage={streamStatusText}
+            isFinished={streamFinished}
+            error={streamError}
+            onCompleted={() => setShowProgressModal(false)}
+            onCancel={() => setShowProgressModal(false)}
+          />
+        </Suspense>
       )}
 
       {/* Atmen Breathing Portal Modal */}
       {showBreathingModal && (
-        <AtmenBreathingPortal
-          visible={true}
-          onClose={() => setShowBreathingModal(false)}
-          mode="modal"
-        />
+        <Suspense fallback={null}>
+          <AtmenBreathingPortal
+            visible={true}
+            onClose={() => setShowBreathingModal(false)}
+            mode="modal"
+          />
+        </Suspense>
       )}
 
       {/* Hivemind Epistemic Stream Modal */}
       {showHivemindModal && (
-        <HivemindStreamModal
-          visible={true}
-          onClose={() => setShowHivemindModal(false)}
-          onStartFocusTrack={handleStartFocusTrack}
-        />
+        <Suspense fallback={null}>
+          <HivemindStreamModal
+            visible={true}
+            onClose={() => setShowHivemindModal(false)}
+            onStartFocusTrack={handleStartFocusTrack}
+          />
+        </Suspense>
       )}
 
       {/* News-Hub Sources, Gatherer & Settings Modal */}
       {showNewsHubSettingsModal && (
-        <NewsHubModal
-          visible={true}
-          onClose={() => {
-            setShowNewsHubSettingsModal(false);
-            void loadLiveNews();
-          }}
-        />
+        <Suspense fallback={null}>
+          <NewsHubModal
+            visible={true}
+            onClose={() => {
+              setShowNewsHubSettingsModal(false);
+              void loadLiveNews();
+            }}
+          />
+        </Suspense>
       )}
 
       {/* News Evolution 3-Point Briefing Modal */}
       {showEvolutionModal && (
-        <NewsEvolutionModal
-          visible={true}
-          onClose={() => setShowEvolutionModal(false)}
-          briefing={evolutionBriefing}
-          loading={evolutionLoading}
-          onRefresh={() => void handleOpenEvolution(true)}
-          onOpenArticle={(urlOrId) => {
-            setShowEvolutionModal(false);
-            if (urlOrId.startsWith('http')) {
-              void Linking.openURL(urlOrId).catch(() => {});
-            } else {
-              void openArticle(urlOrId);
-            }
-          }}
-          colors={colors}
-          isDark={isDark}
-        />
+        <Suspense fallback={null}>
+          <NewsEvolutionModal
+            visible={true}
+            onClose={() => setShowEvolutionModal(false)}
+            briefing={evolutionBriefing}
+            loading={evolutionLoading}
+            onRefresh={() => void handleOpenEvolution(true)}
+            onOpenArticle={(urlOrId) => {
+              setShowEvolutionModal(false);
+              if (urlOrId.startsWith('http')) {
+                void Linking.openURL(urlOrId).catch(() => {});
+              } else {
+                void openArticle(urlOrId);
+              }
+            }}
+            colors={colors}
+            isDark={isDark}
+          />
+        </Suspense>
       )}
 
       {/* Inspectable Curation Operation Telemetry Modal */}
       {showReportModal && (
-        <FeedOperationReportModal
-          visible={true}
-          onClose={() => setShowReportModal(false)}
-          result={lastOperationResult}
-          colors={colors}
-          isDark={isDark}
-        />
+        <Suspense fallback={null}>
+          <FeedOperationReportModal
+            visible={true}
+            onClose={() => setShowReportModal(false)}
+            result={lastOperationResult}
+            colors={colors}
+            isDark={isDark}
+          />
+        </Suspense>
       )}
 
       {/* Channel Edit & Typo-Correction Modal */}

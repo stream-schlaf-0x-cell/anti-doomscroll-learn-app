@@ -38,11 +38,7 @@ import { BackupService } from '../data/backupService';
 import { RaindropService } from '../raindrop/raindropService';
 import { FeatureModuleId } from '../modules/featureRegistry';
 import { refreshLocalEdition } from './localFeedRefresh';
-import {
-  cloudSyncService,
-  CloudSyncConfig,
-  DEFAULT_CLOUD_SYNC_CONFIG
-} from '../sync/cloudSyncService';
+import { cloudSyncService, CloudSyncConfig } from '../sync/cloudSyncService';
 import { defaultGraphRepository } from '../graph/graphRepository';
 import { BoundedIdSet } from '../feed/boundedIdSet';
 import { defaultFeedOperationManager } from '../feed/FeedOperationManager';
@@ -56,6 +52,9 @@ import { hasAiConfiguration, loadAiCredentials } from '../ai/atmenAiClient';
 import { harvestRabbitHoleForItem } from '../synthesis/rabbitHoleService';
 import { seenImpressionsService } from '../data/seenImpressionsService';
 import { hivemindLearningService } from '../learning/hivemindLearningService';
+import { BackgroundCoordinator, countFreshUnseenItems } from './backgroundCoordinator';
+import { useReadingProgressController } from './useReadingProgressController';
+import { useCloudSyncController, MergedCloudSnapshotUpdate } from './useCloudSyncController';
 
 export function extractSalientKeywords(titleOrItem: string | Pick<FeedItem, 'title' | 'subtitle' | 'keyInsight' | 'feedText'>): string[] {
   return extractConceptKeywords(titleOrItem);
@@ -400,19 +399,102 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [snapshotSyncInfo, setSnapshotSyncInfo] = useState<string | null>(null);
   const [spaces, setSpaces] = useState<Subchannel[]>([]);
   const [dismissedItemIds, setDismissedItemIds] = useState<string[]>([]);
-  const [cloudSyncConfig, setCloudSyncConfig] = useState<CloudSyncConfig>(DEFAULT_CLOUD_SYNC_CONFIG);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
-  const syncDebounceTimer = useRef<NodeJS.Timeout | null>(null);
-  const scheduleCloudSyncPushRef = useRef<() => void>(() => {});
-  const triggerCloudSyncRef = useRef<(forcePush?: boolean) => Promise<boolean>>(async () => false);
 
-  // Atomic Hydration (WP 1): Hard safety unlock if storage/cold-boot snapshot fetch is sluggish (warm boot unlocks <50ms)
+  const selectedEditionTypeRef = useRef<DayEditionType>(selectedEditionType);
+  selectedEditionTypeRef.current = selectedEditionType;
+  const activeDateSeedRef = useRef<string>(activeDateSeed);
+  activeDateSeedRef.current = activeDateSeed;
+  const shuffleSeedRef = useRef<number>(0);
+  shuffleSeedRef.current = shuffleSeed;
+  const remoteSnapshotUrlRef = useRef<string>(remoteSnapshotUrl);
+  remoteSnapshotUrlRef.current = remoteSnapshotUrl;
+  const sessionServedIdsRef = useRef<BoundedIdSet>(new BoundedIdSet(200));
+
+  // References to track latest committed state and prevent stale closures
+  const latestProfileRef = useRef<UserProfile>(profile);
+  const latestInteractionsRef = useRef<Record<string, ReadingInteraction>>(interactions);
+  const latestDailyEditionRef = useRef<ScoredFeedItem[]>(dailyEdition);
+  const latestDiscoveryItemsRef = useRef<ScoredFeedItem[]>(discoveryItems);
+  const latestSavedArticlesRef = useRef<FeedItem[]>(savedArticles);
+  const latestOpenWebItemsRef = useRef<FeedItem[]>(openWebItems);
+  const latestSelectedArticleRef = useRef<FeedItem | null>(selectedArticle);
+  latestProfileRef.current = profile;
+  latestInteractionsRef.current = interactions;
+  latestDailyEditionRef.current = dailyEdition;
+  latestDiscoveryItemsRef.current = discoveryItems;
+  latestSavedArticlesRef.current = savedArticles;
+  latestOpenWebItemsRef.current = openWebItems;
+  latestSelectedArticleRef.current = selectedArticle;
+
+  const feedRecomputeVersion = useRef<number>(0);
+  const storageGenerationRef = useRef<number>(0);
+  const backgroundCoordinatorRef = useRef<BackgroundCoordinator | null>(null);
+
+  // Extracted controller: debounced reading progress persistence
+  const {
+    updateReadingProgress,
+    flushReadingProgress,
+    cancelPendingReadingProgress
+  } = useReadingProgressController({
+    latestInteractionsRef,
+    setInteractions,
+    storageGenerationRef
+  });
+
+  // Extracted controller: Cloud Sync, pairing & debounced push
+  const handleMergedCloudSnapshot = useCallback((snapshot: MergedCloudSnapshotUpdate) => {
+    if (snapshot.profile) {
+      latestProfileRef.current = snapshot.profile;
+      setProfile(snapshot.profile);
+    }
+    if (snapshot.interactions) {
+      latestInteractionsRef.current = snapshot.interactions;
+      setInteractions(snapshot.interactions);
+    }
+    if (snapshot.savedArticles) {
+      setSavedArticles(snapshot.savedArticles);
+    }
+    if (snapshot.dismissedItemIds) {
+      setDismissedItemIds(snapshot.dismissedItemIds);
+    }
+    if (snapshot.spaces) {
+      setSpaces(snapshot.spaces);
+    }
+  }, []);
+
+  const {
+    cloudSyncConfig,
+    isSyncing,
+    syncStatusMessage,
+    triggerCloudSync,
+    updateCloudSyncConfig,
+    activateCloudSync,
+    applyPairingCode,
+    getPairingBundle,
+    scheduleCloudSyncPush
+  } = useCloudSyncController({
+    onMergedSnapshot: handleMergedCloudSnapshot,
+    onError: setErrorMessage
+  });
+
+  const scheduleCloudSyncPushRef = useRef(scheduleCloudSyncPush);
+  const triggerCloudSyncRef = useRef(triggerCloudSync);
+  scheduleCloudSyncPushRef.current = scheduleCloudSyncPush;
+  triggerCloudSyncRef.current = triggerCloudSync;
+
+  // Atomic Hydration: hard safety unlock if storage/cold-boot snapshot fetch is sluggish (warm boot unlocks <50ms)
   useEffect(() => {
     const fallbackTimer = setTimeout(() => {
       setIsHydrated(true);
-    }, 2600);
+    }, 1800);
     return () => clearTimeout(fallbackTimer);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      backgroundCoordinatorRef.current?.stop();
+      backgroundCoordinatorRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -461,8 +543,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [selectSpace, selectedFilter]);
 
   const deleteSpace = useCallback(async (id: string) => {
-    const spaces = await defaultSpaceRepository.getAllSpaces();
-    const target = spaces.find(s => s.id === id || s.handle.toLowerCase() === id.toLowerCase());
+    const allSpaces = await defaultSpaceRepository.getAllSpaces();
+    const target = allSpaces.find(s => s.id === id || s.handle.toLowerCase() === id.toLowerCase());
     const targetHandle = target?.handle || id;
     const ok = await defaultSpaceRepository.deleteSubchannel(id);
     if (ok) {
@@ -486,48 +568,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     scheduleCloudSyncPushRef.current();
   }, []);
 
-  const selectedEditionTypeRef = useRef<DayEditionType>(selectedEditionType);
-  selectedEditionTypeRef.current = selectedEditionType;
-
-  const activeDateSeedRef = useRef<string>(activeDateSeed);
-  activeDateSeedRef.current = activeDateSeed;
-
-  const shuffleSeedRef = useRef<number>(0);
-  shuffleSeedRef.current = shuffleSeed;
-
-  const sessionServedIdsRef = useRef<BoundedIdSet>(new BoundedIdSet(200));
-
-  // References to track latest committed state and prevent stale closures
-  const latestProfileRef = useRef<UserProfile>(profile);
-  const latestInteractionsRef = useRef<Record<string, ReadingInteraction>>(interactions);
-  const latestDailyEditionRef = useRef<ScoredFeedItem[]>(dailyEdition);
-  const latestDiscoveryItemsRef = useRef<ScoredFeedItem[]>(discoveryItems);
-  const latestSavedArticlesRef = useRef<FeedItem[]>(savedArticles);
-  const latestOpenWebItemsRef = useRef<FeedItem[]>(openWebItems);
-  const latestSelectedArticleRef = useRef<FeedItem | null>(selectedArticle);
-  latestProfileRef.current = profile;
-  latestInteractionsRef.current = interactions;
-  latestDailyEditionRef.current = dailyEdition;
-  latestDiscoveryItemsRef.current = discoveryItems;
-  latestSavedArticlesRef.current = savedArticles;
-  latestOpenWebItemsRef.current = openWebItems;
-  latestSelectedArticleRef.current = selectedArticle;
-
   const currentEditionType = useMemo(() => {
     return determineCurrentEditionType(new Date(), profile);
   }, [profile]);
 
-  // Sequencing token to discard stale asynchronous feed recomputations
-  const feedRecomputeVersion = useRef<number>(0);
-
-  // Generation counter to invalidate pending background writes on reset
-  const storageGenerationRef = useRef<number>(0);
-
-  // Pending throttled reading progress buffer
-  const pendingProgressRef = useRef<{ id: string; percent: number } | null>(null);
-  const progressDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Compute active theme colors and palette
   const isDark = useMemo(() => {
     const themePref = profile.readingPreferences.theme;
     if (themePref === 'dark') return true;
@@ -558,7 +602,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [colors.background]);
 
-  // Sequenced feed recomputation: newest committed call always wins
+  // Sequenced single-pass feed recomputation: newest committed call always wins
   const scheduleFeedRecompute = useCallback(async (
     prof: UserProfile,
     inter: Record<string, ReadingInteraction>,
@@ -578,9 +622,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const shouldLoadWeather = edition === 'morning' && prof.editionPreferences?.weatherEnabled !== false;
       const city = prof.editionPreferences?.weatherCity || 'dresden';
 
+      const singlePassPromise = feedRepository.getEditionAndDiscovery
+        ? feedRepository.getEditionAndDiscovery(edition, prof, inter, seed, offset, prevIds)
+        : null;
+
       await refreshLocalEdition({
-        loadDaily: () => feedRepository.getEditionFeed(edition, prof, inter, seed, offset, prevIds),
-        loadDiscovery: () => feedRepository.getDiscoveryItems(prof, inter, undefined, offset, prevIds),
+        loadDaily: () =>
+          singlePassPromise
+            ? singlePassPromise.then(res => res.daily)
+            : feedRepository.getEditionFeed(edition, prof, inter, seed, offset, prevIds),
+        loadDiscovery: () =>
+          singlePassPromise
+            ? singlePassPromise.then(res => res.discovery)
+            : feedRepository.getDiscoveryItems(prof, inter, undefined, offset, prevIds),
         onFeed: ({ daily, discovery }) => {
           setDailyEdition(daily as ScoredFeedItem[]);
           setDiscoveryItems(discovery as ScoredFeedItem[]);
@@ -605,7 +659,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setShuffleSeed(nextOffset);
     shuffleSeedRef.current = nextOffset;
 
-    // Track currently served items with bounded FIFO memory (200 IDs)
     const previouslyServed = sessionServedIdsRef.current;
     if (currentlyRenderedIds && currentlyRenderedIds.length > 0) {
       previouslyServed.addMany(currentlyRenderedIds);
@@ -626,7 +679,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prevSnapshotSet
     );
 
-    // Calculate truthful candidate metrics
     const allRepoItems = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
     const totalPoolCount = allRepoItems.length + openWebItems.length;
     const isPoolExhausted = previouslyServed.size >= totalPoolCount && totalPoolCount > 0;
@@ -634,13 +686,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const pinnedIds = defaultFeedOperationManager.getPinnedItemIds();
     const pinnedCount = pinnedIds.length;
     const estimatedFresh = Math.max(0, Math.min(24 - pinnedCount, totalPoolCount - previouslyServed.size));
-    const freshCount = isPoolExhausted ? Math.max(1, totalPoolCount - pinnedCount) : (estimatedFresh > 0 ? estimatedFresh : 24 - pinnedCount);
+    const freshCount = isPoolExhausted
+      ? Math.max(1, totalPoolCount - pinnedCount)
+      : (estimatedFresh > 0 ? estimatedFresh : 24 - pinnedCount);
 
-    return {
-      freshCount,
-      pinnedCount,
-      isPoolExhausted
-    };
+    return { freshCount, pinnedCount, isPoolExhausted };
   }, [dailyEdition, discoveryItems, openWebItems, scheduleFeedRecompute]);
 
   const updateEditionPreferences = useCallback(async (prefs: Partial<EditionPreferences>) => {
@@ -701,34 +751,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [activeFeedOption, refreshHistory]);
 
-  // Flush pending reading progress immediately to persistent storage
-  const flushReadingProgress = useCallback(async () => {
-    if (progressDebounceTimerRef.current) {
-      clearTimeout(progressDebounceTimerRef.current);
-      progressDebounceTimerRef.current = null;
-    }
-    const pending = pendingProgressRef.current;
-    if (pending) {
-      pendingProgressRef.current = null;
-      try {
-        const updated = await libraryRepository.updateProgress(pending.id, pending.percent);
-        setInteractions(prev => {
-          const next = { ...prev, [pending.id]: updated };
-          latestInteractionsRef.current = next;
-          return next;
-        });
-      } catch (err) {
-        console.warn('Lesefortschritt konnte nicht persistiert werden:', err);
-      }
-    }
-  }, []);
-
-  const remoteSnapshotUrlRef = useRef<string>(remoteSnapshotUrl);
-  remoteSnapshotUrlRef.current = remoteSnapshotUrl;
-
-  // Wake-on-Focus & New-Day Auto-Refresh (Pillar 3):
-  // Ensures iOS/iPadOS Home-Screen PWAs & desktop tabs kept open overnight immediately pull fresh snapshots,
-  // live dispatches, and cross-device seen-impressions upon waking after >= 25 min or on a new calendar day.
+  // Wake-on-Focus & New-Day Auto-Refresh
   const runForegroundWakeCheck = useCallback(async () => {
     try {
       const cfg = await cloudSyncService.getConfig();
@@ -770,8 +793,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSnapshotSyncInfo(syncText);
       }
 
+      const seenIds = await seenImpressionsService.getSeenIds().catch(() => new Set<string>());
       if (liveRes.status === 'fulfilled' && Array.isArray(liveRes.value) && liveRes.value.length > 0) {
-        const seenIds = await seenImpressionsService.getSeenIds().catch(() => new Set<string>());
         const curatedLive = liveRes.value
           .map(sanitizeCuratedFeedItem)
           .filter(satisfiesDefaultCuratedStandard)
@@ -782,12 +805,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
             return item;
           });
-        if (curatedLive.length > 0 && (feedRepository as any).addItems) {
-          (feedRepository as any).addItems(curatedLive, { operationType: 'background_sync', pinInserted: false });
+        if (curatedLive.length > 0 && feedRepository.addItems) {
+          feedRepository.addItems(curatedLive, { operationType: 'background_sync', pinInserted: false });
         }
       }
 
-      await (feedRepository as any).hydrateFromReservoir?.(remoteSnapshotUrlRef.current).catch(() => {});
+      // Only touch deep reservoir on wake if fresh unseen pool is running low
+      const currentRepoItems = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+      if (countFreshUnseenItems(currentRepoItems, seenIds) < 40) {
+        await feedRepository.hydrateFromReservoir?.(remoteSnapshotUrlRef.current).catch(() => {});
+      }
 
       await scheduleFeedRecompute(
         latestProfileRef.current,
@@ -808,7 +835,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'inactive') {
-        flushReadingProgress();
+        void flushReadingProgress();
         void seenImpressionsService.flush();
       } else if (nextState === 'active') {
         void runForegroundWakeCheck();
@@ -835,6 +862,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const loadInitialData = useCallback(async () => {
     setStartupState({ status: 'loading' });
     setErrorMessage(null);
+    backgroundCoordinatorRef.current?.stop();
 
     try {
       let loadedProfile: UserProfile;
@@ -908,9 +936,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Non-fatal
       }
 
-      // 1. Instant Cache-First Boot Hydration: pre-warm fast local stores (<50ms on warm boot)
+      // 1. Instant Cache-First Boot Hydration: pre-warm < 100 KB Boot-Deck + fast local stores (<50ms on warm boot)
       try {
         await Promise.all([
+          feedRepository.hydrateFromBootDeck?.().catch(() => {}),
           feedRepository.ensureInitialized?.().catch(() => {}),
           seenImpressionsService.getSeenIds().catch(() => new Set<string>()),
           hivemindLearningService.getTracks().catch(() => [])
@@ -920,7 +949,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       // Cold-Boot Freshness Gate: if repository only holds static vault/init fallbacks (< 15 real items),
-      // hydrate the public snapshot BEFORE Frame 1 renders (capped at 2200ms) so cold browsers never lock vault cards at #1.
+      // hydrate the public snapshot BEFORE Frame 1 renders (capped at 1400ms) so cold browsers never lock vault cards at #1.
       const preHydrateItems = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
       const realCount = preHydrateItems.filter(item => !isStaticFallbackItem(item)).length;
       let didColdBootSnapshotHydrate = false;
@@ -937,7 +966,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 didColdBootSnapshotHydrate = true;
               }
             })().catch(() => {}),
-            sleep(2200)
+            sleep(1400)
           ]);
         } catch {
           // Non-blocking cold-boot fallback
@@ -948,7 +977,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setStartupState({ status: 'ready' });
       setIsHydrated(true);
 
-      // 2. Non-blocking post-hydration migration & public snapshot sync (recomputes once only if items changed)
+      // 2. Non-blocking post-hydration migration & IndexedDB/public snapshot sync (NO eager reservoir download!)
       void (async () => {
         const beforeCount = feedRepository.getAllItems ? feedRepository.getAllItems().length : 0;
         let snapshotInserted = 0;
@@ -992,50 +1021,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             selectedEditionTypeRef.current
           );
         }
-
-        // Hydrate Tier-2 Deep Endless Reservoir (up to ~900 unseen 14d items) quietly in the background
-        try {
-          const resHydration = await (feedRepository as any).hydrateFromReservoir?.(currentSnapshotUrl);
-          if (resHydration?.success && resHydration.insertedCount > 0) {
-            await scheduleFeedRecompute(
-              latestProfileRef.current,
-              latestInteractionsRef.current,
-              selectedEditionTypeRef.current
-            );
-          }
-        } catch {
-          // Non-blocking reservoir fallback
-        }
       })();
 
-      // 3. Autonomous AI Editorial Newsroom Worker (3s after boot; stores silently in repository without recomputing visible stream)
-      setTimeout(() => {
-        void (async () => {
-          try {
-            const creds = await loadAiCredentials();
-            if (!hasAiConfiguration(creds)) return;
-            const repoItems: FeedItem[] = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
-            const batchRes = await runBackgroundEditorialNewsroomBatch(repoItems, {
-              batchSize: 4,
-              credentials: creds
-            });
-            if (batchRes.enrichedItems.length > 0 && (feedRepository as any).addItems) {
-              (feedRepository as any).addItems(batchRes.enrichedItems);
-            }
-          } catch {
-            // Silent background newsroom worker fallback
-          }
-        })();
-      }, 3000);
-
-      // 4. Delayed background live harvest (8000ms after mount; auto-curates multi-lane discoveries when < 40 fresh unseen items exist)
-      setTimeout(() => {
-        void (async () => {
-          try {
-            const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
-            const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
-            const seenIds = await seenImpressionsService.getSeenIds();
-            const safeLive = curatedLive.map(item => {
+      // 3. Single consolidated idle BackgroundCoordinator (>= 15s quiet settle; skips completely if >= 40 fresh unseen items exist)
+      const coordinator = new BackgroundCoordinator({
+        getRepoItems: () => (feedRepository.getAllItems ? feedRepository.getAllItems() : []),
+        getSeenIds: () => seenImpressionsService.getSeenIds(),
+        hydrateReservoir: () => feedRepository.hydrateFromReservoir?.(currentSnapshotUrl),
+        runLiveReplenishment: async ({ existingIds, seenIds }) => {
+          const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
+          const safeLive = liveItems
+            .map(sanitizeCuratedFeedItem)
+            .filter(satisfiesDefaultCuratedStandard)
+            .map(item => {
               if (item.isStaticFallback || seenIds.has(item.id)) {
                 const { pinnedManualRunAt, ...rest } = item;
                 return rest;
@@ -1043,65 +1041,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               return item;
             });
 
-            const repoPool = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
-            const fourteenDaysAgoMs = Date.now() - 14 * 86400 * 1000;
-            const unseenFreshCount = repoPool.filter(item => {
-              if (seenIds.has(item.id)) return false;
-              const t = new Date(item.publishedAt).getTime();
-              return !isNaN(t) && t >= fourteenDaysAgoMs;
-            }).length;
-
-            let autoHarvested: FeedItem[] = [];
-            if (unseenFreshCount < 40) {
-              try {
-                const creds = await loadAiCredentials(appStorage).catch(() => undefined);
-                const discovery = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
-                  existingIds: new Set(repoPool.map(i => i.id)),
-                  seenIds,
-                  targetNewCount: 8,
-                  credentials: creds
-                });
-                autoHarvested = discovery.items
-                  .map(sanitizeCuratedFeedItem)
-                  .filter(satisfiesDefaultCuratedStandard)
-                  .map(item => {
-                    const { pinnedManualRunAt, ...rest } = item;
-                    return rest;
-                  });
-              } catch {
-                // Non-fatal auto-discovery fallback
-              }
-            }
-
-            const combinedNew = [...safeLive, ...autoHarvested];
-            if (combinedNew.length > 0 && (feedRepository as any).addItems) {
-              (feedRepository as any).addItems(combinedNew);
-              await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
-            }
-          } catch {
-            // Non-blocking fallback
-          }
-        })();
-      }, 8000);
-
-      // 5. Calm 15-minute background live check (never mutates active feed in-place; stores into repo for pendingArrivals)
-      const calmCheckInterval = setInterval(() => {
-        void (async () => {
+          let autoHarvested: FeedItem[] = [];
           try {
-            const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(false);
-            const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
-            if (curatedLive.length > 0 && (feedRepository as any).addItems) {
-              (feedRepository as any).addItems(curatedLive);
-              await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
-            }
+            const creds = await loadAiCredentials(appStorage).catch(() => undefined);
+            const discovery = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
+              existingIds,
+              seenIds,
+              targetNewCount: 8,
+              credentials: creds
+            });
+            autoHarvested = discovery.items
+              .map(sanitizeCuratedFeedItem)
+              .filter(satisfiesDefaultCuratedStandard)
+              .map(item => {
+                const { pinnedManualRunAt, ...rest } = item;
+                return rest;
+              });
           } catch {
-            // Non-blocking background check
+            // Non-fatal auto-discovery fallback
           }
-        })();
-      }, 15 * 60 * 1000);
-      if (calmCheckInterval && typeof (calmCheckInterval as any).unref === 'function') {
-        (calmCheckInterval as any).unref();
-      }
+          return [...safeLive, ...autoHarvested];
+        },
+        runAiNewsroom: async repoItems => {
+          const creds = await loadAiCredentials();
+          if (!hasAiConfiguration(creds)) return [];
+          const batchRes = await runBackgroundEditorialNewsroomBatch(repoItems, {
+            batchSize: 4,
+            credentials: creds
+          });
+          return batchRes.enrichedItems;
+        },
+        runPeriodicLiveCheck: async () => {
+          const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(false);
+          return liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+        },
+        onItemsAdded: async (items, shouldRecompute) => {
+          if (items.length > 0 && feedRepository.addItems) {
+            feedRepository.addItems(items);
+          }
+          if (shouldRecompute) {
+            await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
+          }
+        }
+      });
+      backgroundCoordinatorRef.current = coordinator;
+      coordinator.start();
 
       // On Web: check initial URL query for ?article=<id>
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1132,18 +1116,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [scheduleFeedRecompute]);
 
   useEffect(() => {
-    loadInitialData();
+    void loadInitialData();
   }, [loadInitialData]);
 
   // Quarantines corrupt bytes and resets to fresh defaults
   const resetCorruptedData = useCallback(async () => {
     try {
       storageGenerationRef.current++;
-      if (progressDebounceTimerRef.current) {
-        clearTimeout(progressDebounceTimerRef.current);
-        progressDebounceTimerRef.current = null;
-      }
-      pendingProgressRef.current = null;
+      backgroundCoordinatorRef.current?.stop();
+      cancelPendingReadingProgress();
       setSavedArticles([]);
       await userProfileRepository.quarantineAndReset();
       await libraryRepository.quarantineAndReset();
@@ -1151,7 +1132,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {
       setErrorMessage('Zurücksetzen fehlgeschlagen. Bitte versuche es erneut.');
     }
-  }, [loadInitialData]);
+  }, [cancelPendingReadingProgress, loadInitialData]);
 
   const setRemoteSnapshotUrl = useCallback(async (url: string) => {
     setRemoteSnapshotUrlState(url);
@@ -1239,7 +1220,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     setActiveDateSeed(res.simulatedDate);
     activeDateSeedRef.current = res.simulatedDate;
-    await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, selectedEditionTypeRef.current, res.simulatedDate);
+    await scheduleFeedRecompute(
+      latestProfileRef.current,
+      latestInteractionsRef.current,
+      selectedEditionTypeRef.current,
+      res.simulatedDate
+    );
     return { simulatedDate: res.simulatedDate, itemCount: res.generatedItems.length };
   }, [scheduleFeedRecompute]);
 
@@ -1272,7 +1258,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }).catch(() => {});
     setSelectedArticleId(id);
-    setSelectedArticle(item); // item can be null if missing; ReaderScreen gracefully displays fallback
+    setSelectedArticle(item);
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       try {
@@ -1286,7 +1272,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const closeArticle = useCallback(() => {
-    flushReadingProgress();
+    void flushReadingProgress();
     setSelectedArticleId(null);
     setSelectedArticle(null);
 
@@ -1342,7 +1328,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setSelectedArticleId(articleIdFromUrl);
           setSelectedArticle(item);
         } else {
-          flushReadingProgress();
+          void flushReadingProgress();
           setSelectedArticleId(null);
           setSelectedArticle(null);
         }
@@ -1422,7 +1408,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             latestInteractionsRef.current = next;
             return next;
           });
-          // Defer background sync & rabbit-hole harvesting so UI stays at 60fps
           const timer = setTimeout(() => {
             void RaindropService.syncArticleIfConnected(articleToSave);
             void BackupService.saveAutoBackup();
@@ -1446,59 +1431,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Throttled reading progress write (bounds write rate to max 1 write / 800ms while scrolling)
-  const updateReadingProgress = useCallback(async (id: string, percent: number) => {
-    // Keep in pending buffer
-    pendingProgressRef.current = { id, percent };
-    const currentGen = storageGenerationRef.current;
-
-    // Update React state optimistically so progress bar is instant
-    setInteractions(prev => {
-      const existing = prev[id] ?? { itemId: id, saved: false, progressPercent: 0, furthestPositionPercent: 0 };
-      const next = {
-        ...prev,
-        [id]: {
-          ...existing,
-          progressPercent: Math.max(existing.progressPercent, percent),
-          furthestPositionPercent: Math.max(existing.furthestPositionPercent ?? 0, percent)
-        }
-      };
-      latestInteractionsRef.current = next;
-      return next;
-    });
-
-    if (progressDebounceTimerRef.current) {
-      clearTimeout(progressDebounceTimerRef.current);
-    }
-
-    progressDebounceTimerRef.current = setTimeout(async () => {
-      progressDebounceTimerRef.current = null;
-      if (currentGen !== storageGenerationRef.current) return;
-      const pending = pendingProgressRef.current;
-      if (pending) {
-        pendingProgressRef.current = null;
-        try {
-          const updated = await libraryRepository.updateProgress(pending.id, pending.percent);
-          if (currentGen === storageGenerationRef.current) {
-            setInteractions(prev => {
-              const next = { ...prev, [pending.id]: updated };
-              latestInteractionsRef.current = next;
-              return next;
-            });
-          }
-        } catch {
-          // Non-fatal background write
-        }
-      }
-    }, 800);
-  }, []);
-
   const setFeedback = useCallback(async (
     id: string,
     feedback: 'more_like_this' | 'less_like_this' | 'neutral' | 'already_known' | 'more_depth',
     timeWorthFeedback?: 'very_worthwhile' | 'worthwhile' | 'neutral' | 'not_worthwhile'
   ) => {
-    // 1. Instant 0ms optimistic state update BEFORE any async storage I/O
     const prevInt = latestInteractionsRef.current[id] ?? {
       itemId: id,
       saved: false,
@@ -1527,14 +1464,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             item = await libraryRepository.getSavedArticle(id);
           }
           if (item && (feedback === 'more_like_this' || feedback === 'less_like_this' || feedback === 'already_known' || feedback === 'more_depth')) {
-            let eventType: 'feedback_positive' | 'feedback_negative' | 'feedback_already_known' | 'feedback_more_depth' = 'feedback_positive';
-            if (feedback === 'less_like_this') {
-              eventType = 'feedback_negative';
-            } else if (feedback === 'already_known') {
-              eventType = 'feedback_already_known';
-            } else if (feedback === 'more_depth') {
-              eventType = 'feedback_more_depth';
-            }
+            const eventType =
+              feedback === 'less_like_this'
+                ? 'feedback_negative'
+                : feedback === 'already_known'
+                ? 'feedback_already_known'
+                : feedback === 'more_depth'
+                ? 'feedback_more_depth'
+                : 'feedback_positive';
             const res = await RecursiveLearningEngine.recordInteractionEvent(latestProfileRef.current, item, eventType);
             if (res.event) {
               latestProfileRef.current = res.updatedProfile;
@@ -1575,9 +1512,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
-      // Mirror note to Personal Knowledge Graph (Masterplan v3)
       try {
-        const thoughtType = tag === 'these' ? 'thesis' : tag === 'einwand' ? 'thesis' : tag === 'unterricht' ? 'concept' : 'article_note';
+        const thoughtType = tag === 'these' || tag === 'einwand' ? 'thesis' : tag === 'unterricht' ? 'concept' : 'article_note';
         const thought = await defaultGraphRepository.addThought({
           type: thoughtType,
           title: text.length > 50 ? text.slice(0, 47) + '…' : text,
@@ -1609,7 +1545,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const voteItem = useCallback(async (id: string, direction: 'up' | 'down' | 'clear') => {
-    // 1. Instant 0ms optimistic state update BEFORE any async storage I/O (NEVER reorders active stream)
     const { nextInteractions } = computeOptimisticVoteState(
       latestInteractionsRef.current,
       [],
@@ -1625,7 +1560,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       latestInteractionsRef.current = committedInteractions;
       setInteractions(committedInteractions);
 
-      // 2. Defer taste-profile persistence & rabbit-hole expansion to background (never re-sorts active feed)
       const timer = setTimeout(async () => {
         try {
           let item = await feedRepository.getItemById(id);
@@ -1676,7 +1610,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       latestInteractionsRef.current = nextInteractions;
       setInteractions(nextInteractions);
 
-      let item: FeedItem | null =
+      const item: FeedItem | null =
         itemOverride ??
         latestDailyEditionRef.current.find(i => i.id === id) ??
         latestDiscoveryItemsRef.current.find(i => i.id === id) ??
@@ -1687,7 +1621,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let domainOut = '';
         let keywordsOut: string[] = [];
         const committed = await userProfileRepository.updateProfile(curr => {
-          const res = applyDismissFeedbackToProfile(curr, item!);
+          const res = applyDismissFeedbackToProfile(curr, item);
           domainOut = res.domain;
           keywordsOut = res.keywords;
           return res.updatedProfile;
@@ -1720,7 +1654,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       latestInteractionsRef.current = nextInteractions;
       setInteractions(nextInteractions);
 
-      let item: FeedItem | null =
+      const item: FeedItem | null =
         itemOverride ??
         latestDailyEditionRef.current.find(i => i.id === id) ??
         latestDiscoveryItemsRef.current.find(i => i.id === id) ??
@@ -1729,7 +1663,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (item) {
         const committed = await userProfileRepository.updateProfile(curr =>
-          revertDismissFeedbackFromProfile(curr, item!)
+          revertDismissFeedbackFromProfile(curr, item)
         );
         latestProfileRef.current = committed;
         setProfile(committed);
@@ -1741,67 +1675,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
   }, [scheduleFeedRecompute]);
 
-  const removeFeedbackBoost = useCallback(async (
+  const removeFeedbackMemoryEntry = useCallback(async (
+    kind: 'boost' | 'penalty',
     category: 'topic' | 'author' | 'keyword' | 'domain' | 'space',
     key: string
   ) => {
+    const fieldMap =
+      kind === 'boost'
+        ? ({
+            topic: 'boostedTopics',
+            author: 'boostedAuthors',
+            keyword: 'boostedKeywords',
+            domain: 'boostedDomains',
+            space: 'boostedSpaces'
+          } as const)
+        : ({
+            topic: 'penalizedTopics',
+            author: 'penalizedAuthors',
+            keyword: 'penalizedKeywords',
+            domain: 'penalizedDomains',
+            space: 'penalizedSpaces'
+          } as const);
     try {
-      const fieldMap = {
-        topic: 'boostedTopics',
-        author: 'boostedAuthors',
-        keyword: 'boostedKeywords',
-        domain: 'boostedDomains',
-        space: 'boostedSpaces'
-      } as const;
       const targetField = fieldMap[category];
       const committed = await userProfileRepository.updateProfile(curr => {
         const nextMemory = { ...curr.feedbackMemory };
         const record = { ...(nextMemory[targetField] || {}) };
         delete record[key];
         (nextMemory as any)[targetField] = record;
-        return {
-          ...curr,
-          feedbackMemory: nextMemory
-        };
+        return { ...curr, feedbackMemory: nextMemory };
       });
       latestProfileRef.current = committed;
       setProfile(committed);
       await scheduleFeedRecompute(committed, latestInteractionsRef.current);
     } catch {
-      setErrorMessage('Boost konnte nicht entfernt werden.');
+      setErrorMessage(
+        kind === 'boost'
+          ? 'Boost konnte nicht entfernt werden.'
+          : 'Dämpfung konnte nicht zurückgesetzt werden.'
+      );
     }
   }, [scheduleFeedRecompute]);
 
-  const removeFeedbackPenalty = useCallback(async (
-    category: 'topic' | 'author' | 'keyword' | 'domain' | 'space',
-    key: string
-  ) => {
-    try {
-      const fieldMap = {
-        topic: 'penalizedTopics',
-        author: 'penalizedAuthors',
-        keyword: 'penalizedKeywords',
-        domain: 'penalizedDomains',
-        space: 'penalizedSpaces'
-      } as const;
-      const targetField = fieldMap[category];
-      const committed = await userProfileRepository.updateProfile(curr => {
-        const nextMemory = { ...curr.feedbackMemory };
-        const record = { ...(nextMemory[targetField] || {}) };
-        delete record[key];
-        (nextMemory as any)[targetField] = record;
-        return {
-          ...curr,
-          feedbackMemory: nextMemory
-        };
-      });
-      latestProfileRef.current = committed;
-      setProfile(committed);
-      await scheduleFeedRecompute(committed, latestInteractionsRef.current);
-    } catch {
-      setErrorMessage('Dämpfung konnte nicht zurückgesetzt werden.');
-    }
-  }, [scheduleFeedRecompute]);
+  const removeFeedbackBoost = useCallback(
+    (category: 'topic' | 'author' | 'keyword' | 'domain' | 'space', key: string) =>
+      removeFeedbackMemoryEntry('boost', category, key),
+    [removeFeedbackMemoryEntry]
+  );
+
+  const removeFeedbackPenalty = useCallback(
+    (category: 'topic' | 'author' | 'keyword' | 'domain' | 'space', key: string) =>
+      removeFeedbackMemoryEntry('penalty', category, key),
+    [removeFeedbackMemoryEntry]
+  );
 
   const updateFeedMixRatio = useCallback(async (
     focusRatio: number,
@@ -1893,10 +1819,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const committed = await userProfileRepository.updateProfile(curr => ({
         ...curr,
-        readingPreferences: {
-          ...curr.readingPreferences,
-          fontSize
-        }
+        readingPreferences: { ...curr.readingPreferences, fontSize }
       }));
       latestProfileRef.current = committed;
       setProfile(committed);
@@ -1909,10 +1832,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const committed = await userProfileRepository.updateProfile(curr => ({
         ...curr,
-        readingPreferences: {
-          ...curr.readingPreferences,
-          theme
-        }
+        readingPreferences: { ...curr.readingPreferences, theme }
       }));
       latestProfileRef.current = committed;
       setProfile(committed);
@@ -1925,10 +1845,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const committed = await userProfileRepository.updateProfile(curr => ({
         ...curr,
-        readingPreferences: {
-          ...curr.readingPreferences,
-          palette: newPalette
-        }
+        readingPreferences: { ...curr.readingPreferences, palette: newPalette }
       }));
       latestProfileRef.current = committed;
       setProfile(committed);
@@ -1944,10 +1861,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const currentVal = currentModules[moduleId] ?? true;
         return {
           ...curr,
-          enabledModules: {
-            ...currentModules,
-            [moduleId]: !currentVal
-          }
+          enabledModules: { ...currentModules, [moduleId]: !currentVal }
         };
       });
       latestProfileRef.current = committed;
@@ -1998,7 +1912,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [scheduleFeedRecompute]);
 
-  // Re-runs onboarding flow without destroying saved articles
   const repeatOnboarding = useCallback(async () => {
     try {
       const committed = await userProfileRepository.updateProfile(curr => ({
@@ -2013,18 +1926,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Destructive reset: wipes only @atem: keys and restores clean state
+  // Destructive reset: wipes only @atem: keys + IndexedDB cache and restores clean state
   const clearAllLocalData = useCallback(async () => {
     try {
       storageGenerationRef.current++;
-      if (progressDebounceTimerRef.current) {
-        clearTimeout(progressDebounceTimerRef.current);
-        progressDebounceTimerRef.current = null;
-      }
-      pendingProgressRef.current = null;
+      backgroundCoordinatorRef.current?.stop();
+      cancelPendingReadingProgress();
       setSavedArticles([]);
 
-      await appStorage.clearAtemKeys();
+      await Promise.all([
+        appStorage.clearAtemKeys(),
+        feedRepository.clearCache?.().catch(() => {})
+      ]);
       const cleanProfile: UserProfile = {
         ...DEFAULT_USER_PROFILE,
         explicitInterests: { ...DEFAULT_STARTER_INTERESTS },
@@ -2039,145 +1952,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {
       setErrorMessage('Löschen der lokalen Daten fehlgeschlagen.');
     }
-  }, [scheduleFeedRecompute]);
+  }, [cancelPendingReadingProgress, scheduleFeedRecompute]);
 
   const clearError = useCallback(() => {
     setErrorMessage(null);
   }, []);
-
-  // ---------------------------------------------------------------------------
-  // Cloud Sync Service Integration (Phase 4 Live Single-Instance Sync)
-  // ---------------------------------------------------------------------------
-
-  const triggerCloudSync = useCallback(async (forcePush?: boolean): Promise<boolean> => {
-    setIsSyncing(true);
-    try {
-      const res = await cloudSyncService.sync({ forcePush });
-      const cfg = await cloudSyncService.getConfig();
-      setCloudSyncConfig(cfg);
-      if (res.success && res.mergedSnapshot) {
-        if (res.mergedSnapshot.profile) {
-          latestProfileRef.current = res.mergedSnapshot.profile;
-          setProfile(res.mergedSnapshot.profile);
-        }
-        if (res.mergedSnapshot.interactions) {
-          latestInteractionsRef.current = res.mergedSnapshot.interactions;
-          setInteractions(res.mergedSnapshot.interactions);
-        }
-        if (res.mergedSnapshot.savedArticles) {
-          setSavedArticles(res.mergedSnapshot.savedArticles);
-        }
-        if (res.mergedSnapshot.dismissedItemIds) {
-          setDismissedItemIds(res.mergedSnapshot.dismissedItemIds);
-        }
-        if (res.mergedSnapshot.spaces) {
-          setSpaces(res.mergedSnapshot.spaces);
-        }
-      }
-      setIsSyncing(false);
-      return res.success;
-    } catch {
-      setIsSyncing(false);
-      return false;
-    }
-  }, []);
-  triggerCloudSyncRef.current = triggerCloudSync;
-
-  const scheduleCloudSyncPush = useCallback(() => {
-    if (syncDebounceTimer.current) {
-      clearTimeout(syncDebounceTimer.current);
-    }
-    syncDebounceTimer.current = setTimeout(() => {
-      void (async () => {
-        try {
-          const cfg = await cloudSyncService.getConfig();
-          if (cfg.enabled && cfg.autoSync) {
-            await triggerCloudSync(true);
-          }
-        } catch {
-          // Non-fatal
-        }
-      })();
-    }, 1500);
-  }, [triggerCloudSync]);
-  scheduleCloudSyncPushRef.current = scheduleCloudSyncPush;
-
-  const updateCloudSyncConfig = useCallback(async (patch: Partial<CloudSyncConfig>) => {
-    const updated = await cloudSyncService.saveConfig(patch);
-    setCloudSyncConfig(updated);
-    if (updated.enabled) {
-      void triggerCloudSync();
-    }
-  }, [triggerCloudSync]);
-
-  const activateCloudSync = useCallback(async (token: string, passphrase?: string) => {
-    setIsSyncing(true);
-    try {
-      const res = await cloudSyncService.activateCloudSync(token, passphrase);
-      const cfg = await cloudSyncService.getConfig();
-      setCloudSyncConfig(cfg);
-      setIsSyncing(false);
-      return res;
-    } catch (err: any) {
-      setIsSyncing(false);
-      return { success: false, error: err?.message || String(err) };
-    }
-  }, []);
-
-  const applyPairingCode = useCallback(async (code: string): Promise<boolean> => {
-    try {
-      const ok = await cloudSyncService.applyPairingCode(code);
-      const cfg = await cloudSyncService.getConfig();
-      setCloudSyncConfig(cfg);
-      if (ok) {
-        setSyncStatusMessage('✅ Gerät erfolgreich gekoppelt & synchronisiert!');
-        setTimeout(() => setSyncStatusMessage(null), 5000);
-        void triggerCloudSync();
-      }
-      return ok;
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'Koppel-Code ungültig.');
-      return false;
-    }
-  }, [triggerCloudSync]);
-
-  const getPairingBundle = useCallback(async () => {
-    return cloudSyncService.getPairingBundle();
-  }, []);
-
-  // Initialize Cloud Sync & Handle URL Pairing Auto-Ingest (?pair=...)
-  useEffect(() => {
-    void (async () => {
-      try {
-        const cfg = await cloudSyncService.getConfig();
-        setCloudSyncConfig(cfg);
-
-        if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.search) {
-          const params = new URLSearchParams(window.location.search);
-          const pairCode = params.get('pair');
-          if (pairCode) {
-            const ok = await cloudSyncService.applyPairingCode(pairCode);
-            const freshCfg = await cloudSyncService.getConfig();
-            setCloudSyncConfig(freshCfg);
-            const cleanUrl = window.location.pathname + window.location.hash;
-            window.history.replaceState({}, document.title, cleanUrl);
-            setSyncStatusMessage('✅ Gerät erfolgreich gekoppelt & synchronisiert!');
-            setTimeout(() => setSyncStatusMessage(null), 5000);
-            if (ok) {
-              await triggerCloudSync();
-            }
-            return;
-          }
-        }
-
-        if (cfg.enabled && cfg.autoSync) {
-          await triggerCloudSync();
-        }
-      } catch (err: any) {
-        console.warn('[Sync] Init failed:', err);
-      }
-    })();
-  }, [triggerCloudSync]);
 
   const contextValue = useMemo<AppContextValue>(
     () => ({

@@ -1,7 +1,13 @@
 import { FeedItem, UserProfile, ReadingInteraction, TOPIC_SPACE_MAP, DayEditionType } from '../domain/types';
 import { INITIAL_FIXTURES } from './fixtures';
-import { rankAndInterleaveFeed, rankEditionFeed, ScoredFeedItem, scoreFeedItem } from '../domain/ranking';
+import {
+  rankAndInterleaveFeed,
+  rankBloomScrollFeed,
+  ScoredFeedItem,
+  scoreFeedItem
+} from '../domain/ranking';
 import { AtemStorage, appStorage } from './storage';
+import { FeedCacheStore, defaultFeedCacheStore } from './feedCacheStore';
 import { REAL_KNOWLEDGE_VAULT } from './realKnowledgeVault';
 import { enrichItemWithInstantResearch } from '../synthesis/backgroundResearchPipeline';
 import {
@@ -19,7 +25,6 @@ import { parseSnapshotPayload } from '../feed/snapshotPayload';
 import { isDeprecatedShowcaseStarterItem } from '../learning/hivemindLearningService';
 import { seenImpressionsService } from './seenImpressionsService';
 
-const PUBLIC_SNAPSHOT_CACHE_KEY = '@atem:public_feed_snapshot:v1';
 const SNAPSHOT_CACHE_REUSE_TTL_MS = 15 * 60 * 1000;
 
 /**
@@ -44,6 +49,137 @@ function isRejectedCachedItem(item: Partial<FeedItem> | null | undefined): boole
   if (title && !isSupportedFeedLanguage(title, context)) return true;
   if (IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${title} ${context}`)) return true;
   return false;
+}
+
+function itemContentRichness(item: Pick<FeedItem, 'articleBody' | 'body' | 'feedText'>): number {
+  return Math.max(
+    (item.articleBody || '').length,
+    (item.body || '').length,
+    (item.feedText || '').length
+  );
+}
+
+/**
+ * Applies the top-batch teaching/challenging/no-consecutive-topic diversity sweep
+ * directly on already-scored items without re-scoring.
+ */
+function ensureTopBatchDiversity(ranked: ScoredFeedItem[], batchSize = 5): ScoredFeedItem[] {
+  if (ranked.length <= batchSize) return ranked;
+
+  const topBatch = ranked.slice(0, batchSize);
+  const rest = ranked.slice(batchSize);
+
+  const insertSafelyIntoRest = (item: ScoredFeedItem) => {
+    const lastTopTopic = topBatch[topBatch.length - 1]?.primaryTopic;
+    if (
+      rest.length > 0 &&
+      (rest[0].primaryTopic === item.primaryTopic || lastTopTopic === item.primaryTopic)
+    ) {
+      const nextDiffIdx = rest.findIndex(
+        r => r.primaryTopic !== item.primaryTopic && r.primaryTopic !== lastTopTopic
+      );
+      if (nextDiffIdx !== -1) {
+        rest.splice(nextDiffIdx, 0, item);
+        return;
+      }
+    }
+    rest.unshift(item);
+  };
+
+  if (!topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics')) {
+    const tIdx = rest.findIndex(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics');
+    if (tIdx !== -1) {
+      const [teachItem] = rest.splice(tIdx, 1);
+      const displaced = topBatch[batchSize - 1];
+      topBatch[batchSize - 1] = teachItem;
+      insertSafelyIntoRest(displaced);
+    }
+  }
+
+  if (!topBatch.some(i => i.isChallengingPerspective || i.type === 'perspective')) {
+    const cIdx = rest.findIndex(i => i.isChallengingPerspective || i.type === 'perspective');
+    if (cIdx !== -1 && batchSize >= 2) {
+      const [challItem] = rest.splice(cIdx, 1);
+      const replacePos = topBatch[batchSize - 2]?.isTeachingRelated ? batchSize - 3 : batchSize - 2;
+      const pos = Math.max(0, replacePos);
+      const displaced = topBatch[pos];
+      topBatch[pos] = challItem;
+      insertSafelyIntoRest(displaced);
+    }
+  }
+
+  for (let i = 0; i < topBatch.length - 1; i++) {
+    if (topBatch[i].primaryTopic === topBatch[i + 1].primaryTopic) {
+      const swapIdx = topBatch.findIndex((x, idx) => idx > i + 1 && x.primaryTopic !== topBatch[i].primaryTopic);
+      if (swapIdx !== -1) {
+        const temp = topBatch[i + 1];
+        topBatch[i + 1] = topBatch[swapIdx];
+        topBatch[swapIdx] = temp;
+      }
+    }
+  }
+  if (rest.length > 0 && topBatch[topBatch.length - 1].primaryTopic === rest[0].primaryTopic) {
+    const swapRestIdx = rest.findIndex(r => r.primaryTopic !== topBatch[topBatch.length - 1].primaryTopic);
+    if (swapRestIdx !== -1) {
+      const [nonDup] = rest.splice(swapRestIdx, 1);
+      rest.unshift(nonDup);
+    }
+  }
+
+  return [...topBatch, ...rest];
+}
+
+/**
+ * Applies deterministic daily-edition variation & multipliers directly onto a pre-computed base score
+ * so `scoreFeedItem` is never invoked repeatedly across morning / midday / evening / discovery.
+ */
+function scoreForEditionFromBase(
+  base: ScoredFeedItem,
+  editionType: DayEditionType,
+  seed: string,
+  shuffleOffset: number = 0
+): ScoredFeedItem {
+  let hash = 0;
+  const str = `${seed}_s${shuffleOffset}_${editionType}_${base.id}`;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  const variationFactor = 0.92 + (Math.abs(hash) % 160) / 1000;
+
+  let editionMultiplier = 1.0;
+
+  if (editionType === 'morning') {
+    if (base.sourceTrustLevel === 'public_broadcaster' || base.format === 'sourced_update') editionMultiplier += 0.35;
+    if (base.primaryTopic === 'science_society') editionMultiplier += 0.30;
+    if (base.primaryTopic === 'ai_apple') editionMultiplier += 0.20;
+    if (base.estimatedReadingMinutes <= 3) editionMultiplier += 0.20;
+  } else if (editionType === 'midday') {
+    if (base.isTeachingRelated || base.primaryTopic === 'german_didactics') editionMultiplier += 0.35;
+    if (base.primaryTopic === 'opportunities_growth' || base.primaryTopic === 'health_biohacking') editionMultiplier += 0.30;
+    if (base.primaryTopic === 'memes_satire' || base.format === 'meme') editionMultiplier += 0.30;
+    if (base.primaryTopic === 'youtube_gems' || base.format === 'youtube_gem') editionMultiplier += 0.25;
+  } else if (editionType === 'evening') {
+    if (base.format === 'long_invitation' || base.estimatedReadingMinutes >= 4) editionMultiplier += 0.35;
+    if (base.primaryTopic === 'philosophy_ethics' || base.primaryTopic === 'contemplation_mind') editionMultiplier += 0.30;
+    if (base.primaryTopic === 'book_mastery' || base.format === 'book_masterpiece') editionMultiplier += 0.30;
+    if (base.primaryTopic === 'sound_synthesis' || base.primaryTopic === 'art_aesthetics') editionMultiplier += 0.25;
+    if (base.isEvergreenGem) editionMultiplier += 0.25;
+  }
+
+  if (base.targetEditions && base.targetEditions.length > 0) {
+    if (base.targetEditions.includes(editionType)) {
+      editionMultiplier += 0.20;
+    } else {
+      editionMultiplier -= 0.30;
+    }
+  }
+
+  const adjustedScore = Math.round(base.score * variationFactor * Math.max(0.1, editionMultiplier) * 1000) / 1000;
+  return {
+    ...base,
+    score: adjustedScore
+  };
 }
 
 // Dynamic, non-static load of pipeline output in Node.js test / CLI environments
@@ -134,12 +270,22 @@ export interface IFeedRepository {
     shuffleOffset?: number,
     previouslyShownIds?: Set<string>
   ): Promise<ScoredFeedItem[]>;
+  getEditionAndDiscovery?(
+    editionType: DayEditionType,
+    profile: UserProfile,
+    interactions?: Record<string, ReadingInteraction>,
+    dateSeed?: string,
+    shuffleOffset?: number,
+    previouslyShownIds?: Set<string>
+  ): Promise<{ daily: ScoredFeedItem[]; discovery: ScoredFeedItem[] }>;
   getItemById(id: string): Promise<FeedItem | null>;
   searchItems(query: string, profile: UserProfile, interactions?: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
   setItems?(items: FeedItem[]): void;
   addItems?(items: FeedItem[], options?: { operationType?: FeedOperationType; pinInserted?: boolean; telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry }): void;
   getAllItems?(): FeedItem[];
   ensureInitialized?(): Promise<void>;
+  hydrateFromBootDeck?(): Promise<{ loadedCount: number; generatedAt?: string }>;
+  clearCache?(): Promise<void>;
   hydrateFromPublicSnapshot?(
     remoteUrl?: string,
     options?: { forceRefresh?: boolean }
@@ -165,26 +311,260 @@ export class LocalFeedRepository implements IFeedRepository {
   private items: FeedItem[];
   private dynamicItems: FeedItem[] = [];
   private storage: AtemStorage;
+  private cacheStore: FeedCacheStore;
   private articleIndex: ArticleIndex;
   private relatedService: RelatedContentService;
+  private indexDirty: boolean = true;
   private indexTimer: ReturnType<typeof setTimeout> | null = null;
+  private indexIdleHandle: number | null = null;
+  private itemsVersion: number = 0;
+  private scoreCache: {
+    version: number;
+    profile: UserProfile;
+    interactions: Record<string, ReadingInteraction>;
+    byId: Map<string, ScoredFeedItem>;
+  } | null = null;
   private dynamicInitPromise: Promise<void>;
 
+  private cancelScheduledIndexBuild(): void {
+    if (this.indexTimer !== null) {
+      clearTimeout(this.indexTimer);
+      this.indexTimer = null;
+    }
+    if (
+      this.indexIdleHandle !== null &&
+      typeof window !== 'undefined' &&
+      typeof (window as any).cancelIdleCallback === 'function'
+    ) {
+      (window as any).cancelIdleCallback(this.indexIdleHandle);
+      this.indexIdleHandle = null;
+    }
+  }
+
+  private ensureIndexReady(): void {
+    if (!this.indexDirty) return;
+    this.cancelScheduledIndexBuild();
+    this.articleIndex.buildIndex(this.items);
+    this.relatedService.setIndex(this.articleIndex);
+    this.indexDirty = false;
+  }
+
   private scheduleIndexBuild(): void {
+    this.indexDirty = true;
+    this.itemsVersion++;
+    this.scoreCache = null;
+
     const isBrowserRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
     if (!isBrowserRuntime) {
-      this.articleIndex.buildIndex(this.items);
-      this.relatedService.setIndex(this.articleIndex);
+      // Keep lazy in Node/tests: zero idle timer leaks and built on demand in ensureIndexReady()
       return;
     }
-    if (this.indexTimer) {
-      clearTimeout(this.indexTimer);
-    }
-    this.indexTimer = setTimeout(() => {
+
+    this.cancelScheduledIndexBuild();
+    const runBuild = () => {
+      this.indexIdleHandle = null;
       this.indexTimer = null;
+      if (!this.indexDirty) return;
       this.articleIndex.buildIndex(this.items);
       this.relatedService.setIndex(this.articleIndex);
-    }, 120);
+      this.indexDirty = false;
+    };
+
+    if (typeof (window as any).requestIdleCallback === 'function') {
+      this.indexIdleHandle = (window as any).requestIdleCallback(runBuild, { timeout: 1000 });
+    } else {
+      this.indexTimer = setTimeout(runBuild, 350);
+    }
+  }
+
+  private getBaseScores(
+    profile: UserProfile,
+    interactions: Record<string, ReadingInteraction> = {}
+  ): Map<string, ScoredFeedItem> {
+    if (
+      this.scoreCache &&
+      this.scoreCache.version === this.itemsVersion &&
+      this.scoreCache.profile === profile &&
+      this.scoreCache.interactions === interactions
+    ) {
+      return this.scoreCache.byId;
+    }
+
+    const byId = new Map<string, ScoredFeedItem>();
+    for (const item of this.items) {
+      byId.set(item.id, scoreFeedItem(item, profile, interactions));
+    }
+    this.scoreCache = {
+      version: this.itemsVersion,
+      profile,
+      interactions,
+      byId
+    };
+    return byId;
+  }
+
+  private allocateEditionsFromBase(
+    baseScores: Map<string, ScoredFeedItem>,
+    dateSeed?: string,
+    shuffleOffset: number = 0,
+    previouslyShownIds?: Set<string>
+  ): Record<DayEditionType, ScoredFeedItem[]> {
+    const seed = dateSeed || new Date().toISOString().slice(0, 10);
+    const targetPerEdition = 8;
+    const assignedIds = new Set<string>();
+    const editions: DayEditionType[] = ['morning', 'midday', 'evening'];
+    const allocations: Record<DayEditionType, ScoredFeedItem[]> = {
+      morning: [],
+      midday: [],
+      evening: []
+    };
+
+    const allScored = Array.from(baseScores.values());
+    const unshownPool =
+      previouslyShownIds && previouslyShownIds.size > 0
+        ? allScored.filter(item => !previouslyShownIds.has(item.id))
+        : [];
+
+    for (const edition of editions) {
+      let availablePool =
+        unshownPool.length > 0
+          ? unshownPool.filter(item => !assignedIds.has(item.id))
+          : allScored.filter(item => !assignedIds.has(item.id));
+
+      if (availablePool.length < targetPerEdition) {
+        const currentAvailableIds = new Set(availablePool.map(i => i.id));
+        const backfill = allScored.filter(
+          item => !assignedIds.has(item.id) && !currentAvailableIds.has(item.id)
+        );
+        availablePool = [...availablePool, ...backfill];
+      }
+
+      const scored = availablePool.map(base =>
+        scoreForEditionFromBase(base, edition, seed, shuffleOffset)
+      );
+
+      // Rank top candidate slice (bounded for speed while keeping teaching/challenging quotas intact)
+      let rankingInput = scored;
+      if (scored.length > 140) {
+        const byScore = [...scored].sort((a, b) => (b.score || 0) - (a.score || 0));
+        const topSlice = byScore.slice(0, 120);
+        const topSliceIds = new Set(topSlice.map(i => i.id));
+        let extraTeaching = 0;
+        let extraChallenging = 0;
+        for (let i = 120; i < byScore.length; i++) {
+          const cand = byScore[i];
+          if (
+            extraTeaching < 8 &&
+            (cand.isTeachingRelated || cand.primaryTopic === 'german_didactics') &&
+            !topSliceIds.has(cand.id)
+          ) {
+            topSlice.push(cand);
+            topSliceIds.add(cand.id);
+            extraTeaching++;
+          } else if (
+            extraChallenging < 8 &&
+            (cand.isChallengingPerspective || cand.type === 'perspective') &&
+            !topSliceIds.has(cand.id)
+          ) {
+            topSlice.push(cand);
+            topSliceIds.add(cand.id);
+            extraChallenging++;
+          }
+          if (extraTeaching >= 8 && extraChallenging >= 8) break;
+        }
+        rankingInput = topSlice;
+      }
+
+      const bloomRanked = rankBloomScrollFeed(rankingInput);
+      const count = Math.min(targetPerEdition, bloomRanked.length);
+      const topBatch = bloomRanked.slice(0, count);
+      const remainder = bloomRanked.slice(count);
+
+      if (
+        (edition === 'morning' || edition === 'midday') &&
+        !topBatch.some(i => i.isTeachingRelated || i.primaryTopic === 'german_didactics')
+      ) {
+        const tIdx = remainder.findIndex(
+          i => i.isTeachingRelated || i.primaryTopic === 'german_didactics'
+        );
+        if (tIdx !== -1 && topBatch.length > 0) {
+          const [elevated] = remainder.splice(tIdx, 1);
+          topBatch[topBatch.length - 1] = elevated;
+        }
+      }
+
+      if (!topBatch.some(i => i.isChallengingPerspective)) {
+        const cIdx = remainder.findIndex(i => i.isChallengingPerspective);
+        if (cIdx !== -1 && topBatch.length > 1) {
+          const [elevated] = remainder.splice(cIdx, 1);
+          topBatch[topBatch.length - 2] = elevated;
+        } else {
+          const pIdx = remainder.findIndex(i => i.type === 'perspective');
+          if (pIdx !== -1 && topBatch.length > 1) {
+            const [elevated] = remainder.splice(pIdx, 1);
+            topBatch[topBatch.length - 2] = elevated;
+          }
+        }
+      }
+
+      for (const item of topBatch) {
+        assignedIds.add(item.id);
+      }
+      allocations[edition] = topBatch;
+    }
+
+    return allocations;
+  }
+
+  private rankDiscoveryFromBase(
+    baseScores: Map<string, ScoredFeedItem>,
+    profile: UserProfile,
+    interactions: Record<string, ReadingInteraction> = {},
+    excludedIds?: Set<string>,
+    shuffleOffset: number = 0,
+    previouslyShownIds?: Set<string>
+  ): ScoredFeedItem[] {
+    const excludeSet = new Set<string>(excludedIds ?? []);
+    if (!excludedIds) {
+      const dailyScored: ScoredFeedItem[] = [];
+      for (const item of this.items) {
+        if (item.isDailyEdition) {
+          const s = baseScores.get(item.id);
+          if (s) dailyScored.push(s);
+        }
+      }
+      const rankedDaily = ensureTopBatchDiversity(rankBloomScrollFeed(dailyScored), 5);
+      for (const i of rankedDaily.slice(0, 12)) excludeSet.add(i.id);
+    }
+    if (previouslyShownIds && previouslyShownIds.size > 0 && shuffleOffset > 0) {
+      for (const id of previouslyShownIds) excludeSet.add(id);
+    }
+
+    let remainingItems = this.items.filter(item => !excludeSet.has(item.id));
+    if (remainingItems.length < 12) {
+      const baseDailyExclude = new Set(
+        this.items
+          .filter(i => i.isDailyEdition)
+          .slice(0, 8)
+          .map(i => i.id)
+      );
+      const unshownIds = new Set(remainingItems.map(i => i.id));
+      const backfill = this.items.filter(
+        item => !baseDailyExclude.has(item.id) && !unshownIds.has(item.id)
+      );
+      remainingItems = [...remainingItems, ...backfill];
+    }
+
+    const remainingScored = remainingItems.map(
+      item => baseScores.get(item.id) ?? scoreFeedItem(item, profile, interactions)
+    );
+    const ranked = ensureTopBatchDiversity(rankBloomScrollFeed(remainingScored), 5);
+    const rankedIds = new Set(ranked.map(r => r.id));
+    const missingNonArdTail = remainingItems
+      .filter(item => !rankedIds.has(item.id))
+      .map(item => baseScores.get(item.id) ?? scoreFeedItem(item, profile, interactions));
+    const completeRanked = missingNonArdTail.length > 0 ? [...ranked, ...missingNonArdTail] : ranked;
+    return this.applyPinnedItems(completeRanked, profile, interactions, excludeSet, baseScores);
   }
 
   constructor(customItemsOrStorage?: FeedItem[] | AtemStorage, storage: AtemStorage = appStorage) {
@@ -196,6 +576,7 @@ export class LocalFeedRepository implements IFeedRepository {
     } else {
       this.storage = storage;
     }
+    this.cacheStore = this.storage === appStorage ? defaultFeedCacheStore : new FeedCacheStore(this.storage);
     this.articleIndex = new ArticleIndex();
     this.relatedService = new RelatedContentService(this.articleIndex);
 
@@ -235,6 +616,51 @@ export class LocalFeedRepository implements IFeedRepository {
 
   async ensureInitialized(): Promise<void> {
     await this.dynamicInitPromise;
+  }
+
+  /**
+   * Hydrates the compact `< 100 KB` Boot-Deck (`@atem:boot_deck:v1`) in `< 20ms`
+   * so warm boots immediately render fresh real cards while IndexedDB / network hydrate full bodies.
+   */
+  async hydrateFromBootDeck(): Promise<{ loadedCount: number; generatedAt?: string }> {
+    try {
+      const deck = await this.cacheStore.getBootDeck();
+      if (!deck || !Array.isArray(deck.items) || deck.items.length === 0) {
+        return { loadedCount: 0 };
+      }
+
+      const map = new Map<string, FeedItem>();
+      for (const item of this.items) {
+        if (!isRejectedCachedItem(item)) {
+          map.set(item.id, item);
+        }
+      }
+
+      let loadedCount = 0;
+      for (const raw of deck.items) {
+        if (isRejectedCachedItem(raw)) continue;
+        const existing = map.get(raw.id);
+        if (existing && itemContentRichness(existing) >= itemContentRichness(raw)) {
+          // Never downgrade an already-loaded full article with a compact boot-deck preview
+          continue;
+        }
+        const clean = sanitizeCuratedFeedItem(enrichSocialFeedItem(raw, { lazyCrossReferences: true }));
+        map.set(clean.id, clean);
+        loadedCount++;
+      }
+
+      if (loadedCount > 0) {
+        this.items = this.purgeDemoFixturesIfSufficient(Array.from(map.values()));
+        this.scheduleIndexBuild();
+      }
+      return { loadedCount, generatedAt: deck.generatedAt };
+    } catch {
+      return { loadedCount: 0 };
+    }
+  }
+
+  async clearCache(): Promise<void> {
+    await this.cacheStore.clearAll();
   }
 
   private purgeDemoFixturesIfSufficient(items: FeedItem[]): FeedItem[] {
@@ -309,29 +735,29 @@ export class LocalFeedRepository implements IFeedRepository {
 
   private async initDynamicItems(): Promise<void> {
     try {
-      const raw = await this.storage.getItem('@atem:dynamic_items:v1');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          const filtered = parsed.filter((i: any) => !isRejectedCachedItem(i));
-          this.dynamicItems = filtered.map(i =>
-            sanitizeCuratedFeedItem(enrichSocialFeedItem(i, { lazyCrossReferences: true }))
-          );
-          if (filtered.length !== parsed.length) {
-            await this.storage.setItem('@atem:dynamic_items:v1', JSON.stringify(this.dynamicItems));
+      const parsed = await this.cacheStore.getDynamicItems();
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const filtered = parsed.filter((i: any) => !isRejectedCachedItem(i));
+        this.dynamicItems = filtered.map(i =>
+          sanitizeCuratedFeedItem(enrichSocialFeedItem(i, { lazyCrossReferences: true }))
+        );
+        if (filtered.length !== parsed.length) {
+          await this.cacheStore.setDynamicItems(this.dynamicItems);
+        }
+        const map = new Map<string, FeedItem>();
+        for (const item of this.items) {
+          if (!isRejectedCachedItem(item)) {
+            map.set(item.id, item);
           }
-          const map = new Map<string, FeedItem>();
-          for (const item of this.items) {
-            if (!isRejectedCachedItem(item)) {
-              map.set(item.id, item);
-            }
-          }
-          for (const dyn of this.dynamicItems) {
+        }
+        for (const dyn of this.dynamicItems) {
+          const existing = map.get(dyn.id);
+          if (!existing || itemContentRichness(dyn) >= itemContentRichness(existing)) {
             map.set(dyn.id, dyn);
           }
-          this.items = this.purgeDemoFixturesIfSufficient(Array.from(map.values()));
-          this.scheduleIndexBuild();
         }
+        this.items = this.purgeDemoFixturesIfSufficient(Array.from(map.values()));
+        this.scheduleIndexBuild();
       }
     } catch {
       // Non-fatal fallback
@@ -341,7 +767,7 @@ export class LocalFeedRepository implements IFeedRepository {
   private async persistDynamicItems(): Promise<void> {
     try {
       this.dynamicItems = this.dynamicItems.filter(i => !isRejectedCachedItem(i));
-      await this.storage.setItem('@atem:dynamic_items:v1', JSON.stringify(this.dynamicItems));
+      await this.cacheStore.setDynamicItems(this.dynamicItems);
     } catch {
       // Non-fatal fallback
     }
@@ -408,7 +834,14 @@ export class LocalFeedRepository implements IFeedRepository {
     this.scheduleIndexBuild();
   }
 
-  addItems(newItems: FeedItem[], options?: { operationType?: FeedOperationType; pinInserted?: boolean; telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry }): void {
+  addItems(
+    newItems: FeedItem[],
+    options?: {
+      operationType?: FeedOperationType;
+      pinInserted?: boolean;
+      telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry;
+    }
+  ): void {
     const cleanInput = newItems.filter(i => !isRejectedCachedItem(i));
     const enrichedNew = cleanInput.map(i =>
       sanitizeCuratedFeedItem(enrichSocialFeedItem(i, { lazyCrossReferences: true }))
@@ -421,9 +854,8 @@ export class LocalFeedRepository implements IFeedRepository {
 
     this.items = this.purgeDemoFixturesIfSufficient(mergeResult.mergedItems);
     this.rememberMergedChanges(mergeResult.operationResult);
-    this.articleIndex.buildIndex(this.items);
-    this.relatedService.setIndex(this.articleIndex);
-    this.persistDynamicItems();
+    this.scheduleIndexBuild();
+    void this.persistDynamicItems();
   }
 
   getAllItems(): FeedItem[] {
@@ -434,7 +866,8 @@ export class LocalFeedRepository implements IFeedRepository {
     rankedItems: ScoredFeedItem[],
     profile: UserProfile,
     interactions: Record<string, ReadingInteraction> = {},
-    excludedIds: Set<string> = new Set()
+    excludedIds: Set<string> = new Set(),
+    baseScores?: Map<string, ScoredFeedItem>
   ): ScoredFeedItem[] {
     const pinnedIds = defaultFeedOperationManager.getPinnedItemIds();
     if (pinnedIds.length === 0) return rankedItems;
@@ -442,13 +875,16 @@ export class LocalFeedRepository implements IFeedRepository {
     const pinnedSet = new Set(pinnedIds);
     const topPinned: ScoredFeedItem[] = [];
 
-    // Find pinned items in this.items
     for (const id of pinnedIds) {
       if (excludedIds.has(id)) continue;
+      const cached = baseScores?.get(id);
+      if (cached) {
+        topPinned.push(cached);
+        continue;
+      }
       const match = this.items.find(i => i.id === id);
       if (match) {
-        const scored = scoreFeedItem(match, profile, interactions);
-        topPinned.push(scored);
+        topPinned.push(scoreFeedItem(match, profile, interactions));
       }
     }
 
@@ -460,9 +896,16 @@ export class LocalFeedRepository implements IFeedRepository {
     profile: UserProfile,
     interactions: Record<string, ReadingInteraction> = {}
   ): Promise<ScoredFeedItem[]> {
-    const dailyPool = this.items.filter(item => item.isDailyEdition);
-    const rankedDaily = rankAndInterleaveFeed(dailyPool, profile, interactions);
-    const withPinned = this.applyPinnedItems(rankedDaily, profile, interactions);
+    const baseScores = this.getBaseScores(profile, interactions);
+    const dailyScored: ScoredFeedItem[] = [];
+    for (const item of this.items) {
+      if (item.isDailyEdition) {
+        const scored = baseScores.get(item.id);
+        if (scored) dailyScored.push(scored);
+      }
+    }
+    const rankedDaily = ensureTopBatchDiversity(rankBloomScrollFeed(dailyScored), 5);
+    const withPinned = this.applyPinnedItems(rankedDaily, profile, interactions, new Set(), baseScores);
     return withPinned.slice(0, 12);
   }
 
@@ -474,8 +917,16 @@ export class LocalFeedRepository implements IFeedRepository {
     shuffleOffset?: number,
     previouslyShownIds?: Set<string>
   ): Promise<ScoredFeedItem[]> {
-    const ranked = rankEditionFeed(this.items, editionType, profile, interactions, dateSeed, shuffleOffset, previouslyShownIds);
-    return this.applyPinnedItems(ranked, profile, interactions);
+    if (this.items.length === 0) return [];
+    const baseScores = this.getBaseScores(profile, interactions);
+    const allocations = this.allocateEditionsFromBase(
+      baseScores,
+      dateSeed,
+      shuffleOffset ?? 0,
+      previouslyShownIds
+    );
+    const ranked = allocations[editionType] || [];
+    return this.applyPinnedItems(ranked, profile, interactions, new Set(), baseScores);
   }
 
   async getDiscoveryItems(
@@ -485,34 +936,60 @@ export class LocalFeedRepository implements IFeedRepository {
     shuffleOffset: number = 0,
     previouslyShownIds?: Set<string>
   ): Promise<ScoredFeedItem[]> {
-    const excludeSet = new Set<string>(excludedIds ?? []);
-    if (!excludedIds) {
-      const dailyPool = this.items.filter(item => item.isDailyEdition);
-      const rankedDaily = rankAndInterleaveFeed(dailyPool, profile, interactions);
-      for (const i of rankedDaily.slice(0, 12)) excludeSet.add(i.id);
-    }
-    if (previouslyShownIds && previouslyShownIds.size > 0 && shuffleOffset > 0) {
-      for (const id of previouslyShownIds) excludeSet.add(id);
-    }
+    const baseScores = this.getBaseScores(profile, interactions);
+    return this.rankDiscoveryFromBase(
+      baseScores,
+      profile,
+      interactions,
+      excludedIds,
+      shuffleOffset,
+      previouslyShownIds
+    );
+  }
 
-    let remainingItems = this.items.filter(item => !excludeSet.has(item.id));
-    // If excluding previously shown left fewer than 12 items, keep unshown items first and backfill
-    if (remainingItems.length < 12) {
-      const baseDailyExclude = new Set(this.items.filter(i => i.isDailyEdition).slice(0, 8).map(i => i.id));
-      const unshownIds = new Set(remainingItems.map(i => i.id));
-      const backfill = this.items.filter(item => !baseDailyExclude.has(item.id) && !unshownIds.has(item.id));
-      remainingItems = [...remainingItems, ...backfill];
+  /**
+   * Single-pass recompute computing both Daily Edition and Discovery streams from
+   * one shared `scoreFeedItem` pass across `this.items`.
+   */
+  async getEditionAndDiscovery(
+    editionType: DayEditionType,
+    profile: UserProfile,
+    interactions: Record<string, ReadingInteraction> = {},
+    dateSeed?: string,
+    shuffleOffset: number = 0,
+    previouslyShownIds?: Set<string>
+  ): Promise<{ daily: ScoredFeedItem[]; discovery: ScoredFeedItem[] }> {
+    if (this.items.length === 0) {
+      return { daily: [], discovery: [] };
     }
-    const ranked = rankAndInterleaveFeed(remainingItems, profile, interactions);
-    const rankedIds = new Set(ranked.map(r => r.id));
-    const missingNonArdTail = remainingItems
-      .filter(item => !rankedIds.has(item.id))
-      .map(item => scoreFeedItem(item, profile, interactions));
-    const completeRanked = missingNonArdTail.length > 0 ? [...ranked, ...missingNonArdTail] : ranked;
-    return this.applyPinnedItems(completeRanked, profile, interactions, excludeSet);
+    const baseScores = this.getBaseScores(profile, interactions);
+    const allocations = this.allocateEditionsFromBase(
+      baseScores,
+      dateSeed,
+      shuffleOffset,
+      previouslyShownIds
+    );
+    const daily = this.applyPinnedItems(
+      allocations[editionType] || [],
+      profile,
+      interactions,
+      new Set(),
+      baseScores
+    );
+    const dailyIds = new Set(daily.map(i => i.id));
+    const discovery = this.rankDiscoveryFromBase(
+      baseScores,
+      profile,
+      interactions,
+      dailyIds,
+      shuffleOffset,
+      previouslyShownIds
+    );
+    return { daily, discovery };
   }
 
   async getItemById(id: string): Promise<FeedItem | null> {
+    this.ensureIndexReady();
     const found = this.articleIndex.getItem(id) || this.items.find(item => item.id === id);
     if (!found) return null;
 
@@ -532,6 +1009,7 @@ export class LocalFeedRepository implements IFeedRepository {
     profile: UserProfile,
     interactions: Record<string, ReadingInteraction> = {}
   ): Promise<ScoredFeedItem[]> {
+    this.ensureIndexReady();
     const q = query.toLowerCase().trim();
     if (!q) {
       return rankAndInterleaveFeed(this.items, profile, interactions);
@@ -547,8 +1025,8 @@ export class LocalFeedRepository implements IFeedRepository {
 
   /**
    * Fetches the latest serverless feed snapshot using SnapshotLoader
-   * and safely merges validated items into storage.
-   * Checks cached `@atem:public_feed_snapshot:v1` quickly on warm boots unless `forceRefresh: true`.
+   * and safely merges validated items into IndexedDB (browser) or AtemStorage (Node/tests).
+   * Checks cached snapshot quickly on warm boots unless `forceRefresh: true`.
    */
   async hydrateFromPublicSnapshot(
     remoteUrl?: string,
@@ -572,13 +1050,12 @@ export class LocalFeedRepository implements IFeedRepository {
 
     if (!forceRefresh) {
       try {
-        const cachedRaw = await this.storage.getItem(PUBLIC_SNAPSHOT_CACHE_KEY);
-        if (cachedRaw) {
-          const parsedObj = JSON.parse(cachedRaw);
+        const parsedObj = await this.cacheStore.getPublicSnapshot();
+        if (parsedObj) {
           const cachedPayload = parseSnapshotPayload(parsedObj);
           const cachedOriginUrl =
-            parsedObj && typeof parsedObj === 'object' && typeof (parsedObj as any).remoteUrl === 'string'
-              ? String((parsedObj as any).remoteUrl).trim()
+            typeof parsedObj.remoteUrl === 'string'
+              ? String(parsedObj.remoteUrl).trim()
               : '';
           const urlMatchesCache =
             !cachedOriginUrl ||
@@ -596,8 +1073,8 @@ export class LocalFeedRepository implements IFeedRepository {
 
             const nowMs = Date.now();
             const cachedAtMs =
-              parsedObj && typeof parsedObj === 'object' && typeof (parsedObj as any).cachedAt === 'string'
-                ? Date.parse((parsedObj as any).cachedAt)
+              typeof parsedObj.cachedAt === 'string'
+                ? Date.parse(parsedObj.cachedAt)
                 : NaN;
             const generatedAtMs = cachedPayload.generatedAt ? Date.parse(cachedPayload.generatedAt) : NaN;
             const isFreshCache = Number.isFinite(cachedAtMs)
@@ -643,19 +1120,16 @@ export class LocalFeedRepository implements IFeedRepository {
         const insertedCount = this.items.filter(i => !beforeIds.has(i.id)).length;
 
         try {
-          await this.storage.setItem(
-            PUBLIC_SNAPSHOT_CACHE_KEY,
-            JSON.stringify({
-              generatedAt: res.generatedAt,
-              cachedAt: new Date().toISOString(),
-              remoteUrl: trimmedUrl || 'default',
-              items: res.items,
-              sourceHealth: res.sourceHealth,
-              totalCandidateSources: res.totalCandidateSources
-            })
-          );
+          await this.cacheStore.setPublicSnapshot({
+            generatedAt: res.generatedAt,
+            cachedAt: new Date().toISOString(),
+            remoteUrl: trimmedUrl || 'default',
+            items: res.items,
+            sourceHealth: res.sourceHealth,
+            totalCandidateSources: res.totalCandidateSources
+          });
         } catch {
-          // Non-fatal if storage quota is full
+          // Non-fatal if cache storage is unavailable
         }
 
         return {
@@ -762,8 +1236,7 @@ export class LocalFeedRepository implements IFeedRepository {
 
     this.items = this.purgeDemoFixturesIfSufficient(mergeResult.mergedItems);
     this.rememberMergedChanges(mergeResult.operationResult);
-    this.articleIndex.buildIndex(this.items);
-    this.relatedService.setIndex(this.articleIndex);
+    this.scheduleIndexBuild();
     await this.persistDynamicItems();
 
     return curated;
@@ -788,8 +1261,7 @@ export class LocalFeedRepository implements IFeedRepository {
 
     this.items = this.purgeDemoFixturesIfSufficient(mergeResult.mergedItems);
     this.rememberMergedChanges(mergeResult.operationResult);
-    this.articleIndex.buildIndex(this.items);
-    this.relatedService.setIndex(this.articleIndex);
+    this.scheduleIndexBuild();
     await this.persistDynamicItems();
 
     return mergeResult.operationResult;

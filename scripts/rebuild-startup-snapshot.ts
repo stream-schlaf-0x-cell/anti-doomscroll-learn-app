@@ -16,7 +16,12 @@ import {
   satisfiesDefaultCuratedStandard
 } from '../src/core/enrichment/batchEnricher';
 import { REAL_KNOWLEDGE_VAULT } from '../src/core/data/realKnowledgeVault';
-import { selectStartupItems, STARTUP_SNAPSHOT_MAX_BYTES } from '../src/core/feed/snapshotPayload';
+import {
+  compactItemForSnapshot,
+  compactSourceHealthForSnapshot,
+  selectStartupItems,
+  STARTUP_SNAPSHOT_MAX_BYTES
+} from '../src/core/feed/snapshotPayload';
 
 const PUBLIC_SNAPSHOT_PATH = path.resolve(__dirname, '../public/feed-snapshot.json');
 const PIPELINE_OUTPUT_PATH = path.resolve(__dirname, '../src/core/data/pipeline-output.json');
@@ -100,18 +105,20 @@ function main() {
     return ardCount <= ardBudget;
   });
 
-  // 4. Select within byte/item budget
+  // 4. Select within byte/item budget and compact payload for fast client delivery
+  const compactHealth = compactSourceHealthForSnapshot(snapshot.sourceHealth || {});
+  const compactedCandidates = diversified.map(item => compactItemForSnapshot(item, { maxBodyChars: 6000 }));
   const metadata = {
     generatedAt: new Date().toISOString(),
-    totalCandidateSources: snapshot.totalCandidateSources ?? Object.keys(snapshot.sourceHealth || {}).length,
+    totalCandidateSources: snapshot.totalCandidateSources ?? Object.keys(compactHealth).length,
     activeDeliveringSources: snapshot.activeDeliveringSources ?? 0,
     totalAvailableItems: 0,
     items: [] as FeedItem[],
-    sourceHealth: snapshot.sourceHealth || {}
+    sourceHealth: compactHealth
   };
   const metaBytes = Buffer.byteLength(JSON.stringify(metadata), 'utf8');
-  const selected = selectStartupItems(diversified, STARTUP_SNAPSHOT_MAX_BYTES - metaBytes - 50_000);
-  metadata.items = selected;
+  const selected = selectStartupItems(compactedCandidates, STARTUP_SNAPSHOT_MAX_BYTES - metaBytes - 50_000);
+  metadata.items = selected.map(item => compactItemForSnapshot(item, { maxBodyChars: 6000 }));
   metadata.totalAvailableItems = Math.max(selected.length, diversified.length);
 
   fs.writeFileSync(PUBLIC_SNAPSHOT_PATH, JSON.stringify(metadata), 'utf8');

@@ -12,7 +12,7 @@ import {
 import { upgradeImageResolutionUrl, isRejectedLowResOrLogoUrl } from '../utils/imageQuality';
 import { appStorage, AtemStorage } from '../data/storage';
 import { VERIFIED_FEED_SOURCES } from './sources';
-import { GLOBAL_CORPUS_RESERVE_SOURCES } from './globalCorpusSources';
+import type { RawFeedSource } from './types';
 import { fetchSingleFeed } from './feedFetcher';
 import { normalizeFeedEntry } from './normalizer';
 import {
@@ -28,6 +28,30 @@ import {
   isEditorialQualityHackerNewsStory
 } from '../data/continuousLiveNewsService';
 import { isDeprecatedShowcaseStarterItem } from '../learning/hivemindLearningService';
+
+let cachedReserveCorpusSources: RawFeedSource[] | null = null;
+let reserveCorpusSourcesPromise: Promise<RawFeedSource[]> | null = null;
+
+export async function loadReserveCorpusSources(): Promise<RawFeedSource[]> {
+  if (cachedReserveCorpusSources) {
+    return cachedReserveCorpusSources;
+  }
+  if (!reserveCorpusSourcesPromise) {
+    reserveCorpusSourcesPromise = import('./globalCorpusSources')
+      .then((mod) => {
+        const sources = Array.isArray(mod.GLOBAL_CORPUS_RESERVE_SOURCES)
+          ? mod.GLOBAL_CORPUS_RESERVE_SOURCES
+          : [];
+        cachedReserveCorpusSources = sources;
+        return sources;
+      })
+      .catch(() => {
+        reserveCorpusSourcesPromise = null;
+        return [];
+      });
+  }
+  return reserveCorpusSourcesPromise;
+}
 
 export interface MultiLaneDiscoveryOptions {
   storage?: AtemStorage;
@@ -1547,8 +1571,9 @@ export class OpenWebHarvester {
       );
     };
 
-    // Combine verified sources and global corpus reserve sources, excluding Tagesschau (handled separately with cap)
-    const allSources = [...VERIFIED_FEED_SOURCES, ...GLOBAL_CORPUS_RESERVE_SOURCES].filter(
+    // Combine verified sources and lazily loaded global corpus reserve sources, excluding Tagesschau (handled separately with cap)
+    const reserveSources = await loadReserveCorpusSources();
+    const allSources = [...VERIFIED_FEED_SOURCES, ...reserveSources].filter(
       s =>
         s.url &&
         !s.url.toLowerCase().includes('tagesschau.de') &&
