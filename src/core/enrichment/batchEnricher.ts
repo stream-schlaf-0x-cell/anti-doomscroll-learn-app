@@ -686,8 +686,10 @@ export function getCardRenderableText(item: {
   return displayFeedText;
 }
 
-const SPORTS_GOSSIP_REGEX = /\b(bundesliga|dfb-pokal|champions league|eintracht frankfurt|matchplan|pokalduell|ligapartie|torjäger|spieltag|transfermarkt|tabellenführer|trainerwechsel|nfl|quarterback|super bowl|touchdown|nba|mlb|nhl|tv ratings)\b/i;
-const TRIVIAL_PR_OR_GADGET_REVIEW_REGEX = /(?:^test:\s*melofty\b|\bmelofty\s+pro\b|\bexpert-powered self-improvement with\b|\bsponsored\s+review\b|\baffordable\s+mini-?pc\b)/i;
+const SPORTS_GOSSIP_REGEX = /\b(bundesliga|dfb-pokal|champions league|regionalliga|2\.\s*liga|3\.\s*liga|eintracht frankfurt|kickers offenbach|matchplan|pokalduell|ligapartie|torjäger|spieltag|elfmeter|strafstoß|topspiel|transfermarkt|tabellenführer|trainerwechsel|nfl|quarterback|super bowl|touchdown|nba|mlb|nhl|pickleball|tv ratings)\b/i;
+const SPORTS_URL_PATH_REGEX = /\/(?:sport|fussball|bundesliga|motorsport|handball|eishockey|tennis)\//i;
+const JOURNAL_ERRATA_OR_TRIVIA_REGEX = /(?:^\s*\[?(?:corrections?|erratum|corrigendum|retraction|author correction|publisher correction)\]?(?:\s|:|-)|correction to lancet\b|^(?:auf welchem kontinent|welches land hat|wie heißt die hauptstadt|wissen sie,\s*wo|rätsel des tages)\b)/i;
+const TRIVIAL_PR_OR_GADGET_REVIEW_REGEX = /(?:^test:\s*melofty\b|\bmelofty\s+pro\b|\bexpert-powered self-improvement with\b|\bsponsored\s+review\b|\baffordable\s+mini-?pc\b|\bkündigt\s+\d+-teilige\s+doku\s+[„"']timberlake\b)/i;
 /** Pure shopping / price-drop posts (Amazon Blitzangebote, "50 percent off this weekend") never belong in the feed. */
 export const SHOPPING_DEAL_TITLE_REGEX =
   /(?:\bblitzangebote?\b|\bangebote?\s+des\s+tages\b|\bdeals?\s+des\s+tages\b|\btagesdeals?\b|\bprime\s+day\b|\bcyber\s+monday\b|\bblack\s+friday[-\s]+(?:deals?|angebote?)\b|\brabattcode\b|\bgutscheincode\b|\bschnäppchen\b|\b\d{1,2}\s*(?:%|percent|prozent)\s+(?:off|rabatt|reduziert|günstiger)\b|\bup\s+to\s+\d{1,2}\s*(?:%|percent)\s+off\b|\ball-time\s+low\b|\blowest\s+price\b|\bprice\s+drop\b|\bdeal\s+alert\b|\bbest\s+deals?\b)/i;
@@ -748,14 +750,6 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
     return true;
   }
   // Visual formats (memes, comics, art showcases) carry their value in image / punchline
-  const isVisual =
-    item.format === 'art_showcase' ||
-    item.format === 'meme' ||
-    item.format === 'comic' ||
-    item.space === 'c/memes' ||
-    item.space === 'c/kunst_galerie' ||
-    item.primaryTopic === 'memes_satire';
-
   const isMemeLike =
     item.format === 'meme' ||
     item.format === 'comic' ||
@@ -769,21 +763,32 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
       (item.primaryTopic === 'art_aesthetics' && (!item.space || item.space === 'c/kunst_galerie')));
 
   if (isArtLike) {
-    // Visual-first gallery contract: a sharp, non-logo image AND real descriptive text
+    // Visual-first gallery contract: a sharp, non-logo image AND real descriptive text, no political memes or webcam fluff
     const hasValidImage = Boolean(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
     const descriptive = getCardRenderableText(item);
-    return hasValidImage && descriptive.length >= 60 && !isCelebrityFluff(item.title || '');
+    const artTitle = item.title || '';
+    const isMisplacedMemeOrFluff = /\b(trump|biden|putin|nvidia\s+ceo|bizarre\s+.*meme|cheetah\s+cubs|on\s+camera\s+at\s+the\s+zoo)\b/i.test(artTitle);
+    return hasValidImage && descriptive.length >= 60 && !isCelebrityFluff(artTitle) && !isMisplacedMemeOrFluff;
   }
 
-  if (isVisual) {
-    return true;
+  if (isMemeLike) {
+    // Live RSS / OpenWeb memes & comics in c/memes must carry a genuine non-logo visual image!
+    if (item.memeMeta?.trackId) return true;
+    const isLiveIngestedMeme = /^(?:live|openweb)-/i.test(item.id || '');
+    if (!isLiveIngestedMeme) return true;
+    const hasMemeImage = Boolean(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
+    return hasMemeImage;
   }
 
   const title = (item.title || '').trim();
-  if (isCelebrityFluff(title)) {
+  if (isCelebrityFluff(title) || JOURNAL_ERRATA_OR_TRIVIA_REGEX.test(title)) {
     return false;
   }
   if (!title || /^schlagzeilen$/i.test(title)) {
+    return false;
+  }
+  const itemUrl = (item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '').toLowerCase();
+  if (SPORTS_URL_PATH_REGEX.test(itemUrl) || (item.sourceDomain || '').toLowerCase() === 'truthsocial.com') {
     return false;
   }
 
@@ -860,6 +865,10 @@ export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefine
   if (renderable.length < 140) {
     return false;
   }
+  const proseWords = renderable.split(/\s+/).filter(Boolean).length;
+  if (proseWords < 15) {
+    return false;
+  }
 
   return true;
 }
@@ -891,25 +900,37 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     );
 
   const routingText = `${item.subtitle || ''} ${cleanedFeedText}`;
-  const isGenuineArtShowcase = item.format === 'art_showcase';
-  const isPartyPolitics = !isGenuineArtShowcase && isDomesticPartyPolitics(title, routingText);
-  const isProtestOrPolitical = !isGenuineArtShowcase && isPoliticalOrProtestNews(title, routingText);
-  const isCelebrity = isCelebrityFluff(title);
   const currentSpace = (item.space || '').toLowerCase();
+  const isProtectedDidacticOrSynth =
+    currentSpace === 'c/didaktik_labor' ||
+    currentSpace === 'c/synth_alchemie' ||
+    item.primaryTopic === 'german_didactics' ||
+    item.primaryTopic === 'sound_synthesis';
+  const isGenuineArtShowcase =
+    item.format === 'art_showcase' &&
+    !/\b(trump|biden|putin|nvidia\s+ceo|bizarre\s+.*meme|cheetah\s+cubs|on\s+camera\s+at\s+the\s+zoo)\b/i.test(title);
+  const isPartyPolitics = !isGenuineArtShowcase && !isProtectedDidacticOrSynth && isDomesticPartyPolitics(title, routingText);
+  const isProtestOrPolitical = !isGenuineArtShowcase && !isProtectedDidacticOrSynth && isPoliticalOrProtestNews(title, routingText);
+  const isCelebrity = isCelebrityFluff(title);
   const isExplicitAiOrCodePost = /\b(html|css|javascript|typescript|llms?|score-?seeking|gpt[-\s]?\d*|claude|gemini|openai|anthropic|reasoning model\w*|frontier ai|coding|programming|compiler|neural network)\b/i.test(`${title} ${routingText}`);
   const hasAuthenticArtSignal =
-    item.format === 'art_showcase' ||
+    isGenuineArtShowcase ||
     /\b(painting|gemälde|sculpture|skulptur|museum|exhibition|ausstellung|architektur|architecture|fotografie|photography|canvas|oil on|renaissance|barock|impressionis|modernism|installation)\b/i.test(`${title} ${routingText}`);
   const isMisplacedInKunstGalerie =
     currentSpace === 'c/kunst_galerie' &&
-    item.format !== 'art_showcase' &&
-    (isExplicitAiOrCodePost || !hasAuthenticArtSignal);
-  const isRoutableSpace = !currentSpace || currentSpace === 'c/serendipity' || currentSpace === 'c/dialektik' || currentSpace === 'c/kunst_galerie' || currentSpace === 'c/books';
+    (!isGenuineArtShowcase && (isExplicitAiOrCodePost || !hasAuthenticArtSignal));
+  const isImagelessMemeItem =
+    /^(?:live|openweb)-/i.test(item.id || '') &&
+    (currentSpace === 'c/memes' || item.primaryTopic === 'memes_satire' || item.format === 'meme' || item.format === 'comic') &&
+    !item.memeMeta?.trackId &&
+    !(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
+  const isRoutableSpace = !currentSpace || currentSpace === 'c/serendipity' || currentSpace === 'c/dialektik' || currentSpace === 'c/kunst_galerie' || currentSpace === 'c/books' || isImagelessMemeItem;
   const preserveCuratedTopic =
     !isAggregatorItem &&
     !isPartyPolitics &&
     !isProtestOrPolitical &&
     !isMisplacedInKunstGalerie &&
+    !isImagelessMemeItem &&
     Boolean(item.primaryTopic) &&
     Boolean(currentSpace) &&
     currentSpace !== 'c/serendipity';
@@ -918,6 +939,8 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
       ? 'ai_apple'
       : isMisplacedInKunstGalerie
       ? 'ai_apple'
+      : isImagelessMemeItem
+      ? 'science_society'
       : item.primaryTopic || 'science_society';
 
   let correctedTopic: TopicTag = isPartyPolitics && isRoutableSpace
@@ -931,9 +954,15 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
   if ((isProtestOrPolitical || isPartyPolitics) && correctedTopic === 'book_mastery') {
     correctedTopic = 'philosophy_ethics';
   }
+  if (isImagelessMemeItem && correctedTopic === 'memes_satire') {
+    correctedTopic = classifyTopicDeterministically(title, routingText, 'science_society');
+    if (correctedTopic === 'memes_satire') correctedTopic = 'science_society';
+  }
 
   let routedSpace: string | undefined = item.space;
-  if (isAggregatorItem && currentSpace === 'c/kontemplation' && correctedTopic !== 'contemplation_mind') {
+  if (isImagelessMemeItem) {
+    routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/serendipity';
+  } else if (isAggregatorItem && currentSpace === 'c/kontemplation' && correctedTopic !== 'contemplation_mind') {
     routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/dialektik';
   } else if (isMisplacedInKunstGalerie) {
     routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/acceleration';
@@ -952,11 +981,17 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/serendipity';
   }
 
+  const sanitizedFormat =
+    (isImagelessMemeItem && (item.format === 'meme' || item.format === 'comic')) ||
+    (isMisplacedInKunstGalerie && item.format === 'art_showcase')
+      ? 'sourced_update'
+      : item.format;
+
   const isVisualArtOrMeme =
-    item.format === 'art_showcase' ||
-    item.format === 'meme' ||
-    item.space === 'c/memes' ||
-    item.space === 'c/kunst_galerie';
+    sanitizedFormat === 'art_showcase' ||
+    sanitizedFormat === 'meme' ||
+    routedSpace === 'c/memes' ||
+    routedSpace === 'c/kunst_galerie';
 
   // Short podcast / video teaser stub guard (strip boilerplate, never inject fake philosophical filler):
   const isPodcastOrVideoStub =
@@ -1118,6 +1153,7 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
 
   return {
     ...item,
+    format: sanitizedFormat,
     title: cleanedTitle,
     ...(routedSpace ? { space: routedSpace } : {}),
     subtitle: finalSubtitle,

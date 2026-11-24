@@ -273,6 +273,8 @@ interface AppContextValue {
   goHome: () => void;
   feedScrollToTopSignal: number;
   requestFeedScrollToTop: () => void;
+  wakeRefreshSignal: number;
+  lastWakeWasNewDay: boolean;
   whyModalItem: ScoredFeedItem | null;
   openWhyModal: (item: ScoredFeedItem) => void;
   closeWhyModal: () => void;
@@ -377,6 +379,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const requestFeedScrollToTop = useCallback(() => {
     setFeedScrollToTopSignal(s => s + 1);
   }, []);
+  const [wakeRefreshSignal, setWakeRefreshSignal] = useState<number>(0);
+  const [lastWakeWasNewDay, setLastWakeWasNewDay] = useState<boolean>(false);
+  const lastForegroundRefreshAtRef = useRef<number>(Date.now());
+  const lastActiveCalendarDayRef = useRef<string>(new Date().toISOString().slice(0, 10));
+  const wakeRefreshInFlightRef = useRef<boolean>(false);
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<FeedItem | null>(null);
   const [whyModalItem, setWhyModalItem] = useState<ScoredFeedItem | null>(null);
@@ -716,49 +723,113 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Flush progress when app moves to background; pull sync when returning to active
+  const remoteSnapshotUrlRef = useRef<string>(remoteSnapshotUrl);
+  remoteSnapshotUrlRef.current = remoteSnapshotUrl;
+
+  // Wake-on-Focus & New-Day Auto-Refresh (Pillar 3):
+  // Ensures iOS/iPadOS Home-Screen PWAs & desktop tabs kept open overnight immediately pull fresh snapshots,
+  // live dispatches, and cross-device seen-impressions upon waking after >= 25 min or on a new calendar day.
+  const runForegroundWakeCheck = useCallback(async () => {
+    try {
+      const cfg = await cloudSyncService.getConfig();
+      if (cfg.enabled && cfg.autoSync) {
+        await triggerCloudSyncRef.current();
+      }
+    } catch {
+      // Non-fatal
+    }
+
+    const nowMs = Date.now();
+    const todayIso = new Date(nowMs).toISOString().slice(0, 10);
+    const isNewDay = todayIso !== lastActiveCalendarDayRef.current;
+    const isIdleOver25Min = nowMs - lastForegroundRefreshAtRef.current >= 25 * 60 * 1000;
+
+    if (!isNewDay && !isIdleOver25Min) return;
+    if (wakeRefreshInFlightRef.current) return;
+
+    wakeRefreshInFlightRef.current = true;
+    lastForegroundRefreshAtRef.current = nowMs;
+    lastActiveCalendarDayRef.current = todayIso;
+
+    try {
+      if (isNewDay) {
+        setActiveDateSeed(todayIso);
+        activeDateSeedRef.current = todayIso;
+        const nextEdition = determineCurrentEditionType(new Date(nowMs), latestProfileRef.current);
+        setSelectedEditionTypeState(nextEdition);
+        selectedEditionTypeRef.current = nextEdition;
+      }
+
+      const [snapRes, liveRes] = await Promise.allSettled([
+        (feedRepository as any).hydrateFromPublicSnapshot?.(remoteSnapshotUrlRef.current),
+        ContinuousLiveNewsService.refreshLiveFeeds(true)
+      ]);
+
+      if (snapRes.status === 'fulfilled' && snapRes.value?.success) {
+        const syncText = `Stand ${snapRes.value.snapshotDate || new Date(nowMs).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${snapRes.value.itemCount} Impulse`;
+        setSnapshotSyncInfo(syncText);
+      }
+
+      if (liveRes.status === 'fulfilled' && Array.isArray(liveRes.value) && liveRes.value.length > 0) {
+        const seenIds = await seenImpressionsService.getSeenIds().catch(() => new Set<string>());
+        const curatedLive = liveRes.value
+          .map(sanitizeCuratedFeedItem)
+          .filter(satisfiesDefaultCuratedStandard)
+          .map(item => {
+            if (item.isStaticFallback || seenIds.has(item.id)) {
+              const { pinnedManualRunAt, ...rest } = item;
+              return rest;
+            }
+            return item;
+          });
+        if (curatedLive.length > 0 && (feedRepository as any).addItems) {
+          (feedRepository as any).addItems(curatedLive, { operationType: 'background_sync', pinInserted: false });
+        }
+      }
+
+      await (feedRepository as any).hydrateFromReservoir?.(remoteSnapshotUrlRef.current).catch(() => {});
+
+      await scheduleFeedRecompute(
+        latestProfileRef.current,
+        latestInteractionsRef.current,
+        selectedEditionTypeRef.current,
+        activeDateSeedRef.current
+      );
+      setLastWakeWasNewDay(isNewDay);
+      setWakeRefreshSignal(s => s + 1);
+    } catch {
+      // Non-fatal wake refresh fallback
+    } finally {
+      wakeRefreshInFlightRef.current = false;
+    }
+  }, [scheduleFeedRecompute]);
+
+  // Flush progress when app moves to background; pull sync & wake-refresh when returning to active
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === 'background' || nextState === 'inactive') {
         flushReadingProgress();
+        void seenImpressionsService.flush();
       } else if (nextState === 'active') {
-        void (async () => {
-          try {
-            const cfg = await cloudSyncService.getConfig();
-            if (cfg.enabled && cfg.autoSync) {
-              await triggerCloudSyncRef.current();
-            }
-          } catch {
-            // Non-fatal
-          }
-        })();
+        void runForegroundWakeCheck();
       }
     };
     const sub = AppState.addEventListener('change', handleAppStateChange);
     return () => sub.remove();
-  }, [flushReadingProgress]);
+  }, [flushReadingProgress, runForegroundWakeCheck]);
 
-  // Web visibilitychange listener for instant multi-tab sync
+  // Web visibilitychange listener for instant multi-tab sync & overnight PWA wake refresh
   useEffect(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       const handleVisChange = () => {
         if (document.visibilityState === 'visible') {
-          void (async () => {
-            try {
-              const cfg = await cloudSyncService.getConfig();
-              if (cfg.enabled && cfg.autoSync) {
-                await triggerCloudSyncRef.current();
-              }
-            } catch {
-              // Non-fatal
-            }
-          })();
+          void runForegroundWakeCheck();
         }
       };
       document.addEventListener('visibilitychange', handleVisChange);
       return () => document.removeEventListener('visibilitychange', handleVisChange);
     }
-  }, []);
+  }, [runForegroundWakeCheck]);
 
   // Load initial data on startup with explicit typed error recovery
   const loadInitialData = useCallback(async () => {
@@ -879,7 +950,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 snapshotInserted = Number(res.insertedCount || 0);
               }
             })().catch(() => {}),
-            new Promise<void>(resolve => setTimeout(resolve, 1200))
+            new Promise<void>(resolve => setTimeout(resolve, 2800))
           ]);
         } catch {
           // Non-blocking fallback
@@ -892,6 +963,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             latestInteractionsRef.current,
             selectedEditionTypeRef.current
           );
+        }
+
+        // Hydrate Tier-2 Deep Endless Reservoir (up to ~900 unseen 14d items) quietly in the background
+        try {
+          const resHydration = await (feedRepository as any).hydrateFromReservoir?.(currentSnapshotUrl);
+          if (resHydration?.success && resHydration.insertedCount > 0) {
+            await scheduleFeedRecompute(
+              latestProfileRef.current,
+              latestInteractionsRef.current,
+              selectedEditionTypeRef.current
+            );
+          }
+        } catch {
+          // Non-blocking reservoir fallback
         }
       })();
 
@@ -2104,6 +2189,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       goHome,
       feedScrollToTopSignal,
       requestFeedScrollToTop,
+      wakeRefreshSignal,
+      lastWakeWasNewDay,
       whyModalItem,
       openWhyModal,
       closeWhyModal,
@@ -2204,6 +2291,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       goHome,
       feedScrollToTopSignal,
       requestFeedScrollToTop,
+      wakeRefreshSignal,
+      lastWakeWasNewDay,
       whyModalItem,
       openWhyModal,
       closeWhyModal,

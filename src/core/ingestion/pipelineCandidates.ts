@@ -13,7 +13,7 @@ export function normalizePipelineResults(results: FeedFetchResult[], previous: R
     let validForSource = 0;
     if (result.success && result.entries.length) {
       totalRawEntries += result.entries.length;
-      for (const entry of result.entries.slice(0, 4)) {
+      for (const entry of result.entries.slice(0, 6)) {
         try {
           const parsed = FeedItemSchema.safeParse(normalizeFeedEntry(entry, result.source, editionDate));
           if (parsed.success) {

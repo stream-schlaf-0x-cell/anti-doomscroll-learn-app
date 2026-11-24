@@ -22,7 +22,7 @@ import {
   SHOWCASE_STARTER_TRACK_IDS
 } from '../learning/hivemindLearningService';
 
-export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-15-v13.0-reader-quality-and-hd-images';
+export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-24-v14.0-living-endless-bloomscroll';
 
 function isUndatedVisualFormat(item: Partial<FeedItem>): boolean {
   return (

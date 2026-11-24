@@ -87,6 +87,7 @@ test('Rich Feed Discovery, Slop Eradication, Hard Quarantine & Clean Reader Suit
 
     // Check migration version
     assert.ok(
+      CURRENT_DATA_MIGRATION_VERSION === '2026-11-24-v14.0-living-endless-bloomscroll' ||
       CURRENT_DATA_MIGRATION_VERSION === '2026-11-15-v13.0-reader-quality-and-hd-images' ||
       CURRENT_DATA_MIGRATION_VERSION === '2026-11-15-v12.0-fresh-relevant-main-feed' ||
       CURRENT_DATA_MIGRATION_VERSION === '2026-11-15-v11.0-main-feed-masterplan-clean' ||

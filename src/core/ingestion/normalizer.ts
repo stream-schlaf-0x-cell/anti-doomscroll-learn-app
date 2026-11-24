@@ -511,9 +511,19 @@ export function normalizeFeedEntry(
       : undefined;
 
   const isTimelessFormat = format === 'meme' || format === 'art_showcase' || source.primaryTopic === 'memes_satire' || source.primaryTopic === 'art_aesthetics';
-  const resolvedPrimaryTopic: TopicTag = isTimelessFormat
-    ? source.primaryTopic
-    : classifyTopicDeterministically(cleanTitle, `${subtitle} ${feedText}`, source.primaryTopic);
+  const combinedForRouting = `${subtitle} ${feedText}`;
+  const hasExplicitPolitics = isDomesticPartyPolitics(cleanTitle, combinedForRouting);
+  // Preserve dedicated specialist source topics (Didaktik, Klangsynthese, Bücher, Kontemplation)
+  // so articles from Deutsches Schulportal, Bob Blume, DLF Büchermarkt, LRB, or CDM are not hijacked into generic spaces
+  const isDedicatedSpecialistSource =
+    source.primaryTopic === 'german_didactics' ||
+    source.primaryTopic === 'sound_synthesis' ||
+    (!hasExplicitPolitics && (source.primaryTopic === 'book_mastery' || source.primaryTopic === 'contemplation_mind'));
+
+  const resolvedPrimaryTopic: TopicTag =
+    isTimelessFormat || isDedicatedSpecialistSource
+      ? source.primaryTopic
+      : classifyTopicDeterministically(cleanTitle, combinedForRouting, source.primaryTopic);
   const resolvedTopics = Array.from(new Set<TopicTag>([resolvedPrimaryTopic, ...source.topics]));
   const explicitSpace =
     !isTimelessFormat && isDomesticPartyPolitics(cleanTitle, `${subtitle} ${feedText}`)

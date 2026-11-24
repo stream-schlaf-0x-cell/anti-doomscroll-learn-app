@@ -3,6 +3,8 @@ import { isDeliveringHealth, parseSourceHealth, SourceHealthInfo } from '../inge
 
 export const STARTUP_SNAPSHOT_MAX_ITEMS = 450;
 export const STARTUP_SNAPSHOT_MAX_BYTES = 3_500_000;
+export const RESERVOIR_MAX_ITEMS = 950;
+export const RESERVOIR_MAX_BYTES = 9_000_000;
 
 export interface SnapshotPayload {
   generatedAt?: string;
@@ -22,8 +24,12 @@ export function utf8ByteLength(value: string): number {
   return bytes;
 }
 
-/** Keeps complete reader bodies, taking one item per publisher before a second pass. */
-export function selectStartupItems(items: FeedItem[], byteBudget = STARTUP_SNAPSHOT_MAX_BYTES): FeedItem[] {
+/** Keeps complete reader bodies, taking one item per publisher before subsequent passes. */
+export function selectStartupItems(
+  items: FeedItem[],
+  byteBudget = STARTUP_SNAPSHOT_MAX_BYTES,
+  maxItems = STARTUP_SNAPSHOT_MAX_ITEMS
+): FeedItem[] {
   const buckets = new Map<string, FeedItem[]>();
   for (const item of items) {
     // Treat curated knowledge vault items as distinct high-signal entries so museum collections are preserved
@@ -38,7 +44,7 @@ export function selectStartupItems(items: FeedItem[], byteBudget = STARTUP_SNAPS
   let bytes = 2;
   const seen = new Set<string>();
   let pending = true;
-  while (pending && result.length < STARTUP_SNAPSHOT_MAX_ITEMS) {
+  while (pending && result.length < maxItems) {
     pending = false;
     for (const queue of buckets.values()) {
       const item = queue.shift();
@@ -51,14 +57,19 @@ export function selectStartupItems(items: FeedItem[], byteBudget = STARTUP_SNAPS
       if (bytes + itemBytes > byteBudget) continue;
       result.push(item);
       bytes += itemBytes;
-      if (result.length === STARTUP_SNAPSHOT_MAX_ITEMS) break;
+      if (result.length === maxItems) break;
     }
   }
   return result;
 }
 
-export function parseSnapshotPayload(value: unknown): SnapshotPayload | null {
+export function parseSnapshotPayload(
+  value: unknown,
+  options?: { maxItems?: number; maxBytes?: number }
+): SnapshotPayload | null {
   if (!value || typeof value !== 'object') return null;
+  const maxItems = options?.maxItems ?? STARTUP_SNAPSHOT_MAX_ITEMS;
+  const maxBytes = options?.maxBytes ?? STARTUP_SNAPSHOT_MAX_BYTES;
   const object = value as Record<string, unknown>;
   const rawItems = Array.isArray(value) ? value : object.items;
   if (!Array.isArray(rawItems)) return null;
@@ -78,9 +89,17 @@ export function parseSnapshotPayload(value: unknown): SnapshotPayload | null {
     activeDeliveringSources: Object.values(sourceHealth).filter(isDeliveringHealth).length,
     totalAvailableItems: typeof object.totalAvailableItems === 'number' && Number.isInteger(object.totalAvailableItems) && object.totalAvailableItems >= validItems.length
       ? object.totalAvailableItems : validItems.length,
-    items: [], sourceHealth
+    items: [],
+    sourceHealth
   };
   const metadataBytes = utf8ByteLength(JSON.stringify(payload));
-  payload.items = selectStartupItems(validItems, Math.max(0, STARTUP_SNAPSHOT_MAX_BYTES - metadataBytes));
+  payload.items = selectStartupItems(validItems, Math.max(0, maxBytes - metadataBytes), maxItems);
   return payload.items.length ? payload : null;
+}
+
+export function parseReservoirPayload(value: unknown): SnapshotPayload | null {
+  return parseSnapshotPayload(value, {
+    maxItems: RESERVOIR_MAX_ITEMS,
+    maxBytes: RESERVOIR_MAX_BYTES
+  });
 }

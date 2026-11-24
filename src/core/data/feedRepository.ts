@@ -16,6 +16,7 @@ import { FeedMergeService, MergeOptions } from '../feed/FeedMergeService';
 import { defaultFeedOperationManager, FeedOperationResult, FeedOperationType } from '../feed/FeedOperationManager';
 import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
 import { isDeprecatedShowcaseStarterItem } from '../learning/hivemindLearningService';
+import { seenImpressionsService } from './seenImpressionsService';
 
 function isRejectedCachedItem(item: Partial<FeedItem> | null | undefined): boolean {
   if (!item || typeof item !== 'object') return true;
@@ -122,7 +123,19 @@ export interface IFeedRepository {
   setItems?(items: FeedItem[]): void;
   addItems?(items: FeedItem[], options?: { operationType?: FeedOperationType; pinInserted?: boolean; telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry }): void;
   getAllItems?(): FeedItem[];
-  hydrateFromPublicSnapshot?(remoteUrl?: string): Promise<{ success: boolean; itemCount: number; snapshotDate?: string }>;
+  hydrateFromPublicSnapshot?(remoteUrl?: string): Promise<{
+    success: boolean;
+    itemCount: number;
+    insertedCount?: number;
+    snapshotDate?: string;
+    generatedAt?: string;
+  }>;
+  hydrateFromReservoir?(remoteUrl?: string): Promise<{
+    success: boolean;
+    itemCount: number;
+    insertedCount: number;
+    generatedAt?: string;
+  }>;
   curateAndAddItems?(items: FeedItem[]): Promise<FeedItem[]>;
   executeContentOperation?(type: FeedOperationType, candidates: FeedItem[], options?: ContentOperationOptions): Promise<FeedOperationResult>;
 }
@@ -202,16 +215,16 @@ export class LocalFeedRepository implements IFeedRepository {
     const demoIds = new Set(INITIAL_FIXTURES.map(f => f.id));
     const realItems = items.filter(i => !demoIds.has(i.id));
     const pool = realItems.length >= 30 ? realItems : items;
-    return this.capActivePool(pool, 160);
+    return this.capActivePool(pool, 1200);
   }
 
   /**
-   * Caps active in-memory article pool to at most 160 items to keep Space switching
-   * and in-memory filtering at < 3ms, while strictly protecting Hivemind learning items,
-   * saved items, and evergreen gems.
+   * Caps active in-memory article pool to 1,200 items (O(1) space map keeps Space switching < 2ms),
+   * strictly protecting Hivemind learning items, saved items, and unseen discoveries ahead of already-seen items.
    */
-  private capActivePool(items: FeedItem[], maxItems = 160): FeedItem[] {
+  private capActivePool(items: FeedItem[], maxItems = 1200): FeedItem[] {
     if (items.length <= maxItems) return items;
+    const seenSet = seenImpressionsService.getSeenIdsSync();
     const protectedIds = new Set<string>();
     for (const item of items) {
       if (isDeprecatedShowcaseStarterItem(item)) continue;
@@ -219,43 +232,50 @@ export class LocalFeedRepository implements IFeedRepository {
         (item.id.startsWith('hivemind-') && !isDeprecatedShowcaseStarterItem(item)) ||
         item.id.startsWith('flourish-') ||
         (item.isEvergreenGem === true && item.space === 'c/kunst_galerie') ||
-        Boolean((item as any).isSaved) ||
-        Boolean(item.space && item.space !== 'c/memes' && !item.isStaticFallback)
+        Boolean((item as any).isSaved)
       ) {
         protectedIds.add(item.id);
       }
     }
 
-    const byTopic = new Map<string, FeedItem[]>();
+    const byTopicUnseen = new Map<string, FeedItem[]>();
+    const byTopicSeen = new Map<string, FeedItem[]>();
     for (const item of items) {
       const topic = item.primaryTopic || 'general';
-      const list = byTopic.get(topic) || [];
+      const targetMap = seenSet.has(item.id) ? byTopicSeen : byTopicUnseen;
+      const list = targetMap.get(topic) || [];
       list.push(item);
-      byTopic.set(topic, list);
+      targetMap.set(topic, list);
     }
 
-    const keptIds = new Set<string>();
-    for (const id of protectedIds) {
-      keptIds.add(id);
-    }
+    const keptIds = new Set<string>(protectedIds);
 
-    const topicKeys = Array.from(byTopic.keys());
-    let round = 0;
-    let added = true;
-    while (keptIds.size < maxItems && added) {
-      added = false;
-      for (const topic of topicKeys) {
-        if (keptIds.size >= maxItems) break;
-        const list = byTopic.get(topic);
-        if (list && round < list.length) {
-          const cand = list[round];
-          if (!keptIds.has(cand.id)) {
-            keptIds.add(cand.id);
-            added = true;
+    const fillFromTopicMap = (topicMap: Map<string, FeedItem[]>) => {
+      const topicKeys = Array.from(topicMap.keys());
+      let round = 0;
+      let added = true;
+      while (keptIds.size < maxItems && added) {
+        added = false;
+        for (const topic of topicKeys) {
+          if (keptIds.size >= maxItems) break;
+          const list = topicMap.get(topic);
+          if (list && round < list.length) {
+            const cand = list[round];
+            if (!keptIds.has(cand.id)) {
+              keptIds.add(cand.id);
+              added = true;
+            }
           }
         }
+        round++;
       }
-      round++;
+    };
+
+    // Pass 1: Keep all unseen items round-robin across topics first
+    fillFromTopicMap(byTopicUnseen);
+    // Pass 2: Only fill remaining capacity with already-seen items
+    if (keptIds.size < maxItems) {
+      fillFromTopicMap(byTopicSeen);
     }
 
     return items.filter(it => keptIds.has(it.id));
@@ -505,20 +525,89 @@ export class LocalFeedRepository implements IFeedRepository {
    */
   async hydrateFromPublicSnapshot(
     remoteUrl?: string
-  ): Promise<{ success: boolean; itemCount: number; snapshotDate?: string }> {
+  ): Promise<{
+    success: boolean;
+    itemCount: number;
+    insertedCount?: number;
+    snapshotDate?: string;
+    generatedAt?: string;
+  }> {
     try {
       const res = await defaultSnapshotLoader.loadSnapshot(remoteUrl);
       if (res.success && res.items.length > 0) {
-        this.addItems(res.items);
+        const beforeIds = new Set(this.items.map(i => i.id));
+        this.addItems(res.items, { operationType: 'background_sync', pinInserted: false });
+        const insertedCount = this.items.filter(i => !beforeIds.has(i.id)).length;
         return {
           success: true,
           itemCount: res.itemCount,
-          snapshotDate: res.snapshotDate
+          insertedCount,
+          snapshotDate: res.snapshotDate,
+          generatedAt: res.generatedAt
         };
       }
-      return { success: false, itemCount: 0 };
+      return { success: false, itemCount: 0, insertedCount: 0 };
     } catch {
-      return { success: false, itemCount: 0 };
+      return { success: false, itemCount: 0, insertedCount: 0 };
+    }
+  }
+
+  /**
+   * Lazily hydrates the rolling 14-day Deep Endless Reservoir (`feed-reservoir.json`, up to ~900 items)
+   * silently into the tail of the repository pool without pinning or triggering top-banner noise.
+   */
+  async hydrateFromReservoir(
+    remoteUrl?: string
+  ): Promise<{
+    success: boolean;
+    itemCount: number;
+    insertedCount: number;
+    generatedAt?: string;
+  }> {
+    try {
+      const res = await defaultSnapshotLoader.loadReservoir(remoteUrl);
+      if (!res.success || res.items.length === 0) {
+        return { success: false, itemCount: 0, insertedCount: 0 };
+      }
+
+      const seenSet = await seenImpressionsService.getSeenIds().catch(() => seenImpressionsService.getSeenIdsSync());
+      const normTitle = (t: string) => (t || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+      const normUrl = (u?: string) => (u || '').trim().toLowerCase().replace(/\/+$/, '');
+
+      const existingIds = new Set(this.items.map(i => i.id));
+      const existingUrls = new Set(this.items.map(i => normUrl(i.canonicalUrl)).filter(Boolean));
+      const existingTitles = new Set(this.items.map(i => normTitle(i.title)).filter(t => t.length >= 8));
+
+      const appended: FeedItem[] = [];
+      for (const raw of res.items) {
+        if (seenSet.has(raw.id)) continue;
+        if (existingIds.has(raw.id)) continue;
+        if (isRejectedCachedItem(raw)) continue;
+        const uKey = normUrl(raw.canonicalUrl);
+        if (uKey && existingUrls.has(uKey)) continue;
+        const tKey = normTitle(raw.title);
+        if (tKey.length >= 8 && existingTitles.has(tKey)) continue;
+
+        const clean = sanitizeCuratedFeedItem(enrichSocialFeedItem(raw, { lazyCrossReferences: true }));
+        existingIds.add(clean.id);
+        if (uKey) existingUrls.add(uKey);
+        if (tKey.length >= 8) existingTitles.add(tKey);
+        appended.push(clean);
+      }
+
+      if (appended.length > 0) {
+        this.items = this.purgeDemoFixturesIfSufficient([...this.items, ...appended]);
+        this.scheduleIndexBuild();
+      }
+
+      return {
+        success: true,
+        itemCount: res.itemCount,
+        insertedCount: appended.length,
+        generatedAt: res.generatedAt
+      };
+    } catch {
+      return { success: false, itemCount: 0, insertedCount: 0 };
     }
   }
 

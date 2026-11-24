@@ -365,16 +365,43 @@ function getAttribute(xml: string, tagName: string, attrName: string): string {
 }
 
 /**
- * Parses a date string into standard ISO 8601 or falls back to current time.
- * Clamps future dates (e.g. weekend print issue dates) to Date.now().
+ * Attempts to recover a genuine publication date (YYYY/MM/DD or YYYY-MM-DD) from an article URL
+ * when the feed XML omits <pubDate>.
  */
-export function parseDateWithReliability(dateStr?: string): { iso: string; reliable: boolean } {
+export function extractDateFromUrl(url?: string): string | null {
+  if (!url || typeof url !== 'string') return null;
+  const fullDateMatch = url.match(/(?:^|[/\-_])(20[12]\d)[/\-_](0[1-9]|1[0-2])[/\-_](0[1-9]|[12]\d|3[01])(?=$|[/\-_.?])/);
+  if (!fullDateMatch) return null;
+  const [, yyyy, mm, dd] = fullDateMatch;
+  const candidate = new Date(`${yyyy}-${mm}-${dd}T12:00:00.000Z`);
+  if (isNaN(candidate.getTime())) return null;
+  if (candidate.getTime() > Date.now() + 24 * 3600 * 1000) return null;
+  return candidate.getTime() > Date.now() ? new Date().toISOString() : candidate.toISOString();
+}
+
+/**
+ * Parses a date string into standard ISO 8601.
+ * - Clamps future dates (e.g. weekend print issue dates) to Date.now().
+ * - Recovers YYYY-MM-DD from article URLs if XML omits <pubDate>.
+ * - When truly undated, assigns a neutral 5-day-old timestamp with `reliable: false`
+ *   so undated archive essays never masquerade as "published 0 seconds ago" ahead of today's news.
+ */
+export function parseDateWithReliability(dateStr?: string, fallbackUrl?: string): { iso: string; reliable: boolean } {
+  const neutralUndatedIso = () => new Date(Date.now() - 5 * 86400 * 1000).toISOString();
   if (!dateStr || !dateStr.trim()) {
-    return { iso: new Date().toISOString(), reliable: false };
+    const urlDate = extractDateFromUrl(fallbackUrl);
+    if (urlDate) {
+      return { iso: urlDate, reliable: true };
+    }
+    return { iso: neutralUndatedIso(), reliable: false };
   }
   const parsed = new Date(dateStr.trim());
   if (isNaN(parsed.getTime())) {
-    return { iso: new Date().toISOString(), reliable: false };
+    const urlDate = extractDateFromUrl(fallbackUrl);
+    if (urlDate) {
+      return { iso: urlDate, reliable: true };
+    }
+    return { iso: neutralUndatedIso(), reliable: false };
   }
   if (parsed.getTime() > Date.now()) {
     return { iso: new Date().toISOString(), reliable: true };
@@ -591,12 +618,15 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
 
       const published =
         getTagContent(block, 'published') ||
-        getTagContent(block, 'updated');
+        getTagContent(block, 'updated') ||
+        getTagContent(block, 'dc:date') ||
+        getTagContent(block, 'dcterms:issued') ||
+        getTagContent(block, 'dcterms:modified');
 
       const imageUrl = extractImageUrl(block, link);
       const imageAltText = extractImageAltText(block, title);
 
-      const dateInfo = parseDateWithReliability(published);
+      const dateInfo = parseDateWithReliability(published, link);
 
       if (title && link) {
         entries.push({
@@ -641,9 +671,14 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
 
       const pubDate =
         getTagContent(block, 'pubDate') ||
-        getTagContent(block, 'dc:date');
+        getTagContent(block, 'dc:date') ||
+        getTagContent(block, 'dcterms:issued') ||
+        getTagContent(block, 'dcterms:modified') ||
+        getTagContent(block, 'atom:published') ||
+        getTagContent(block, 'atom:updated') ||
+        getTagContent(block, 'prism:publicationDate');
 
-      const dateInfo = parseDateWithReliability(pubDate);
+      const dateInfo = parseDateWithReliability(pubDate, link);
       const imageUrl = extractImageUrl(block, link);
       const imageAltText = extractImageAltText(block, title);
 

@@ -145,7 +145,9 @@ export const FeedScreen: React.FC = () => {
     updateSpace,
     isHydrated,
     scheduleCloudSyncPush,
-    feedScrollToTopSignal
+    feedScrollToTopSignal,
+    wakeRefreshSignal,
+    lastWakeWasNewDay
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
@@ -155,9 +157,19 @@ export const FeedScreen: React.FC = () => {
   const [seenIds, setSeenIds] = useState<Set<string>>(() => seenImpressionsService.getSeenIdsSync());
   const [seenRecordMap, setSeenRecordMap] = useState<Map<string, SeenImpressionRecord>>(() => seenImpressionsService.getSeenRecordMapSync());
 
+  const syncSeenStateFromService = useCallback(() => {
+    setSeenIds(seenImpressionsService.getSeenIdsSync());
+    setSeenRecordMap(seenImpressionsService.getSeenRecordMapSync());
+  }, []);
+
   React.useEffect(() => {
     void seenImpressionsService.getSeenIds().then(setSeenIds);
     void seenImpressionsService.getSeenRecordMap().then(setSeenRecordMap);
+    return seenImpressionsService.subscribe(() => {
+      // Immediately reflect initial storage/CloudSync hydration when local state was still empty
+      setSeenIds(prev => (prev.size === 0 ? seenImpressionsService.getSeenIdsSync() : prev));
+      setSeenRecordMap(prev => (prev.size === 0 ? seenImpressionsService.getSeenRecordMapSync() : prev));
+    });
   }, []);
   const [isScrolledDown, setIsScrolledDown] = useState<boolean>(false);
   const isScrolledDownRef = React.useRef<boolean>(false);
@@ -221,6 +233,8 @@ export const FeedScreen: React.FC = () => {
   const [revealedNewItems, setRevealedNewItems] = useState<FeedItem[]>([]);
 
   const handleSortChange = useCallback((mode: FeedSortMode) => {
+    sessionStartedAt.current = Date.now();
+    syncSeenStateFromService();
     defaultFeedOperationManager.clearAutomaticPins();
     setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
     lockedTopItemIdsRef.current = null;
@@ -230,11 +244,31 @@ export const FeedScreen: React.FC = () => {
     revealScrollGraceUntilRef.current = Date.now() + 800;
     setPendingStreamArrivals([]);
     setPendingNewItemIds([]);
-    setVisibleInfiniteCount(12);
+    setVisibleInfiniteCount(15);
     setSortMode(mode);
     setActiveCardIndex(0);
     scrollToFeedTop(true);
-  }, [scrollToFeedTop]);
+  }, [scrollToFeedTop, syncSeenStateFromService]);
+
+  // Wake-on-Focus & New-Day Signal Handler: refreshes seen filter and unlocks yesterday's frozen viewport
+  const lastHandledWakeSignalRef = React.useRef<number>(wakeRefreshSignal);
+  React.useEffect(() => {
+    if (wakeRefreshSignal <= lastHandledWakeSignalRef.current) return;
+    lastHandledWakeSignalRef.current = wakeRefreshSignal;
+    sessionStartedAt.current = Date.now();
+    syncSeenStateFromService();
+    if (lastWakeWasNewDay || scrollOffsetYRef.current < 80) {
+      lockedTopItemIdsRef.current = null;
+      hasCommittedInitialViewportRef.current = false;
+      frozenRenderedFreshRef.current = [];
+      newArrivalsQueueRef.current = [];
+      setPendingStreamArrivals([]);
+      setPendingNewItemIds([]);
+      if (lastWakeWasNewDay) {
+        scrollToFeedTop(false);
+      }
+    }
+  }, [wakeRefreshSignal, lastWakeWasNewDay, syncSeenStateFromService, scrollToFeedTop]);
   const [curatedSelection, setCuratedSelection] = useState<{
     items: FeedItem[];
     timestamp: string;
@@ -627,6 +661,7 @@ export const FeedScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
+    sessionStartedAt.current = Date.now();
     lockedTopItemIdsRef.current = null;
     hasCommittedInitialViewportRef.current = false;
     newArrivalsQueueRef.current = [];
@@ -692,9 +727,11 @@ export const FeedScreen: React.FC = () => {
   };
 
   const handleFilterChange = useCallback((filter: string | 'all') => {
+    sessionStartedAt.current = Date.now();
+    syncSeenStateFromService();
     setActiveHivemindTrackId(null);
     setSelectedFilter(filter);
-    setVisibleInfiniteCount(12);
+    setVisibleInfiniteCount(15);
     lockedTopItemIdsRef.current = null;
     hasCommittedInitialViewportRef.current = false;
     setPendingStreamArrivals([]);
@@ -702,7 +739,7 @@ export const FeedScreen: React.FC = () => {
     if (filter !== 'all' && (activeFeedOption === 'live_news' || activeFeedOption === 'classics')) {
       setActiveFeedOption('infinite');
     }
-  }, [activeFeedOption, setActiveFeedOption, setSelectedFilter, scrollToFeedTop]);
+  }, [activeFeedOption, setActiveFeedOption, setSelectedFilter, scrollToFeedTop, syncSeenStateFromService]);
 
   const handleInvestigateTopic = useCallback((topic: TopicTag) => {
     setSelectedFilter(`c/${topic}`);
@@ -878,46 +915,32 @@ export const FeedScreen: React.FC = () => {
       strictMatches.length >= 3 || selectedFilter === 'all' ? strictMatches : fallbackMatches;
     const curatedPool = filterByQuery(baseCuratedPool);
 
-    // Permanent Seen Quarantine (Pillar 4):
-    // Any unbookmarked and non-upvoted article seen in a previous session (> 5 min before current session)
-    // stays permanently behind 100% of unseen items instead of resurrecting after 72 hours.
-    const cutoffMs = sessionStartedAt.current - 5 * 60_000;
+    // Strict 100% Unseen Guarantee (Pillar 3 & 4):
+    // Any article already seen in a prior session/view (> 60s before current active scroll window)
+    // is strictly excluded from the main stream (accessible anytime in Chronik & Bibliothek) — zero silent recycling!
+    const cutoffMs = sessionStartedAt.current - 60_000;
 
     const unseenCandidates: ScoredFeedItem[] = [];
-    const quarantinedTail: ScoredFeedItem[] = [];
 
     for (const item of curatedPool) {
-      const userInt = currentInteractions[item.id];
-      const isSaved = Boolean(userInt?.saved);
-      const isUpvoted = Boolean(userInt?.voteScore === 1);
       const rec = seenRecordMap.get(item.id);
       const isAlreadySeen = seenIds.has(item.id);
 
-      if ((rec || isAlreadySeen) && !isSaved && !isUpvoted) {
+      if (rec || isAlreadySeen) {
         const firstSeen = rec ? new Date(rec.firstSeenAt).getTime() : 0;
         if (!rec || isNaN(firstSeen) || firstSeen < cutoffMs) {
-          quarantinedTail.push(item);
           continue;
         }
       }
       unseenCandidates.push(item);
     }
 
-    const sortedUnseen = sortFeedForDisplay(unseenCandidates, sortMode, {
+    const combinedSorted = sortFeedForDisplay(unseenCandidates, sortMode, {
       pinnedIds,
       interleave: true,
       seenItemIds: seenIds,
       seenRecords: seenRecordMap
     });
-
-    const sortedTail = sortFeedForDisplay(quarantinedTail, sortMode, {
-      ignorePins: true,
-      interleave: true,
-      seenItemIds: seenIds,
-      seenRecords: seenRecordMap
-    });
-
-    const combinedSorted = [...sortedUnseen, ...sortedTail];
 
     // Mode 2 — Beiläufig im Haupt-Stream (Ambient Drip Interleaving):
     // When viewing "Alle Spaces" in "Für dich" mode, weave the next 1-2 unread cards from active learning tracks
@@ -1058,19 +1081,19 @@ export const FeedScreen: React.FC = () => {
     }
   }, [lockedInfiniteResult]);
 
-  // Evergreen & Archive fallback items when fresh items are exhausted (never recycles cloned IDs)
+  // Evergreen & Archive fallback items when fresh items are exhausted (strictly unseen only — never recycles seen classics)
   const evergreenFallbackItems = useMemo(() => {
     if (sortMode === 'today') return []; // Never append old evergreen items under ⚡ Heute!
     const currentInteractions = interactionsRef.current;
     const freshIds = new Set(lockedInfiniteBase.map(i => i.id));
     const rawClassics = ContinuousLiveNewsService.getEvergreenClassics();
     const scored = rawClassics
-      .filter(item => !freshIds.has(item.id) && !dismissedSet.has(item.id))
+      .filter(item => !freshIds.has(item.id) && !dismissedSet.has(item.id) && !seenIds.has(item.id))
       .map(item => getCachedSanitizedEntry(item))
       .filter(entry => entry.strictStandardOk && matchesSelectedSpace(entry.item))
       .map(entry => scoreFeedItem(entry.item, profile, currentInteractions));
     return filterByQuery(scored);
-  }, [sortMode, lockedInfiniteBase, dismissedSet, profile, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery]);
+  }, [sortMode, lockedInfiniteBase, dismissedSet, seenIds, profile, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery]);
 
   const scoredRevealedItems = useMemo(() => {
     if (revealedNewItems.length === 0) return [];
@@ -1363,37 +1386,97 @@ export const FeedScreen: React.FC = () => {
   const [curationStage, setCurationStage] = useState<string>('');
   const [showReportModal, setShowReportModal] = useState<boolean>(false);
   const isReplenishingRef = React.useRef<boolean>(false);
+  const reservoirHydratedInFeedRef = React.useRef<boolean>(false);
+  const lastAutoReplenishAtRef = React.useRef<number>(0);
   const [isReplenishingStream, setIsReplenishingStream] = useState<boolean>(false);
 
   const curateNextStreamBatch = useCallback(async (reason: 'scroll' | 'today' = 'scroll') => {
     if (isReplenishingRef.current) return;
+    const nowMs = Date.now();
+    if (reason === 'scroll' && nowMs - lastAutoReplenishAtRef.current < 4500) return;
     isReplenishingRef.current = true;
+    lastAutoReplenishAtRef.current = nowMs;
     setIsReplenishingStream(true);
     try {
+      let addedMatchingCount = 0;
+
+      // Stage 1: Hydrate rolling 900-item Deep Endless Reservoir if not yet loaded
+      if (!reservoirHydratedInFeedRef.current && feedRepository.hydrateFromReservoir) {
+        reservoirHydratedInFeedRef.current = true;
+        const resHyd = await feedRepository.hydrateFromReservoir().catch(() => null);
+        if (resHyd?.success && resHyd.insertedCount > 0) {
+          addedMatchingCount += resHyd.insertedCount;
+        }
+      }
+
+      // Stage 2: Force-refresh live news & rotating CORS-safe RSS streams
       const freshLive = await ContinuousLiveNewsService.getLiveStream({
-        limit: 24,
-        forceRefresh: reason === 'today'
-      });
+        limit: 36,
+        forceRefresh: true
+      }).catch(() => [] as FeedItem[]);
       if (freshLive.length > 0) {
         setLiveNewsItems(freshLive);
       }
-      const existingIds = new Set(
-        (feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id)
-      );
-      const unseenCandidates = freshLive
-        .filter(i => !existingIds.has(i.id))
+      const repoSnapshot = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+      const existingIds = new Set(repoSnapshot.map(i => i.id));
+      const unseenIds = await seenImpressionsService.getSeenIds().catch(() => seenImpressionsService.getSeenIdsSync());
+
+      const unseenLiveCandidates = freshLive
+        .filter(i => !existingIds.has(i.id) && !unseenIds.has(i.id))
         .map(sanitizeCuratedFeedItem)
         .filter(satisfiesDefaultCuratedStandard);
 
-      if (unseenCandidates.length > 0) {
-        const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(unseenCandidates.slice(0, 12));
-        const validCurated = curated.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
+      if (unseenLiveCandidates.length > 0) {
+        const curated = await defaultBatchEditionEnricher.gatekeepAndEnrichBatch(unseenLiveCandidates.slice(0, 12));
+        const validCurated = [
+          ...curated.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard),
+          ...unseenLiveCandidates.slice(12)
+        ];
         if (validCurated.length > 0) {
-          feedRepository.addItems(validCurated);
-          await recomputeFeed();
+          feedRepository.addItems?.(validCurated, { operationType: 'background_sync', pinInserted: false });
+          addedMatchingCount += validCurated.filter(matchesSelectedSpace).length;
         }
-      } else if (reason === 'today') {
+      }
+
+      // Stage 3: Multi-Lane Open-Web Harvester with rotating page cursor when pool needs deeper discoveries
+      if (addedMatchingCount < 10 && sortMode !== 'today') {
+        const updatedRepo = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+        const allIds = new Set(updatedRepo.map(i => i.id));
+        const allTitles = new Set(
+          updatedRepo
+            .map(i => (i.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''))
+            .filter(t => t.length >= 6)
+        );
+        const creds = await loadAiCredentials().catch(() => undefined);
+        const topicHint =
+          activeTopic ||
+          (selectedFilter !== 'all'
+            ? selectedFilter.replace(/^c\//i, '').replace(/[_-]+/g, ' ').trim()
+            : undefined);
+
+        const multiLane = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
+          existingIds: allIds,
+          existingTitles: allTitles,
+          seenIds: unseenIds,
+          targetNewCount: 18,
+          topicHint,
+          credentials: creds
+        }).catch(() => null);
+
+        if (multiLane && multiLane.items.length > 0) {
+          const tailReady = multiLane.items.map(it => {
+            const { pinnedManualRunAt, ...rest } = it;
+            return rest;
+          });
+          feedRepository.addItems?.(tailReady, { operationType: 'background_sync', pinInserted: false });
+          addedMatchingCount += tailReady.length;
+        }
+      } else if (addedMatchingCount === 0 && reason === 'today') {
         await refreshLiveFeed();
+      }
+
+      if (addedMatchingCount > 0) {
+        await recomputeFeed();
       }
     } catch {
       // Non-blocking background replenishment
@@ -1401,7 +1484,7 @@ export const FeedScreen: React.FC = () => {
       isReplenishingRef.current = false;
       setIsReplenishingStream(false);
     }
-  }, [recomputeFeed, refreshLiveFeed]);
+  }, [recomputeFeed, refreshLiveFeed, matchesSelectedSpace, sortMode, activeTopic, selectedFilter]);
 
   // Automatic harvest on today switch disabled to prevent background reorders (Task 2: manual refresh only)
 
@@ -1486,7 +1569,18 @@ export const FeedScreen: React.FC = () => {
 
   const totalInfiniteAvailable = infiniteInterleavedBase.length + evergreenFallbackItems.length;
 
-  // Seamless infinite mind-scroll listener (triggers next items & background auto-replenishment at 75% scroll depth)
+  // Auto-replenish proactively if unseen pool in the active view drops below 12 cards
+  React.useEffect(() => {
+    if (!isHydrated || activeFeedOption === 'history' || activeFeedOption === 'classics' || activeFeedOption === 'live_news') {
+      return;
+    }
+    if (searchQuery.trim() || activeHivemindTrack) return;
+    if (totalInfiniteAvailable > 0 && totalInfiniteAvailable < 12 && !isReplenishingRef.current) {
+      void curateNextStreamBatch('scroll');
+    }
+  }, [isHydrated, activeFeedOption, searchQuery, activeHivemindTrack, totalInfiniteAvailable, curateNextStreamBatch]);
+
+  // Seamless infinite mind-scroll listener (triggers next items & background auto-replenishment well ahead of bottom)
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
     scrollOffsetYRef.current = contentOffset.y;
@@ -1521,14 +1615,14 @@ export const FeedScreen: React.FC = () => {
 
     const scrollBottom = layoutMeasurement.height + contentOffset.y;
     const reachedThreshold = contentSize.height > 0 && (
-      scrollBottom >= contentSize.height * 0.75 ||
-      scrollBottom >= contentSize.height - 900
+      scrollBottom >= contentSize.height * 0.65 ||
+      scrollBottom >= contentSize.height - 1350
     );
 
     if (reachedThreshold) {
       setVisibleInfiniteCount(prev => {
         const next = Math.min(prev + 15, Math.max(prev + 15, totalInfiniteAvailable));
-        if (next >= totalInfiniteAvailable - 8) {
+        if (next >= totalInfiniteAvailable - 25) {
           void curateNextStreamBatch('scroll');
         }
         return next;
@@ -3213,14 +3307,48 @@ export const FeedScreen: React.FC = () => {
                         </View>
                       )}
 
-                      {isReplenishingStream && (
+                      {isReplenishingStream ? (
                         <View style={[styles.loadingBox, { backgroundColor: colors.surface, paddingVertical: spacing.md }]}>
                           <ActivityIndicator size="small" color={colors.accent} />
                           <Text style={[styles.loadingText, { color: colors.textSecondary, marginTop: 6 }]}>
                             Kuratiere weitere hochrelevante Beiträge im Hintergrund…
                           </Text>
                         </View>
-                      )}
+                      ) : visibleInfiniteCount >= totalInfiniteAvailable && !searchQuery.trim() ? (
+                        <View
+                          style={[
+                            styles.streamDividerCard,
+                            { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }
+                          ]}
+                        >
+                          <Text style={[styles.streamDividerTitle, { color: colors.textPrimary }]}>
+                            Alle aktuellen ungesehenen Beiträge in dieser Ansicht erkundet
+                          </Text>
+                          <Text style={[styles.streamDividerText, { color: colors.textSecondary, marginBottom: 12 }]}>
+                            Bereits gesehene Posts bleiben aus dem Hauptstream ausgeblendet. Starte eine frische Tiefenrecherche oder blättere in deiner Chronik.
+                          </Text>
+                          <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+                            <TouchableOpacity
+                              onPress={handleRunManualResearchPipeline}
+                              disabled={isRunningManualPipeline}
+                              style={[styles.generatePocketButton, { backgroundColor: colors.accent, opacity: isRunningManualPipeline ? 0.65 : 1 }]}
+                            >
+                              <Ionicons name="refresh" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
+                              <Text style={styles.generatePocketButtonText}>
+                                {isRunningManualPipeline ? 'Recherchiert…' : '20 neue Beiträge recherchieren'}
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => setActiveFeedOption('history')}
+                              style={[styles.resetFilterButton, { borderColor: colors.borderSubtle }]}
+                            >
+                              <Text style={[styles.resetFilterButtonText, { color: colors.textPrimary }]}>
+                                🕓 Chronik öffnen
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ) : null}
                     </>
                   )}
 

@@ -1,25 +1,34 @@
-name: Virtual Newsroom Scheduled Curation
+name: Virtual Newsroom Scheduled Curation & Pages Deploy
 
 on:
   schedule:
-    # Runs every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
-    - cron: '0 */6 * * *'
+    # Runs every 4 hours (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   newsroom:
-    name: 5-Stage Virtual Newsroom Curation
+    name: 5-Stage Virtual Newsroom Curation & Live Pages Rollout
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -33,20 +42,50 @@ jobs:
       - name: Install Python Scrapling for Fulltext Web Harvesting
         run: pip install --quiet scrapling || true
 
-      - name: Run 5-Stage Virtual Newsroom Ingestion Pipeline
+      - name: Run 5-Stage Virtual Newsroom Ingestion & Reservoir Pipeline
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: npm run ingest
 
-      - name: Commit & push fresh newsroom snapshot
+      - name: Commit & push fresh newsroom snapshot + reservoir
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add public/feed-snapshot.json src/core/data/pipeline-output.json src/core/data/source-health.json
+          if [ -f public/feed-reservoir.json ]; then
+            git add public/feed-reservoir.json
+          fi
           if git diff --staged --quiet; then
             echo "No changes in feed snapshot."
           else
-            git commit -m "chore(newsroom): 6-hour virtual newsroom curation snapshot [$(date -u +'%Y-%m-%d %H:%M UTC')]"
+            git commit -m "chore(newsroom): 4-hour virtual newsroom snapshot & reservoir [$(date -u +'%Y-%m-%d %H:%M UTC')]"
+            git pull --rebase -X ours origin main || true
             git push
           fi
+
+      - name: Export Expo Web Bundle & Fresh Snapshots for GitHub Pages
+        run: |
+          npx expo export -p web
+          sed -i 's|src="/_expo/|src="./_expo/|g' dist/index.html
+          sed -i 's|href="/favicon.ico"|href="./favicon.ico"|g' dist/index.html
+          if [ -f public/feed-snapshot.json ]; then
+            cp public/feed-snapshot.json dist/feed-snapshot.json
+          fi
+          if [ -f public/feed-reservoir.json ]; then
+            cp public/feed-reservoir.json dist/feed-reservoir.json
+          fi
+          cp dist/index.html dist/404.html
+          touch dist/.nojekyll
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

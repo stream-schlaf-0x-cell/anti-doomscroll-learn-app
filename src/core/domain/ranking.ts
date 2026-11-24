@@ -276,24 +276,28 @@ export function scoreFeedItem(
   }
   const durationMatch = readingTimeFit;
 
-  // 4. Freshness Score (14-Day Relevance-Gated Window: keeps substantive items up to 14 days fresh for personal ranking)
+  // 4. Freshness Score (70/30 Daily Freshness Gradient + 14-Day Relevance-Gated Window)
   const isReliableDate = item.publicationDateReliable !== false;
   const pubTime = isReliableDate ? new Date(item.publishedAt).getTime() : NaN;
   const nowTime = Date.now();
-  const hoursOld = isNaN(pubTime) ? 200 : Math.max(0, (nowTime - pubTime) / (1000 * 60 * 60));
-  let freshness = 0.70;
+  const hoursOld = isNaN(pubTime) ? 140 : Math.max(0, (nowTime - pubTime) / (1000 * 60 * 60));
+  let freshness = 0.65;
   if (!isReliableDate) {
-    freshness = item.isEvergreenGem ? 0.74 : 0.64;
-  } else if (hoursOld <= 24) {
-    freshness = 0.98;
-  } else if (hoursOld <= 72) {
-    freshness = 0.94;
+    freshness = item.isEvergreenGem ? 0.70 : 0.56;
+  } else if (hoursOld <= 18) {
+    freshness = 1.00;
+  } else if (hoursOld <= 36) {
+    freshness = 0.96;
+  } else if (hoursOld <= 48) {
+    freshness = 0.91;
+  } else if (hoursOld <= 96) {
+    freshness = 0.78;
   } else if (hoursOld <= 168) {
-    freshness = 0.89;
+    freshness = 0.66;
   } else if (hoursOld <= 336) {
-    freshness = 0.82;
+    freshness = 0.54;
   } else {
-    freshness = item.isEvergreenGem ? 0.52 : 0.32;
+    freshness = item.isEvergreenGem ? 0.45 : 0.22;
   }
 
   // 5. Editorial & Source Value (substance over raw recency + Tier A/B Credibility Bonus)
@@ -429,12 +433,12 @@ export function scoreFeedItem(
   }
   behavioralAdjustment = Math.max(0, Math.min(1, behavioralAdjustment));
 
-  // Weighted Composite Score (Organic feedback & similarity carry strong adaptive leverage)
+  // Weighted Composite Score (Daily freshness + organic feedback & similarity carry strong leverage)
   let rawScore =
-    topicMatch * 0.24 +
-    goalAlignment * 0.14 +
-    freshness * 0.14 +
-    readingTimeFit * 0.16 +
+    topicMatch * 0.23 +
+    goalAlignment * 0.13 +
+    freshness * 0.18 +
+    readingTimeFit * 0.14 +
     editorialValue * 0.06 +
     feedbackAdjustment * 0.22 +
     behavioralAdjustment * 0.04 +
@@ -873,6 +877,7 @@ export function isWithin14DayRelevanceWindow(
     FeedItem,
     | 'id'
     | 'publishedAt'
+    | 'firstSeenAt'
     | 'publicationDateReliable'
     | 'format'
     | 'primaryTopic'
@@ -884,18 +889,22 @@ export function isWithin14DayRelevanceWindow(
   > & { score?: number },
   nowMs = Date.now()
 ): boolean {
-  const isTimeless =
-    item.publicationDateReliable === false ||
+  const isVisualOrVaultTimeless =
     item.format === 'art_showcase' ||
     item.format === 'meme' ||
     item.primaryTopic === 'art_aesthetics' ||
     item.primaryTopic === 'memes_satire' ||
     item.space === 'c/kunst_galerie' ||
     item.space === 'c/memes' ||
-    Boolean(item.isEvergreenGem && String(item.id || '').startsWith('vault-gem-'));
-  if (isTimeless) return true;
+    Boolean(item.isEvergreenGem && String(item.id || '').startsWith('vault-'));
+  if (isVisualOrVaultTimeless) return true;
 
-  const pubTime = new Date(item.publishedAt).getTime();
+  // Undated non-visual entries fall back to firstSeenAt / publishedAt so undated RSS essays still age out after 14 days
+  const refDateStr =
+    item.publicationDateReliable === false
+      ? (item.firstSeenAt || item.publishedAt)
+      : item.publishedAt;
+  const pubTime = refDateStr ? new Date(refDateStr).getTime() : NaN;
   if (isNaN(pubTime)) return Boolean(item.isEvergreenGem);
 
   const hoursOld = Math.max(0, (nowMs - pubTime) / (1000 * 60 * 60));
@@ -906,8 +915,11 @@ export function isWithin14DayRelevanceWindow(
     return hoursOld <= 120;
   }
 
+  // Days 4..14 require genuine learned high relevance (or explicit evergreen gem status), never low-substance filler
   if (hoursOld > 72 && typeof item.score === 'number') {
-    return Boolean(item.isEvergreenGem) || item.score >= 0.72;
+    if (item.isEvergreenGem) return true;
+    const minScore = hoursOld > 168 ? 0.81 : 0.79;
+    return item.score >= minScore;
   }
 
   return true;
@@ -957,12 +969,24 @@ export function rankBloomScrollFeed(
   const SLIDING_WINDOW = 6;
   const DIVERSITY_WINDOW = 30;
 
+  const isFresh48hItem = (it: ScoredFeedItem): boolean => {
+    if (it.publicationDateReliable === false || isArtShowcaseItem(it) || it.format === 'meme') {
+      return false;
+    }
+    const t = new Date(it.publishedAt).getTime();
+    return !isNaN(t) && t > 0 && (nowMs - t) <= 48 * 3600 * 1000;
+  };
+
   while (remaining.length > 0) {
     const pos = selected.length;
     const recentWindow = selected.slice(Math.max(0, pos - SLIDING_WINDOW));
+    const window10 = selected.slice(Math.max(0, pos - 10));
     const window30 = selected.slice(Math.max(0, pos - DIVERSITY_WINDOW));
     const lastCard = pos > 0 ? selected[pos - 1] : null;
     const secondLastCard = pos > 1 ? selected[pos - 2] : null;
+    const freshInWindow10 = window10.filter(isFresh48hItem).length;
+    const targetFreshIn10 = Math.ceil(Math.min(10, window10.length + 1) * 0.70);
+    const needsFreshAnchor = freshInWindow10 < targetFreshIn10 && remaining.some(isFresh48hItem);
 
     // Count publishers & spaces in the last 30 cards
     const pubCounts30 = new Map<string, number>();
@@ -1208,7 +1232,34 @@ export function rankBloomScrollFeed(
         utility += 0.15;
       }
 
-      // 6. Visual Rhythm & Image Emphasis (break up text walls; elevate authentic editorial imagery)
+      // 0a. 70/30 Daily Freshness Choreography (~70% < 48h fresh dispatches + ~30% high-relevance 3-14d deep essays)
+      const candReliablePub =
+        cand.publicationDateReliable !== false && cand.publishedAt
+          ? new Date(cand.publishedAt).getTime()
+          : NaN;
+      const candAgeHours = !isNaN(candReliablePub) && candReliablePub > 0
+        ? Math.max(0, (nowMs - candReliablePub) / 3600_000)
+        : Infinity;
+      const candIsFresh48h =
+        !isArtShowcaseItem(cand) &&
+        cand.format !== 'meme' &&
+        candAgeHours <= 48;
+
+      if (candIsFresh48h) {
+        utility += candAgeHours <= 24 ? 1.85 : 1.15;
+        if (needsFreshAnchor) {
+          utility += 2.25;
+        }
+      } else if (!isArtShowcaseItem(cand) && cand.format !== 'meme') {
+        if (needsFreshAnchor) {
+          utility -= 1.60;
+        } else if ((cand.score || 0) >= 0.82 && (cand.wordCount || 0) >= 140) {
+          // Earned 30% Deep-Essay Slot for genuinely high-relevance 3-14d essays
+          utility += 0.85;
+        }
+      }
+
+      // 6. Visual Rhythm & Image Emphasis (balanced pacing without letting old thumbnails crush fresh text)
       const candHasAuthenticImg = Boolean(
         cand.imageUrl &&
         cand.hasAuthenticImage !== false &&
@@ -1220,12 +1271,12 @@ export function rankBloomScrollFeed(
         !lastCard?.imageUrl.includes('images.unsplash.com')
       );
       if (candHasAuthenticImg) {
-        utility += 1.8;
+        utility += 0.65;
         if (lastCard && !lastHasAuthenticImg) {
-          utility += 2.2;
+          utility += 0.95;
         }
       } else if (lastCard && !lastHasAuthenticImg) {
-        utility -= 2.5;
+        utility -= 1.25;
       }
 
       if (utility > bestWindowScore) {

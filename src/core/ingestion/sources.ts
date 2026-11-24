@@ -191,20 +191,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "import-ai-clark",
-    "name": "Import AI (Jack Clark)",
-    "url": "https://importai.substack.com/feed",
-    "primaryTopic": "ai_apple",
-    "topics": [
-      "ai_apple",
-      "philosophy_ethics"
-    ],
-    "defaultEvidenceTier": "permitted_full_text",
-    "defaultAuthor": "Jack Clark",
-    "language": "en",
-    "isChallengingPerspective": true
-  },
-  {
     "id": "sciencedaily-mind-brain",
     "name": "ScienceDaily Mind & Brain",
     "url": "https://www.sciencedaily.com/rss/mind_brain.xml",
@@ -1717,19 +1703,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "nature-genetics",
-    "name": "Nature Genetics & Epigenetics",
-    "url": "https://www.nature.com/subjects/genetics.rss",
-    "primaryTopic": "health_biohacking",
-    "topics": [
-      "health_biohacking",
-      "science_society"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Nature Portfolio",
-    "language": "en"
-  },
-  {
     "id": "sd-computer-science",
     "name": "ScienceDaily Computer Science",
     "url": "https://www.sciencedaily.com/rss/computers_math/computer_science.xml",
@@ -1739,18 +1712,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "ScienceDaily CS",
-    "language": "en"
-  },
-  {
-    "id": "nature-physics-journal",
-    "name": "Nature Physics Journal",
-    "url": "https://www.nature.com/nphys.rss",
-    "primaryTopic": "science_society",
-    "topics": [
-      "science_society"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Nature Physics",
     "language": "en"
   },
   {
@@ -1795,34 +1756,9 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "nature-materials",
-    "name": "Nature Materials Science",
-    "url": "https://www.nature.com/subjects/materials-science.rss",
-    "primaryTopic": "science_society",
-    "topics": [
-      "science_society",
-      "opportunities_growth"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Nature Portfolio",
-    "language": "en"
-  },
-  {
     "id": "nature-climate",
     "name": "Nature Climate Sciences",
     "url": "https://www.nature.com/subjects/climate-sciences.rss",
-    "primaryTopic": "science_society",
-    "topics": [
-      "science_society"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Nature Portfolio",
-    "language": "en"
-  },
-  {
-    "id": "nature-evolution",
-    "name": "Nature Evolutionary Biology",
-    "url": "https://www.nature.com/subjects/evolution.rss",
     "primaryTopic": "science_society",
     "topics": [
       "science_society"
@@ -1911,32 +1847,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "nature-immunology",
-    "name": "Nature Immunology Research",
-    "url": "https://www.nature.com/subjects/immunology.rss",
-    "primaryTopic": "health_biohacking",
-    "topics": [
-      "health_biohacking"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Nature Portfolio",
-    "language": "en"
-  },
-  {
-    "id": "nature-social-sciences",
-    "name": "Nature Social Sciences",
-    "url": "https://www.nature.com/subjects/social-sciences.rss",
-    "primaryTopic": "philosophy_ethics",
-    "topics": [
-      "philosophy_ethics",
-      "science_society"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Nature Portfolio",
-    "language": "en",
-    "isChallengingPerspective": true
-  },
-  {
     "id": "sd-biotech",
     "name": "ScienceDaily Biotechnology",
     "url": "https://www.sciencedaily.com/rss/plants_animals/biotechnology.xml",
@@ -1947,33 +1857,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "ScienceDaily",
-    "language": "en"
-  },
-  {
-    "id": "nature-education",
-    "name": "Nature Higher Education & Pedagogy",
-    "url": "https://www.nature.com/subjects/education.rss",
-    "primaryTopic": "german_didactics",
-    "topics": [
-      "german_didactics",
-      "science_society"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Nature Portfolio",
-    "language": "en",
-    "isTeachingRelated": true
-  },
-  {
-    "id": "nature-math-comp",
-    "name": "Nature Mathematics & Computing",
-    "url": "https://www.nature.com/subjects/mathematics-and-computing.rss",
-    "primaryTopic": "ai_apple",
-    "topics": [
-      "ai_apple",
-      "science_society"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Nature Portfolio",
     "language": "en"
   },
   {
@@ -2070,18 +1953,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "nature-climate-journal",
-    "name": "Nature Climate Change Journal",
-    "url": "https://www.nature.com/nclimate.rss",
-    "primaryTopic": "science_society",
-    "topics": [
-      "science_society"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Nature Climate Change",
-    "language": "en"
-  },
-  {
     "id": "lobsters-ai",
     "name": "Lobsters AI & Machine Learning",
     "url": "https://lobste.rs/t/ai.rss",
@@ -2158,31 +2029,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "lobsters-visualization",
-    "name": "Lobsters Data Visualization",
-    "url": "https://lobste.rs/t/visualization.rss",
-    "primaryTopic": "art_aesthetics",
-    "topics": [
-      "art_aesthetics",
-      "science_society"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Lobsters Viz",
-    "language": "en"
-  },
-  {
-    "id": "lobsters-mac",
-    "name": "Lobsters macOS & Apple Ecosystem",
-    "url": "https://lobste.rs/t/mac.rss",
-    "primaryTopic": "ai_apple",
-    "topics": [
-      "ai_apple"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Lobsters Mac",
-    "language": "en"
-  },
-  {
     "id": "heise-top",
     "name": "Heise Online Top-News",
     "url": "https://www.heise.de/rss/heise-top-atom.xml",
@@ -2196,33 +2042,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "de"
   },
   {
-    "id": "lobsters-culture",
-    "name": "Lobsters Tech Culture & Society",
-    "url": "https://lobste.rs/t/culture.rss",
-    "primaryTopic": "philosophy_ethics",
-    "topics": [
-      "philosophy_ethics",
-      "ai_apple"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Lobsters Culture",
-    "language": "en",
-    "isChallengingPerspective": true
-  },
-  {
-    "id": "lobsters-satire",
-    "name": "Lobsters Computing Satire & Humor",
-    "url": "https://lobste.rs/t/satire.rss",
-    "primaryTopic": "memes_satire",
-    "topics": [
-      "memes_satire",
-      "ai_apple"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Lobsters Satire",
-    "language": "en"
-  },
-  {
     "id": "lobsters-web",
     "name": "Lobsters Open Web Architecture",
     "url": "https://lobste.rs/t/web.rss",
@@ -2233,18 +2052,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "Lobsters Web",
-    "language": "en"
-  },
-  {
-    "id": "lobsters-rust",
-    "name": "Lobsters Systems Engineering (Rust)",
-    "url": "https://lobste.rs/t/rust.rss",
-    "primaryTopic": "ai_apple",
-    "topics": [
-      "ai_apple"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Lobsters Rust",
     "language": "en"
   },
   {
@@ -2639,18 +2446,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "esa-space",
-    "name": "European Space Agency (ESA Science)",
-    "url": "https://www.esa.int/rssfeed/Our_Activities/Space_Science",
-    "primaryTopic": "science_society",
-    "topics": [
-      "science_society"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "ESA",
-    "language": "en"
-  },
-  {
     "id": "wissenschaftskommunikation-de",
     "name": "Wissenschaftskommunikation.de (Didaktik & Forschung)",
     "url": "https://www.wissenschaftskommunikation.de/feed/",
@@ -2889,18 +2684,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "de",
     "isTeachingRelated": true,
     "isChallengingPerspective": true
-  },
-  {
-    "id": "juxtapoz-art",
-    "name": "Juxtapoz Art & Culture Magazine",
-    "url": "https://www.juxtapoz.com/news/?format=feed&type=rss",
-    "primaryTopic": "art_aesthetics",
-    "topics": [
-      "art_aesthetics"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Juxtapoz",
-    "language": "en"
   },
   {
     "id": "booooooom-art",
@@ -3305,19 +3088,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "colah-blog",
-    "name": "colah's blog (Chris Olah – Mechanistic Interpretability)",
-    "url": "https://colah.github.io/rss.xml",
-    "primaryTopic": "ai_apple",
-    "topics": [
-      "ai_apple",
-      "science_society"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Chris Olah",
-    "language": "en"
-  },
-  {
     "id": "ness-labs",
     "name": "Ness Labs (Anne-Laure Le Cunff – Mindful Productivity & Neuroscience)",
     "url": "https://nesslabs.com/feed",
@@ -3584,19 +3354,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "Nate Silver",
-    "language": "en"
-  },
-  {
-    "id": "sasha-chapin",
-    "name": "Sasha Chapin (Writing, Meditation & Aesthetics)",
-    "url": "https://sashachapin.substack.com/feed",
-    "primaryTopic": "contemplation_mind",
-    "topics": [
-      "contemplation_mind",
-      "book_mastery"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Sasha Chapin",
     "language": "en"
   },
   {
@@ -4983,18 +4740,6 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "lobsters-osdev",
-    "name": "Lobsters Operating Systems Design",
-    "url": "https://lobste.rs/t/osdev.rss",
-    "primaryTopic": "ai_apple",
-    "topics": [
-      "ai_apple"
-    ],
-    "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Lobsters OS",
-    "language": "en"
-  },
-  {
     "id": "derek-sivers",
     "name": "Derek Sivers (Philosophy of Creative Independence)",
     "url": "https://sive.rs/en.atom",
@@ -5023,31 +4768,128 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "isChallengingPerspective": true
   },
   {
-    "id": "lobsters-law",
-    "name": "Lobsters Tech Law & Regulation",
-    "url": "https://lobste.rs/t/law.rss",
+    "id": "herr-larbig-didaktik",
+    "name": "Herr Larbig (Deutsch- & Mediendidaktik in der Praxis)",
+    "url": "https://herrlarbig.de/feed/",
+    "primaryTopic": "german_didactics",
+    "topics": [
+      "german_didactics",
+      "ai_apple"
+    ],
+    "defaultEvidenceTier": "permitted_full_text",
+    "defaultAuthor": "Torsten Larbig",
+    "language": "de",
+    "isTeachingRelated": true
+  },
+  {
+    "id": "news4teachers-de",
+    "name": "News4teachers (Bildung, Unterricht & Schulpolitik)",
+    "url": "https://www.news4teachers.de/feed/",
+    "primaryTopic": "german_didactics",
+    "topics": [
+      "german_didactics",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "News4teachers Redaktion",
+    "language": "de",
+    "isTeachingRelated": true
+  },
+  {
+    "id": "philomag-de",
+    "name": "Philosophie Magazin",
+    "url": "https://www.philomag.de/rss.xml",
     "primaryTopic": "philosophy_ethics",
     "topics": [
       "philosophy_ethics",
-      "ai_apple"
+      "contemplation_mind",
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Lobsters Law",
-    "language": "en",
+    "defaultAuthor": "Philosophie Magazin Redaktion",
+    "language": "de",
     "isChallengingPerspective": true
   },
   {
-    "id": "buddhistdoor-global",
-    "name": "Buddhistdoor Global",
-    "url": "https://www.buddhistdoor.net/feed/",
+    "id": "merkur-zeitschrift",
+    "name": "MERKUR – Deutsche Zeitschrift für europäisches Denken",
+    "url": "https://www.merkur-zeitschrift.de/feed/",
+    "primaryTopic": "book_mastery",
+    "topics": [
+      "book_mastery",
+      "philosophy_ethics",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "MERKUR Redaktion",
+    "language": "de",
+    "isChallengingPerspective": true
+  },
+  {
+    "id": "soziopolis-essays",
+    "name": "Soziopolis (Gesellschaftstheorie & Buchkritik)",
+    "url": "https://www.soziopolis.de/rss.xml",
+    "primaryTopic": "book_mastery",
+    "topics": [
+      "book_mastery",
+      "philosophy_ethics",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Soziopolis Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "fivebooks-interviews",
+    "name": "Five Books (Deep Reading & Scholarly Book Recommendations)",
+    "url": "https://fivebooks.com/feed/",
+    "primaryTopic": "book_mastery",
+    "topics": [
+      "book_mastery",
+      "philosophy_ethics",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Five Books Editors",
+    "language": "en"
+  },
+  {
+    "id": "sixcolors-apple",
+    "name": "Six Colors (Apple Ecosystem, iPad & Mac Depth)",
+    "url": "https://sixcolors.com/feed/",
+    "primaryTopic": "ai_apple",
+    "topics": [
+      "ai_apple"
+    ],
+    "defaultEvidenceTier": "permitted_full_text",
+    "defaultAuthor": "Jason Snell & Dan Moren",
+    "language": "en"
+  },
+  {
+    "id": "mindful-org",
+    "name": "Mindful (Contemplative Practice & Cognitive Clarity)",
+    "url": "https://www.mindful.org/feed/",
     "primaryTopic": "contemplation_mind",
     "topics": [
       "contemplation_mind",
-      "philosophy_ethics"
+      "health_biohacking"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
-    "defaultAuthor": "Buddhistdoor Global",
+    "defaultAuthor": "Mindful Editorial",
     "language": "en"
+  },
+  {
+    "id": "mdr-sachsen-rss",
+    "name": "MDR SACHSEN (Dresden & Region Sachsen)",
+    "url": "https://www.mdr.de/nachrichten/sachsen/sachsen-nachrichtenfeed-100-rss.xml",
+    "primaryTopic": "science_society",
+    "topics": [
+      "science_society",
+      "german_didactics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "MDR Sachsen Redaktion",
+    "language": "de"
   }
 ];
 

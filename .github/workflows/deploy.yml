@@ -58,6 +58,9 @@ jobs:
           if [ -f public/feed-snapshot.json ]; then
             cp public/feed-snapshot.json dist/feed-snapshot.json
           fi
+          if [ -f public/feed-reservoir.json ]; then
+            cp public/feed-reservoir.json dist/feed-reservoir.json
+          fi
           cp dist/index.html dist/404.html
           touch dist/.nojekyll
 

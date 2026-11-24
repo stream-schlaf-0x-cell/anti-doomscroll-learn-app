@@ -49,9 +49,27 @@ export class SeenImpressionsService {
   private hydrated = false;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private persistCount = 0;
+  private listeners: Set<() => void> = new Set();
 
   constructor(private storage: AtemStorage = appStorage) {
     this.registerLifecycleFlushListeners();
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private notifyListeners(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // Ignore subscriber errors
+      }
+    }
   }
 
   private registerLifecycleFlushListeners(): void {
@@ -96,6 +114,7 @@ export class SeenImpressionsService {
     }
 
     this.pruneInMemoryIfNeeded();
+    this.notifyListeners();
 
     // 2. Schedule debounced background persistence (1200ms)
     this.scheduleDebouncedPersist();
@@ -182,6 +201,9 @@ export class SeenImpressionsService {
         this.seenMap.set(stored.itemId, mergeSeenRecord(stored, mem));
       }
     }
+    if (storedRecords.length > 0) {
+      this.notifyListeners();
+    }
   }
 
   private async readInternalRecords(tx?: { get: () => Promise<string | null> }): Promise<SeenImpressionRecord[]> {
@@ -255,6 +277,7 @@ export class SeenImpressionsService {
     }
 
     if (changed) {
+      this.notifyListeners();
       await this.flush();
     }
   }
@@ -285,6 +308,7 @@ export class SeenImpressionsService {
     }
     this.seenMap.clear();
     this.hydrated = true;
+    this.notifyListeners();
     await this.storage.removeItem(SeenImpressionsService.STORAGE_KEY);
     await this.storage.removeItem(SeenImpressionsService.LEGACY_STORAGE_KEY).catch(() => {});
   }
