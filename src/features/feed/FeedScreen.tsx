@@ -14,7 +14,8 @@ import {
   Platform,
   TextInput,
   Linking,
-  Modal
+  Modal,
+  Animated
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { TopicTag, FeedItem, TOPIC_SPACE_MAP } from '../../core/domain/types';
@@ -54,6 +55,7 @@ import { feedRepository } from '../../core/data/feedRepository';
 import { SubchannelFlourishService, detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
 import { FeedOperationReportModal } from '../../ui/components/FeedOperationReportModal';
+import { PullToRefreshIndicator } from '../../ui/components/PullToRefreshIndicator';
 import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
 import {
   holdFeedPresentation,
@@ -63,6 +65,15 @@ import {
   INITIAL_ARRIVALS_BANNER_STATE,
   evaluateArrivalsBannerVisibility
 } from '../../core/feed/feedPresentation';
+import {
+  HORIZON_BAR_TOP_LOCK_Y,
+  PULL_REFRESH_THRESHOLD,
+  PULL_REFRESH_MAX,
+  PullToRefreshState,
+  evaluateHorizonBarVisibility,
+  evaluatePullToRefreshGesture,
+  shouldUnlockFallbackTopLock
+} from '../../core/feed/scrollUxController';
 import { NewsEvolutionModal } from '../../ui/components/NewsEvolutionModal';
 import { NewsEvolutionService, NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
 import {
@@ -176,9 +187,63 @@ export const FeedScreen: React.FC = () => {
   const scrollYRef = React.useRef<number>(0);
   const scrollOffsetYRef = React.useRef<number>(0);
   const flatListRef = React.useRef<FlatList<FeedFlatListRow>>(null);
-  const scrollToFeedTop = useCallback((animated = true) => {
-    flatListRef.current?.scrollToOffset({ offset: 0, animated });
+  const feedColumnRef = React.useRef<View>(null);
+
+  // Sticky auto-hide / scroll-up-reveal Horizon Switcher & Pull-to-Refresh state
+  const [horizonBarVisible, setHorizonBarVisible] = useState<boolean>(true);
+  const horizonBarVisibleRef = React.useRef<boolean>(true);
+  const horizonBarFocusedRef = React.useRef<boolean>(false);
+  const lastClampedScrollYRef = React.useRef<number>(0);
+  const wasAtTopRef = React.useRef<boolean>(true);
+  const reachedTopAtRef = React.useRef<number>(Date.now());
+  const horizonBarAnim = React.useRef(new Animated.Value(1)).current;
+
+  const setHorizonBarVisibility = useCallback((nextVisible: boolean) => {
+    if (horizonBarVisibleRef.current === nextVisible) return;
+    horizonBarVisibleRef.current = nextVisible;
+    setHorizonBarVisible(nextVisible);
+    Animated.timing(horizonBarAnim, {
+      toValue: nextVisible ? 1 : 0,
+      duration: nextVisible ? 190 : 170,
+      useNativeDriver: Platform.OS !== 'web'
+    }).start();
+  }, [horizonBarAnim]);
+
+  const handleHorizonBarFocus = useCallback(() => {
+    horizonBarFocusedRef.current = true;
+    setHorizonBarVisibility(true);
+  }, [setHorizonBarVisibility]);
+
+  const handleHorizonBarBlur = useCallback((event: any) => {
+    const currentTarget = event?.currentTarget;
+    const relatedTarget = event?.relatedTarget;
+    if (
+      currentTarget &&
+      relatedTarget &&
+      typeof currentTarget.contains === 'function' &&
+      currentTarget.contains(relatedTarget)
+    ) {
+      return;
+    }
+    horizonBarFocusedRef.current = false;
   }, []);
+
+  const [pullState, setPullState] = useState<PullToRefreshState>(() =>
+    evaluatePullToRefreshGesture({ pullDeltaY: 0, isRefreshing: false })
+  );
+  const pullStateRef = React.useRef<PullToRefreshState>(pullState);
+  const refreshingRef = React.useRef<boolean>(false);
+  const refreshRotatedIdsRef = React.useRef<Set<string>>(new Set());
+  const currentFeedItemsRef = React.useRef<ScoredFeedItem[]>([]);
+  const recordedViewportIdsRef = React.useRef<Set<string>>(new Set());
+
+  const scrollToFeedTop = useCallback((animated = true) => {
+    lastClampedScrollYRef.current = 0;
+    wasAtTopRef.current = true;
+    reachedTopAtRef.current = Date.now();
+    setHorizonBarVisibility(true);
+    flatListRef.current?.scrollToOffset({ offset: 0, animated });
+  }, [setHorizonBarVisibility]);
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => defaultFeedOperationManager.getPinnedItemIds());
 
   // Explicit user tap scroll-to-top signal (e.g. tapping active Stream tab or Home brand logo)
@@ -247,8 +312,10 @@ export const FeedScreen: React.FC = () => {
     setVisibleInfiniteCount(15);
     setSortMode(mode);
     setActiveCardIndex(0);
+    setHorizonBarVisibility(true);
+    lastClampedScrollYRef.current = 0;
     scrollToFeedTop(true);
-  }, [scrollToFeedTop, syncSeenStateFromService]);
+  }, [scrollToFeedTop, setHorizonBarVisibility, syncSeenStateFromService]);
 
   // Wake-on-Focus & New-Day Signal Handler: refreshes seen filter and unlocks yesterday's frozen viewport
   const lastHandledWakeSignalRef = React.useRef<number>(wakeRefreshSignal);
@@ -289,6 +356,24 @@ export const FeedScreen: React.FC = () => {
   const [visibleInfiniteCount, setVisibleInfiniteCount] = useState<number>(12);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [simToast, setSimToast] = useState<string | null>(null);
+  const simToastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showTransientToast = useCallback((message: string, durationMs = 3000) => {
+    if (simToastTimerRef.current) {
+      clearTimeout(simToastTimerRef.current);
+    }
+    setSimToast(message);
+    simToastTimerRef.current = setTimeout(() => {
+      simToastTimerRef.current = null;
+      setSimToast(null);
+    }, durationMs);
+  }, []);
+  React.useEffect(() => {
+    return () => {
+      if (simToastTimerRef.current) {
+        clearTimeout(simToastTimerRef.current);
+      }
+    };
+  }, []);
   const subchannels = spaces;
   const [showMasterModal, setShowMasterModal] = useState<boolean>(false);
   const [masterModalTab, setMasterModalTab] = useState<MasterTab>('channels');
@@ -659,31 +744,107 @@ export const FeedScreen: React.FC = () => {
     await defaultSpaceRepository.notify();
   }, []);
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
     setRefreshing(true);
-    sessionStartedAt.current = Date.now();
-    lockedTopItemIdsRef.current = null;
-    hasCommittedInitialViewportRef.current = false;
-    newArrivalsQueueRef.current = [];
-    frozenRenderedFreshRef.current = [];
-    revealScrollGraceUntilRef.current = Date.now() + 1000;
-    setPendingStreamArrivals([]);
-    setPendingNewItemIds([]);
-    await refreshLiveFeed();
-    await loadSubchannels();
-    const [updatedSeen, updatedRecords] = await Promise.all([
-      seenImpressionsService.getSeenIds(),
-      seenImpressionsService.getSeenRecordMap()
-    ]);
-    setSeenIds(updatedSeen);
-    setSeenRecordMap(updatedRecords);
-    if (activeFeedOption === 'live_news') {
-      await loadLiveNews();
-    } else if (activeFeedOption === 'classics') {
-      setClassicsItems(ContinuousLiveNewsService.getEvergreenClassics());
+    const refreshingPullState = evaluatePullToRefreshGesture({
+      pullDeltaY: 0,
+      isRefreshing: true,
+      threshold: PULL_REFRESH_THRESHOLD,
+      maxPull: PULL_REFRESH_MAX
+    });
+    pullStateRef.current = refreshingPullState;
+    setPullState(refreshingPullState);
+
+    try {
+      // 1. Flush currently visible top cards into seen impressions & Chronik so fresh unseen items rise to Slot #1
+      if (
+        activeFeedOption !== 'live_news' &&
+        activeFeedOption !== 'classics' &&
+        activeFeedOption !== 'history'
+      ) {
+        const visibleTopIds = currentFeedItemsRef.current
+          .slice(0, 6)
+          .map(item => item.id)
+          .filter(Boolean);
+        if (visibleTopIds.length > 0) {
+          for (const id of visibleTopIds) {
+            recordedViewportIdsRef.current.add(id);
+            refreshRotatedIdsRef.current.add(id);
+          }
+          void recordCardAppearances(visibleTopIds);
+          await seenImpressionsService.recordSeen(visibleTopIds);
+          scheduleCloudSyncPush();
+        }
+      }
+
+      // 2. Clear viewport lock & scroll-freeze state
+      sessionStartedAt.current = Date.now();
+      lockedTopItemIdsRef.current = null;
+      hasCommittedInitialViewportRef.current = false;
+      newArrivalsQueueRef.current = [];
+      frozenRenderedFreshRef.current = [];
+      revealScrollGraceUntilRef.current = Date.now() + 1000;
+      setPendingStreamArrivals([]);
+      setPendingNewItemIds([]);
+      arrivalsBannerStateRef.current = INITIAL_ARRIVALS_BANNER_STATE;
+      setArrivalsBannerState(INITIAL_ARRIVALS_BANNER_STATE);
+      setHorizonBarVisibility(true);
+      lastClampedScrollYRef.current = 0;
+
+      // 3. Force-refresh public snapshot alongside live feeds
+      await Promise.allSettled([
+        Promise.resolve(
+          (feedRepository as any).hydrateFromPublicSnapshot?.(undefined, { forceRefresh: true })
+        ),
+        refreshLiveFeed()
+      ]);
+      await recomputeFeed();
+      await loadSubchannels();
+
+      // 4. Refresh seen sets & mode-specific feeds
+      const [updatedSeen, updatedRecords] = await Promise.all([
+        seenImpressionsService.getSeenIds(),
+        seenImpressionsService.getSeenRecordMap()
+      ]);
+      setSeenIds(updatedSeen);
+      setSeenRecordMap(updatedRecords);
+      if (activeFeedOption === 'live_news') {
+        await loadLiveNews(true);
+      } else if (activeFeedOption === 'classics') {
+        setClassicsItems(ContinuousLiveNewsService.getEvergreenClassics());
+      }
+
+      scrollToFeedTop(true);
+      showTransientToast('✓ Feed mit frischen Inhalten aktualisiert', 3000);
+    } finally {
+      refreshingRef.current = false;
+      setRefreshing(false);
+      const idlePullState = evaluatePullToRefreshGesture({
+        pullDeltaY: 0,
+        isRefreshing: false,
+        threshold: PULL_REFRESH_THRESHOLD,
+        maxPull: PULL_REFRESH_MAX
+      });
+      pullStateRef.current = idlePullState;
+      setPullState(idlePullState);
     }
-    setRefreshing(false);
-  };
+  }, [
+    activeFeedOption,
+    recordCardAppearances,
+    scheduleCloudSyncPush,
+    setHorizonBarVisibility,
+    refreshLiveFeed,
+    recomputeFeed,
+    loadSubchannels,
+    loadLiveNews,
+    scrollToFeedTop,
+    showTransientToast
+  ]);
+
+  const onRefreshRef = React.useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
 
   const handleGenerateEmptyPocket = async () => {
     const targetSpace = selectedFilter === 'all'
@@ -923,6 +1084,9 @@ export const FeedScreen: React.FC = () => {
     const unseenCandidates: ScoredFeedItem[] = [];
 
     for (const item of curatedPool) {
+      if (refreshRotatedIdsRef.current.has(item.id)) {
+        continue;
+      }
       const rec = seenRecordMap.get(item.id);
       const isAlreadySeen = seenIds.has(item.id);
 
@@ -1007,9 +1171,14 @@ export const FeedScreen: React.FC = () => {
     const withinBootWindow =
       hydratedAtRef.current === null || Date.now() < hydratedAtRef.current + 3000;
     const lockedSurvivingCount = lockedIds.filter(id => itemMap.has(id)).length;
+    const shouldUnlockVaultFallback = shouldUnlockFallbackTopLock(
+      lockedIds,
+      infiniteInterleavedBase
+    );
     if (
       infiniteInterleavedBase.length > 0 &&
-      ((withinBootWindow && scrollOffsetYRef.current < 40) ||
+      (shouldUnlockVaultFallback ||
+        (withinBootWindow && scrollOffsetYRef.current < 40) ||
         lockedSurvivingCount < Math.min(6, lockedIds.length))
     ) {
       lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
@@ -1173,6 +1342,7 @@ export const FeedScreen: React.FC = () => {
     }
     return renderedInfiniteItems;
   }, [curatedSelection, dismissedSet, activeFeedOption, renderedInfiniteItems, scoredLiveItems, scoredClassicsItems, historyItems, profile]);
+  currentFeedItemsRef.current = currentFeedItems;
 
   // 1-Tap "🚫 Weniger davon" state & Undo handler
   const [lastDismissedItem, setLastDismissedItem] = useState<{ id: string; title: string } | null>(null);
@@ -1381,7 +1551,6 @@ export const FeedScreen: React.FC = () => {
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
   const viewportHeightRef = React.useRef<number>(820);
-  const recordedViewportIdsRef = React.useRef<Set<string>>(new Set());
 
   const [curationStage, setCurationStage] = useState<string>('');
   const [showReportModal, setShowReportModal] = useState<boolean>(false);
@@ -1589,6 +1758,33 @@ export const FeedScreen: React.FC = () => {
       viewportHeightRef.current = layoutMeasurement.height;
     }
 
+    const isNowAtTop = contentOffset.y <= 2;
+    if (isNowAtTop && !wasAtTopRef.current) {
+      wasAtTopRef.current = true;
+      reachedTopAtRef.current = Date.now();
+    } else if (!isNowAtTop && wasAtTopRef.current) {
+      wasAtTopRef.current = false;
+    }
+
+    const horizonDecision = evaluateHorizonBarVisibility({
+      currentY: contentOffset.y,
+      lastY: lastClampedScrollYRef.current,
+      contentHeight: contentSize.height,
+      viewportHeight: layoutMeasurement.height,
+      currentlyVisible: horizonBarVisibleRef.current,
+      hasFocusWithin: horizonBarFocusedRef.current
+    });
+    if (horizonDecision.visible !== horizonBarVisibleRef.current) {
+      setHorizonBarVisibility(horizonDecision.visible);
+      lastClampedScrollYRef.current = horizonDecision.clampedY;
+    } else if (
+      horizonDecision.clampedY <= HORIZON_BAR_TOP_LOCK_Y ||
+      (horizonDecision.visible && horizonDecision.clampedY < lastClampedScrollYRef.current) ||
+      (!horizonDecision.visible && horizonDecision.clampedY > lastClampedScrollYRef.current)
+    ) {
+      lastClampedScrollYRef.current = horizonDecision.clampedY;
+    }
+
     const isDown = contentOffset.y > 80;
     if (isScrolledDownRef.current !== isDown) {
       isScrolledDownRef.current = isDown;
@@ -1628,7 +1824,224 @@ export const FeedScreen: React.FC = () => {
         return next;
       });
     }
-  }, [scheduleChronikFlush, totalInfiniteAvailable, curateNextStreamBatch]);
+  }, [setHorizonBarVisibility, scheduleChronikFlush, totalInfiniteAvailable, curateNextStreamBatch]);
+
+  // Interactive Pull-to-Refresh for Web (Touch Pull on iOS/iPadOS PWA + Desktop Trackpad Overscroll)
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' || !isHydrated || typeof window === 'undefined') return;
+    const node = feedColumnRef.current as unknown as HTMLElement | null;
+    if (!node || typeof node.addEventListener !== 'function') return;
+
+    let touchActive = false;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let lockedAxis: 'none' | 'vertical' | 'horizontal' = 'none';
+    let wheelAccum = 0;
+    let wheelDecayTimer: ReturnType<typeof setTimeout> | null = null;
+    let rafId: number | null = null;
+    let pendingPullDelta: number | null = null;
+
+    const isAtFeedTop = (): boolean => {
+      if (scrollOffsetYRef.current > 2) return false;
+      const scrollEl = node.querySelector('[data-testid="feed-flatlist"]') as HTMLElement | null;
+      if (scrollEl && typeof scrollEl.scrollTop === 'number' && scrollEl.scrollTop > 2) {
+        return false;
+      }
+      return true;
+    };
+
+    const applyPullDeltaImmediate = (deltaY: number) => {
+      const next = evaluatePullToRefreshGesture({
+        pullDeltaY: deltaY,
+        isRefreshing: refreshingRef.current,
+        threshold: PULL_REFRESH_THRESHOLD,
+        maxPull: PULL_REFRESH_MAX
+      });
+      const prev = pullStateRef.current;
+      if (
+        prev.phase !== next.phase ||
+        prev.readyToRelease !== next.readyToRelease ||
+        Math.abs(prev.pullDistance - next.pullDistance) >= 1
+      ) {
+        pullStateRef.current = next;
+        setPullState(next);
+      }
+    };
+
+    const schedulePullDelta = (deltaY: number) => {
+      pendingPullDelta = deltaY;
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        if (pendingPullDelta !== null) {
+          const value = pendingPullDelta;
+          pendingPullDelta = null;
+          applyPullDeltaImmediate(value);
+        }
+      });
+    };
+
+    const resetPull = () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      pendingPullDelta = null;
+      wheelAccum = 0;
+      if (wheelDecayTimer) {
+        clearTimeout(wheelDecayTimer);
+        wheelDecayTimer = null;
+      }
+      if (!refreshingRef.current) {
+        applyPullDeltaImmediate(0);
+      }
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (refreshingRef.current || e.touches.length !== 1) return;
+      if (!isAtFeedTop()) {
+        touchActive = false;
+        return;
+      }
+      touchActive = true;
+      lockedAxis = 'none';
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!touchActive || refreshingRef.current || e.touches.length !== 1) return;
+      if (!isAtFeedTop()) {
+        touchActive = false;
+        lockedAxis = 'none';
+        resetPull();
+        return;
+      }
+
+      const dx = e.touches[0].clientX - touchStartX;
+      const dy = e.touches[0].clientY - touchStartY;
+
+      if (lockedAxis === 'none') {
+        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+          if (dy > 0 && Math.abs(dy) > Math.abs(dx)) {
+            lockedAxis = 'vertical';
+          } else {
+            lockedAxis = 'horizontal';
+            touchActive = false;
+            return;
+          }
+        } else {
+          return;
+        }
+      }
+
+      if (lockedAxis !== 'vertical') return;
+
+      if (dy <= 0) {
+        schedulePullDelta(0);
+        return;
+      }
+
+      if (dy > 8 && Math.abs(dy) > Math.abs(dx) && e.cancelable) {
+        e.preventDefault();
+      }
+      schedulePullDelta(dy);
+    };
+
+    const handleTouchEndOrCancel = () => {
+      if (!touchActive) return;
+      touchActive = false;
+      lockedAxis = 'none';
+      if (pendingPullDelta !== null) {
+        const latestDelta = pendingPullDelta;
+        pendingPullDelta = null;
+        if (rafId !== null) {
+          window.cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        applyPullDeltaImmediate(latestDelta);
+      }
+      if (pullStateRef.current.readyToRelease && !refreshingRef.current) {
+        void onRefreshRef.current();
+      } else {
+        resetPull();
+      }
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      if (refreshingRef.current) return;
+      if (!isAtFeedTop()) {
+        if (wheelAccum > 0) {
+          resetPull();
+        }
+        return;
+      }
+
+      if (e.deltaY > 4) {
+        if (wheelAccum > 0 || pullStateRef.current.phase !== 'idle') {
+          resetPull();
+        }
+        return;
+      }
+
+      if (e.deltaY < -12 && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        if (Date.now() - reachedTopAtRef.current < 260) {
+          return;
+        }
+        wheelAccum = Math.min(240, wheelAccum + Math.min(46, Math.abs(e.deltaY) * 0.85));
+        applyPullDeltaImmediate(wheelAccum);
+
+        if (wheelDecayTimer) {
+          clearTimeout(wheelDecayTimer);
+        }
+
+        if (pullStateRef.current.readyToRelease) {
+          wheelAccum = 0;
+          wheelDecayTimer = null;
+          void onRefreshRef.current();
+          return;
+        }
+
+        wheelDecayTimer = setTimeout(() => {
+          wheelDecayTimer = null;
+          wheelAccum = 0;
+          if (!refreshingRef.current) {
+            applyPullDeltaImmediate(0);
+          }
+        }, 600);
+      }
+    };
+
+    node.addEventListener('touchstart', handleTouchStart, { passive: true });
+    node.addEventListener('touchmove', handleTouchMove, { passive: false });
+    node.addEventListener('touchend', handleTouchEndOrCancel, { passive: true });
+    node.addEventListener('touchcancel', handleTouchEndOrCancel, { passive: true });
+    node.addEventListener('wheel', handleWheel, { passive: true });
+
+    return () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+      if (wheelDecayTimer) {
+        clearTimeout(wheelDecayTimer);
+      }
+      node.removeEventListener('touchstart', handleTouchStart);
+      node.removeEventListener('touchmove', handleTouchMove);
+      node.removeEventListener('touchend', handleTouchEndOrCancel);
+      node.removeEventListener('touchcancel', handleTouchEndOrCancel);
+      node.removeEventListener('wheel', handleWheel);
+    };
+  }, [isHydrated]);
+
+  React.useEffect(() => {
+    if (
+      activeFeedOption !== 'live_news' &&
+      activeFeedOption !== 'classics' &&
+      activeFeedOption !== 'history'
+    ) {
+      setHorizonBarVisibility(true);
+    }
+  }, [activeFeedOption, setHorizonBarVisibility]);
 
   const [isCuratingLiveAi, setIsCuratingLiveAi] = useState<boolean>(false);
 
@@ -2218,6 +2631,12 @@ export const FeedScreen: React.FC = () => {
     );
   }
 
+  const isEndlessStreamMode =
+    activeFeedOption !== 'live_news' &&
+    activeFeedOption !== 'classics' &&
+    activeFeedOption !== 'history';
+  const stickyHorizonBarHeight = isDesktop ? 56 : 64;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Top Header: Reddit Desktop Header vs Mobile Header */}
@@ -2275,21 +2694,292 @@ export const FeedScreen: React.FC = () => {
       >
         {/* Feed Column (Center) */}
         <View
+          ref={feedColumnRef}
           style={[
             styles.feedColumn,
             isDesktop && styles.desktopFeedColumn,
-            { flex: 1, minHeight: 0 },
+            { flex: 1, minHeight: 0, position: 'relative' },
             Platform.OS === 'web' ? ({ overflow: 'hidden' } as any) : undefined
           ]}
         >
+          {/* Sticky Auto-Hide / Instant Scroll-Up-Reveal Horizon Switcher (Endless Stream only) */}
+          {isEndlessStreamMode && (
+            <Animated.View
+              pointerEvents={horizonBarVisible ? 'auto' : 'none'}
+              style={[
+                styles.stickyHorizonBarOuter,
+                {
+                  backgroundColor: colors.background,
+                  borderBottomColor: isScrolledDown ? colors.borderSubtle : 'transparent',
+                  paddingHorizontal: isDesktop ? 0 : spacing.pageHorizontal,
+                  opacity: horizonBarAnim,
+                  transform: [
+                    {
+                      translateY: horizonBarAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [-(stickyHorizonBarHeight + 12), 0]
+                      })
+                    }
+                  ]
+                },
+                isScrolledDown && styles.stickyHorizonBarElevated
+              ]}
+              {...(Platform.OS === 'web'
+                ? ({
+                    onFocus: handleHorizonBarFocus,
+                    onBlur: handleHorizonBarBlur
+                  } as any)
+                : {})}
+            >
+              <View style={[styles.stickyHorizonBarInner, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.horizonScrollRow}
+                  style={styles.horizonScrollView}
+                >
+                  <TouchableOpacity
+                    onPress={() => handleSortChange('for_you')}
+                    style={[
+                      styles.sortTab,
+                      !isDesktop && styles.sortTabTouchTarget,
+                      (sortMode === 'for_you' || sortMode === 'hot') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: sortMode === 'for_you' || sortMode === 'hot' }}
+                  >
+                    <Text style={styles.sortEmoji}>🔥</Text>
+                    <Text style={[styles.sortTabText, { color: (sortMode === 'for_you' || sortMode === 'hot') ? colors.accent : colors.textSecondary }]}>
+                      Für dich
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => handleSortChange('today')}
+                    style={[
+                      styles.sortTab,
+                      !isDesktop && styles.sortTabTouchTarget,
+                      (sortMode === 'today' || sortMode === 'new') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: sortMode === 'today' || sortMode === 'new' }}
+                  >
+                    <Text style={styles.sortEmoji}>⚡</Text>
+                    <Text style={[styles.sortTabText, { color: (sortMode === 'today' || sortMode === 'new') ? colors.accent : colors.textSecondary }]}>
+                      Heute
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => handleSortChange('discourse')}
+                    style={[
+                      styles.sortTab,
+                      !isDesktop && styles.sortTabTouchTarget,
+                      sortMode === 'discourse' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: sortMode === 'discourse' }}
+                  >
+                    <Text style={styles.sortEmoji}>🧭</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'discourse' ? colors.accent : colors.textSecondary }]}>
+                      Diskurs
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => handleSortChange('top')}
+                    style={[
+                      styles.sortTab,
+                      !isDesktop && styles.sortTabTouchTarget,
+                      sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: sortMode === 'top' }}
+                  >
+                    <Text style={styles.sortEmoji}>🏆</Text>
+                    <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
+                      Top
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => handleSortChange('timeless')}
+                    style={[
+                      styles.sortTab,
+                      !isDesktop && styles.sortTabTouchTarget,
+                      (sortMode === 'timeless' || sortMode === 'gems') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                    ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: sortMode === 'timeless' || sortMode === 'gems' }}
+                  >
+                    <Text style={styles.sortEmoji}>💎</Text>
+                    <Text style={[styles.sortTabText, { color: (sortMode === 'timeless' || sortMode === 'gems') ? colors.accent : colors.textSecondary }]}>
+                      Zeitlos
+                    </Text>
+                  </TouchableOpacity>
+
+                  <View style={[styles.horizonBarDivider, { backgroundColor: colors.borderSubtle }]} />
+
+                  <TouchableOpacity
+                    onPress={handleRunManualResearchPipeline}
+                    disabled={isRunningManualPipeline}
+                    style={[
+                      styles.sortTab,
+                      !isDesktop && styles.sortTabTouchTarget,
+                      {
+                        backgroundColor: isRunningManualPipeline ? colors.accentSubtle : colors.surfaceSecondary,
+                        borderColor: isRunningManualPipeline ? colors.accent : colors.borderSubtle
+                      }
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Recherche jetzt starten"
+                  >
+                    {isRunningManualPipeline ? (
+                      <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 4 }} />
+                    ) : (
+                      <Ionicons name="sparkles-outline" size={13} color={colors.accent} />
+                    )}
+                    <Text style={[styles.sortTabText, { color: isRunningManualPipeline ? colors.accent : colors.textPrimary, fontSize: 11.5 }]} numberOfLines={1}>
+                      {isRunningManualPipeline
+                        ? `Pipeline: ${manualPipelineStageLabel || 'Läuft…'}`
+                        : 'Recherche jetzt starten'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {lastOperationResult && (
+                    <TouchableOpacity
+                      onPress={() => setShowReportModal(true)}
+                      style={[
+                        styles.sortTab,
+                        !isDesktop && styles.sortTabTouchTarget,
+                        {
+                          backgroundColor: colors.accentSubtle,
+                          borderColor: colors.accent
+                        }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Recherchereport öffnen"
+                    >
+                      <Text style={[styles.sortTabText, { color: colors.accent, fontSize: 11.5 }]} numberOfLines={1}>
+                        📋 Bericht ({lastOperationResult.insertedCount} neu)
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </ScrollView>
+
+                {/* Compact 1-Tap Reload Button (WCAG 2.5.1 clickable equivalent for pull-to-refresh) */}
+                <TouchableOpacity
+                  onPress={() => void onRefresh()}
+                  disabled={refreshing}
+                  style={[
+                    styles.compactReloadBtn,
+                    !isDesktop && styles.compactReloadBtnTouch,
+                    {
+                      backgroundColor: refreshing ? colors.accentSubtle : colors.surfaceSecondary,
+                      borderColor: refreshing ? colors.accent : colors.borderSubtle
+                    }
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Feed mit frischen Inhalten neu laden"
+                  accessibilityState={{ busy: refreshing }}
+                >
+                  {refreshing ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Text style={styles.compactReloadEmoji}>🔄</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          )}
+
+          {/* 1-Tap "🚫 Weniger davon" Toast with Undo */}
+          {lastDismissedItem && (
+            <View
+              style={[
+                styles.simToastContainer,
+                {
+                  top: isEndlessStreamMode && horizonBarVisible ? stickyHorizonBarHeight + 10 : 12,
+                  backgroundColor: colors.surface,
+                  borderWidth: 1,
+                  borderColor: colors.accent,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12
+                }
+              ]}
+            >
+              <Text style={[styles.simToastText, { color: colors.textPrimary, flex: 1 }]}>
+                Verstanden — weniger zu diesem Thema/dieser Quelle
+              </Text>
+              <TouchableOpacity
+                onPress={handleUndoDismissCard}
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                  borderRadius: radius.pill,
+                  backgroundColor: colors.accent
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Rückgängig"
+              >
+                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
+                  Rückgängig
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Crisp Refresh & Status Toast */}
+          {simToast && !lastDismissedItem && (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.simToastContainer,
+                {
+                  top: isEndlessStreamMode && horizonBarVisible ? stickyHorizonBarHeight + 10 : 12,
+                  backgroundColor: colors.accent
+                }
+              ]}
+            >
+              <Text accessibilityLiveRegion="polite" style={styles.simToastText}>
+                {simToast}
+              </Text>
+            </View>
+          )}
+
+          {/* Interactive Pull-to-Refresh Indicator (Touch + Trackpad Overscroll + Clickable Pill) */}
+          {pullState.phase !== 'idle' && (
+            <View style={{ marginTop: isEndlessStreamMode ? stickyHorizonBarHeight + 2 : 6 }}>
+              <PullToRefreshIndicator
+                pullDistance={pullState.pullDistance}
+                progress={pullState.progress}
+                phase={pullState.phase}
+                onTriggerRefresh={() => void onRefresh()}
+                colors={colors}
+                isDark={isDark}
+              />
+            </View>
+          )}
+
           <FlatList
             ref={flatListRef}
+            testID="feed-flatlist"
             data={flatListData}
             keyExtractor={(row) => row.key}
             renderItem={renderFlatListItem}
             contentContainerStyle={[
               styles.scrollContent,
-              isDesktop && { paddingHorizontal: 0 }
+              isDesktop && { paddingHorizontal: 0 },
+              {
+                paddingTop:
+                  pullState.phase !== 'idle'
+                    ? 6
+                    : isEndlessStreamMode
+                    ? stickyHorizonBarHeight + 10
+                    : 18
+              }
             ]}
             style={[
               { flex: 1, minHeight: 0 },
@@ -2299,7 +2989,7 @@ export const FeedScreen: React.FC = () => {
             ]}
             showsVerticalScrollIndicator={false}
             onScroll={handleScroll}
-            scrollEventThrottle={32}
+            scrollEventThrottle={16}
             keyboardShouldPersistTaps="handled"
             initialNumToRender={10}
             maxToRenderPerBatch={8}
@@ -2427,49 +3117,6 @@ export const FeedScreen: React.FC = () => {
             {/* MODE: ENDLESS DISCOVERY STREAM (UNIFIED CONTINUOUS STREAM) */}
             {activeFeedOption !== 'live_news' && activeFeedOption !== 'classics' && activeFeedOption !== 'history' && (
               <>
-                {/* 1-Tap "🚫 Weniger davon" Toast with Undo */}
-                {lastDismissedItem && (
-                  <View
-                    style={[
-                      styles.simToastContainer,
-                      {
-                        backgroundColor: colors.surface,
-                        borderWidth: 1,
-                        borderColor: colors.accent,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12
-                      }
-                    ]}
-                  >
-                    <Text style={[styles.simToastText, { color: colors.textPrimary, flex: 1 }]}>
-                      Verstanden — weniger zu diesem Thema/dieser Quelle
-                    </Text>
-                    <TouchableOpacity
-                      onPress={handleUndoDismissCard}
-                      style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 5,
-                        borderRadius: radius.pill,
-                        backgroundColor: colors.accent
-                      }}
-                      accessibilityRole="button"
-                      accessibilityLabel="Rückgängig"
-                    >
-                      <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
-                        Rückgängig
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {simToast && (
-                  <View style={[styles.simToastContainer, { backgroundColor: colors.accent }]}>
-                    <Text style={styles.simToastText}>{simToast}</Text>
-                  </View>
-                )}
-
                 {searchQuery.trim().length > 0 && (
                   <View style={[styles.searchNoticeCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                     <Ionicons name="search" size={14} color={colors.accent} style={{ marginRight: 6 }} />
@@ -2481,142 +3128,6 @@ export const FeedScreen: React.FC = () => {
                     </TouchableOpacity>
                   </View>
                 )}
-
-                {/* 5 Distinct Sort Horizons + Manual Pipeline Control */}
-                <View style={[styles.sortBar, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.horizonScrollRow}
-                    style={{ width: '100%' }}
-                  >
-                    <TouchableOpacity
-                      onPress={() => handleSortChange('for_you')}
-                      style={[
-                        styles.sortTab,
-                        (sortMode === 'for_you' || sortMode === 'hot') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                      ]}
-                      accessibilityRole="tab"
-                      accessibilityState={{ selected: sortMode === 'for_you' || sortMode === 'hot' }}
-                    >
-                      <Text style={styles.sortEmoji}>🔥</Text>
-                      <Text style={[styles.sortTabText, { color: (sortMode === 'for_you' || sortMode === 'hot') ? colors.accent : colors.textSecondary }]}>
-                        Für dich
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => handleSortChange('today')}
-                      style={[
-                        styles.sortTab,
-                        (sortMode === 'today' || sortMode === 'new') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                      ]}
-                      accessibilityRole="tab"
-                      accessibilityState={{ selected: sortMode === 'today' || sortMode === 'new' }}
-                    >
-                      <Text style={styles.sortEmoji}>⚡</Text>
-                      <Text style={[styles.sortTabText, { color: (sortMode === 'today' || sortMode === 'new') ? colors.accent : colors.textSecondary }]}>
-                        Heute
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => handleSortChange('discourse')}
-                      style={[
-                        styles.sortTab,
-                        sortMode === 'discourse' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                      ]}
-                      accessibilityRole="tab"
-                      accessibilityState={{ selected: sortMode === 'discourse' }}
-                    >
-                      <Text style={styles.sortEmoji}>🧭</Text>
-                      <Text style={[styles.sortTabText, { color: sortMode === 'discourse' ? colors.accent : colors.textSecondary }]}>
-                        Diskurs
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => handleSortChange('top')}
-                      style={[
-                        styles.sortTab,
-                        sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                      ]}
-                      accessibilityRole="tab"
-                      accessibilityState={{ selected: sortMode === 'top' }}
-                    >
-                      <Text style={styles.sortEmoji}>🏆</Text>
-                      <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
-                        Top
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => handleSortChange('timeless')}
-                      style={[
-                        styles.sortTab,
-                        (sortMode === 'timeless' || sortMode === 'gems') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                      ]}
-                      accessibilityRole="tab"
-                      accessibilityState={{ selected: sortMode === 'timeless' || sortMode === 'gems' }}
-                    >
-                      <Text style={styles.sortEmoji}>💎</Text>
-                      <Text style={[styles.sortTabText, { color: (sortMode === 'timeless' || sortMode === 'gems') ? colors.accent : colors.textSecondary }]}>
-                        Zeitlos
-                      </Text>
-                    </TouchableOpacity>
-                  </ScrollView>
-
-                  <View style={[styles.sortRightInfo, { gap: 8 }]}>
-                    <TouchableOpacity
-                      onPress={handleRunManualResearchPipeline}
-                      disabled={isRunningManualPipeline}
-                      style={[
-                        styles.sortTab,
-                        {
-                          flex: 1,
-                          backgroundColor: isRunningManualPipeline ? colors.accentSubtle : colors.surfaceSecondary,
-                          borderColor: isRunningManualPipeline ? colors.accent : colors.borderSubtle,
-                          paddingVertical: 6,
-                          paddingHorizontal: 10,
-                          justifyContent: 'center'
-                        }
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Recherche jetzt starten"
-                    >
-                      {isRunningManualPipeline ? (
-                        <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 5 }} />
-                      ) : (
-                        <Text style={{ fontSize: 12, marginRight: 4 }}>🔄</Text>
-                      )}
-                      <Text style={[styles.sortTabText, { color: isRunningManualPipeline ? colors.accent : colors.textPrimary, fontSize: 11.5 }]} numberOfLines={1}>
-                        {isRunningManualPipeline
-                          ? `Pipeline: ${manualPipelineStageLabel || 'Läuft…'}`
-                          : 'Recherche jetzt starten'}
-                      </Text>
-                    </TouchableOpacity>
-                    {lastOperationResult && (
-                      <TouchableOpacity
-                        onPress={() => setShowReportModal(true)}
-                        style={[
-                          styles.sortTab,
-                          {
-                            backgroundColor: colors.accentSubtle,
-                            borderColor: colors.accent,
-                            paddingVertical: 6,
-                            paddingHorizontal: 10
-                          }
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityLabel="Recherchereport öffnen"
-                      >
-                        <Text style={[styles.sortTabText, { color: colors.accent, fontSize: 11.5 }]} numberOfLines={1}>
-                          📋 Bericht ({lastOperationResult.insertedCount} neu)
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
 
                 {/* Visible Curated Selection Header */}
                 {curatedSelection && (
@@ -3926,6 +4437,35 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 420
   },
+  stickyHorizonBarOuter: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 25,
+    paddingTop: 6,
+    paddingBottom: 4,
+    borderBottomWidth: 0.5
+  },
+  stickyHorizonBarElevated: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4
+  },
+  stickyHorizonBarInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 4,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: 6
+  },
+  horizonScrollView: {
+    flex: 1,
+    minWidth: 0
+  },
   sortBar: {
     padding: 8,
     borderRadius: radius.md,
@@ -3937,17 +4477,46 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingRight: 6
+    paddingRight: 4
   },
   sortTab: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    minHeight: 36,
+    paddingHorizontal: 11,
     paddingVertical: 6,
     borderRadius: radius.pill,
     borderWidth: 1,
     borderColor: 'transparent',
     gap: 5
+  },
+  sortTabTouchTarget: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  horizonBarDivider: {
+    width: 1,
+    height: 20,
+    marginHorizontal: 2
+  },
+  compactReloadBtn: {
+    minWidth: 36,
+    minHeight: 36,
+    paddingHorizontal: 9,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0
+  },
+  compactReloadBtnTouch: {
+    minWidth: 44,
+    minHeight: 44,
+    paddingHorizontal: 10
+  },
+  compactReloadEmoji: {
+    fontSize: 14
   },
   sortEmoji: {
     fontSize: 13

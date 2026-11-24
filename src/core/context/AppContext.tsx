@@ -22,7 +22,7 @@ import {
   extractConceptKeywords,
   applyVoteFeedbackToProfile
 } from '../domain/ranking';
-import { feedRepository } from '../data/feedRepository';
+import { feedRepository, isStaticFallbackItem } from '../data/feedRepository';
 import { libraryRepository } from '../data/libraryRepository';
 import { userProfileRepository } from '../data/userProfileRepository';
 import { DEFAULT_USER_PROFILE, DEFAULT_STARTER_INTERESTS } from '../data/fixtures';
@@ -407,11 +407,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const scheduleCloudSyncPushRef = useRef<() => void>(() => {});
   const triggerCloudSyncRef = useRef<(forcePush?: boolean) => Promise<boolean>>(async () => false);
 
-  // Atomic Hydration (WP 1): Ensure UI unlocks within 180ms max fallback if storage is sluggish
+  // Atomic Hydration (WP 1): Hard safety unlock if storage/cold-boot snapshot fetch is sluggish (warm boot unlocks <50ms)
   useEffect(() => {
     const fallbackTimer = setTimeout(() => {
       setIsHydrated(true);
-    }, 180);
+    }, 2600);
     return () => clearTimeout(fallbackTimer);
   }, []);
 
@@ -761,7 +761,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const [snapRes, liveRes] = await Promise.allSettled([
-        (feedRepository as any).hydrateFromPublicSnapshot?.(remoteSnapshotUrlRef.current),
+        feedRepository.hydrateFromPublicSnapshot?.(remoteSnapshotUrlRef.current, { forceRefresh: true }),
         ContinuousLiveNewsService.refreshLiveFeeds(true)
       ]);
 
@@ -908,14 +908,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Non-fatal
       }
 
-      // 1. Instant Cache-First Boot Hydration: pre-warm fast local stores and unlock UI immediately (<50ms)
+      // 1. Instant Cache-First Boot Hydration: pre-warm fast local stores (<50ms on warm boot)
       try {
         await Promise.all([
+          feedRepository.ensureInitialized?.().catch(() => {}),
           seenImpressionsService.getSeenIds().catch(() => new Set<string>()),
           hivemindLearningService.getTracks().catch(() => [])
         ]);
       } catch {
         // Non-blocking fallback
+      }
+
+      // Cold-Boot Freshness Gate: if repository only holds static vault/init fallbacks (< 15 real items),
+      // hydrate the public snapshot BEFORE Frame 1 renders (capped at 2200ms) so cold browsers never lock vault cards at #1.
+      const preHydrateItems = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+      const realCount = preHydrateItems.filter(item => !isStaticFallbackItem(item)).length;
+      let didColdBootSnapshotHydrate = false;
+      if (realCount < 15) {
+        try {
+          const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+          await Promise.race([
+            (async () => {
+              const res = await feedRepository.hydrateFromPublicSnapshot?.(currentSnapshotUrl);
+              if (res?.success) {
+                const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+                setSnapshotSyncInfo(syncText);
+                await appStorage.setItem('@atem:snapshot_sync_info:v1', syncText).catch(() => {});
+                didColdBootSnapshotHydrate = true;
+              }
+            })().catch(() => {}),
+            sleep(2200)
+          ]);
+        } catch {
+          // Non-blocking cold-boot fallback
+        }
       }
 
       await scheduleFeedRecompute(loadedProfile, loadedInteractions, initialEdition);
@@ -940,20 +966,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           console.warn('In-place auto-migration skipped:', migErr);
         }
 
-        try {
-          await Promise.race([
-            (async () => {
-              const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(currentSnapshotUrl);
-              if (res?.success) {
-                const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
-                setSnapshotSyncInfo(syncText);
-                snapshotInserted = Number(res.insertedCount || 0);
-              }
-            })().catch(() => {}),
-            new Promise<void>(resolve => setTimeout(resolve, 2800))
-          ]);
-        } catch {
-          // Non-blocking fallback
+        if (!didColdBootSnapshotHydrate) {
+          try {
+            await Promise.race([
+              (async () => {
+                const res = await feedRepository.hydrateFromPublicSnapshot?.(currentSnapshotUrl);
+                if (res?.success) {
+                  const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+                  setSnapshotSyncInfo(syncText);
+                  snapshotInserted = Number(res.insertedCount || 0);
+                }
+              })().catch(() => {}),
+              new Promise<void>(resolve => setTimeout(resolve, 2800))
+            ]);
+          } catch {
+            // Non-blocking fallback
+          }
         }
 
         const afterCount = feedRepository.getAllItems ? feedRepository.getAllItems().length : beforeCount;
@@ -1134,24 +1162,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let snapshotCount = 0;
     const fallbackDate = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
     let dateText = `${prefixLabel} ${fallbackDate}`;
+    const activeSnapshotUrl = remoteSnapshotUrlRef.current;
 
-    try {
-      const res = await (feedRepository as any).hydrateFromPublicSnapshot?.(remoteSnapshotUrl);
-      if (res?.success) {
-        snapshotCount = res.itemCount;
-        dateText = `${prefixLabel} ${res.snapshotDate || fallbackDate} • ${res.itemCount} Impulse`;
-        setSnapshotSyncInfo(dateText);
-        await appStorage.setItem('@atem:snapshot_sync_info:v1', dateText);
-      }
-    } catch (err) {
-      if (prefixLabel === 'Stand') {
-        console.warn('Live Snapshot Sync failed:', err);
+    const [snapRes, liveRes] = await Promise.allSettled([
+      feedRepository.hydrateFromPublicSnapshot?.(activeSnapshotUrl, { forceRefresh: true }),
+      ContinuousLiveNewsService.refreshLiveFeeds(true)
+    ]);
+
+    if (snapRes.status === 'fulfilled' && snapRes.value?.success) {
+      snapshotCount = snapRes.value.itemCount;
+      dateText = `${prefixLabel} ${snapRes.value.snapshotDate || fallbackDate} • ${snapRes.value.itemCount} Impulse`;
+      setSnapshotSyncInfo(dateText);
+      await appStorage.setItem('@atem:snapshot_sync_info:v1', dateText).catch(() => {});
+    } else if (snapRes.status === 'rejected' && prefixLabel === 'Stand') {
+      console.warn('Live Snapshot Sync failed:', snapRes.reason);
+    }
+
+    const seenIds = await seenImpressionsService.getSeenIds().catch(() => new Set<string>());
+    if (liveRes.status === 'fulfilled' && Array.isArray(liveRes.value) && liveRes.value.length > 0) {
+      const curatedLive = liveRes.value
+        .map(sanitizeCuratedFeedItem)
+        .filter(satisfiesDefaultCuratedStandard)
+        .map(item => {
+          if (item.isStaticFallback || seenIds.has(item.id)) {
+            const { pinnedManualRunAt, ...rest } = item;
+            return rest;
+          }
+          return item;
+        });
+      if (curatedLive.length > 0 && feedRepository.addItems) {
+        feedRepository.addItems(curatedLive, { operationType: 'background_sync', pinInserted: false });
       }
     }
 
     try {
       const existingIds = new Set((feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id));
-      const seenIds = await seenImpressionsService.getSeenIds();
       const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
         existingIds,
         seenIds,
@@ -1160,33 +1205,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const sanitizedDiscovery = discoveryResult.items
         .map(sanitizeCuratedFeedItem)
         .filter(satisfiesDefaultCuratedStandard);
-      if (sanitizedDiscovery.length > 0 && (feedRepository as any).addItems) {
-        (feedRepository as any).addItems(sanitizedDiscovery);
+      if (sanitizedDiscovery.length > 0 && feedRepository.addItems) {
+        feedRepository.addItems(sanitizedDiscovery);
       }
     } catch (err) {
       if (prefixLabel === 'Stand') {
         console.warn('Live multi-lane harvest fallback:', err);
       }
-      try {
-        const liveItems = await ContinuousLiveNewsService.refreshLiveFeeds(true);
-        const curatedLive = liveItems.map(sanitizeCuratedFeedItem).filter(satisfiesDefaultCuratedStandard);
-        const seenIds = await seenImpressionsService.getSeenIds();
-        const safeLive = curatedLive.map(item => {
-          if (item.isStaticFallback || seenIds.has(item.id)) {
-            const { pinnedManualRunAt, ...rest } = item;
-            return rest;
-          }
-          return item;
-        });
-        if (safeLive.length > 0 && (feedRepository as any).addItems) {
-          (feedRepository as any).addItems(safeLive);
-        }
-      } catch {}
     }
 
     await scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current);
     return { success: true, itemCount: snapshotCount || 24, dateText };
-  }, [remoteSnapshotUrl, scheduleFeedRecompute]);
+  }, [scheduleFeedRecompute]);
 
   const refreshFeed = useCallback(async () => {
     try {

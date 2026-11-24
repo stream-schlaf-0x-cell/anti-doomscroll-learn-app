@@ -40,12 +40,17 @@ const MainNavigator: React.FC = () => {
 
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const isDesktop = width >= 960;
+  const isAppleTouchDevice =
+    Platform.OS === 'web' &&
+    typeof navigator !== 'undefined' &&
+    (/iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
+      (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1));
   const isStandaloneIosPwa =
     Platform.OS === 'web' &&
     typeof window !== 'undefined' &&
     ((window.navigator as any).standalone === true ||
-      window.matchMedia?.('(display-mode: standalone)').matches);
+      (isAppleTouchDevice && Boolean(window.matchMedia?.('(display-mode: standalone)').matches)));
+  const isDesktop = width >= 960 && !isStandaloneIosPwa;
 
   // Startup loading indicator
   if (startupState.status === 'loading') {
@@ -339,7 +344,7 @@ const MainNavigator: React.FC = () => {
               borderTopWidth: 0.5,
               borderBottomWidth: 0,
               marginBottom: 0,
-              paddingBottom: isStandaloneIosPwa ? 28 : Math.max(insets.bottom, 12),
+              paddingBottom: isStandaloneIosPwa ? (insets.bottom > 0 ? Math.min(insets.bottom, 20) : 16) : Math.max(insets.bottom, 10),
               ...(selectedArticleId ? { display: 'none' as const } : {})
             }
           ]}
@@ -629,7 +634,9 @@ const styles = StyleSheet.create({
   readerOverlay: {
     ...StyleSheet.absoluteFillObject,
     ...(Platform.OS === 'web' ? ({ position: 'fixed' } as any) : {}),
-    ...(Platform.OS === 'web' ? ({ inset: 0, minHeight: 0, overflow: 'hidden' } as any) : {}),
+    ...(Platform.OS === 'web'
+      ? ({ top: 0, right: 0, bottom: 'auto', left: 0, height: 'var(--app-height, 100dvh)', minHeight: 0, overflow: 'hidden' } as any)
+      : {}),
     zIndex: 5000
   },
   tabBar: {

@@ -26,18 +26,21 @@
     <!-- The `react-native-web` recommended style reset -->
     <style id="expo-reset">
       /* Full-height viewport-fit cover for iOS/iPadOS standalone PWA across portrait & landscape.
-         IMPORTANT: never pin body to height: 100dvh. In iOS standalone mode with a black-translucent
-         status bar, WebKit reports 100dvh minus the top safe area (~59pt), which leaves a dead gap
-         below the tab bar. A fixed body stretched with inset: 0 always reaches the physical bottom edge. */
+         In iOS standalone mode with a black-translucent status bar, WebKit shortens the layout
+         viewport (and 100dvh / inset: 0) by env(safe-area-inset-top) (~59pt on Dynamic Island
+         iPhones, ~24pt on iPads), leaving a dead gap below the bottom tab bar.
+         syncStandaloneViewportHeight() detects that exact truncation (guarded against iPad Split View)
+         and sets --app-height to the full physical screen height while clearing bottom: 0. */
       html {
         background-color: #0E1424 !important;
         margin: 0;
         padding: 0;
         width: 100%;
-        height: 100%;
+        height: var(--app-height, 100dvh);
         min-height: 100vh;
         min-height: 100dvh;
         overflow: hidden;
+        scroll-padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
       }
       body {
         background-color: #0E1424 !important;
@@ -48,18 +51,21 @@
         right: 0;
         bottom: 0;
         left: 0;
-        inset: 0;
         width: 100%;
-        height: auto;
+        height: var(--app-height, 100dvh);
         overflow: hidden;
         -webkit-tap-highlight-color: transparent;
+      }
+      html[data-standalone-viewport="expanded"] body {
+        bottom: auto;
+        height: var(--app-height);
       }
       #root {
         display: flex;
         flex-direction: column;
         flex: 1;
         width: 100%;
-        height: 100%;
+        height: var(--app-height, 100dvh);
         min-height: 0;
         overflow: hidden;
         background-color: #0E1424 !important;
@@ -78,6 +84,109 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
+    <script>
+      (function () {
+        function isAppleMobileDevice() {
+          var ua = (navigator && navigator.userAgent) || '';
+          return (
+            /iPad|iPhone|iPod/.test(ua) ||
+            (navigator &&
+              navigator.platform === 'MacIntel' &&
+              typeof navigator.maxTouchPoints === 'number' &&
+              navigator.maxTouchPoints > 1)
+          );
+        }
+
+        function isStandalonePwa() {
+          if (typeof window === 'undefined') return false;
+          if (window.navigator && window.navigator.standalone === true) return true;
+          return Boolean(
+            isAppleMobileDevice() &&
+              window.matchMedia &&
+              window.matchMedia('(display-mode: standalone)').matches
+          );
+        }
+
+        function isLandscapeOrientation() {
+          if (
+            window.screen &&
+            window.screen.orientation &&
+            typeof window.screen.orientation.type === 'string'
+          ) {
+            return window.screen.orientation.type.indexOf('landscape') === 0;
+          }
+          if (typeof window.orientation === 'number') {
+            return Math.abs(window.orientation) === 90;
+          }
+          if (window.matchMedia) {
+            return window.matchMedia('(orientation: landscape)').matches;
+          }
+          return window.innerWidth > window.innerHeight;
+        }
+
+        function syncStandaloneViewportHeight() {
+          var docEl = document.documentElement;
+          if (!docEl) return;
+
+          var innerW = window.innerWidth || 0;
+          var innerH = window.innerHeight || 0;
+          var screenW = (window.screen && window.screen.width) || 0;
+          var screenH = (window.screen && window.screen.height) || 0;
+
+          if (isStandalonePwa() && innerW > 0 && innerH > 0 && screenW > 0 && screenH > 0) {
+            var landscape = isLandscapeOrientation();
+            var expectedScreenWidth = landscape
+              ? Math.max(screenW, screenH)
+              : Math.min(screenW, screenH);
+            var expectedFullHeight = landscape
+              ? Math.min(screenW, screenH)
+              : Math.max(screenW, screenH);
+            var heightDelta = expectedFullHeight - innerH;
+
+            // Guard against iPad Split View / Slide Over / Stage Manager by confirming full-width
+            // standalone viewport, and expand only when delta matches WebKit's black-translucent
+            // status-bar truncation bug (typically 20–70pt, capped safely at 120pt).
+            if (innerW >= expectedScreenWidth * 0.9 && heightDelta > 0 && heightDelta <= 120) {
+              docEl.style.setProperty('--app-height', expectedFullHeight + 'px');
+              docEl.setAttribute('data-standalone-viewport', 'expanded');
+              return;
+            }
+          }
+
+          var fallbackHeight =
+            window.CSS &&
+            typeof window.CSS.supports === 'function' &&
+            window.CSS.supports('height', '100dvh')
+              ? '100dvh'
+              : innerH > 0
+                ? innerH + 'px'
+                : '100vh';
+          docEl.style.setProperty('--app-height', fallbackHeight);
+          docEl.removeAttribute('data-standalone-viewport');
+        }
+
+        var syncTimers = [];
+        function scheduleViewportSync() {
+          syncStandaloneViewportHeight();
+          while (syncTimers.length) {
+            clearTimeout(syncTimers.pop());
+          }
+          syncTimers.push(setTimeout(syncStandaloneViewportHeight, 120));
+          syncTimers.push(setTimeout(syncStandaloneViewportHeight, 350));
+        }
+
+        syncStandaloneViewportHeight();
+        if (typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(syncStandaloneViewportHeight);
+        }
+        window.addEventListener('resize', syncStandaloneViewportHeight, { passive: true });
+        window.addEventListener('orientationchange', scheduleViewportSync, { passive: true });
+        window.addEventListener('pageshow', scheduleViewportSync, { passive: true });
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') scheduleViewportSync();
+        });
+      })();
+    </script>
     <script>
       (function () {
         var BUNDLE_RE = /_expo\/static\/js\/web\/([^"'\s>?]+\.js)/;

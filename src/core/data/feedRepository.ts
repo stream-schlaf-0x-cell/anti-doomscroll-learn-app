@@ -15,8 +15,24 @@ import { RelatedContentService } from '../feed/RelatedContentService';
 import { FeedMergeService, MergeOptions } from '../feed/FeedMergeService';
 import { defaultFeedOperationManager, FeedOperationResult, FeedOperationType } from '../feed/FeedOperationManager';
 import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
+import { parseSnapshotPayload } from '../feed/snapshotPayload';
 import { isDeprecatedShowcaseStarterItem } from '../learning/hivemindLearningService';
 import { seenImpressionsService } from './seenImpressionsService';
+
+const PUBLIC_SNAPSHOT_CACHE_KEY = '@atem:public_feed_snapshot:v1';
+const SNAPSHOT_CACHE_REUSE_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * Identifies bundled static fallback entries (`vault-*`, `init-*`, or `isStaticFallback === true`).
+ */
+export function isStaticFallbackItem(
+  item: Pick<FeedItem, 'id' | 'isStaticFallback'>
+): boolean {
+  if (!item) return false;
+  if (item.isStaticFallback === true) return true;
+  const id = String(item.id || '');
+  return id.startsWith('vault-') || id.startsWith('init-');
+}
 
 function isRejectedCachedItem(item: Partial<FeedItem> | null | undefined): boolean {
   if (!item || typeof item !== 'object') return true;
@@ -123,12 +139,17 @@ export interface IFeedRepository {
   setItems?(items: FeedItem[]): void;
   addItems?(items: FeedItem[], options?: { operationType?: FeedOperationType; pinInserted?: boolean; telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry }): void;
   getAllItems?(): FeedItem[];
-  hydrateFromPublicSnapshot?(remoteUrl?: string): Promise<{
+  ensureInitialized?(): Promise<void>;
+  hydrateFromPublicSnapshot?(
+    remoteUrl?: string,
+    options?: { forceRefresh?: boolean }
+  ): Promise<{
     success: boolean;
     itemCount: number;
     insertedCount?: number;
     snapshotDate?: string;
     generatedAt?: string;
+    fromCache?: boolean;
   }>;
   hydrateFromReservoir?(remoteUrl?: string): Promise<{
     success: boolean;
@@ -147,6 +168,7 @@ export class LocalFeedRepository implements IFeedRepository {
   private articleIndex: ArticleIndex;
   private relatedService: RelatedContentService;
   private indexTimer: ReturnType<typeof setTimeout> | null = null;
+  private dynamicInitPromise: Promise<void>;
 
   private scheduleIndexBuild(): void {
     const isBrowserRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -208,7 +230,11 @@ export class LocalFeedRepository implements IFeedRepository {
     }
 
     this.scheduleIndexBuild();
-    this.initDynamicItems();
+    this.dynamicInitPromise = this.initDynamicItems();
+  }
+
+  async ensureInitialized(): Promise<void> {
+    await this.dynamicInitPromise;
   }
 
   private purgeDemoFixturesIfSufficient(items: FeedItem[]): FeedItem[] {
@@ -522,33 +548,142 @@ export class LocalFeedRepository implements IFeedRepository {
   /**
    * Fetches the latest serverless feed snapshot using SnapshotLoader
    * and safely merges validated items into storage.
+   * Checks cached `@atem:public_feed_snapshot:v1` quickly on warm boots unless `forceRefresh: true`.
    */
   async hydrateFromPublicSnapshot(
-    remoteUrl?: string
+    remoteUrl?: string,
+    options?: { forceRefresh?: boolean }
   ): Promise<{
     success: boolean;
     itemCount: number;
     insertedCount?: number;
     snapshotDate?: string;
     generatedAt?: string;
+    fromCache?: boolean;
   }> {
+    const forceRefresh = options?.forceRefresh === true;
+    const trimmedUrl = remoteUrl?.trim() || '';
+    let cachedFallback: {
+      itemCount: number;
+      insertedCount: number;
+      snapshotDate?: string;
+      generatedAt?: string;
+    } | null = null;
+
+    if (!forceRefresh) {
+      try {
+        const cachedRaw = await this.storage.getItem(PUBLIC_SNAPSHOT_CACHE_KEY);
+        if (cachedRaw) {
+          const parsedObj = JSON.parse(cachedRaw);
+          const cachedPayload = parseSnapshotPayload(parsedObj);
+          const cachedOriginUrl =
+            parsedObj && typeof parsedObj === 'object' && typeof (parsedObj as any).remoteUrl === 'string'
+              ? String((parsedObj as any).remoteUrl).trim()
+              : '';
+          const urlMatchesCache =
+            !cachedOriginUrl ||
+            !trimmedUrl ||
+            cachedOriginUrl === trimmedUrl ||
+            (cachedOriginUrl === 'default' && !trimmedUrl);
+
+          if (cachedPayload && urlMatchesCache && cachedPayload.items.length > 0) {
+            const beforeIds = new Set(this.items.map(i => i.id));
+            this.addItems(cachedPayload.items, { operationType: 'background_sync', pinInserted: false });
+            const cachedInsertedCount = this.items.filter(i => !beforeIds.has(i.id)).length;
+            const cachedSnapshotDate = cachedPayload.generatedAt
+              ? new Date(cachedPayload.generatedAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
+              : undefined;
+
+            const nowMs = Date.now();
+            const cachedAtMs =
+              parsedObj && typeof parsedObj === 'object' && typeof (parsedObj as any).cachedAt === 'string'
+                ? Date.parse((parsedObj as any).cachedAt)
+                : NaN;
+            const generatedAtMs = cachedPayload.generatedAt ? Date.parse(cachedPayload.generatedAt) : NaN;
+            const isFreshCache = Number.isFinite(cachedAtMs)
+              ? nowMs - cachedAtMs >= -60_000 && nowMs - cachedAtMs <= SNAPSHOT_CACHE_REUSE_TTL_MS
+              : Number.isFinite(generatedAtMs) &&
+                nowMs - generatedAtMs >= -5 * 60_000 &&
+                nowMs - generatedAtMs <= 4 * 60 * 60 * 1000;
+
+            cachedFallback = {
+              itemCount: cachedPayload.items.length,
+              insertedCount: cachedInsertedCount,
+              snapshotDate: cachedSnapshotDate,
+              generatedAt: cachedPayload.generatedAt
+            };
+
+            if (isFreshCache) {
+              return {
+                success: true,
+                ...cachedFallback,
+                fromCache: true
+              };
+            }
+          }
+        }
+      } catch {
+        // Ignore malformed cache and proceed to network fetch
+      }
+    }
+
     try {
-      const res = await defaultSnapshotLoader.loadSnapshot(remoteUrl);
+      const effectiveUrl = forceRefresh
+        ? trimmedUrl
+          ? trimmedUrl.includes('?')
+            ? `${trimmedUrl}&_t=${Date.now()}`
+            : `${trimmedUrl}?_t=${Date.now()}`
+          : `./feed-snapshot.json?_t=${Date.now()}`
+        : trimmedUrl || undefined;
+
+      const res = await defaultSnapshotLoader.loadSnapshot(effectiveUrl);
       if (res.success && res.items.length > 0) {
         const beforeIds = new Set(this.items.map(i => i.id));
         this.addItems(res.items, { operationType: 'background_sync', pinInserted: false });
         const insertedCount = this.items.filter(i => !beforeIds.has(i.id)).length;
+
+        try {
+          await this.storage.setItem(
+            PUBLIC_SNAPSHOT_CACHE_KEY,
+            JSON.stringify({
+              generatedAt: res.generatedAt,
+              cachedAt: new Date().toISOString(),
+              remoteUrl: trimmedUrl || 'default',
+              items: res.items,
+              sourceHealth: res.sourceHealth,
+              totalCandidateSources: res.totalCandidateSources
+            })
+          );
+        } catch {
+          // Non-fatal if storage quota is full
+        }
+
         return {
           success: true,
           itemCount: res.itemCount,
           insertedCount,
           snapshotDate: res.snapshotDate,
-          generatedAt: res.generatedAt
+          generatedAt: res.generatedAt,
+          fromCache: false
         };
       }
-      return { success: false, itemCount: 0, insertedCount: 0 };
+      if (cachedFallback) {
+        return {
+          success: true,
+          ...cachedFallback,
+          fromCache: true
+        };
+      }
+      return { success: false, itemCount: 0, insertedCount: 0, fromCache: false };
     } catch {
-      return { success: false, itemCount: 0, insertedCount: 0 };
+      if (cachedFallback) {
+        return {
+          success: true,
+          ...cachedFallback,
+          fromCache: true
+        };
+      }
+      return { success: false, itemCount: 0, insertedCount: 0, fromCache: false };
     }
   }
 

@@ -44,12 +44,27 @@ test('Bloomscroll Polish V4.1 — Eliminate the 8 Live iPhone Stumbling Blocks',
       'App.tsx tabBar must not use invalid string calc(...) for react-native-web paddingBottom'
     );
     assert.ok(
+      indexHtml.includes('var(--app-height, 100dvh)') &&
+        indexHtml.includes('syncStandaloneViewportHeight'),
+      'public/index.html must sync --app-height for standalone iOS/iPadOS PWA viewports'
+    );
+    assert.ok(
+      indexHtml.includes('scroll-padding-bottom'),
+      'public/index.html must set scroll-padding-bottom so focused elements clear the bottom tab bar'
+    );
+    assert.ok(
       appTsx.includes('isStandaloneIosPwa'),
       'App.tsx must detect isStandaloneIosPwa'
     );
     assert.ok(
-      appTsx.includes('isStandaloneIosPwa ? 28 : Math.max(insets.bottom, 12)'),
-      'App.tsx must pass numeric paddingBottom to tabBar'
+      appTsx.includes('const isDesktop = width >= 960 && !isStandaloneIosPwa;'),
+      'App.tsx must keep bottom tab navigation on iPad standalone PWA across portrait and landscape'
+    );
+    assert.ok(
+      appTsx.includes(
+        'isStandaloneIosPwa ? (insets.bottom > 0 ? Math.min(insets.bottom, 20) : 16) : Math.max(insets.bottom, 10)'
+      ),
+      'App.tsx must pass numeric safe-area paddingBottom to tabBar without double-padding'
     );
   });
 

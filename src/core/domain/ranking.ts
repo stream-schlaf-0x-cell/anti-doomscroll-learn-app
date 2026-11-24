@@ -643,6 +643,33 @@ export function isArtShowcaseItem(item: Pick<FeedItem, 'format' | 'primaryTopic'
   );
 }
 
+/**
+ * Identifies static non-art archive items from `REAL_KNOWLEDGE_VAULT` (e.g. `vault-gem-*`
+ * historical essays from 1945-2011 or non-art `vault-*` entries) that belong in `timeless` / `gems`
+ * or pure offline fallback — never in populated `for_you`, `today`, `discourse`, or `top` streams.
+ */
+export function isNonArtVaultItem(
+  item: Pick<FeedItem, 'id' | 'format' | 'primaryTopic' | 'space'>
+): boolean {
+  const id = String(item.id || '');
+  if (id.startsWith('vault-gem-')) return true;
+  if (id.startsWith('vault-') && !isArtShowcaseItem(item)) return true;
+  return false;
+}
+
+function countNonVaultLiveItems(
+  items: readonly Pick<FeedItem, 'id' | 'isStaticFallback'>[]
+): number {
+  let count = 0;
+  for (const item of items) {
+    if (item.isStaticFallback === true) continue;
+    const id = String(item.id || '');
+    if (id.startsWith('vault-') || id.startsWith('init-')) continue;
+    count++;
+  }
+  return count;
+}
+
 export function isDailyDigestNewsletter(
   item: Pick<FeedItem, 'id' | 'sourceReferences' | 'sourceBroadcasterName'>
 ): boolean {
@@ -788,7 +815,11 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
       }
 
       if (enforceMixedArtCap && candIsArt && hasNonArtLeft) {
-        if (artPlaced >= maxArtAllowed || artInRecent4) {
+        if (
+          artPlaced >= maxArtAllowed ||
+          artInRecent4 ||
+          (nonArtTotal >= 10 && (result.length < 3 || (result.length < 10 && artPlaced >= 1)))
+        ) {
           continue;
         }
       }
@@ -889,15 +920,14 @@ export function isWithin14DayRelevanceWindow(
   > & { score?: number },
   nowMs = Date.now()
 ): boolean {
-  const isVisualOrVaultTimeless =
+  const isVisualTimeless =
     item.format === 'art_showcase' ||
     item.format === 'meme' ||
     item.primaryTopic === 'art_aesthetics' ||
     item.primaryTopic === 'memes_satire' ||
     item.space === 'c/kunst_galerie' ||
-    item.space === 'c/memes' ||
-    Boolean(item.isEvergreenGem && String(item.id || '').startsWith('vault-'));
-  if (isVisualOrVaultTimeless) return true;
+    item.space === 'c/memes';
+  if (isVisualTimeless) return true;
 
   // Undated non-visual entries fall back to firstSeenAt / publishedAt so undated RSS essays still age out after 14 days
   const refDateStr =
@@ -937,8 +967,11 @@ export function rankBloomScrollFeed(
   // Pre-filter daily digest newsletters (max 1 newest issue <= 7d per publisher) & deduplicate by id
   const nowMs = Date.now();
   const freshDigests = dedupeDailyDigestNewsletters(items, 7);
+  const nonVaultCount = countNonVaultLiveItems(freshDigests);
+  const excludeNonArtVault = nonVaultCount >= 15;
   const fresh14dPoolCount = freshDigests.filter(it => {
     if (
+      isNonArtVaultItem(it) ||
       it.publicationDateReliable === false ||
       isArtShowcaseItem(it) ||
       it.format === 'meme'
@@ -953,7 +986,10 @@ export function rankBloomScrollFeed(
   const seenKeys = new Set<string>();
   const remaining: ScoredFeedItem[] = [];
   for (const item of freshDigests) {
-    if (apply14DayWindow && !isWithin14DayRelevanceWindow(item, nowMs)) {
+    if (excludeNonArtVault && isNonArtVaultItem(item)) {
+      continue;
+    }
+    if (apply14DayWindow && !isNonArtVaultItem(item) && !isWithin14DayRelevanceWindow(item, nowMs)) {
       continue;
     }
     const key = item.id;
@@ -964,6 +1000,16 @@ export function rankBloomScrollFeed(
 
   // Sort initial candidates by personal score + freshness
   remaining.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+  const nonArtFreshCount = remaining.filter(it => {
+    if (isArtShowcaseItem(it) || it.format === 'meme' || isNonArtVaultItem(it)) {
+      return false;
+    }
+    if (it.publicationDateReliable === false) return false;
+    const t = new Date(it.publishedAt).getTime();
+    return !isNaN(t) && t > 0 && (nowMs - t) <= 14 * 24 * 3600 * 1000;
+  }).length;
+  const guardTopArtSlots = nonArtFreshCount >= 10;
 
   const selected: ScoredFeedItem[] = [];
   const SLIDING_WINDOW = 6;
@@ -1022,6 +1068,8 @@ export function rankBloomScrollFeed(
     const recent3Domains = selected.slice(-3).map(s => getDomainDiversityKey(s));
     const recent3HasAggregator = selected.slice(-3).some(s => isAggregatorItem(s));
     const recent9HasArd = selected.slice(-9).some(s => isArdSource(s));
+    const artInTop10 = selected.slice(0, 10).filter(s => isArtShowcaseItem(s)).length;
+    const hasNonArtRemaining = guardTopArtSlots && remaining.some(r => !isArtShowcaseItem(r));
 
     let bestIdx = 0;
     let bestWindowScore = -Infinity;
@@ -1136,10 +1184,10 @@ export function rankBloomScrollFeed(
       if (options?.seenItemIds?.has(cand.id)) {
         utility -= 500.0;
       }
-      if (!isArtShowcaseItem(cand) && (cand.isStaticFallback || cand.id.startsWith('vault-gem-'))) {
+      if (isNonArtVaultItem(cand) || (!isArtShowcaseItem(cand) && cand.isStaticFallback)) {
         const pubYear = cand.publishedAt ? new Date(cand.publishedAt).getUTCFullYear() : NaN;
-        if (cand.isStaticFallback || (!isNaN(pubYear) && pubYear < 2016)) {
-          utility -= 14.0;
+        if (cand.isStaticFallback || isNonArtVaultItem(cand) || (!isNaN(pubYear) && pubYear < 2016)) {
+          utility -= 24.0;
         }
       }
 
@@ -1186,9 +1234,17 @@ export function rankBloomScrollFeed(
         const recentArtCount = recentWindow.filter(
           x => getCardRhythmFormat(x) === 'visual_art' || isArtShowcaseItem(x)
         ).length;
-        if (artCount30 >= 3) utility -= 3.2;
-        else if (recentArtCount >= 1) utility -= 1.8;
-        else utility += 0.22;
+        if (guardTopArtSlots && hasNonArtRemaining && pos < 3) {
+          utility -= 400.0; // Never occupy Slot #1-#3 when >= 10 non-art fresh articles are available
+        } else if (guardTopArtSlots && hasNonArtRemaining && pos < 10 && artInTop10 >= 1) {
+          utility -= 400.0; // Max 1 artwork in top 10 when >= 10 non-art fresh articles exist
+        } else if (artCount30 >= 3) {
+          utility -= 3.2;
+        } else if (recentArtCount >= 1) {
+          utility -= 1.8;
+        } else if (pos >= 3) {
+          utility += 0.22;
+        }
       }
 
       // 3. ~10% Teaching & ~10% Counter-Perspective Target Steering
@@ -1306,10 +1362,7 @@ export function interleaveSerendipitySlot(
   const isEligibleSerendipityCandidate = (cand: ScoredFeedItem): boolean => {
     if (seenItemIds?.has(cand.id)) return false;
     if (cand.isStaticFallback) return false;
-    if (!isArtShowcaseItem(cand) && cand.id.startsWith('vault-gem-')) {
-      const pubYear = cand.publishedAt ? new Date(cand.publishedAt).getUTCFullYear() : NaN;
-      if (!isNaN(pubYear) && pubYear < 2016) return false;
-    }
+    if (isNonArtVaultItem(cand)) return false;
     return true;
   };
 
@@ -1346,10 +1399,14 @@ export function interleaveSerendipitySlot(
     // Look ahead for a high-quality mind-expanding unseen item outside dominantTop2Topics and recentTopics
     const prevSpace = slotIdx > 0 ? getEffectiveSpaceHandle(result[slotIdx - 1]) : null;
     const nextSpace = slotIdx < result.length ? getEffectiveSpaceHandle(result[slotIdx]) : null;
+    const hasOtherArtInTop10 = (excludeIdx: number): boolean =>
+      slotIdx < 10 &&
+      result.slice(0, Math.min(10, result.length)).some((x, idx) => idx !== excludeIdx && isArtShowcaseItem(x));
     let swapCandidateIdx = -1;
     for (let j = slotIdx + 1; j < result.length; j++) {
       const cand = result[j];
       if (!isEligibleSerendipityCandidate(cand)) continue;
+      if (isArtShowcaseItem(cand) && hasOtherArtInTop10(j)) continue;
       const candSpace = getEffectiveSpaceHandle(cand);
       if (candSpace === prevSpace || candSpace === nextSpace) continue;
       const score = cand.curationScore ?? 7.8;
@@ -1376,6 +1433,7 @@ export function interleaveSerendipitySlot(
       for (let j = slotIdx + 1; j < result.length; j++) {
         const cand = result[j];
         if (!isEligibleSerendipityCandidate(cand)) continue;
+        if (isArtShowcaseItem(cand) && hasOtherArtInTop10(j)) continue;
         const candSpace = getEffectiveSpaceHandle(cand);
         if (candSpace === prevSpace || candSpace === nextSpace) continue;
         const score = cand.curationScore ?? 7.8;
@@ -1391,6 +1449,7 @@ export function interleaveSerendipitySlot(
       for (let j = slotIdx + 1; j < result.length; j++) {
         const cand = result[j];
         if (!isEligibleSerendipityCandidate(cand)) continue;
+        if (isArtShowcaseItem(cand) && hasOtherArtInTop10(j)) continue;
         const score = cand.curationScore ?? 7.8;
         if (score >= 7.5 && !dominantTop2Topics.has(cand.primaryTopic) && !recentTopics.has(cand.primaryTopic)) {
           swapCandidateIdx = j;
@@ -1489,7 +1548,7 @@ function hasVerifiedFeedImage(item: FeedItem): boolean {
  */
 function isEligibleForTodayNews(item: ScoredFeedItem, nowMs: number, maxAgeMs: number): boolean {
   if (isHivemindLearningCard(item)) return false;
-  if (isArtShowcaseItem(item) || item.isEvergreenGem) return false;
+  if (isArtShowcaseItem(item) || item.isEvergreenGem || isNonArtVaultItem(item) || item.isStaticFallback) return false;
   if (item.publicationDateReliable === false) return false;
 
   if (
@@ -1646,6 +1705,11 @@ export function sortFeedForDisplay(
     ['art_showcase', 'youtube_gem', 'book_masterpiece', 'meme', 'opportunity_radar', 'long_invitation', 'surprising_connection'].includes(item.format) ||
     ['museum_collection', 'encyclopedia', 'peer_reviewed'].includes(item.sourceTrustLevel || '');
 
+  const excludeNonArtVaultInLiveHorizons = countNonVaultLiveItems(remaining) >= 15;
+  const liveHorizonTopPins = excludeNonArtVaultInLiveHorizons
+    ? effectiveTopPins.filter(item => !isNonArtVaultItem(item))
+    : effectiveTopPins;
+
   // 1. "🔥 Für dich" (Default Smart Mix): Bloom-Ranking + Seen-Rotation + Serendipity Slot + Strict Diversity Caps
   if (mode === 'for_you' || (mode === 'hot' && options.interleave)) {
     const ranked = rankBloomScrollFeed(remaining, {
@@ -1653,7 +1717,7 @@ export function sortFeedForDisplay(
       seenRecords: options.seenRecords
     });
     const withSerendipity = interleaveSerendipitySlot(ranked, options.seenItemIds);
-    return [...effectiveTopPins, ...withSerendipity];
+    return [...liveHorizonTopPins, ...withSerendipity];
   }
 
   // 2a. "⚡ Heute" (True Today News Contract: diverse current news <= 18h / <= 36h, NEVER Hivemind or old papers, capped ARD)
@@ -1775,8 +1839,11 @@ export function sortFeedForDisplay(
   if (mode === 'discourse') {
     const now = Date.now();
     const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+    const discourseBase = excludeNonArtVaultInLiveHorizons
+      ? remaining.filter(item => !isNonArtVaultItem(item))
+      : remaining;
     // Exclude short news flashes, focus on substantive analyses from the last 1-14 days
-    const discourseCandidates = remaining
+    const discourseCandidates = discourseBase
       .filter(item => {
         const time = new Date(item.publishedAt).getTime();
         const isRecent = isNaN(time) || (now - time) <= fourteenDaysMs + (48 * 3600 * 1000);
@@ -1786,7 +1853,7 @@ export function sortFeedForDisplay(
       })
       .map(item => enrichItemWithDiscourseConcept(item));
 
-    const pool = discourseCandidates.length >= 3 ? discourseCandidates : remaining.map(item => enrichItemWithDiscourseConcept(item));
+    const pool = discourseCandidates.length >= 3 ? discourseCandidates : discourseBase.map(item => enrichItemWithDiscourseConcept(item));
     const sorted = [...pool].sort((a, b) => {
       const balancingA = isBalancingSource(a) ? 15 : 0;
       const balancingB = isBalancingSource(b) ? 15 : 0;
@@ -1795,13 +1862,16 @@ export function sortFeedForDisplay(
       if (scoreB !== scoreA) return scoreB - scoreA;
       return b.id.localeCompare(a.id);
     });
-    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today'], options.seenItemIds, options.seenRecords);
-    return [...effectiveTopPins, ...enforceCuratedStreamDiversity(disjoint)];
+    const disjoint = demoteItemsLeadingOtherHorizons(sorted, discourseBase, ['today'], options.seenItemIds, options.seenRecords);
+    return [...liveHorizonTopPins, ...enforceCuratedStreamDiversity(disjoint)];
   }
 
   // 4. "🏆 Top" (30-Day Review of highest impact items)
   if (mode === 'top') {
-    const sorted = [...remaining].sort((a, b) => {
+    const topBase = excludeNonArtVaultInLiveHorizons
+      ? remaining.filter(item => !isNonArtVaultItem(item))
+      : remaining;
+    const sorted = [...topBase].sort((a, b) => {
       const pointsA = (a.externalCommunityScore?.points ?? 0) + (a.upvotesCount ?? 0) * 10;
       const pointsB = (b.externalCommunityScore?.points ?? 0) + (b.upvotesCount ?? 0) * 10;
       const trustBonusA = a.sourceTrustLevel === 'peer_reviewed' ? 15 : a.sourceTrustLevel === 'public_broadcaster' ? 12 : a.sourceTrustLevel === 'deep_essay' ? 10 : 5;
@@ -1820,8 +1890,8 @@ export function sortFeedForDisplay(
       if (timeB !== timeA) return timeB - timeA;
       return b.id.localeCompare(a.id);
     });
-    const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today', 'discourse'], options.seenItemIds, options.seenRecords);
-    return [...effectiveTopPins, ...enforceCuratedStreamDiversity(disjoint)];
+    const disjoint = demoteItemsLeadingOtherHorizons(sorted, topBase, ['today', 'discourse'], options.seenItemIds, options.seenRecords);
+    return [...liveHorizonTopPins, ...enforceCuratedStreamDiversity(disjoint)];
   }
 
   // 5. "💎 Zeitlos" (Timeless essays, art, literature, music, evergreen concepts)
