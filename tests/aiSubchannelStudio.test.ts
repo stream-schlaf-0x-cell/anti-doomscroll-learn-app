@@ -1,11 +1,15 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { MemoryStorageDriver, AtemStorage } from '../src/core/data/storage';
 import { SpaceRepository, resolveItemSpaceHandle, canonicalSpaceHandle } from '../src/core/spaces/spaceRepository';
 import {
   generateDeterministicSubchannelDraft,
   generateSubchannelDraft,
   SUBCHANNEL_VIBES,
+  STUDIO_QUICK_THEMES,
+  stripLeadingDecorativeEmoji,
   SubchannelVibe
 } from '../src/core/studio/subchannelAssistant';
 import { FeedItem, FeedItemSchema } from '../src/core/domain/types';
@@ -187,6 +191,45 @@ describe('AI Studio & Subchannel Streamlining', () => {
 
       assert.equal(filterChannel(itemInChannelOnly), true, 'channel_only item MUST appear inside its own channel');
       assert.equal(filterChannel(itemInNormal), false, 'normal item must not appear inside unrelated channel');
+    });
+  });
+
+  describe('Studio UI Helpers & Hygiene Invariants', () => {
+    it('strips leading decorative emojis from vibes and flairs cleanly', () => {
+      assert.equal(
+        stripLeadingDecorativeEmoji(SUBCHANNEL_VIBES.contemplation.label),
+        'Inspiration & Kontemplation'
+      );
+      assert.equal(
+        stripLeadingDecorativeEmoji(SUBCHANNEL_VIBES.debate.label),
+        'Debatte & Streitfrage'
+      );
+      assert.equal(stripLeadingDecorativeEmoji('🎨 Bauhaus'), 'Bauhaus');
+      assert.equal(stripLeadingDecorativeEmoji('Erkenntnistheorie'), 'Erkenntnistheorie');
+    });
+
+    it('provides neutral quick themes and suggestedTitle on drafts', () => {
+      assert.ok(STUDIO_QUICK_THEMES.length >= 4);
+      for (const theme of STUDIO_QUICK_THEMES) {
+        assert.ok(!/buddhismus/i.test(theme));
+      }
+      const draft = generateDeterministicSubchannelDraft('Erkenntnistheorie', 'debate');
+      assert.equal(draft.suggestedTitle, 'Erkenntnistheorie');
+    });
+
+    it('enforces emoji-free, strict-TS, invariant-safe UltraMasterModal structure', () => {
+      const modalPath = path.resolve(__dirname, '..', 'src/ui/components/UltraMasterModal.tsx');
+      const modalSrc = fs.readFileSync(modalPath, 'utf8');
+
+      assert.ok(!modalSrc.includes('z.B. Buddhismus'));
+      assert.ok(!modalSrc.includes('c/buddhismus'));
+      assert.ok(!/:\s*any\b|\bas\s+any\b/.test(modalSrc), 'UltraMasterModal must not use loose any');
+      assert.ok(!/\p{Extended_Pictographic}/u.test(modalSrc), 'UltraMasterModal must contain zero decorative emojis');
+      assert.ok(modalSrc.includes("export type MasterTab = 'channels' | 'feed_control' | 'new_space' | 'taste'"));
+      assert.ok(modalSrc.includes('getEffectiveTopicWeight'));
+      assert.ok(modalSrc.includes('RecursiveLearningEngine.getEngineState()'));
+      assert.ok(modalSrc.includes('Erweiterte Optionen'));
+      assert.ok(modalSrc.includes('Geschmacksprofil zurücksetzen'));
     });
   });
 });

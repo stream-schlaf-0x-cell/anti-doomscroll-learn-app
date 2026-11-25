@@ -9,12 +9,22 @@
  */
 
 import { TopicTag, UserProfile, FeedItem } from '../domain/types';
-import { applyVoteFeedbackToProfile } from '../domain/ranking';
+import { applyVoteFeedbackToProfile, extractConceptKeywords } from '../domain/ranking';
 import { appStorage } from '../data/storage';
 
 export interface LearningTelemetryEvent {
   timestamp: string;
-  type: 'upvote' | 'downvote' | 'completed_reading' | 'note_created' | 'feedback_positive' | 'feedback_negative' | 'feedback_already_known' | 'feedback_more_depth' | 'raindrop_sync';
+  type:
+    | 'upvote'
+    | 'downvote'
+    | 'completed_reading'
+    | 'note_created'
+    | 'bookmark_saved'
+    | 'feedback_positive'
+    | 'feedback_negative'
+    | 'feedback_already_known'
+    | 'feedback_more_depth'
+    | 'raindrop_sync';
   topic: TopicTag;
   delta: number;
   reason: string;
@@ -29,11 +39,187 @@ export interface LearningEngineState {
   lastTunedAt: string;
 }
 
+const DEFAULT_DOMAIN_TRUST_SCORES: Record<string, number> = {
+  'plato.stanford.edu': 1.35,
+  'quantamagazine.org': 1.30,
+  'tagesschau.de': 1.20,
+  'spektrum.de': 1.25,
+  'aeon.co': 1.25,
+  'cdm.link': 1.15
+};
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+function decayFeedbackRecord(
+  record: Record<string, number> | undefined,
+  factor: number
+): Record<string, number> {
+  const next: Record<string, number> = {};
+  if (!record) return next;
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value !== 'number' || Number.isNaN(value)) continue;
+    const decayed = Math.round(value * factor * 100) / 100;
+    if (decayed >= 0.15) {
+      next[key] = decayed;
+    }
+  }
+  return next;
+}
+
+/**
+ * Pure helper that smoothly decays stale feedbackMemory boosts/penalties
+ * (half-life 28 days) and relaxes derivedWeights gently back toward explicitInterests,
+ * while leaving feedMixRatio completely untouched.
+ */
+export function applyGentleFeedbackDecay(
+  profile: UserProfile,
+  nowMs = Date.now()
+): UserProfile {
+  const mem = profile.feedbackMemory;
+  const lastDecayRaw = mem?.lastFeedbackDecayAt;
+  const lastDecayMs = lastDecayRaw ? new Date(lastDecayRaw).getTime() : NaN;
+
+  if (!lastDecayRaw || Number.isNaN(lastDecayMs)) {
+    return {
+      ...profile,
+      feedbackMemory: {
+        boostedTopics: { ...(mem?.boostedTopics || {}) },
+        penalizedTopics: { ...(mem?.penalizedTopics || {}) },
+        boostedAuthors: { ...(mem?.boostedAuthors || {}) },
+        penalizedAuthors: { ...(mem?.penalizedAuthors || {}) },
+        boostedKeywords: { ...(mem?.boostedKeywords || {}) },
+        penalizedKeywords: { ...(mem?.penalizedKeywords || {}) },
+        boostedDomains: { ...(mem?.boostedDomains || {}) },
+        penalizedDomains: { ...(mem?.penalizedDomains || {}) },
+        boostedSpaces: { ...(mem?.boostedSpaces || {}) },
+        penalizedSpaces: { ...(mem?.penalizedSpaces || {}) },
+        lastFeedbackDecayAt: new Date(nowMs).toISOString()
+      }
+    };
+  }
+
+  const elapsedMs = nowMs - lastDecayMs;
+  if (elapsedMs <= ONE_DAY_MS) {
+    return profile;
+  }
+
+  const daysElapsed = elapsedMs / ONE_DAY_MS;
+  const factor = Math.pow(0.5, daysElapsed / 28);
+
+  const nextDerivedWeights: Record<string, number> = {};
+  for (const [topic, derivedVal] of Object.entries(profile.derivedWeights || {})) {
+    if (typeof derivedVal !== 'number' || Number.isNaN(derivedVal)) continue;
+    const explicitVal = profile.explicitInterests?.[topic as TopicTag];
+    if (typeof explicitVal === 'number' && !Number.isNaN(explicitVal)) {
+      const relaxed = derivedVal + (explicitVal - derivedVal) * (1 - factor);
+      nextDerivedWeights[topic] = Math.round(relaxed * 1000) / 1000;
+    } else {
+      nextDerivedWeights[topic] = derivedVal;
+    }
+  }
+
+  return {
+    ...profile,
+    derivedWeights: nextDerivedWeights,
+    feedbackMemory: {
+      boostedTopics: decayFeedbackRecord(mem?.boostedTopics, factor),
+      penalizedTopics: decayFeedbackRecord(mem?.penalizedTopics, factor),
+      boostedAuthors: decayFeedbackRecord(mem?.boostedAuthors, factor),
+      penalizedAuthors: decayFeedbackRecord(mem?.penalizedAuthors, factor),
+      boostedKeywords: decayFeedbackRecord(mem?.boostedKeywords, factor),
+      penalizedKeywords: decayFeedbackRecord(mem?.penalizedKeywords, factor),
+      boostedDomains: decayFeedbackRecord(mem?.boostedDomains, factor),
+      penalizedDomains: decayFeedbackRecord(mem?.penalizedDomains, factor),
+      boostedSpaces: decayFeedbackRecord(mem?.boostedSpaces, factor),
+      penalizedSpaces: decayFeedbackRecord(mem?.penalizedSpaces, factor),
+      lastFeedbackDecayAt: new Date(nowMs).toISOString()
+    }
+  };
+}
+
+function applyPositiveSignalToFeedbackMemory(profile: UserProfile, item: FeedItem): UserProfile {
+  const primaryTopic = item.primaryTopic || 'philosophy_ethics';
+  const domain = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || '').toLowerCase().trim();
+  const author = (item.sourceReferences?.[0]?.author || item.sourceReferences?.[0]?.publisher || '').trim();
+  const space = item.space ? item.space.toLowerCase().trim() : '';
+  const keywords = extractConceptKeywords(item).slice(0, 2);
+
+  const mem = profile.feedbackMemory;
+  const nextMemory: UserProfile['feedbackMemory'] = {
+    boostedTopics: {
+      ...(mem?.boostedTopics || {}),
+      [primaryTopic]: (mem?.boostedTopics?.[primaryTopic] || 0) + 1
+    },
+    penalizedTopics: { ...(mem?.penalizedTopics || {}) },
+    boostedAuthors: { ...(mem?.boostedAuthors || {}) },
+    penalizedAuthors: { ...(mem?.penalizedAuthors || {}) },
+    boostedKeywords: { ...(mem?.boostedKeywords || {}) },
+    penalizedKeywords: { ...(mem?.penalizedKeywords || {}) },
+    boostedDomains: { ...(mem?.boostedDomains || {}) },
+    penalizedDomains: { ...(mem?.penalizedDomains || {}) },
+    boostedSpaces: { ...(mem?.boostedSpaces || {}) },
+    penalizedSpaces: { ...(mem?.penalizedSpaces || {}) },
+    ...(mem?.lastFeedbackDecayAt ? { lastFeedbackDecayAt: mem.lastFeedbackDecayAt } : {})
+  };
+
+  if (domain) {
+    nextMemory.boostedDomains[domain] = (nextMemory.boostedDomains[domain] || 0) + 1;
+  }
+  if (author) {
+    nextMemory.boostedAuthors[author] = (nextMemory.boostedAuthors[author] || 0) + 1;
+  }
+  for (const kw of keywords) {
+    nextMemory.boostedKeywords[kw] = (nextMemory.boostedKeywords[kw] || 0) + 1;
+  }
+  if (space) {
+    nextMemory.boostedSpaces[space] = (nextMemory.boostedSpaces[space] || 0) + 1;
+  }
+
+  return {
+    ...profile,
+    feedbackMemory: nextMemory
+  };
+}
+
+function extractNormalizedDomain(item: FeedItem): string {
+  const direct = (item.sourceDomain || '').toLowerCase().replace(/^www\./, '').trim();
+  if (direct) return direct;
+  const rawUrl = item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '';
+  if (!rawUrl) return '';
+  try {
+    return new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, '').trim();
+  } catch {
+    return '';
+  }
+}
+
 export class RecursiveLearningEngine {
   private static STORAGE_KEY = '@atem:recursive_learning_state';
   private static DAMPENING_FACTOR = 0.85; // Bounded dampening to prevent abrupt swings
   private static MIN_WEIGHT = 0.10;
   private static MAX_WEIGHT = 0.98;
+  private static cachedState: LearningEngineState | null = null;
+
+  private static createDefaultState(): LearningEngineState {
+    return {
+      events: [],
+      domainTrustScores: { ...DEFAULT_DOMAIN_TRUST_SCORES },
+      processedInteractions: {},
+      appliedInteractions: {},
+      totalLearningCycles: 0,
+      lastTunedAt: new Date().toISOString()
+    };
+  }
+
+  public static getCachedDomainTrustScores(): Record<string, number> {
+    return this.cachedState?.domainTrustScores ?? { ...DEFAULT_DOMAIN_TRUST_SCORES };
+  }
+
+  public static async resetState(): Promise<void> {
+    const fresh = this.createDefaultState();
+    this.cachedState = fresh;
+    await appStorage.setItem(this.STORAGE_KEY, JSON.stringify(fresh));
+  }
 
   /**
    * Retrieves the current telemetry and learning state.
@@ -42,44 +228,35 @@ export class RecursiveLearningEngine {
     try {
       const raw = await appStorage.getItem(this.STORAGE_KEY);
       if (!raw) {
-        return {
-          events: [],
-          domainTrustScores: {
-            'plato.stanford.edu': 1.35,
-            'quantamagazine.org': 1.30,
-            'tagesschau.de': 1.20,
-            'spektrum.de': 1.25,
-            'aeon.co': 1.25,
-            'cdm.link': 1.15
-          },
-          processedInteractions: {},
-          appliedInteractions: {},
-          totalLearningCycles: 0,
-          lastTunedAt: new Date().toISOString()
-        };
+        const defaults = this.createDefaultState();
+        this.cachedState = defaults;
+        return defaults;
       }
-      const parsed = JSON.parse(raw);
-      if (!parsed.processedInteractions) {
-        parsed.processedInteractions = {};
-      }
+      const parsed = JSON.parse(raw) as Partial<LearningEngineState>;
+      const state: LearningEngineState = {
+        events: Array.isArray(parsed.events) ? parsed.events : [],
+        domainTrustScores:
+          parsed.domainTrustScores && typeof parsed.domainTrustScores === 'object'
+            ? parsed.domainTrustScores
+            : { ...DEFAULT_DOMAIN_TRUST_SCORES },
+        processedInteractions: parsed.processedInteractions || {},
+        appliedInteractions: parsed.appliedInteractions || {},
+        totalLearningCycles: typeof parsed.totalLearningCycles === 'number' ? parsed.totalLearningCycles : 0,
+        lastTunedAt: typeof parsed.lastTunedAt === 'string' ? parsed.lastTunedAt : new Date().toISOString()
+      };
       if (!parsed.appliedInteractions) {
-        parsed.appliedInteractions = {};
-        for (const [itemId, evt] of Object.entries(parsed.processedInteractions)) {
+        for (const [itemId, evt] of Object.entries(state.processedInteractions)) {
           if (typeof evt === 'string') {
-            parsed.appliedInteractions[`${itemId}:${evt}`] = true;
+            state.appliedInteractions[`${itemId}:${evt}`] = true;
           }
         }
       }
-      return parsed;
+      this.cachedState = state;
+      return state;
     } catch {
-      return {
-        events: [],
-        domainTrustScores: {},
-        processedInteractions: {},
-        appliedInteractions: {},
-        totalLearningCycles: 0,
-        lastTunedAt: new Date().toISOString()
-      };
+      const defaults = this.createDefaultState();
+      this.cachedState = defaults;
+      return defaults;
     }
   }
 
@@ -91,7 +268,16 @@ export class RecursiveLearningEngine {
   public static async recordInteractionEvent(
     profile: UserProfile,
     item: FeedItem,
-    eventType: 'upvote' | 'downvote' | 'completed_reading' | 'note_created' | 'feedback_positive' | 'feedback_negative' | 'feedback_already_known' | 'feedback_more_depth'
+    eventType:
+      | 'upvote'
+      | 'downvote'
+      | 'completed_reading'
+      | 'note_created'
+      | 'bookmark_saved'
+      | 'feedback_positive'
+      | 'feedback_negative'
+      | 'feedback_already_known'
+      | 'feedback_more_depth'
   ): Promise<{ updatedProfile: UserProfile; event: LearningTelemetryEvent | null }> {
     const state = await this.getEngineState();
     const primaryTopic = item.primaryTopic || 'philosophy_ethics';
@@ -126,6 +312,10 @@ export class RecursiveLearningEngine {
         delta = 0.12;
         reason = `Substantielle Notiz/Reflexion verfasst`;
         break;
+      case 'bookmark_saved':
+        delta = 0.09;
+        reason = `Als Lesezeichen gesichert: „${item.title.slice(0, 30)}…“`;
+        break;
       case 'feedback_positive':
         delta = 0.15;
         reason = `Direktes Feedback „Mehr davon“`;
@@ -158,12 +348,19 @@ export class RecursiveLearningEngine {
       reason
     };
 
-    // Update domain trust
-    const domain = item.sourceReferences?.[0]?.publisher || '';
-    if (domain) {
-      const currentTrust = state.domainTrustScores[domain] || 1.0;
-      const trustDelta = delta > 0 ? 0.04 : -0.05;
-      state.domainTrustScores[domain] = Math.max(0.5, Math.min(2.0, currentTrust + trustDelta));
+    // Update domain trust for both normalized domain and publisher if present
+    const trustDelta = delta > 0 ? 0.04 : -0.05;
+    const normalizedDomain = extractNormalizedDomain(item);
+    const publisher = (item.sourceReferences?.[0]?.publisher || '').trim();
+    const trustKeys = new Set<string>();
+    if (normalizedDomain) trustKeys.add(normalizedDomain);
+    if (publisher && publisher.toLowerCase() !== normalizedDomain) {
+      trustKeys.add(publisher);
+    }
+    for (const key of trustKeys) {
+      const currentTrust = state.domainTrustScores[key] ?? 1.0;
+      const updatedTrust = Math.max(0.5, Math.min(2.0, Math.round((currentTrust + trustDelta) * 1000) / 1000));
+      state.domainTrustScores[key] = updatedTrust;
     }
 
     // Record idempotency tokens
@@ -183,14 +380,21 @@ export class RecursiveLearningEngine {
     state.totalLearningCycles++;
     state.lastTunedAt = new Date().toISOString();
 
+    this.cachedState = state;
     await appStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
 
-    // Propagate concept, keyword, subchannel, and domain affinity into feedbackMemory on vote/feedback
+    // Propagate concept, keyword, subchannel, and domain affinity into feedbackMemory
     let baseProfile = profile;
     if (eventType === 'upvote' || eventType === 'feedback_positive') {
       baseProfile = applyVoteFeedbackToProfile(profile, item, 'up');
     } else if (eventType === 'downvote' || eventType === 'feedback_negative') {
       baseProfile = applyVoteFeedbackToProfile(profile, item, 'down');
+    } else if (
+      eventType === 'bookmark_saved' ||
+      eventType === 'completed_reading' ||
+      eventType === 'note_created'
+    ) {
+      baseProfile = applyPositiveSignalToFeedbackMemory(profile, item);
     }
 
     // Update derivedWeights while keeping explicitInterests untouched

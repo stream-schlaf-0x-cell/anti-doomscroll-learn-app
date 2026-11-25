@@ -23,7 +23,11 @@ export interface ILibraryRepository {
   updateProgress(itemId: string, progressPercent: number): Promise<ReadingInteraction>;
   setFeedback(itemId: string, feedback: 'more_like_this' | 'less_like_this' | 'neutral'): Promise<ReadingInteraction>;
   addNote(itemId: string, text: string, tag?: 'einwand' | 'unterricht' | 'these' | 'notiz'): Promise<ReadingInteraction>;
-  voteItem(itemId: string, direction: 'up' | 'down' | 'clear'): Promise<ReadingInteraction>;
+  voteItem(
+    itemId: string,
+    direction: 'up' | 'down' | 'clear',
+    itemSnapshot?: ReadingInteraction['itemSnapshot']
+  ): Promise<ReadingInteraction>;
   clearLibrary(): Promise<void>;
   quarantineAndReset(): Promise<Record<string, ReadingInteraction>>;
 }
@@ -329,12 +333,18 @@ export class LocalLibraryRepository implements ILibraryRepository {
     }));
   }
 
-  async voteItem(itemId: string, direction: 'up' | 'down' | 'clear'): Promise<ReadingInteraction> {
+  async voteItem(
+    itemId: string,
+    direction: 'up' | 'down' | 'clear',
+    itemSnapshot?: ReadingInteraction['itemSnapshot']
+  ): Promise<ReadingInteraction> {
     const score = direction === 'up' ? 1 : direction === 'down' ? -1 : 0;
     return this.mutateInteraction(itemId, current => ({
       ...current,
       voteScore: score,
-      feedback: direction === 'up' ? 'more_like_this' : direction === 'down' ? 'less_like_this' : current.feedback
+      feedback: direction === 'up' ? 'more_like_this' : direction === 'down' ? 'less_like_this' : current.feedback,
+      upvotedAt: direction === 'up' ? (current.upvotedAt ?? new Date().toISOString()) : undefined,
+      itemSnapshot: itemSnapshot ?? current.itemSnapshot
     }));
   }
 

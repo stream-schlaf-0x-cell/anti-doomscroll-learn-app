@@ -344,7 +344,12 @@ export function optimizeImageUrl(url?: string, targetWidth = 1080): string | und
   return upgradeImageResolutionUrl(trimmed, targetWidth);
 }
 
-export type EditorialVisualCategory = 'comic' | 'square_photo' | 'landscape_photo' | 'suppressed';
+export type EditorialVisualCategory =
+  | 'comic'
+  | 'portrait_photo'
+  | 'square_photo'
+  | 'landscape_photo'
+  | 'suppressed';
 
 export interface EditorialImageAssessment {
   isValid: boolean;
@@ -352,6 +357,113 @@ export interface EditorialImageAssessment {
   objectPosition: string; // e.g. 'top center'
   recommendedAspectRatio?: number;
   reason?: string;
+}
+
+export interface EditorialImagePresentationParams {
+  naturalWidth?: number;
+  naturalHeight?: number;
+  category: EditorialVisualCategory;
+  isArt?: boolean;
+  isMeme?: boolean;
+  viewportWidth: number;
+}
+
+export interface EditorialImagePresentation {
+  frameAspectRatio: number;
+  maxFrameHeight: number;
+  resizeMode: 'contain' | 'cover';
+  objectPosition: string;
+  useMatteFrame: boolean;
+}
+
+/**
+ * Computes responsive, distortion-free container framing for FeedCard and ReaderScreen
+ * across iPhone, iPad (portrait/landscape), and Desktop viewports.
+ */
+export function computeEditorialImagePresentation(
+  params: EditorialImagePresentationParams
+): EditorialImagePresentation {
+  const { naturalWidth, naturalHeight, category, isArt = false, isMeme = false, viewportWidth } = params;
+  const hasNaturalDims =
+    typeof naturalWidth === 'number' &&
+    typeof naturalHeight === 'number' &&
+    naturalWidth > 0 &&
+    naturalHeight > 0;
+
+  const fallbackRatio =
+    isMeme || category === 'comic'
+      ? 1.25
+      : category === 'portrait_photo'
+      ? 0.8
+      : category === 'square_photo'
+      ? 1.0
+      : 16 / 9;
+
+  const ratio = hasNaturalDims ? naturalWidth / naturalHeight : fallbackRatio;
+
+  // Comics / visual humor are never cropped regardless of aspect ratio
+  if (isMeme || category === 'comic') {
+    return {
+      frameAspectRatio: Math.max(0.75, Math.min(2.45, ratio)),
+      maxFrameHeight: viewportWidth >= 700 ? 600 : 480,
+      resizeMode: 'contain',
+      objectPosition: '50% 50%',
+      useMatteFrame: true
+    };
+  }
+
+  // Museum artworks are always framed intact without edge cropping
+  if (isArt) {
+    return {
+      frameAspectRatio: Math.max(0.75, Math.min(2.2, ratio)),
+      maxFrameHeight: viewportWidth >= 700 ? 520 : 420,
+      resizeMode: 'contain',
+      objectPosition: '50% 50%',
+      useMatteFrame: true
+    };
+  }
+
+  // Portrait (ratio < 0.88) -> zero cropping inside a calm matte frame
+  if (ratio < 0.88) {
+    return {
+      frameAspectRatio: Math.max(0.75, ratio),
+      maxFrameHeight: viewportWidth >= 700 ? 480 : 390,
+      resizeMode: 'contain',
+      objectPosition: '50% 20%',
+      useMatteFrame: true
+    };
+  }
+
+  // Square / Cover (0.88 <= ratio <= 1.18) -> zero cropping of portraits, covers, or art
+  if (ratio <= 1.18) {
+    return {
+      frameAspectRatio: Math.max(0.95, Math.min(1.12, ratio)),
+      maxFrameHeight: viewportWidth >= 700 ? 440 : 360,
+      resizeMode: 'contain',
+      objectPosition: '50% 50%',
+      useMatteFrame: true
+    };
+  }
+
+  // Landscape (1.18 < ratio <= 2.45) -> upper-third face/subject protection, generous iPad height
+  if (ratio <= 2.45) {
+    return {
+      frameAspectRatio: Math.max(1.33, Math.min(1.91, ratio)),
+      maxFrameHeight: viewportWidth >= 960 ? 430 : viewportWidth >= 680 ? 420 : 280,
+      resizeMode: 'cover',
+      objectPosition: '50% 18%',
+      useMatteFrame: false
+    };
+  }
+
+  // Ultra-wide panorama (> 2.45) -> contain without aggressive slicing
+  return {
+    frameAspectRatio: Math.min(2.35, ratio),
+    maxFrameHeight: viewportWidth >= 960 ? 360 : viewportWidth >= 680 ? 340 : 240,
+    resizeMode: 'contain',
+    objectPosition: '50% 50%',
+    useMatteFrame: true
+  };
 }
 
 /**
@@ -395,7 +507,32 @@ export function assessEditorialImage(
     };
   }
 
-  // 2. Square format (Artworks, Album Art, Book Covers, Square Portraits)
+  // 2. Portrait format hints
+  const dimMatch = clean.match(/[/_-](\d{3,4})x(\d{3,4})(?:[/_.-]|$)/);
+  if (dimMatch) {
+    const w = parseInt(dimMatch[1], 10);
+    const h = parseInt(dimMatch[2], 10);
+    if (w > 0 && h > 0 && w / h < 0.88) {
+      return {
+        isValid: true,
+        category: 'portrait_photo',
+        objectPosition: '50% 20%',
+        recommendedAspectRatio: Math.max(0.75, w / h),
+        reason: 'Hochformat-Motiv: Vollständig gerahmt ohne Anschnitt'
+      };
+    }
+  }
+  if (clean.includes('portrait')) {
+    return {
+      isValid: true,
+      category: 'portrait_photo',
+      objectPosition: '50% 20%',
+      recommendedAspectRatio: 0.8,
+      reason: 'Hochformat-Motiv: Vollständig gerahmt ohne Anschnitt'
+    };
+  }
+
+  // 3. Square format (Artworks, Album Art, Book Covers, Square Portraits)
   if (
     clean.includes('cover') ||
     clean.includes('album') ||
@@ -407,17 +544,17 @@ export function assessEditorialImage(
     return {
       isValid: true,
       category: 'square_photo',
-      objectPosition: 'top center',
+      objectPosition: '50% 50%',
       recommendedAspectRatio: 1.0,
       reason: 'Quadratisches Kunstwerk / Cover: Zentriert gerahmt, Stirnhöhe geschützt'
     };
   }
 
-  // 3. Editorial Landscape Press Photos (16:9 / 3:2)
+  // 4. Editorial Landscape Press Photos (16:9 / 3:2)
   return {
     isValid: true,
     category: 'landscape_photo',
-    objectPosition: 'top center',
+    objectPosition: '50% 18%',
     recommendedAspectRatio: 16 / 9,
     reason: 'Redaktionelles Pressefoto: 16:9 Master mit Kopfraum-Priorität'
   };

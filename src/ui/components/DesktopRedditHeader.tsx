@@ -243,15 +243,16 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
             >
               <Ionicons name="planet-outline" size={14} color={colors.accent} style={{ marginRight: 5 }} />
               <Text style={[styles.spaceDropdownText, { color: colors.textPrimary }]} numberOfLines={1}>
-                {activeSpaceName === 'Alle Spaces' ? 'Alle Spaces ▾' : `${activeSpaceName} ▾`}
+                {activeSpaceName}
               </Text>
+              <Ionicons name="chevron-down" size={12} color={colors.textMuted} style={{ marginLeft: 4 }} />
             </TouchableOpacity>
           </View>
 
-          {/* Center: Clean navigation pills for 🏠 Stream, 🌌 Kosmos, and ✨ AI Studio */}
+          {/* Center: Clean navigation pills for Stream, Kosmos, AI Studio, Lernen (Hivemind) */}
           <View style={styles.centerSection}>
             <View style={styles.centerNavGroup}>
-              {/* 1. 🏠 Stream */}
+              {/* 1. Stream */}
               <TouchableOpacity
                 onPress={() => {
                   setActiveTab('feed');
@@ -281,11 +282,11 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                     { color: activeTab === 'feed' ? '#FFFFFF' : colors.textPrimary, fontWeight: activeTab === 'feed' ? '700' : '600' }
                   ]}
                 >
-                  🏠 Stream
+                  Stream
                 </Text>
               </TouchableOpacity>
 
-              {/* 2. 🌌 Kosmos (3D Galaxy) */}
+              {/* 2. Kosmos (3D Galaxy) */}
               <TouchableOpacity
                 onPress={() => setActiveTab('network')}
                 style={[
@@ -312,18 +313,18 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                     { color: activeTab === 'network' ? '#FFFFFF' : colors.textPrimary, fontWeight: activeTab === 'network' ? '700' : '600' }
                   ]}
                 >
-                  🌌 Kosmos
+                  Kosmos
                 </Text>
               </TouchableOpacity>
 
-              {/* 3. ✨ AI Studio (Subchannels as #1 priority) */}
+              {/* 3. AI Studio */}
               <TouchableOpacity
                 onPress={() => setShowUltraMasterModal(true)}
                 style={[
                   styles.navPill,
                   {
                     backgroundColor: colors.surfaceSecondary,
-                    borderColor: '#F59E0B'
+                    borderColor: colors.borderSubtle
                   }
                 ]}
                 activeOpacity={0.75}
@@ -331,22 +332,22 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 accessibilityLabel="AI Studio & Subchannel-Erstellung öffnen"
               >
                 <Ionicons
-                  name="sparkles"
-                  size={13}
-                  color="#F59E0B"
+                  name="sparkles-outline"
+                  size={14}
+                  color={colors.accent}
                   style={{ marginRight: 5 }}
                 />
                 <Text
                   style={[
                     styles.navPillText,
-                    { color: colors.textPrimary, fontWeight: '700' }
+                    { color: colors.textPrimary, fontWeight: '600' }
                   ]}
                 >
-                  ✨ AI Studio
+                  AI Studio
                 </Text>
               </TouchableOpacity>
 
-              {/* 4. 🧠 Lernen (Hivemind) */}
+              {/* 4. Lernen (Hivemind) */}
               <TouchableOpacity
                 onPress={() => {
                   if (onOpenHivemind) {
@@ -358,19 +359,24 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 style={[
                   styles.navPill,
                   {
-                    backgroundColor: 'rgba(139, 92, 246, 0.14)',
-                    borderColor: '#8B5CF6'
+                    backgroundColor: colors.surfaceSecondary,
+                    borderColor: colors.borderSubtle
                   }
                 ]}
                 activeOpacity={0.75}
                 accessibilityRole="button"
                 accessibilityLabel="Lernen (Hivemind) öffnen"
               >
-                <Text style={{ fontSize: 13, marginRight: 5 }}>🧠</Text>
+                <Ionicons
+                  name="school-outline"
+                  size={14}
+                  color={colors.accent}
+                  style={{ marginRight: 5 }}
+                />
                 <Text
                   style={[
                     styles.navPillText,
-                    { color: '#8B5CF6', fontWeight: '700' }
+                    { color: colors.textPrimary, fontWeight: '600' }
                   ]}
                 >
                   Lernen (Hivemind)
@@ -379,17 +385,15 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
             </View>
           </View>
 
-          {/* Right: ☁️ Live Cloud Sync + 🧘 Atmen breathing portal trigger + Settings/Theme */}
+          {/* Right: Live Cloud Sync + Atmen breathing portal trigger + Settings/Theme */}
           <View style={styles.rightSection}>
             <TouchableOpacity
               onPress={() => setActiveTab('settings')}
               style={[
                 styles.breathingPill,
                 {
-                  backgroundColor: cloudSyncConfig.enabled
-                    ? (isDark ? 'rgba(16, 185, 129, 0.14)' : '#ECFDF5')
-                    : colors.surfaceSecondary,
-                  borderColor: cloudSyncConfig.enabled ? '#10B981' : colors.borderSubtle
+                  backgroundColor: colors.surfaceSecondary,
+                  borderColor: colors.borderSubtle
                 }
               ]}
               activeOpacity={0.8}
@@ -399,13 +403,13 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
               <Ionicons
                 name={cloudSyncConfig.enabled ? 'cloud-done-outline' : 'cloud-outline'}
                 size={14}
-                color={cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary}
+                color={cloudSyncConfig.enabled ? colors.success : colors.textSecondary}
                 style={{ marginRight: 5 }}
               />
               <Text
                 style={[
                   styles.breathingPillText,
-                  { color: cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary, fontWeight: '700' }
+                  { color: cloudSyncConfig.enabled ? colors.success : colors.textSecondary, fontWeight: '600' }
                 ]}
               >
                 {isSyncing ? 'Sync…' : cloudSyncConfig.enabled ? 'Synchronisiert' : 'Geräte koppeln'}
@@ -414,13 +418,13 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
 
             <TouchableOpacity
               onPress={() => setShowBreathingPortal(true)}
-              style={[styles.breathingPill, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: '#10B981' }]}
+              style={[styles.breathingPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
               activeOpacity={0.8}
               accessibilityRole="button"
               accessibilityLabel="Atmen Portal öffnen"
             >
-              <Text style={{ fontSize: 13, marginRight: 4 }}>🧘</Text>
-              <Text style={[styles.breathingPillText, { color: '#10B981', fontWeight: '700' }]}>
+              <Ionicons name="leaf-outline" size={14} color={colors.success} style={{ marginRight: 5 }} />
+              <Text style={[styles.breathingPillText, { color: colors.textPrimary, fontWeight: '600' }]}>
                 Atmen
               </Text>
             </TouchableOpacity>
@@ -507,7 +511,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                   selectedFilter === 'all' && { backgroundColor: colors.accentSubtle }
                 ]}
               >
-                <Text style={styles.spaceItemIcon}>🌟</Text>
+                <Ionicons name="apps-outline" size={18} color={colors.accent} style={{ marginRight: 10 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.spaceItemTitle, { color: colors.textPrimary }]}>Alle Spaces</Text>
                   <Text style={[styles.spaceItemSub, { color: colors.textMuted }]}>Vollständiger kuratierter Feed aller Wissensbereiche</Text>
@@ -641,8 +645,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
 
             <View style={styles.karmaRulesBox}>
               <Text style={[styles.karmaRulesHeader, { color: colors.textPrimary }]}>Wie du Erkenntnis-Karma aufbaust:</Text>
-              <Text style={[styles.karmaRuleLine, { color: colors.textSecondary }]}>• +10 Punkte für jeden dialektischen Einwand ([⚡️ Einwand])</Text>
-              <Text style={[styles.karmaRuleLine, { color: colors.textSecondary }]}>• +15 Punkte für didaktische Unterrichtsentwürfe ([🏫 Unterricht])</Text>
+              <Text style={[styles.karmaRuleLine, { color: colors.textSecondary }]}>• +10 Punkte für jeden dialektischen Einwand (Einwand)</Text>
+              <Text style={[styles.karmaRuleLine, { color: colors.textSecondary }]}>• +15 Punkte für didaktische Unterrichtsentwürfe (Unterricht)</Text>
               <Text style={[styles.karmaRuleLine, { color: colors.textSecondary }]}>• +5 Punkte für gespeicherte Artikel im Archiv</Text>
               <Text style={[styles.karmaRuleLine, { color: colors.textSecondary }]}>• +2 Punkte für sachliche Upvotes</Text>
               <Text style={[styles.karmaRuleLine, { color: colors.textMuted, fontStyle: 'italic', marginTop: 4 }]}>
@@ -716,8 +720,8 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                 <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 4 }]}>1. KI-Provider:</Text>
                 <View style={styles.providerRow}>
                   {[
-                    { id: 'gemini' as const, label: '⚡️ Google Gemini', desc: 'Offiziell (3.8 Flash, Argon, Nano)' },
-                    { id: 'openrouter' as const, label: '🔮 OpenRouter', desc: 'Claude 3.5 Sonnet, Llama 3.3 & mehr' }
+                    { id: 'gemini' as const, label: 'Google Gemini', icon: 'flash-outline' as const, desc: 'Offiziell (3.8 Flash, Argon, Nano)' },
+                    { id: 'openrouter' as const, label: 'OpenRouter', icon: 'globe-outline' as const, desc: 'Claude 3.5 Sonnet, Llama 3.3 & mehr' }
                   ].map(p => (
                     <TouchableOpacity
                       key={p.id}
@@ -730,6 +734,12 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                         }
                       ]}
                     >
+                      <Ionicons
+                        name={p.icon}
+                        size={13}
+                        color={aiCreds.provider === p.id ? '#FFFFFF' : colors.accent}
+                        style={{ marginRight: 5 }}
+                      />
                       <Text style={[styles.providerPillText, { color: aiCreds.provider === p.id ? '#FFFFFF' : colors.textPrimary }]}>
                         {p.label}
                       </Text>
@@ -838,9 +848,12 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
                   {isTestingAI ? (
                     <ActivityIndicator size="small" color={colors.accent} />
                   ) : (
-                    <Text style={[styles.modalActionBtnText, { color: colors.accent, fontWeight: '700', fontSize: 12 }]}>
-                      🔑 Verbindung testen & Key validieren
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="key-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
+                      <Text style={[styles.modalActionBtnText, { color: colors.accent, fontWeight: '700', fontSize: 12 }]}>
+                        Verbindung testen & Key validieren
+                      </Text>
+                    </View>
                   )}
                 </TouchableOpacity>
 
@@ -1267,7 +1280,7 @@ export const DesktopRedditHeader: React.FC<DesktopRedditHeaderProps> = ({
 
 const styles = StyleSheet.create({
   headerContainer: {
-    height: 52,
+    height: 58,
     borderBottomWidth: 1,
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
@@ -1447,10 +1460,10 @@ const styles = StyleSheet.create({
   breathingPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: radius.pill,
-    borderWidth: 0.5
+    borderWidth: 1
   },
   breathingPillText: {
     fontSize: 11
@@ -1655,6 +1668,8 @@ const styles = StyleSheet.create({
   },
   providerPill: {
     flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
     paddingVertical: 8,
     paddingHorizontal: 6,
     borderRadius: radius.md,

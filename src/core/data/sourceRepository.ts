@@ -203,6 +203,10 @@ function categorizeVerifiedSource(source: RawFeedSource): { category: SourceCate
     id === 'forschung-und-wissen' ||
     id === 'idw-wissenschaft' ||
     id === 'nautilus-magazine' ||
+    id === 'asimov-press' ||
+    id === 'the-conversation-global' ||
+    id === 'zeit-wissen' ||
+    id === 'sz-wissen' ||
     id === 'nature-news' ||
     id.startsWith('sciencedaily') ||
     id === 'mpg-forschung' ||
@@ -212,6 +216,15 @@ function categorizeVerifiedSource(source: RawFeedSource): { category: SourceCate
     return { category: 'science', trustBadge: 'Wissenschaft & Forschung' };
   }
   if (
+    id === 'brandeins-magazin' ||
+    id === 'krautreporter-magazin' ||
+    id === 'republik-ch' ||
+    id === 'zeit-kultur' ||
+    id === 'sz-kultur'
+  ) {
+    return { category: 'culture', trustBadge: 'Qualitätsjournalismus & Essay' };
+  }
+  if (
     id === 'sep-whats-new' ||
     id === 'perlentaucher-magazin' ||
     id === 'dlf-buechermarkt' ||
@@ -219,11 +232,14 @@ function categorizeVerifiedSource(source: RawFeedSource): { category: SourceCate
     id === 'psyche-magazine' ||
     id === 'daily-nous' ||
     id === 'netzpolitik-org' ||
+    id === 'verfassungsblog-de' ||
     id === 'philosophy-now' ||
     id === 'the-marginalian' ||
     id === 'public-domain-review' ||
+    id === 'open-culture' ||
     id === 'astral-codex-ten' ||
     id === 'works-in-progress' ||
+    id === 'noema-magazine' ||
     id === 'tricycle-buddhist' ||
     id === 'lions-roar-buddhism' ||
     id === 'plum-village-mindfulness' ||
@@ -231,13 +247,21 @@ function categorizeVerifiedSource(source: RawFeedSource): { category: SourceCate
     id === 'colossal-art' ||
     id === 'hyperallergic-art' ||
     id === 'monopol-kunst' ||
+    id === 'archdaily-architecture' ||
+    id === 'dezeen-design' ||
     id === '3quarksdaily' ||
     id === 'geschichte-der-gegenwart' ||
     id === 'praefaktisch-philosophie'
   ) {
     return { category: 'culture', trustBadge: 'Essay, Kunst & Kontemplation' };
   }
-  if (id === 'deutsches-schulportal' || id === 'deutscher-bildungsserver' || id === 'edutopia-learning') {
+  if (
+    id === 'deutsches-schulportal' ||
+    id === 'deutscher-bildungsserver' ||
+    id === 'edutopia-learning' ||
+    id === 'bpb-apuz' ||
+    id === 'bob-blume-netzlehrer'
+  ) {
     return { category: 'education', trustBadge: 'Bildung & Didaktik' };
   }
   if (
@@ -249,6 +273,9 @@ function categorizeVerifiedSource(source: RawFeedSource): { category: SourceCate
     id === 'sketchplanations'
   ) {
     return { category: 'memes', trustBadge: 'Comics & Denkmodelle' };
+  }
+  if (id === 'sound-on-sound' || id === 'attack-magazine-synth') {
+    return { category: 'tech', trustBadge: 'Klangsynthese & Studiotechnik' };
   }
   return { category: 'tech', trustBadge: 'KI, Tech & Klang' };
 }

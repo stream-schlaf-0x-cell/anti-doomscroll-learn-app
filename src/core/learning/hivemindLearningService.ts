@@ -69,8 +69,8 @@ export interface GenerateHivemindTrackOptions {
 
 export function inferTrackTopicAndEmoji(titleOrText: string): { topic: TopicTag; emoji: string } {
   const lower = (titleOrText || '').toLowerCase();
-  if (/\b(quant|physik|kosmos|relativität|biolog|evolution|wissenschaft|chemie|klima|geolog|astronomie)\b/.test(lower)) {
-    return { topic: 'science_synthesis' as any in {} ? 'science_society' : 'science_society', emoji: '⚛️' };
+  if (/\b(quant\w*|physik\w*|kosmos|relativität\w*|biolog\w*|evolution\w*|wissenschaft\w*|chemie|klima\w*|geolog\w*|astronomie|science|physics)\b/.test(lower)) {
+    return { topic: 'science_society', emoji: '⚛️' };
   }
   if (/\b(rom|römisch|marius|caesar|augustus|geschichte|antike|mittelalter|imperium|republik)\b/.test(lower)) {
     return { topic: 'science_society', emoji: '🏛️' };
@@ -103,8 +103,49 @@ export function inferTrackTopicAndEmoji(titleOrText: string): { topic: TopicTag;
 // Zero-Crash Client-Side PDF / Text / Book Extractor
 // ---------------------------------------------------------------------------
 
+const WIN_ANSI_HIGH_MAP: Record<number, string> = {
+  0x80: '€',
+  0x82: '‚',
+  0x83: 'ƒ',
+  0x84: '„',
+  0x85: '…',
+  0x86: '†',
+  0x87: '‡',
+  0x88: 'ˆ',
+  0x89: '‰',
+  0x8a: 'Š',
+  0x8b: '‹',
+  0x8c: 'Œ',
+  0x8e: 'Ž',
+  0x91: '‘',
+  0x92: '’',
+  0x93: '“',
+  0x94: '”',
+  0x95: '•',
+  0x96: '–',
+  0x97: '—',
+  0x98: '˜',
+  0x99: '™',
+  0x9a: 'š',
+  0x9b: '›',
+  0x9c: 'œ',
+  0x9e: 'ž',
+  0x9f: 'Ÿ'
+};
+
+function decodeWinAnsiByte(code: number): string {
+  if (code >= 0x80 && code <= 0x9f) {
+    return WIN_ANSI_HIGH_MAP[code] ?? ' ';
+  }
+  if (code >= 32 && code <= 255) {
+    return String.fromCharCode(code);
+  }
+  return ' ';
+}
+
 function decodePdfLiteralEscapes(raw: string): string {
   return raw
+    .replace(/\\\r?\n/g, '')
     .replace(/\\n/g, '\n')
     .replace(/\\r/g, ' ')
     .replace(/\\t/g, ' ')
@@ -113,8 +154,9 @@ function decodePdfLiteralEscapes(raw: string): string {
     .replace(/\\\\/g, '\\')
     .replace(/\\([0-7]{1,3})/g, (_m, oct) => {
       const code = parseInt(oct, 8);
-      return code >= 32 && code <= 255 ? String.fromCharCode(code) : ' ';
-    });
+      return decodeWinAnsiByte(code);
+    })
+    .replace(/[\x80-\x9F]/g, ch => decodeWinAnsiByte(ch.charCodeAt(0)));
 }
 
 function decodePdfHexString(hex: string): string {
@@ -133,13 +175,13 @@ function decodePdfHexString(hex: string): string {
   for (let i = 0; i + 1 < clean.length; i += 2) {
     const code = parseInt(clean.slice(i, i + 2), 16);
     if (code >= 32 && code <= 255) {
-      out += String.fromCharCode(code);
+      out += decodeWinAnsiByte(code);
     }
   }
   return out;
 }
 
-function bytesToLatin1(bytes: Uint8Array, maxBytes = 12_000_000): string {
+function bytesToLatin1(bytes: Uint8Array, maxBytes = 16_000_000): string {
   const len = Math.min(bytes.length, maxBytes);
   let out = '';
   // Process in 16KB chunks to avoid slow character concatenation and argument overflow
@@ -261,7 +303,7 @@ async function extractFlateDecodePdfText(bytes: Uint8Array): Promise<{
   const decompressedParts: string[] = [];
   let sawCompressedStreams = false;
 
-  const streamHeaderRegex = /stream(?:\r\n|\n|\r)/g;
+  const streamHeaderRegex = /stream[ \t]*(?:\r\n|\n|\r)/g;
   let streamMatch: RegExpExecArray | null;
   while ((streamMatch = streamHeaderRegex.exec(rawLatin1)) !== null) {
     const dataStart = streamMatch.index + streamMatch[0].length;
@@ -272,10 +314,11 @@ async function extractFlateDecodePdfText(bytes: Uint8Array): Promise<{
     let dataEnd = endIdx;
     if (dataEnd > dataStart && rawLatin1[dataEnd - 1] === '\n') dataEnd--;
     if (dataEnd > dataStart && rawLatin1[dataEnd - 1] === '\r') dataEnd--;
-    if (dataEnd - dataStart <= 2 || dataEnd - dataStart > 4_000_000) continue;
+    if (dataEnd - dataStart <= 2 || dataEnd - dataStart > 8_000_000) continue;
 
-    const dictWindow = rawLatin1.slice(Math.max(0, streamMatch.index - 400), streamMatch.index);
-    const hasFlateFilter = /\/FlateDecode\b/.test(dictWindow);
+    const dictStart = Math.max(0, streamMatch.index - 600, rawLatin1.lastIndexOf('endobj', streamMatch.index));
+    const dictWindow = rawLatin1.slice(dictStart, streamMatch.index);
+    const hasFlateFilter = /\/Filter\s*(?:\[[^\]]*)?\/FlateDecode\b|\/FlateDecode\b/.test(dictWindow);
     const firstByte = bytes[dataStart];
     const secondByte = bytes[dataStart + 1];
     const looksLikeZlib = firstByte === 0x78 && (secondByte === 0x01 || secondByte === 0x5e || secondByte === 0x9c || secondByte === 0xda);
@@ -289,8 +332,8 @@ async function extractFlateDecodePdfText(bytes: Uint8Array): Promise<{
       (await runDecompressionStream(slice, 'deflate-raw'));
 
     if (inflated && inflated.length > 0) {
-      const decoded = bytesToLatin1(inflated, 2_000_000);
-      if (/\bBT\b/.test(decoded) || /beginbfchar|beginbfrange/.test(decoded) || /[A-Za-z0-9]{4,}/.test(decoded)) {
+      const decoded = bytesToLatin1(inflated, 8_000_000);
+      if (/\bBT\b/.test(decoded) || /beginbfchar|beginbfrange/.test(decoded) || /[A-Za-zäöüÄÖÜß0-9]{4,}/.test(decoded)) {
         decompressedParts.push(decoded);
       }
     }
@@ -323,50 +366,58 @@ export function parsePdfBufferTextFallback(
   }
   const chunks: string[] = [];
 
-  // 1. Parse BT ... ET text object blocks
+  // 1. Parse BT ... ET text object blocks in document order, preserving PDF line breaks
   const btEtRegex = /BT\b([\s\S]*?)\bET/g;
   let blockMatch: RegExpExecArray | null;
   while ((blockMatch = btEtRegex.exec(rawLatin1)) !== null) {
     const block = blockMatch[1];
-    const lineParts: string[] = [];
+    const lines: string[] = [];
+    let currentLineParts: string[] = [];
 
-    // Match TJ arrays: [(Hello) -20 (World)] TJ
-    const tjArrayRegex = /\[([\s\S]*?)\]\s*TJ/g;
-    let arrMatch: RegExpExecArray | null;
-    while ((arrMatch = tjArrayRegex.exec(block)) !== null) {
-      const inner = arrMatch[1];
-      const tokenRegex = /\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>/g;
-      let tok: RegExpExecArray | null;
-      let wordBuf = '';
-      while ((tok = tokenRegex.exec(inner)) !== null) {
-        const t = tok[0];
-        if (t.startsWith('(') && t.endsWith(')')) {
-          wordBuf += decodePdfLiteralEscapes(t.slice(1, -1));
-        } else if (t.startsWith('<') && t.endsWith('>')) {
-          wordBuf += decodePdfHexWithCMap(t.slice(1, -1), cmap);
-        }
+    const flushLine = () => {
+      if (currentLineParts.length > 0) {
+        lines.push(currentLineParts.join(' '));
+        currentLineParts = [];
       }
-      if (wordBuf.trim()) lineParts.push(wordBuf.trim());
-    }
+    };
 
-    // Match single (text) Tj or ' or "
-    const singleTjRegex = /\(((?:\\.|[^\\)])*)\)\s*(?:Tj|'|")/g;
-    let singleMatch: RegExpExecArray | null;
-    while ((singleMatch = singleTjRegex.exec(block)) !== null) {
-      const decoded = decodePdfLiteralEscapes(singleMatch[1]).trim();
-      if (decoded) lineParts.push(decoded);
+    const opRegex = /\[([\s\S]*?)\]\s*TJ|\(((?:\\.|[^\\)])*)\)\s*(Tj|'|")|<([0-9A-Fa-f\s]+)>\s*(Tj|'|")|T\*(?=\s|$)|\b(?:Td|TD|Tm)\b/g;
+    let opMatch: RegExpExecArray | null;
+    while ((opMatch = opRegex.exec(block)) !== null) {
+      if (opMatch[1] !== undefined) {
+        // [(Hello) -20 (World)] TJ
+        const inner = opMatch[1];
+        const tokenRegex = /\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>/g;
+        let tok: RegExpExecArray | null;
+        let wordBuf = '';
+        while ((tok = tokenRegex.exec(inner)) !== null) {
+          const t = tok[0];
+          if (t.startsWith('(') && t.endsWith(')')) {
+            wordBuf += decodePdfLiteralEscapes(t.slice(1, -1));
+          } else if (t.startsWith('<') && t.endsWith('>')) {
+            wordBuf += decodePdfHexWithCMap(t.slice(1, -1), cmap);
+          }
+        }
+        if (wordBuf.trim()) currentLineParts.push(wordBuf.trim());
+      } else if (opMatch[2] !== undefined) {
+        // (text) Tj or ' or "
+        if (opMatch[3] === "'" || opMatch[3] === '"') flushLine();
+        const decoded = decodePdfLiteralEscapes(opMatch[2]).trim();
+        if (decoded) currentLineParts.push(decoded);
+      } else if (opMatch[4] !== undefined) {
+        // <hex> Tj or ' or "
+        if (opMatch[5] === "'" || opMatch[5] === '"') flushLine();
+        const decoded = decodePdfHexWithCMap(opMatch[4], cmap).trim();
+        if (decoded) currentLineParts.push(decoded);
+      } else {
+        // Line positioning operator (T*, Td, TD, Tm)
+        flushLine();
+      }
     }
+    flushLine();
 
-    // Match single <hex> Tj
-    const singleHexTjRegex = /<([0-9A-Fa-f\s]+)>\s*(?:Tj|'|")/g;
-    let hexMatch: RegExpExecArray | null;
-    while ((hexMatch = singleHexTjRegex.exec(block)) !== null) {
-      const decoded = decodePdfHexWithCMap(hexMatch[1], cmap).trim();
-      if (decoded) lineParts.push(decoded);
-    }
-
-    if (lineParts.length > 0) {
-      chunks.push(lineParts.join(' '));
+    if (lines.length > 0) {
+      chunks.push(lines.join('\n'));
     }
   }
 
@@ -389,14 +440,32 @@ export function parsePdfBufferTextFallback(
 
   return chunks
     .join('\n')
+    .replace(/([a-zäöüß])-\s*\n\s*([a-zäöüß])/g, '$1$2')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
-/**
- * Extracts clean text from an uploaded `.pdf`, `.txt`, `.md`, `.json`, or raw buffer/string.
- */
+interface PdfJsPageTextItem {
+  str?: string;
+}
+
+interface PdfJsLike {
+  getDocument: (opts: { data: Uint8Array }) => {
+    promise: Promise<{
+      numPages?: number;
+      getPage: (pageNum: number) => Promise<{
+        getTextContent: () => Promise<{ items?: PdfJsPageTextItem[] }>;
+      }>;
+    }>;
+  };
+}
+
+function getWindowPdfJs(): PdfJsLike | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const candidate = (window as unknown as { pdfjsLib?: PdfJsLike }).pdfjsLib;
+  return candidate && typeof candidate.getDocument === 'function' ? candidate : undefined;
+}
 export async function extractTextFromUploadedFile(
   input: ArrayBuffer | Uint8Array | string | { text?: () => Promise<string>; arrayBuffer?: () => Promise<ArrayBuffer>; name?: string },
   fileName?: string
@@ -442,9 +511,9 @@ export async function extractTextFromUploadedFile(
 
   if (isPdf) {
     // Optional Web PDF.js CDN support if loaded in window
-    if (typeof window !== 'undefined' && (window as any).pdfjsLib) {
+    const pdfjsLib = getWindowPdfJs();
+    if (pdfjsLib) {
       try {
-        const pdfjsLib = (window as any).pdfjsLib;
         const loadingTask = pdfjsLib.getDocument({ data: bytes });
         const pdf = await loadingTask.promise;
         const pageTexts: string[] = [];
@@ -452,10 +521,13 @@ export async function extractTextFromUploadedFile(
         for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
           const page = await pdf.getPage(pageNum);
           const content = await page.getTextContent();
-          const strings = (content.items || []).map((it: any) => it.str || '').join(' ');
+          const strings = (content.items || []).map(it => it.str || '').join(' ');
           if (strings.trim()) pageTexts.push(strings.trim());
         }
-        const combined = pageTexts.join('\n\n').trim();
+        const combined = pageTexts
+          .join('\n\n')
+          .replace(/([a-zäöüß])-\s*\n\s*([a-zäöüß])/g, '$1$2')
+          .trim();
         if (combined.length >= 60) {
           return combined;
         }
@@ -496,6 +568,261 @@ export async function extractTextFromUploadedFile(
 // ---------------------------------------------------------------------------
 // Helper to Build a Valid FeedItem Card for a Hivemind Track
 // ---------------------------------------------------------------------------
+
+function stableHash32(input: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+function sanitizeOptionLetterRefs(text: string): string {
+  return String(text || '')
+    .replace(/\b(?:Warum\s+)?Option\s+[A-D]\s+(?:stimmt|richtig\s+ist)\.?\s*/gi, '')
+    .replace(/\bOption\s+[A-D]\b/gi, 'diese Aussage')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Deterministically shuffles up to 4 quiz options using a stable hash of `seedKey`
+ * so consecutive milestone quizzes distribute `correctIndex` across 0..3 while tracking
+ * the moved correct answer and removing misleading "Option A" phrasing.
+ */
+export function shuffleQuizOptions(
+  quiz: { question: string; options: string[]; correctIndex: number; explanation: string },
+  seedKey: string
+): { question: string; options: string[]; correctIndex: number; explanation: string } {
+  const options = (Array.isArray(quiz.options) ? quiz.options : []).slice(0, 4).map(String);
+  if (options.length <= 1) {
+    return {
+      question: sanitizeOptionLetterRefs(quiz.question),
+      options,
+      correctIndex: 0,
+      explanation: sanitizeOptionLetterRefs(quiz.explanation)
+    };
+  }
+
+  const rawCorrect = Number.isFinite(quiz.correctIndex) ? Math.trunc(quiz.correctIndex) : 0;
+  const safeCorrectIdx = Math.min(Math.max(0, rawCorrect), options.length - 1);
+
+  const tagged = options.map((text, idx) => ({
+    text,
+    isCorrect: idx === safeCorrectIdx
+  }));
+
+  let state = stableHash32(seedKey || 'quiz-seed') || 1;
+  const nextRand = (): number => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  for (let i = tagged.length - 1; i > 0; i--) {
+    const j = Math.floor(nextRand() * (i + 1));
+    const tmp = tagged[i];
+    tagged[i] = tagged[j];
+    tagged[j] = tmp;
+  }
+
+  const movedCorrectIndex = Math.max(0, tagged.findIndex(entry => entry.isCorrect));
+
+  return {
+    question: sanitizeOptionLetterRefs(quiz.question),
+    options: tagged.map(entry => entry.text),
+    correctIndex: movedCorrectIndex,
+    explanation: sanitizeOptionLetterRefs(quiz.explanation)
+  };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Strips markdown code fences and parses AI JSON output; if truncated mid-stream,
+ * scans the `"cards"` array with a string-aware brace matcher to salvage every
+ * complete valid card object.
+ */
+export function salvageHivemindCardsFromRawJson(
+  rawText: string
+): { subtitle?: string; cards: Record<string, unknown>[] } {
+  const cleaned = String(rawText || '')
+    .replace(/^\s*```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .trim();
+
+  if (!cleaned) return { cards: [] };
+
+  try {
+    const parsed: unknown = JSON.parse(cleaned);
+    if (isPlainRecord(parsed) && Array.isArray(parsed.cards)) {
+      return {
+        ...(typeof parsed.subtitle === 'string' ? { subtitle: parsed.subtitle } : {}),
+        cards: parsed.cards.filter(isPlainRecord)
+      };
+    }
+    if (Array.isArray(parsed)) {
+      return { cards: parsed.filter(isPlainRecord) };
+    }
+  } catch {
+    // Fall through to string-aware brace scanner for truncated JSON
+  }
+
+  let subtitle: string | undefined;
+  const subtitleMatch = /"subtitle"\s*:\s*"((?:\\.|[^"\\])*)"/.exec(cleaned);
+  if (subtitleMatch) {
+    try {
+      const decoded = JSON.parse(`"${subtitleMatch[1]}"`) as unknown;
+      if (typeof decoded === 'string' && decoded.trim()) {
+        subtitle = decoded.trim();
+      }
+    } catch {
+      // Ignore malformed subtitle
+    }
+  }
+
+  const cardsKeyMatch = /"cards"\s*:\s*\[/.exec(cleaned);
+  const arrayStart = cardsKeyMatch ? cardsKeyMatch.index + cardsKeyMatch[0].length : cleaned.indexOf('[') + 1;
+  if (arrayStart <= 0 || arrayStart > cleaned.length) {
+    return subtitle ? { subtitle, cards: [] } : { cards: [] };
+  }
+
+  const cards: Record<string, unknown>[] = [];
+  let inString = false;
+  let escapeNext = false;
+  let depth = 0;
+  let objStart = -1;
+
+  for (let i = arrayStart; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (inString) {
+      if (ch === '\\') {
+        escapeNext = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') {
+      if (depth === 0) objStart = i;
+      depth++;
+    } else if (ch === '}') {
+      if (depth > 0) depth--;
+      if (depth === 0 && objStart !== -1) {
+        const candidate = cleaned.slice(objStart, i + 1);
+        try {
+          const obj: unknown = JSON.parse(candidate);
+          if (
+            isPlainRecord(obj) &&
+            (typeof obj.title === 'string' || typeof obj.feedText === 'string' || typeof obj.body === 'string')
+          ) {
+            cards.push(obj);
+          }
+        } catch {
+          // Ignore incomplete/malformed card object
+        }
+        objStart = -1;
+      }
+    } else if (ch === ']' && depth === 0) {
+      break;
+    }
+  }
+
+  return {
+    ...(subtitle ? { subtitle } : {}),
+    cards
+  };
+}
+
+function normalizeRoleBadge(rawBadge: unknown, fallback: string = 'Kontext'): string {
+  const cleaned = String(rawBadge || '')
+    .replace(/^[\p{Extended_Pictographic}\uFE0F\s]+/gu, '')
+    .trim();
+  return cleaned || fallback;
+}
+
+const VALID_ARCHETYPES: ReadonlySet<string> = new Set([
+  'story_thread',
+  'expanding_brain_meme',
+  'contrast_meme',
+  'discourse_replies',
+  'milestone_quiz'
+]);
+
+function normalizeAiCardBlueprints(
+  rawCards: Record<string, unknown>[],
+  fallbackTitlePrefix: string,
+  stepOffset: number,
+  maxCount: number
+): HivemindCardBlueprint[] {
+  const archetypesCycle: readonly HivemindCardArchetype[] = [
+    'story_thread',
+    'expanding_brain_meme',
+    'discourse_replies',
+    'milestone_quiz'
+  ];
+
+  return rawCards.slice(0, maxCount).map((c, idx): HivemindCardBlueprint => {
+    const fallbackArch = archetypesCycle[idx % archetypesCycle.length];
+    const rawArch = typeof c.cardArchetype === 'string' ? c.cardArchetype.trim() : '';
+    const arch: HivemindCardArchetype = VALID_ARCHETYPES.has(rawArch)
+      ? (rawArch as HivemindCardArchetype)
+      : fallbackArch;
+
+    const rawStages = Array.isArray(c.escalationStages) ? c.escalationStages.filter(isPlainRecord) : [];
+    const rawReplies = Array.isArray(c.simulatedReplies) ? c.simulatedReplies.filter(isPlainRecord) : [];
+    const rawQuiz = isPlainRecord(c.quiz) ? c.quiz : null;
+
+    return {
+      cardArchetype: arch,
+      title: String(c.title || `${fallbackTitlePrefix} · Schritt ${stepOffset + idx + 1}`).trim(),
+      subtitle: String(c.subtitle || `${fallbackTitlePrefix} · Schritt ${stepOffset + idx + 1}`).trim(),
+      feedText: String(c.feedText || c.body || '').trim(),
+      body: String(c.body || c.feedText || '').trim(),
+      keyInsight: String(c.keyInsight || c.title || fallbackTitlePrefix).trim(),
+      escalationStages:
+        rawStages.length >= 3
+          ? rawStages.slice(0, 4).map((st, sIdx) => ({
+              stageLabel: String(st.stageLabel || `Stufe ${sIdx + 1}`),
+              caption: String(st.caption || ''),
+              visualLevel: Math.min(4, Math.max(1, sIdx + 1)) as 1 | 2 | 3 | 4
+            }))
+          : undefined,
+      simulatedReplies:
+        rawReplies.length >= 2
+          ? rawReplies.slice(0, 3).map(rep => ({
+              handle: String(rep.handle || 'u/seminar_salon'),
+              roleBadge: normalizeRoleBadge(rep.roleBadge, 'Kontext'),
+              text: String(rep.text || ''),
+              upvotes: Number(rep.upvotes) || 24
+            }))
+          : undefined,
+      quiz:
+        rawQuiz && typeof rawQuiz.question === 'string' && Array.isArray(rawQuiz.options) && rawQuiz.options.length >= 2
+          ? {
+              question: String(rawQuiz.question),
+              options: rawQuiz.options.map(String),
+              correctIndex: Number(rawQuiz.correctIndex) || 0,
+              explanation: String(rawQuiz.explanation || '')
+            }
+          : undefined
+    };
+  });
+}
 
 interface HivemindCardBlueprint {
   title: string;
@@ -587,7 +914,7 @@ function buildHivemindFeedItem(params: {
     isDemonstration: false,
     aiAssisted,
     factReviewStatus: 'pedagogical_concept',
-    provenanceSummary: `🧠 Lernpfad: ${trackTitle} · Schritt ${stepIndex}/${totalSteps}`,
+    provenanceSummary: `Lernpfad: ${trackTitle} · Schritt ${stepIndex}/${totalSteps}`,
     wordCount: Math.max(40, fullBody.split(/\s+/).length),
     evidenceTier: 'multiple_sources',
     contentOrigin: aiAssisted ? 'enriched_ai' : 'live_ingested',
@@ -599,15 +926,18 @@ function buildHivemindFeedItem(params: {
     flair: `${archetypeBadgeLabel[blueprint.cardArchetype]} · ${stepIndex}/${totalSteps}`,
     keyInsight: blueprint.keyInsight,
     quiz: blueprint.quiz
-      ? {
-          id: `quiz-${itemId}`,
-          question: blueprint.quiz.question,
-          options: blueprint.quiz.options.slice(0, 4),
-          correctIndex: Math.min(Math.max(0, blueprint.quiz.correctIndex), blueprint.quiz.options.length - 1),
-          explanation: blueprint.quiz.explanation,
-          sourceArticleId: itemId,
-          sourceArticleTitle: blueprint.title
-        }
+      ? (() => {
+          const shuffledQuiz = shuffleQuizOptions(blueprint.quiz, itemId);
+          return {
+            id: `quiz-${itemId}`,
+            question: shuffledQuiz.question,
+            options: shuffledQuiz.options,
+            correctIndex: shuffledQuiz.correctIndex,
+            explanation: shuffledQuiz.explanation,
+            sourceArticleId: itemId,
+            sourceArticleTitle: blueprint.title
+          };
+        })()
       : undefined,
     hivemindMeta: {
       trackId,
@@ -679,6 +1009,51 @@ export function buildShowcaseStarterTracks(): HivemindLearningTrack[] {
 // Deterministic & Live AI Learning Track Generator
 // ---------------------------------------------------------------------------
 
+export function parseWikipediaUrl(rawUrl?: string): { lang: string; slug: string } | null {
+  if (!rawUrl || !rawUrl.trim()) return null;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    const hostMatch = /^([a-z]{2,3})\.(?:m\.)?wikipedia\.org$/i.exec(parsed.hostname);
+    if (!hostMatch) return null;
+    if (!parsed.pathname.startsWith('/wiki/')) return null;
+    const rawSlug = parsed.pathname.slice('/wiki/'.length).replace(/\/+$/, '');
+    if (!rawSlug) return null;
+    return {
+      lang: hostMatch[1].toLowerCase(),
+      slug: decodeURIComponent(rawSlug)
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWikipediaSummaryBySlug(
+  lang: string,
+  slug: string,
+  skipNetwork?: boolean
+): Promise<{ extract: string; url?: string }> {
+  if (skipNetwork || !slug) return { extract: '' };
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const normalizedSlug = slug.replace(/ /g, '_');
+    const summaryUrl = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(normalizedSlug)}`;
+    const sumRes = await fetch(summaryUrl, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!sumRes.ok) return { extract: '' };
+    const summary = await sumRes.json() as {
+      extract?: unknown;
+      content_urls?: { desktop?: { page?: string } };
+    };
+    return {
+      extract: typeof summary?.extract === 'string' ? summary.extract.trim() : '',
+      url: summary?.content_urls?.desktop?.page
+    };
+  } catch {
+    return { extract: '' };
+  }
+}
+
 async function fetchWikipediaContextForTopic(topicTitle: string, skipNetwork?: boolean): Promise<{ extract: string; url?: string }> {
   if (skipNetwork) return { extract: '' };
   try {
@@ -689,22 +1064,11 @@ async function fetchWikipediaContextForTopic(topicTitle: string, skipNetwork?: b
     const res = await fetch(searchUrl, { signal: controller.signal });
     clearTimeout(timer);
     if (!res.ok) return { extract: '' };
-    const data = await res.json();
+    const data = await res.json() as { query?: { search?: { title?: string }[] } };
     const firstHit = data?.query?.search?.[0];
     if (!firstHit?.title) return { extract: '' };
 
-    const sumController = new AbortController();
-    const sumTimer = setTimeout(() => sumController.abort(), 2500);
-    const sumRes = await fetch(`https://de.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(firstHit.title)}`, {
-      signal: sumController.signal
-    });
-    clearTimeout(sumTimer);
-    if (!sumRes.ok) return { extract: '' };
-    const summary = await sumRes.json();
-    return {
-      extract: typeof summary?.extract === 'string' ? summary.extract.trim() : '',
-      url: summary?.content_urls?.desktop?.page
-    };
+    return await fetchWikipediaSummaryBySlug('de', firstHit.title, skipNetwork);
   } catch {
     return { extract: '' };
   }
@@ -842,19 +1206,19 @@ function buildDeterministicBlueprintsFromSubject(
         simulatedReplies: [
           {
             handle: 'u/kontext_lupe',
-            roleBadge: '🔍 Kontext',
+            roleBadge: 'Kontext',
             text: `Hintergrund zu Schritt ${stepNum}: ${firstSentence} Erst im Zusammenspiel mit den vorangehenden Stufen wird die volle Tragweite sichtbar.`,
             upvotes: 34 + stepNum
           },
           {
             handle: 'u/kritischer_fokus',
-            roleBadge: '⚡ Einwand',
+            roleBadge: 'Einwand',
             text: `Wichtige Differenzierung: Man darf dieses Prinzip nicht schematisch verallgemeinern – die Randbedingungen bestimmen, wann der Effekt kippt.`,
             upvotes: 27 + stepNum
           },
           {
             handle: 'u/praxis_anker',
-            roleBadge: '🛠️ Transfer',
+            roleBadge: 'Transfer',
             text: `Merksatz für die Praxis: ${keyInsight}`,
             upvotes: 41 + stepNum
           }
@@ -914,10 +1278,21 @@ export async function generateHivemindLearningTrack(
 
   if (!contextText && !options.skipNetworkFetch) {
     options.onProgress?.(30, 'Frage Enzyklopädie & Primärquellen ab…');
-    const wiki = await fetchWikipediaContextForTopic(cleanTitle, options.skipNetworkFetch);
-    if (wiki.extract) {
-      contextText = wiki.extract;
-      if (!resolvedUrl && wiki.url) resolvedUrl = wiki.url;
+    const wikiTarget = parseWikipediaUrl(options.sourceUrl) || parseWikipediaUrl(cleanTitle);
+    if (wikiTarget) {
+      const directWiki = await fetchWikipediaSummaryBySlug(wikiTarget.lang, wikiTarget.slug, options.skipNetworkFetch);
+      if (directWiki.extract) {
+        contextText = directWiki.extract;
+        if (!resolvedUrl) resolvedUrl = directWiki.url || options.sourceUrl;
+      }
+    }
+    if (!contextText) {
+      const fallbackQuery = wikiTarget ? wikiTarget.slug.replace(/_/g, ' ') : cleanTitle;
+      const wiki = await fetchWikipediaContextForTopic(fallbackQuery, options.skipNetworkFetch);
+      if (wiki.extract) {
+        contextText = wiki.extract;
+        if (!resolvedUrl && wiki.url) resolvedUrl = wiki.url;
+      }
     }
   }
 
@@ -950,7 +1325,7 @@ WICHTIGE FORMAT-REGELN:
 Wechsle im Rhythmus durch diese 4 Archetypen (cardArchetype):
 1. "story_thread": Pointierter, erzählerischer Erklär-Post (3-5 prägnante Sätze in feedText + ausführlicher Hintergrund in body).
 2. "expanding_brain_meme": Ein 4-stufiges Konzept-Eskalations-Meme (escalationStages mit exakt 4 Stufen: visualLevel 1, 2, 3, 4), das eine Entwicklung, historische Verschiebung oder Erkenntnis-Steigerung unvergesslich macht.
-3. "discourse_replies": Eine scharfe Kernthese mit genau 3 kurzen Community-Antworten in simulatedReplies (🔍 Kontext, ⚡ Einwand, 🛠️ Praxis-Beispiel).
+3. "discourse_replies": Eine scharfe Kernthese mit genau 3 kurzen Community-Antworten in simulatedReplies (Kontext, Einwand, Transfer).
 4. "milestone_quiz": Ein Verständnis-Check mit einer präzisen Multiple-Choice-Frage (quiz mit 4 Optionen, correctIndex 0..3 und Erklärung).
 
 Antworte AUSSCHLIESSLICH mit validem JSON:
@@ -971,15 +1346,15 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
         { "stageLabel": "Stufe 4 · ...", "caption": "AUSSAGE 4", "visualLevel": 4 }
       ],
       "simulatedReplies": [
-        { "handle": "u/historiker", "roleBadge": "🔍 Kontext", "text": "...", "upvotes": 42 },
-        { "handle": "u/kritiker", "roleBadge": "⚡ Einwand", "text": "...", "upvotes": 31 },
-        { "handle": "u/praxis", "roleBadge": "🛠️ Transfer", "text": "...", "upvotes": 28 }
+        { "handle": "u/historiker", "roleBadge": "Kontext", "text": "...", "upvotes": 42 },
+        { "handle": "u/kritiker", "roleBadge": "Einwand", "text": "...", "upvotes": 31 },
+        { "handle": "u/praxis", "roleBadge": "Transfer", "text": "...", "upvotes": 28 }
       ],
       "quiz": {
         "question": "Frage?",
         "options": ["Richtige Antwort", "Falsch B", "Falsch C", "Falsch D"],
         "correctIndex": 0,
-        "explanation": "Warum Option A stimmt."
+        "explanation": "Kurze Begründung, warum die richtige Antwort zutrifft."
       }
     }
   ]
@@ -988,49 +1363,21 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
       const aiRes = await callAiModel(prompt, {
         credentials: creds,
         jsonMode: true,
-        maxTokens: 4000,
-        timeoutMs: 45_000,
+        maxTokens: 8192,
+        timeoutMs: 60_000,
         itemId: `hivemind-track-${trackId}`
       });
 
-      const cleanedJson = aiRes.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-      const parsed = JSON.parse(cleanedJson);
-      if (parsed && Array.isArray(parsed.cards) && parsed.cards.length >= 8) {
-        blueprints = parsed.cards.slice(0, 16).map((c: any, idx: number): HivemindCardBlueprint => {
-          const fallbackArch: HivemindCardArchetype = (['story_thread', 'expanding_brain_meme', 'discourse_replies', 'milestone_quiz'] as const)[idx % 4];
-          const arch: HivemindCardArchetype = c.cardArchetype || fallbackArch;
-          return {
-            cardArchetype: arch,
-            title: String(c.title || `${cleanTitle} · Schritt ${idx + 1}`).trim(),
-            subtitle: String(c.subtitle || `${cleanTitle} · Schritt ${idx + 1}`).trim(),
-            feedText: String(c.feedText || c.body || '').trim(),
-            body: String(c.body || c.feedText || '').trim(),
-            keyInsight: String(c.keyInsight || c.title || cleanTitle).trim(),
-            escalationStages: Array.isArray(c.escalationStages) && c.escalationStages.length >= 3
-              ? c.escalationStages.slice(0, 4).map((st: any, sIdx: number) => ({
-                  stageLabel: String(st.stageLabel || `Stufe ${sIdx + 1}`),
-                  caption: String(st.caption || ''),
-                  visualLevel: (Math.min(4, Math.max(1, sIdx + 1)) as 1 | 2 | 3 | 4)
-                }))
-              : undefined,
-            simulatedReplies: Array.isArray(c.simulatedReplies) && c.simulatedReplies.length >= 2
-              ? c.simulatedReplies.slice(0, 3).map((rep: any) => ({
-                  handle: String(rep.handle || 'u/seminar_salon'),
-                  roleBadge: String(rep.roleBadge || '🔍 Impuls'),
-                  text: String(rep.text || ''),
-                  upvotes: Number(rep.upvotes) || 24
-                }))
-              : undefined,
-            quiz: c.quiz && typeof c.quiz.question === 'string' && Array.isArray(c.quiz.options)
-              ? {
-                  question: String(c.quiz.question),
-                  options: c.quiz.options.map(String),
-                  correctIndex: Number(c.quiz.correctIndex) || 0,
-                  explanation: String(c.quiz.explanation || '')
-                }
-              : undefined
-          };
-        });
+      const salvaged = salvageHivemindCardsFromRawJson(aiRes.text);
+      if (salvaged.cards.length >= 6) {
+        blueprints = normalizeAiCardBlueprints(salvaged.cards, cleanTitle, 0, targetCount);
+        if (blueprints.length < targetCount) {
+          const detFill = buildDeterministicBlueprintsFromSubject(cleanTitle, contextText, targetCount);
+          while (blueprints.length < targetCount) {
+            const fillIdx = blueprints.length;
+            blueprints.push(detFill[fillIdx % detFill.length]);
+          }
+        }
         usedAi = true;
         fallbackReason = undefined;
       } else {
@@ -1039,7 +1386,7 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.toLowerCase().includes('zeitüberschreitung')) {
-        fallbackReason = 'KI-Zeitüberschreitung nach 45 s; lokales Lern-Gerüst genutzt.';
+        fallbackReason = 'KI-Zeitüberschreitung nach 60 s; lokales Lern-Gerüst genutzt.';
       } else if (msg.toLowerCase().includes('budget')) {
         fallbackReason = msg;
       } else {
@@ -1283,15 +1630,15 @@ Antworte ausschließlich als valides JSON-Objekt:
         { "stageLabel": "Stufe 4: Meister-Synthese", "caption": "...", "visualLevel": 4 }
       ],
       "simulatedReplies": [
-        { "handle": "u/skeptiker", "roleBadge": "⚡ Gegenrede", "text": "...", "upvotes": 42 },
-        { "handle": "u/historiker", "roleBadge": "🔍 Kontext", "text": "...", "upvotes": 68 },
-        { "handle": "u/praxis_impuls", "roleBadge": "💡 Synthese", "text": "...", "upvotes": 51 }
+        { "handle": "u/skeptiker", "roleBadge": "Einwand", "text": "...", "upvotes": 42 },
+        { "handle": "u/historiker", "roleBadge": "Kontext", "text": "...", "upvotes": 68 },
+        { "handle": "u/praxis_impuls", "roleBadge": "Synthese", "text": "...", "upvotes": 51 }
       ],
       "quiz": {
         "question": "Präzise Verständnisfrage?",
         "options": ["Richtige Antwort", "Plausible Falschantwort 1", "Plausible Falschantwort 2", "Plausible Falschantwort 3"],
         "correctIndex": 0,
-        "explanation": "Warum Option A stimmt."
+        "explanation": "Kurze Begründung, warum die richtige Antwort zutrifft."
       }
     }
   ]
@@ -1300,54 +1647,14 @@ Antworte ausschließlich als valides JSON-Objekt:
       const aiRes = await callAiModel(prompt, {
         credentials: creds,
         jsonMode: true,
-        maxTokens: 4000,
-        timeoutMs: 45_000,
+        maxTokens: 8192,
+        timeoutMs: 60_000,
         itemId: `hivemind-chapter-${track.id}-${targetChapter.chapterIndex}`
       });
 
-      const cleanedJson = aiRes.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-      const parsed = JSON.parse(cleanedJson);
-      if (parsed && Array.isArray(parsed.cards) && parsed.cards.length >= 6) {
-        blueprints = parsed.cards.slice(0, targetCardCount).map((c: any, idx: number): HivemindCardBlueprint => {
-          const fallbackArch: HivemindCardArchetype = (
-            ['story_thread', 'expanding_brain_meme', 'discourse_replies', 'milestone_quiz'] as const
-          )[idx % 4];
-          const arch: HivemindCardArchetype = c.cardArchetype || fallbackArch;
-          return {
-            cardArchetype: arch,
-            title: String(c.title || `${targetChapter!.title} · Impuls ${idx + 1}`).trim(),
-            subtitle: String(c.subtitle || `${targetChapter!.title} · Schritt ${previousTotal + idx + 1}`).trim(),
-            feedText: String(c.feedText || c.body || '').trim(),
-            body: String(c.body || c.feedText || '').trim(),
-            keyInsight: String(c.keyInsight || c.title || track.title).trim(),
-            escalationStages:
-              Array.isArray(c.escalationStages) && c.escalationStages.length >= 3
-                ? c.escalationStages.slice(0, 4).map((st: any, sIdx: number) => ({
-                    stageLabel: String(st.stageLabel || `Stufe ${sIdx + 1}`),
-                    caption: String(st.caption || ''),
-                    visualLevel: Math.min(4, Math.max(1, sIdx + 1)) as 1 | 2 | 3 | 4
-                  }))
-                : undefined,
-            simulatedReplies:
-              Array.isArray(c.simulatedReplies) && c.simulatedReplies.length >= 2
-                ? c.simulatedReplies.slice(0, 3).map((rep: any) => ({
-                    handle: String(rep.handle || 'u/seminar_salon'),
-                    roleBadge: String(rep.roleBadge || '🔍 Impuls'),
-                    text: String(rep.text || ''),
-                    upvotes: Number(rep.upvotes) || 28
-                  }))
-                : undefined,
-            quiz:
-              c.quiz && typeof c.quiz.question === 'string' && Array.isArray(c.quiz.options)
-                ? {
-                    question: String(c.quiz.question),
-                    options: c.quiz.options.map(String),
-                    correctIndex: Number(c.quiz.correctIndex) || 0,
-                    explanation: String(c.quiz.explanation || '')
-                  }
-                : undefined
-          };
-        });
+      const salvaged = salvageHivemindCardsFromRawJson(aiRes.text);
+      if (salvaged.cards.length >= 6) {
+        blueprints = normalizeAiCardBlueprints(salvaged.cards, targetChapter.title, previousTotal, targetCardCount);
         usedAi = true;
         fallbackReason = undefined;
       } else {
@@ -1356,7 +1663,7 @@ Antworte ausschließlich als valides JSON-Objekt:
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       fallbackReason = msg.toLowerCase().includes('zeitüberschreitung')
-        ? 'KI-Zeitüberschreitung nach 45 s; Kapitel wurde lokal ergänzt.'
+        ? 'KI-Zeitüberschreitung nach 60 s; Kapitel wurde lokal ergänzt.'
         : `KI-Erweiterung nicht verfügbar (${msg}); Kapitel wurde lokal ergänzt.`;
     }
   }
@@ -1501,13 +1808,14 @@ export class HivemindLearningService {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           const remaining = parsed.filter(
-            (t: any) => t && typeof t.id === 'string' && !SHOWCASE_STARTER_TRACK_IDS.has(t.id)
+            (t: unknown): t is Record<string, unknown> =>
+              isPlainRecord(t) && typeof t.id === 'string' && !SHOWCASE_STARTER_TRACK_IDS.has(t.id)
           );
           removedCount = parsed.length - remaining.length;
           if (removedCount > 0) {
             await storage.setItem(HIVEMIND_TRACKS_STORAGE_KEY, JSON.stringify(remaining));
             if (storage === appStorage) {
-              this.cachedTracks = remaining;
+              this.cachedTracks = remaining as unknown as HivemindLearningTrack[];
             }
           }
         }
@@ -1529,7 +1837,7 @@ export class HivemindLearningService {
         return [];
       }
 
-      const parsed = JSON.parse(raw);
+      const parsed: unknown = JSON.parse(raw);
       if (!Array.isArray(parsed)) {
         if (storage === appStorage) {
           this.cachedTracks = [];
@@ -1538,39 +1846,46 @@ export class HivemindLearningService {
       }
 
       const hasShowcaseTracks = parsed.some(
-        (t: any) => t && typeof t.id === 'string' && SHOWCASE_STARTER_TRACK_IDS.has(t.id)
+        (t: unknown) => isPlainRecord(t) && typeof t.id === 'string' && SHOWCASE_STARTER_TRACK_IDS.has(t.id)
       );
 
       const normalized: HivemindLearningTrack[] = parsed
         .filter(
-          (t: any) =>
-            t &&
+          (t: unknown): t is Record<string, unknown> =>
+            isPlainRecord(t) &&
             typeof t.id === 'string' &&
             !SHOWCASE_STARTER_TRACK_IDS.has(t.id) &&
             !deletedIds.has(t.id)
         )
-        .map((t: any): HivemindLearningTrack => {
-          const items = Array.isArray(t.items) ? t.items : [];
+        .map((t): HivemindLearningTrack => {
+          const items = Array.isArray(t.items) ? (t.items as FeedItem[]) : [];
           const totalItemsCount = items.length || Number(t.totalItemsCount) || 0;
-          const validItemIdSet = new Set(items.map((it: FeedItem) => it.id));
+          const validItemIdSet = new Set(items.map(it => it.id));
           const completedItemIds: string[] = Array.isArray(t.completedItemIds)
-            ? Array.from(new Set(t.completedItemIds.map((v: unknown) => String(v)).filter((id: string) => validItemIdSet.size === 0 || validItemIdSet.has(id))))
+            ? Array.from(new Set(t.completedItemIds.map((v: unknown) => String(v)).filter(id => validItemIdSet.size === 0 || validItemIdSet.has(id))))
             : [];
           const progressPercent = calculateTrackProgressPercent(completedItemIds, totalItemsCount);
 
           const titleStr = String(t.title || 'Lernpfad');
-          const chapters = buildChaptersForTrack(titleStr, '', t.chapters);
+          const rawChapters = Array.isArray(t.chapters) ? (t.chapters as HivemindChapterSpec[]) : undefined;
+          const chapters = buildChaptersForTrack(titleStr, '', rawChapters);
           const currentChapterIndex =
             typeof t.currentChapterIndex === 'number' && t.currentChapterIndex >= 1
               ? t.currentChapterIndex
               : Math.max(1, chapters.filter(c => c.isGenerated).length);
+
+          const rawSourceType = t.sourceType;
+          const sourceType: HivemindLearningTrack['sourceType'] =
+            rawSourceType === 'book' || rawSourceType === 'pdf_document' || rawSourceType === 'url'
+              ? rawSourceType
+              : 'topic';
 
           return {
             id: String(t.id),
             title: titleStr,
             subtitle: String(t.subtitle || `${totalItemsCount} Karten`),
             iconEmoji: String(t.iconEmoji || '🧠'),
-            sourceType: t.sourceType || 'topic',
+            sourceType,
             sourceLabel: String(t.sourceLabel || t.title || 'Hivemind'),
             createdAt: String(t.createdAt || new Date().toISOString()),
             updatedAt: String(t.updatedAt || new Date().toISOString()),

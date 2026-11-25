@@ -222,17 +222,17 @@ export function getThemeColors(mode: ThemeMode = 'dark', palette: ThemePalette =
   // Default: Nordic Slate ('tidalglass' — Kühler Schiefer & Stahlblau)
   return mode === 'dark'
     ? {
-        background: '#0A0E14',
+        background: '#0A0E15',
         surface: '#111722',
-        surfaceSecondary: '#18202F',
+        surfaceSecondary: '#182130',
         surfaceSubtle: '#202B3D',
-        textPrimary: '#E4EBF3',
-        textSecondary: '#94A3B8',
-        textMuted: '#64748B',
-        accent: '#5282B8',
-        accentSubtle: 'rgba(82, 130, 184, 0.14)',
-        border: '#222E42',
-        borderSubtle: '#182232',
+        textPrimary: '#E8EEF5',
+        textSecondary: '#9AA8BC',
+        textMuted: '#6E7F96',
+        accent: '#5B8BC0',
+        accentSubtle: 'rgba(91, 139, 192, 0.14)',
+        border: '#243145',
+        borderSubtle: '#1B2536',
         danger: '#C96A75',
         success: '#4B9B7E',
         badgeBg: '#172233',
@@ -240,22 +240,22 @@ export function getThemeColors(mode: ThemeMode = 'dark', palette: ThemePalette =
         cardHighlight: '#141D2B'
       }
     : {
-        background: '#EFF3F8',
-        surface: '#FAFCFF',
-        surfaceSecondary: '#E4EBF3',
-        surfaceSubtle: '#D6E0EC',
-        textPrimary: '#111927',
+        background: '#F1F4F8',
+        surface: '#FFFFFF',
+        surfaceSecondary: '#E8EEF5',
+        surfaceSubtle: '#DBE3EE',
+        textPrimary: '#111827',
         textSecondary: '#475569',
         textMuted: '#64748B',
         accent: '#3B6998',
-        accentSubtle: 'rgba(59, 105, 152, 0.10)',
+        accentSubtle: 'rgba(59, 105, 152, 0.09)',
         border: '#CBD5E1',
-        borderSubtle: '#DCE4EE',
+        borderSubtle: '#E2E8F0',
         danger: '#A64452',
         success: '#2E7D62',
         badgeBg: '#E3ECF5',
         badgeText: '#2A4F75',
-        cardHighlight: '#F3F7FB'
+        cardHighlight: '#F7FAFD'
       };
 }
 

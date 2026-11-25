@@ -7,6 +7,7 @@ export interface UseReadingProgressControllerParams {
   latestInteractionsRef: MutableRefObject<Record<string, ReadingInteraction>>;
   setInteractions: Dispatch<SetStateAction<Record<string, ReadingInteraction>>>;
   storageGenerationRef: MutableRefObject<number>;
+  onArticleCompleted?: (itemId: string) => void;
 }
 
 export interface ReadingProgressController {
@@ -22,10 +23,15 @@ export interface ReadingProgressController {
 export function useReadingProgressController({
   latestInteractionsRef,
   setInteractions,
-  storageGenerationRef
+  storageGenerationRef,
+  onArticleCompleted
 }: UseReadingProgressControllerParams): ReadingProgressController {
   const pendingProgressRef = useRef<{ id: string; percent: number } | null>(null);
   const progressDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prePendingCompletionEligibleRef = useRef<Record<string, boolean>>({});
+  const completedNotifiedIdsRef = useRef<Set<string>>(new Set());
+  const onArticleCompletedRef = useRef(onArticleCompleted);
+  onArticleCompletedRef.current = onArticleCompleted;
 
   const cancelPendingReadingProgress = useCallback(() => {
     if (progressDebounceTimerRef.current) {
@@ -33,6 +39,8 @@ export function useReadingProgressController({
       progressDebounceTimerRef.current = null;
     }
     pendingProgressRef.current = null;
+    prePendingCompletionEligibleRef.current = {};
+    completedNotifiedIdsRef.current.clear();
   }, []);
 
   // Flush pending reading progress immediately to persistent storage
@@ -44,6 +52,11 @@ export function useReadingProgressController({
     const pending = pendingProgressRef.current;
     if (pending) {
       pendingProgressRef.current = null;
+      const prevExisting = latestInteractionsRef.current[pending.id];
+      const wasEligible =
+        Boolean(prePendingCompletionEligibleRef.current[pending.id]) ||
+        (!prevExisting?.completedAt && (prevExisting?.furthestPositionPercent ?? 0) < 95);
+      delete prePendingCompletionEligibleRef.current[pending.id];
       try {
         const updated = await libraryRepository.updateProgress(pending.id, pending.percent);
         setInteractions(prev => {
@@ -51,6 +64,10 @@ export function useReadingProgressController({
           latestInteractionsRef.current = next;
           return next;
         });
+        if (pending.percent >= 95 && wasEligible && !completedNotifiedIdsRef.current.has(pending.id)) {
+          completedNotifiedIdsRef.current.add(pending.id);
+          onArticleCompletedRef.current?.(pending.id);
+        }
       } catch (err) {
         console.warn('Lesefortschritt konnte nicht persistiert werden:', err);
       }
@@ -62,6 +79,14 @@ export function useReadingProgressController({
     async (id: string, percent: number) => {
       pendingProgressRef.current = { id, percent };
       const currentGen = storageGenerationRef.current;
+
+      const prevExisting = latestInteractionsRef.current[id];
+      if (
+        prevExisting === undefined ||
+        (!prevExisting.completedAt && (prevExisting.furthestPositionPercent ?? 0) < 95)
+      ) {
+        prePendingCompletionEligibleRef.current[id] = true;
+      }
 
       // Update React state optimistically so progress bar is instant
       setInteractions(prev => {
@@ -93,6 +118,11 @@ export function useReadingProgressController({
         const pending = pendingProgressRef.current;
         if (pending) {
           pendingProgressRef.current = null;
+          const prevBeforeWrite = latestInteractionsRef.current[pending.id];
+          const wasEligible =
+            Boolean(prePendingCompletionEligibleRef.current[pending.id]) ||
+            (!prevBeforeWrite?.completedAt && (prevBeforeWrite?.furthestPositionPercent ?? 0) < 95);
+          delete prePendingCompletionEligibleRef.current[pending.id];
           try {
             const updated = await libraryRepository.updateProgress(pending.id, pending.percent);
             if (currentGen === storageGenerationRef.current) {
@@ -101,6 +131,14 @@ export function useReadingProgressController({
                 latestInteractionsRef.current = next;
                 return next;
               });
+              if (
+                pending.percent >= 95 &&
+                wasEligible &&
+                !completedNotifiedIdsRef.current.has(pending.id)
+              ) {
+                completedNotifiedIdsRef.current.add(pending.id);
+                onArticleCompletedRef.current?.(pending.id);
+              }
             }
           } catch {
             // Non-fatal background write

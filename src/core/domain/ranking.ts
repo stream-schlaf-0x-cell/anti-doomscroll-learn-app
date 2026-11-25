@@ -9,6 +9,7 @@ import {
 } from './types';
 import { SeenImpressionRecord } from '../data/seenImpressionsService';
 import { isSupportedFeedLanguage, IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX } from '../enrichment/batchEnricher';
+import { RecursiveLearningEngine } from '../recommendations/recursiveLearningEngine';
 
 export interface ScoreBreakdown {
   topicMatch: number;
@@ -223,7 +224,8 @@ export function enrichItemWithDiscourseConcept<T extends FeedItem>(item: T): T {
 export function scoreFeedItem(
   item: FeedItem,
   profile: UserProfile,
-  interactions: Record<string, ReadingInteraction> = {}
+  interactions: Record<string, ReadingInteraction> = {},
+  domainTrustOverride?: Record<string, number>
 ): ScoredFeedItem {
   const interaction = interactions[item.id];
 
@@ -415,6 +417,45 @@ export function scoreFeedItem(
   const similarityDelta = computeUpvoteSimilarityBoost(item, profile, interactions);
   feedbackAdjustment += similarityDelta;
 
+  // Learned Domain / Publisher Trust Multiplier
+  const trustMap = domainTrustOverride ?? RecursiveLearningEngine.getCachedDomainTrustScores();
+  const normDomain = (item.sourceDomain || '').toLowerCase().replace(/^www\./, '').trim();
+  let urlHost = '';
+  const rawTrustUrl = item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '';
+  if (rawTrustUrl) {
+    try {
+      urlHost = new URL(rawTrustUrl).hostname.toLowerCase().replace(/^www\./, '').trim();
+    } catch {
+      // Ignore malformed URLs
+    }
+  }
+  const rawPublisher = (item.sourceReferences?.[0]?.publisher || '').trim();
+  const lowerPublisher = rawPublisher.toLowerCase();
+
+  let learnedTrust: number | undefined;
+  if (normDomain && typeof trustMap[normDomain] === 'number') {
+    learnedTrust = trustMap[normDomain];
+  } else if (urlHost && typeof trustMap[urlHost] === 'number') {
+    learnedTrust = trustMap[urlHost];
+  } else if (lowerPublisher && typeof trustMap[lowerPublisher] === 'number') {
+    learnedTrust = trustMap[lowerPublisher];
+  } else if (rawPublisher && typeof trustMap[rawPublisher] === 'number') {
+    learnedTrust = trustMap[rawPublisher];
+  } else if (lowerPublisher) {
+    for (const [key, val] of Object.entries(trustMap)) {
+      if (key.toLowerCase().trim() === lowerPublisher && typeof val === 'number') {
+        learnedTrust = val;
+        break;
+      }
+    }
+  }
+
+  let trustDelta = 0;
+  if (typeof learnedTrust === 'number' && learnedTrust !== 1.0) {
+    trustDelta = Math.max(-0.15, Math.min(0.18, (learnedTrust - 1.0) * 0.25));
+    feedbackAdjustment += trustDelta;
+  }
+
   if (interaction?.feedback === 'more_like_this') feedbackAdjustment += 0.40;
   if (interaction?.feedback === 'less_like_this') feedbackAdjustment -= 0.50;
   if (interaction?.voteScore === 1) feedbackAdjustment += 0.25;
@@ -442,7 +483,8 @@ export function scoreFeedItem(
     editorialValue * 0.06 +
     feedbackAdjustment * 0.22 +
     behavioralAdjustment * 0.04 +
-    similarityDelta * 0.45;
+    similarityDelta * 0.45 +
+    trustDelta * 0.35;
 
   // Direct explicit interaction overrides on the item itself
   if (interaction?.feedback === 'less_like_this' || interaction?.voteScore === -1) {
@@ -481,6 +523,11 @@ export function scoreFeedItem(
 
   if (credibilityBonus >= 0.08) {
     whyFactors.push(`Hohe Quellen-Reliabilität: Tier A Verifikation (+${Math.round(credibilityBonus * 100)}%)`);
+  }
+  if (typeof learnedTrust === 'number' && Math.abs(learnedTrust - 1.0) >= 0.08) {
+    const pct = Math.round((learnedTrust - 1.0) * 100);
+    const sign = pct > 0 ? '+' : '';
+    whyFactors.push(`Gelerntes Quellen-Vertrauen: ${sign}${pct}%`);
   }
   if (manipulativeDampener > 0) {
     whyFactors.push(`Sensationalismus-Dämpfung (-${Math.round(manipulativeDampener * 100)}%)`);

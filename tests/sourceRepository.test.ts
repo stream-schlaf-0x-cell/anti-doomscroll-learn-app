@@ -2,6 +2,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { SourceRepository } from '../src/core/data/sourceRepository';
 import { MemoryStorageDriver, AtemStorage } from '../src/core/data/storage';
+import { VERIFIED_FEED_SOURCES } from '../src/core/ingestion/sources';
 
 describe('SourceRepository & News Hub Ingestion Engine', () => {
   let storage: AtemStorage;
@@ -165,6 +166,80 @@ describe('SourceRepository & News Hub Ingestion Engine', () => {
     const factCheckSources = sources.filter(s => s.category === 'fact_check');
     assert.ok(factCheckSources.length > 0);
     assert.strictEqual(factCheckSources.every(s => s.enabled), true);
+  });
+
+  it('guarantees zero duplicate IDs or normalized URLs across VERIFIED_FEED_SOURCES', () => {
+    const normalizeUrl = (url: string) =>
+      url.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/+$/, '');
+
+    const seenIds = new Set<string>();
+    const seenUrls = new Map<string, string>();
+
+    for (const source of VERIFIED_FEED_SOURCES) {
+      assert.strictEqual(seenIds.has(source.id), false, `Duplicate source ID detected: ${source.id}`);
+      seenIds.add(source.id);
+
+      const normalized = normalizeUrl(source.url);
+      assert.strictEqual(
+        seenUrls.has(normalized),
+        false,
+        `Duplicate normalized URL "${normalized}" for ${source.id} (already used by ${seenUrls.get(normalized)})`
+      );
+      seenUrls.set(normalized, source.id);
+    }
+  });
+
+  it('activates all flagship DE & EN sources by default with valid categories and German trustBadges', async () => {
+    const flagshipSpecs: {
+      id: string;
+      expectedCategory: 'culture' | 'science' | 'education' | 'oerr' | 'tech';
+      expectTeaching?: boolean;
+      expectChallenging?: boolean;
+    }[] = [
+      { id: 'brandeins-magazin', expectedCategory: 'culture' },
+      { id: 'krautreporter-magazin', expectedCategory: 'culture', expectChallenging: true },
+      { id: 'republik-ch', expectedCategory: 'culture', expectChallenging: true },
+      { id: 'bpb-apuz', expectedCategory: 'education', expectTeaching: true },
+      { id: 'zeit-wissen', expectedCategory: 'science' },
+      { id: 'zeit-kultur', expectedCategory: 'culture' },
+      { id: 'sz-wissen', expectedCategory: 'science' },
+      { id: 'sz-kultur', expectedCategory: 'culture' },
+      { id: 'geschichte-der-gegenwart', expectedCategory: 'culture', expectChallenging: true },
+      { id: 'praefaktisch-philosophie', expectedCategory: 'culture' },
+      { id: 'verfassungsblog-de', expectedCategory: 'culture', expectChallenging: true },
+      { id: 'bob-blume-netzlehrer', expectedCategory: 'education', expectTeaching: true },
+      { id: 'asimov-press', expectedCategory: 'science' },
+      { id: 'works-in-progress', expectedCategory: 'culture' },
+      { id: 'the-conversation-global', expectedCategory: 'science' },
+      { id: 'open-culture', expectedCategory: 'culture', expectTeaching: true },
+      { id: 'nautilus-magazine', expectedCategory: 'science' },
+      { id: 'noema-magazine', expectedCategory: 'culture', expectChallenging: true },
+      { id: 'archdaily-architecture', expectedCategory: 'culture' },
+      { id: 'dezeen-design', expectedCategory: 'culture' },
+      { id: 'sound-on-sound', expectedCategory: 'tech' },
+      { id: 'attack-magazine-synth', expectedCategory: 'tech' }
+    ];
+
+    const allSources = await repo.getAllSources();
+    const byId = new Map(allSources.map(s => [s.id, s]));
+    const rawById = new Map(VERIFIED_FEED_SOURCES.map(s => [s.id, s]));
+
+    for (const spec of flagshipSpecs) {
+      const source = byId.get(spec.id);
+      const raw = rawById.get(spec.id);
+      assert.ok(source, `Flagship source ${spec.id} must exist in SourceRepository`);
+      assert.ok(raw, `Flagship source ${spec.id} must exist in VERIFIED_FEED_SOURCES`);
+      assert.notStrictEqual(raw.defaultEnabled, false, `${spec.id} must not be disabled by default`);
+      assert.strictEqual(source.enabled, true, `${spec.id} must be enabled by default`);
+      assert.strictEqual(source.category, spec.expectedCategory, `${spec.id} category mismatch`);
+      assert.ok(source.trustBadge && source.trustBadge.trim().length > 0, `${spec.id} must have a trustBadge`);
+      if (spec.expectTeaching) {
+        assert.strictEqual(raw.isTeachingRelated, true, `${spec.id} must have isTeachingRelated: true`);
+      }
+      if (spec.expectChallenging) {
+        assert.strictEqual(raw.isChallengingPerspective, true, `${spec.id} must have isChallengingPerspective: true`);
+      }
+    }
   });
 });
 

@@ -326,8 +326,9 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
                     setQuestion('Was wurde tatsächlich untersucht, welche Grenzen hat das Ergebnis, und was trägt die Aussage?')
                   }
                 >
+                  <Ionicons name="search-outline" size={12} color={colors.textSecondary} style={{ marginRight: 5 }} />
                   <Text style={[styles.presetBtnText, { color: colors.textSecondary }]}>
-                    🔍 Kernaussagen & Belegprüfung
+                    Kernaussagen & Belegprüfung
                   </Text>
                 </TouchableOpacity>
 
@@ -337,8 +338,9 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
                     setQuestion('Welche methodischen Einschränkungen, Gegenbelege oder alternativen Erklärungen existieren?')
                   }
                 >
+                  <Ionicons name="scale-outline" size={12} color={colors.textSecondary} style={{ marginRight: 5 }} />
                   <Text style={[styles.presetBtnText, { color: colors.textSecondary }]}>
-                    ⚖️ Grenzen & Einwände
+                    Grenzen & Einwände
                   </Text>
                 </TouchableOpacity>
 
@@ -348,8 +350,9 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
                     setQuestion('Was lässt sich aus diesen Erkenntnissen verantwortbar in die Praxis oder den Unterricht übertragen?')
                   }
                 >
+                  <Ionicons name="school-outline" size={12} color={colors.textSecondary} style={{ marginRight: 5 }} />
                   <Text style={[styles.presetBtnText, { color: colors.textSecondary }]}>
-                    🏫 Praxistransfer
+                    Praxistransfer
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -419,9 +422,12 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
 
                 {/* 1. Synthesis Summary */}
                 <View style={[styles.sectionCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <Text style={[styles.cardHeader, { color: colors.accent }]}>
-                    1. 💡 Was sich aus dem Material ableiten lässt
-                  </Text>
+                  <View style={styles.sectionHeaderRow}>
+                    <Ionicons name="bulb-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+                    <Text style={[styles.cardHeader, { color: colors.accent, marginBottom: 0 }]}>
+                      1. Was sich aus dem Material ableiten lässt
+                    </Text>
+                  </View>
                   <Text style={[styles.synthesisBody, { color: colors.textPrimary }]}>
                     {result.synthesisSummary}
                   </Text>
@@ -429,9 +435,12 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
 
                 {/* 2. Grounded Claims & Quotes */}
                 <View style={[styles.sectionCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <Text style={[styles.cardHeader, { color: colors.accent }]}>
-                    2. 📖 Belegstellen & Zitate (Darauf stützt sich diese Einordnung)
-                  </Text>
+                  <View style={styles.sectionHeaderRow}>
+                    <Ionicons name="book-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+                    <Text style={[styles.cardHeader, { color: colors.accent, marginBottom: 0 }]}>
+                      2. Belegstellen & Zitate (Darauf stützt sich diese Einordnung)
+                    </Text>
+                  </View>
                   {result.groundedClaims.map((claim, idx) => (
                     <View
                       key={claim.id || idx}
@@ -439,14 +448,28 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
                     >
                       <View style={styles.claimTopRow}>
                         <View style={[styles.evidenceBadge, { backgroundColor: colors.accentSubtle }]}>
+                          <Ionicons
+                            name={
+                              claim.evidenceType === 'observation'
+                                ? 'search-outline'
+                                : claim.evidenceType === 'interpretation'
+                                ? 'chatbubble-ellipses-outline'
+                                : claim.evidenceType === 'causal_claim'
+                                ? 'flash-outline'
+                                : 'scale-outline'
+                            }
+                            size={11}
+                            color={colors.accent}
+                            style={{ marginRight: 4 }}
+                          />
                           <Text style={[styles.evidenceBadgeText, { color: colors.accent }]}>
                             {claim.evidenceType === 'observation'
-                              ? '🔍 Beobachtung'
+                              ? 'Beobachtung'
                               : claim.evidenceType === 'interpretation'
-                              ? '💭 Interpretation'
+                              ? 'Interpretation'
                               : claim.evidenceType === 'causal_claim'
-                              ? '⚡ Kausalität'
-                              : '⚖️ Werturteil'}
+                              ? 'Kausalität'
+                              : 'Werturteil'}
                           </Text>
                         </View>
                         <TouchableOpacity
@@ -476,9 +499,12 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
 
                 {/* 3. Limitations & Counterpoints */}
                 <View style={[styles.sectionCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <Text style={[styles.cardHeader, { color: '#8B5CF6' }]}>
-                    3. ⚠️ Relevante Grenzen & methodische Einwände
-                  </Text>
+                  <View style={styles.sectionHeaderRow}>
+                    <Ionicons name="alert-circle-outline" size={15} color="#8B5CF6" style={{ marginRight: 6 }} />
+                    <Text style={[styles.cardHeader, { color: '#8B5CF6', marginBottom: 0 }]}>
+                      3. Relevante Grenzen & methodische Einwände
+                    </Text>
+                  </View>
                   {result.limitationsAndCounterpoints.map((lim, idx) => (
                     <View key={idx} style={styles.bulletRow}>
                       <Ionicons name="alert-circle-outline" size={14} color="#8B5CF6" style={{ marginRight: 6, marginTop: 2 }} />
@@ -489,9 +515,12 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
 
                 {/* 4. Open Questions */}
                 <View style={[styles.sectionCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <Text style={[styles.cardHeader, { color: '#F59E0B' }]}>
-                    4. ❓ Was offen bleibt
-                  </Text>
+                  <View style={styles.sectionHeaderRow}>
+                    <Ionicons name="help-circle-outline" size={15} color="#F59E0B" style={{ marginRight: 6 }} />
+                    <Text style={[styles.cardHeader, { color: '#F59E0B', marginBottom: 0 }]}>
+                      4. Was offen bleibt
+                    </Text>
+                  </View>
                   {result.openQuestions.map((q, idx) => (
                     <View key={idx} style={styles.bulletRow}>
                       <Ionicons name="help-circle-outline" size={14} color="#F59E0B" style={{ marginRight: 6, marginTop: 2 }} />
@@ -502,9 +531,12 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
 
                 {/* 5. Next Steps */}
                 <View style={[styles.sectionCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                  <Text style={[styles.cardHeader, { color: colors.textPrimary }]}>
-                    5. 🚀 Mögliche nächste Schritte
-                  </Text>
+                  <View style={styles.sectionHeaderRow}>
+                    <Ionicons name="arrow-forward-circle-outline" size={15} color={colors.textPrimary} style={{ marginRight: 6 }} />
+                    <Text style={[styles.cardHeader, { color: colors.textPrimary, marginBottom: 0 }]}>
+                      5. Mögliche nächste Schritte
+                    </Text>
+                  </View>
                   {result.suggestedNextSteps.map((step, idx) => (
                     <View
                       key={step.id || idx}
@@ -538,9 +570,12 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
 
                 {/* User Verdict & Sovereign Judgment */}
                 <View style={[styles.sectionCard, { backgroundColor: colors.surface, borderColor: colors.accent }]}>
-                  <Text style={[styles.cardHeader, { color: colors.textPrimary }]}>
-                    ✍️ Mein persönliches Urteil (Unveränderbare Notiz)
-                  </Text>
+                  <View style={styles.sectionHeaderRow}>
+                    <Ionicons name="create-outline" size={15} color={colors.textPrimary} style={{ marginRight: 6 }} />
+                    <Text style={[styles.cardHeader, { color: colors.textPrimary, marginBottom: 0 }]}>
+                      Mein persönliches Urteil (Unveränderbare Notiz)
+                    </Text>
+                  </View>
                   <Text style={[styles.verdictHint, { color: colors.textMuted }]}>
                     Die KI liefert Recherche und Belege. Deine eigene Schlussfolgerung bleibt davon getrennt und wird niemals überschrieben.
                   </Text>
@@ -740,6 +775,8 @@ const styles = StyleSheet.create({
     marginTop: 10
   },
   presetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 6,
@@ -812,6 +849,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1
   },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10
+  },
   cardHeader: {
     fontSize: 14,
     fontWeight: '700',
@@ -834,8 +876,10 @@ const styles = StyleSheet.create({
     marginBottom: 6
   },
   evidenceBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
     borderRadius: 4
   },
   evidenceBadgeText: {

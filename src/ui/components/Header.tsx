@@ -70,10 +70,8 @@ export const Header: React.FC<HeaderProps> = ({
               style={[
                 styles.syncPill,
                 {
-                  backgroundColor: cloudSyncConfig.enabled
-                    ? (isDark ? 'rgba(16, 185, 129, 0.16)' : '#ECFDF5')
-                    : colors.surfaceSecondary,
-                  borderColor: cloudSyncConfig.enabled ? '#10B981' : colors.borderSubtle
+                  backgroundColor: colors.surfaceSecondary,
+                  borderColor: colors.borderSubtle
                 }
               ]}
               accessibilityRole="button"
@@ -82,13 +80,13 @@ export const Header: React.FC<HeaderProps> = ({
               <Ionicons
                 name={cloudSyncConfig.enabled ? 'cloud-done-outline' : 'cloud-outline'}
                 size={14}
-                color={cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary}
+                color={cloudSyncConfig.enabled ? colors.success : colors.textSecondary}
               />
               {!isCompactMobile && (
                 <Text
                   style={[
                     styles.syncPillText,
-                    { color: cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary }
+                    { color: cloudSyncConfig.enabled ? colors.success : colors.textSecondary }
                   ]}
                 >
                   {isSyncing ? 'Sync…' : cloudSyncConfig.enabled ? 'Synchronisiert' : 'Koppeln'}
@@ -99,36 +97,36 @@ export const Header: React.FC<HeaderProps> = ({
             {onOpenHivemind && (
               <TouchableOpacity
                 onPress={onOpenHivemind}
-                style={[styles.themeToggle, { backgroundColor: 'rgba(139, 92, 246, 0.16)' }]}
+                style={[styles.themeToggle, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
                 accessibilityRole="button"
                 accessibilityLabel="Hivemind Lern-Feed öffnen"
               >
-                <Text style={{ fontSize: 13 }}>🧠</Text>
+                <Ionicons name="school-outline" size={15} color={colors.accent} />
               </TouchableOpacity>
             )}
 
             <TouchableOpacity
               onPress={() => setShowMaster(true)}
-              style={[styles.themeToggle, { backgroundColor: '#F59E0B' + '22' }]}
+              style={[styles.themeToggle, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
               accessibilityRole="button"
               accessibilityLabel="AI Studio & Subchannel-Erstellung öffnen"
             >
-              <Ionicons name="sparkles" size={15} color="#F59E0B" />
+              <Ionicons name="sparkles-outline" size={15} color={colors.accent} />
             </TouchableOpacity>
 
             <TouchableOpacity
               onPress={() => setShowBreathing(true)}
-              style={[styles.themeToggle, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}
+              style={[styles.themeToggle, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
               accessibilityRole="button"
               accessibilityLabel="Atmen Portal öffnen"
             >
-              <Text style={{ fontSize: 13 }}>🧘</Text>
+              <Ionicons name="leaf-outline" size={15} color={colors.success} />
             </TouchableOpacity>
 
             {showThemeToggle && (
               <TouchableOpacity
                 onPress={handleToggleTheme}
-                style={[styles.themeToggle, { backgroundColor: colors.surfaceSecondary }]}
+                style={[styles.themeToggle, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 accessibilityRole="button"
                 accessibilityLabel={isDark ? 'Helles Erscheinungsbild aktivieren' : 'Dunkles Erscheinungsbild aktivieren'}
@@ -208,20 +206,21 @@ const styles = StyleSheet.create({
   syncPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 17,
-    borderWidth: 0.5
+    borderWidth: 1
   },
   syncPillText: {
     fontSize: 11,
-    fontWeight: '700'
+    fontWeight: '600'
   },
   themeToggle: {
     width: 34,
     height: 34,
     borderRadius: 17,
+    borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center'
   }

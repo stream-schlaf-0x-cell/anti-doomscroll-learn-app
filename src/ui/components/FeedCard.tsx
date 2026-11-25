@@ -29,6 +29,7 @@ import {
   optimizeImageUrl,
   upgradeImageResolutionUrl,
   assessEditorialImage,
+  computeEditorialImagePresentation,
   isTrustedMuseumOrArtDomain,
   isLikelyBannerOrLogoUrl,
   extractLoadedImageDimensions,
@@ -128,17 +129,17 @@ export function formatHonestTimeLabel(item: ScoredFeedItem): string {
 }
 
 export function formatCuratedLabel(curatedAt?: string): string {
-  if (!curatedAt) return '✨ Frisch kuratiert';
+  if (!curatedAt) return 'Frisch kuratiert';
   try {
     const diffMs = Date.now() - new Date(curatedAt).getTime();
-    if (diffMs < 0 || diffMs < 1000 * 60 * 2) return '✨ Frisch kuratiert · gerade eben';
+    if (diffMs < 0 || diffMs < 1000 * 60 * 2) return 'Frisch kuratiert · gerade eben';
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
-    if (diffMinutes < 60) return `✨ Kuratiert vor ${diffMinutes} Min.`;
+    if (diffMinutes < 60) return `Kuratiert vor ${diffMinutes} Min.`;
     const diffHours = Math.floor(diffMinutes / 60);
-    if (diffHours < 24) return `✨ Kuratiert vor ${diffHours} Std.`;
-    return `✨ Kuratiert am ${new Date(curatedAt).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })}`;
+    if (diffHours < 24) return `Kuratiert vor ${diffHours} Std.`;
+    return `Kuratiert am ${new Date(curatedAt).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })}`;
   } catch {
-    return '✨ Frisch kuratiert';
+    return 'Frisch kuratiert';
   }
 }
 
@@ -170,7 +171,6 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   const resolvedTrackProgress = hivemindTrackProgressPercent ?? hivemindProgressPercent;
   const resolvedStepCompleted = isHivemindStepCompleted ?? isCompletedHivemindStep;
   const { width } = useWindowDimensions();
-  const isDesktop = width >= 960;
   const colors = useMemo(() => getThemeColors(isDark ? 'dark' : 'light', palette), [isDark, palette]);
   const {
     toggleSaveItem,
@@ -185,6 +185,8 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   const [usedFallbackUrl, setUsedFallbackUrl] = useState(false);
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const [naturalAspectRatio, setNaturalAspectRatio] = useState<number | null>(null);
+  const [naturalDims, setNaturalDims] = useState<{ width: number; height: number } | null>(null);
+  const [cardInnerWidth, setCardInnerWidth] = useState<number>(() => Math.min(width - 36, 740));
   const [showSimulatedReplies, setShowSimulatedReplies] = useState(false);
   const [markedHivemindDone, setMarkedHivemindDone] = useState<boolean>(Boolean(resolvedStepCompleted));
   const [dynamicTrackProgress, setDynamicTrackProgress] = useState<number | undefined>(resolvedTrackProgress);
@@ -222,6 +224,8 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     setImageError(false);
     setImageRejected(false);
     setUsedFallbackUrl(false);
+    setNaturalAspectRatio(null);
+    setNaturalDims(null);
   }, [item.imageUrl, item.id]);
 
   // Web Escape key listener to exit fullscreen lightbox effortlessly
@@ -340,6 +344,39 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     }
   };
 
+  const handleLoadedImageDimensions = (loadedW: number, loadedH: number) => {
+    if (!(loadedW > 0) || !(loadedH > 0)) return;
+    const ratio = loadedW / loadedH;
+    if (
+      !isMemeCard &&
+      !isArtCard &&
+      !isTrustedArtImage &&
+      (isLowResolutionEditorialImage(loadedW, loadedH) || ratio > 2.45)
+    ) {
+      setImageRejected(true);
+      return;
+    }
+    setNaturalDims({ width: loadedW, height: loadedH });
+    setNaturalAspectRatio(ratio);
+  };
+
+  const imagePresentation = useMemo(
+    () =>
+      computeEditorialImagePresentation({
+        naturalWidth: naturalDims?.width,
+        naturalHeight: naturalDims?.height,
+        category: editorialAssessment.category,
+        isArt: isArtCard,
+        isMeme: isMemeCard,
+        viewportWidth: width
+      }),
+    [naturalDims, editorialAssessment.category, isArtCard, isMemeCard, width]
+  );
+
+  const imageFrameHeight = Math.round(
+    Math.min(imagePresentation.maxFrameHeight, cardInnerWidth / imagePresentation.frameAspectRatio)
+  );
+
   // Hide boilerplate feedText when it merely repeats HN metadata or comic alt-text punchline
   const shouldShowBodyText = Boolean(displayFeedText);
 
@@ -427,26 +464,32 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   // Single compact badge only when meaningful (never duplicate "Originalauszug" + "RSS-Originalauszug")
   const compactBadge = useMemo(() => {
     if (item.aiAssisted) {
-      return { label: '🤖 KI', color: '#10B981', bg: 'rgba(16, 185, 129, 0.14)' };
+      return { label: 'KI', icon: 'sparkles-outline' as const, color: '#10B981', bg: 'rgba(16, 185, 129, 0.12)' };
     }
     if (item.sourceTrustLevel === 'peer_reviewed') {
-      return { label: '🔬 Studie', color: '#3B82F6', bg: 'rgba(59, 130, 246, 0.12)' };
+      return { label: 'Studie', icon: 'flask-outline' as const, color: '#3B82F6', bg: 'rgba(59, 130, 246, 0.10)' };
     }
     if (item.sourceTrustLevel === 'museum_collection') {
-      return { label: '🏛️ Museum', color: '#D97706', bg: 'rgba(245, 158, 11, 0.14)' };
+      return { label: 'Museum', icon: 'library-outline' as const, color: '#D97706', bg: 'rgba(245, 158, 11, 0.12)' };
     }
     return null;
   }, [item.aiAssisted, item.sourceTrustLevel]);
 
   return (
     <View
+      onLayout={(e) => {
+        const w = e.nativeEvent.layout.width;
+        if (w > 0) {
+          const horizontalPad = isHero ? spacing.xl * 2 : spacing.lg * 2;
+          const nextInner = Math.max(200, w - horizontalPad);
+          setCardInnerWidth(prev => (Math.abs(prev - nextInner) > 1 ? nextInner : prev));
+        }
+      }}
       style={[
         styles.card,
         {
           backgroundColor: isHero ? colors.cardHighlight : colors.surface,
-          borderColor: isFocused ? spaceColor : isHero ? spaceColor : colors.borderSubtle,
-          borderLeftColor: spaceColor,
-          borderLeftWidth: 3.5
+          borderColor: isFocused ? colors.accent : colors.borderSubtle
         },
         isHero && styles.heroCard
       ]}
@@ -479,8 +522,9 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
             (typeof item.pinnedManualRunAt === 'number' && (Date.now() - item.pinnedManualRunAt) <= 30 * 60 * 1000)) && (
             <>
               <Text style={[styles.dotSeparator, { color: colors.textMuted }]}>•</Text>
-              <View style={[styles.neuBadge, { backgroundColor: colors.accentSubtle, borderColor: colors.accent }]}>
-                <Text style={[styles.neuBadgeText, { color: colors.accent }]}>✨ Neu</Text>
+              <View style={[styles.neuBadge, { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }]}>
+                <Ionicons name="sparkles-outline" size={10} color={colors.accent} style={{ marginRight: 3 }} />
+                <Text style={[styles.neuBadgeText, { color: colors.accent }]}>Neu</Text>
               </View>
             </>
           )}
@@ -497,6 +541,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
                 }
               ]}
             >
+              <Ionicons name={compactBadge.icon} size={11} color={compactBadge.color} style={{ marginRight: 4 }} />
               <Text
                 style={[
                   styles.provenancePillText,
@@ -524,13 +569,18 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
             styles.hivemindTrackPill,
             {
               backgroundColor: markedHivemindDone ? 'rgba(16, 185, 129, 0.14)' : colors.accentSubtle,
-              borderColor: markedHivemindDone ? '#10B981' : colors.accent
+              borderColor: markedHivemindDone ? '#10B981' : colors.borderSubtle
             }
           ]}
           accessibilityRole="button"
           accessibilityLabel={`Lernpfad ${hivemindTrackTitle} im Fokus-Modus öffnen`}
         >
-          <Text style={{ fontSize: 12, marginRight: 5 }}>🧠</Text>
+          <Ionicons
+            name="school-outline"
+            size={13}
+            color={markedHivemindDone ? '#10B981' : colors.accent}
+            style={{ marginRight: 5 }}
+          />
           <Text
             style={[
               styles.hivemindTrackPillText,
@@ -554,9 +604,9 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
 
       {Boolean(item.recommendedBecauseOfTitle) && (
         <View style={[styles.editorialBadgeRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-          <Ionicons name="link-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+          <Ionicons name="link-outline" size={12} color={colors.accent} style={{ marginRight: 5 }} />
           <Text style={[styles.editorialBadgeText, { color: colors.textSecondary }]} numberOfLines={1}>
-            🔗 Vertiefung zu deinem Upvote: „{item.recommendedBecauseOfTitle}“
+            Vertiefung zu deinem Upvote: „{item.recommendedBecauseOfTitle}“
           </Text>
         </View>
       )}
@@ -613,26 +663,52 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
             onPress={() => setShowImageLightbox(true)}
             style={[
               styles.artImageWrapper,
-              naturalAspectRatio
-                ? { aspectRatio: naturalAspectRatio, maxHeight: isDesktop ? 520 : 420 }
-                : { height: isDesktop ? 400 : 320 }
+              {
+                height: imageFrameHeight,
+                backgroundColor: colors.surfaceSecondary
+              }
             ]}
           >
-            <Image
-              source={{ uri: activeVisualUri }}
-              style={styles.artImage}
-              resizeMode="contain"
-              onError={handleImageError}
-            />
+            {Platform.OS === 'web' ? (
+              React.createElement('img', {
+                src: activeVisualUri,
+                alt: item.title,
+                loading: 'lazy',
+                decoding: 'async',
+                onLoad: (e: React.SyntheticEvent<HTMLImageElement>) => {
+                  const img = e.currentTarget;
+                  handleLoadedImageDimensions(img.naturalWidth, img.naturalHeight);
+                },
+                onError: handleImageError,
+                style: {
+                  width: '100%',
+                  height: '100%',
+                  display: 'block',
+                  objectFit: imagePresentation.resizeMode,
+                  objectPosition: imagePresentation.objectPosition
+                }
+              })
+            ) : (
+              <Image
+                source={{ uri: activeVisualUri }}
+                style={styles.artImage}
+                resizeMode={imagePresentation.resizeMode}
+                onLoad={(e) => {
+                  const dims = extractLoadedImageDimensions(e);
+                  if (dims) handleLoadedImageDimensions(dims.width, dims.height);
+                }}
+                onError={handleImageError}
+              />
+            )}
             <View style={styles.zoomBadgeOverlay}>
               <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
               <Text style={styles.zoomBadgeText}>Vollbild</Text>
             </View>
             <View style={styles.artMuseumPlaque}>
-              <Ionicons name="color-palette" size={14} color="#F59E0B" style={{ marginRight: 6 }} />
+              <Ionicons name="color-palette-outline" size={14} color="#F59E0B" style={{ marginRight: 6 }} />
               <Text style={styles.artMuseumPlaqueText} numberOfLines={1}>
                 {item.artMeta?.artist || publisherName}{' '}
-                {item.artMeta?.year ? `(${item.artMeta.year})` : ''} •{' '}
+                {item.artMeta?.year ? `(${item.artMeta.year})` : ''} ·{' '}
                 {item.artMeta?.museum || 'Museums-Sammlung'}
               </Text>
             </View>
@@ -646,40 +722,53 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
           onPress={() => (isMemeCard ? setShowImageLightbox(true) : handleCardPress())}
           style={[
             isMemeCard ? styles.comicStageContainer : styles.imageContainer,
-            isMemeCard
-              ? { aspectRatio: naturalAspectRatio || 1.25 }
-              : { height: undefined, aspectRatio: 16 / 9, maxHeight: isDesktop ? 340 : 260, backgroundColor: colors.surfaceSecondary }
+            {
+              height: imageFrameHeight,
+              backgroundColor: isMemeCard
+                ? '#FFFFFF'
+                : imagePresentation.useMatteFrame
+                ? colors.surfaceSecondary
+                : colors.surfaceSecondary
+            }
           ]}
         >
-          <Image
-            source={{ uri: activeVisualUri }}
-            style={[
-              styles.cardImage,
-              isMemeCard && styles.comicImage,
-              { objectPosition: editorialAssessment.objectPosition || 'top center' } as any
-            ]}
-            resizeMode={isMemeCard || isArtCard || editorialAssessment.category === 'comic' || editorialAssessment.category === 'square_photo' ? 'contain' : 'cover'}
-            onLoad={(e) => {
-              const dims = extractLoadedImageDimensions(e);
-              if (dims) {
-                const { width: loadedW, height: loadedH } = dims;
-                const ratio = loadedW / loadedH;
-                if (
-                  !isMemeCard &&
-                  !isArtCard &&
-                  !isTrustedArtImage &&
-                  (isLowResolutionEditorialImage(loadedW, loadedH) || ratio > 2.35)
-                ) {
-                  setImageRejected(true);
-                  return;
-                }
-                if (isMemeCard) {
-                  setNaturalAspectRatio(ratio);
-                }
+          {Platform.OS === 'web' ? (
+            React.createElement('img', {
+              src: activeVisualUri,
+              alt: item.title,
+              loading: 'lazy',
+              decoding: 'async',
+              onLoad: (e: React.SyntheticEvent<HTMLImageElement>) => {
+                const img = e.currentTarget;
+                handleLoadedImageDimensions(img.naturalWidth, img.naturalHeight);
+              },
+              onError: handleImageError,
+              style: {
+                width: '100%',
+                height: '100%',
+                display: 'block',
+                objectFit: imagePresentation.resizeMode,
+                objectPosition: imagePresentation.objectPosition
               }
-            }}
-            onError={handleImageError}
-          />
+            })
+          ) : (
+            <Image
+              source={{ uri: activeVisualUri }}
+              style={[
+                styles.cardImage,
+                isMemeCard && styles.comicImage,
+                { objectPosition: imagePresentation.objectPosition } as any
+              ]}
+              resizeMode={imagePresentation.resizeMode}
+              onLoad={(e) => {
+                const dims = extractLoadedImageDimensions(e);
+                if (dims) {
+                  handleLoadedImageDimensions(dims.width, dims.height);
+                }
+              }}
+              onError={handleImageError}
+            />
+          )}
           {isMemeCard && (
             <View style={styles.zoomBadgeOverlay}>
               <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
@@ -719,12 +808,15 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
           onPress={handleCardPress}
           style={[
             styles.keyInsightCallout,
-            { backgroundColor: colors.accentSubtle, borderLeftWidth: 3, borderLeftColor: colors.accent }
+            { backgroundColor: colors.accentSubtle, borderColor: colors.borderSubtle }
           ]}
         >
-          <Text style={[styles.keyInsightLabel, { color: colors.accent }]}>
-            💡 Kernaussage
-          </Text>
+          <View style={styles.calloutLabelRow}>
+            <Ionicons name="bulb-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+            <Text style={[styles.keyInsightLabel, { color: colors.accent, marginBottom: 0 }]}>
+              Kernaussage
+            </Text>
+          </View>
           <Text style={[styles.keyInsightText, { color: colors.textPrimary }]} numberOfLines={2}>
             {distinctKeyInsight}
           </Text>
@@ -795,7 +887,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
         </View>
       )}
 
-      {/* Inline Expandable Community Replies (💬 X Antworten anzeigen) */}
+      {/* Inline Expandable Community Replies */}
       {simulatedReplies && simulatedReplies.length > 0 && (
         <View style={styles.simulatedRepliesWrapper}>
           <TouchableOpacity
@@ -811,7 +903,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
             accessibilityRole="button"
             accessibilityLabel={`${simulatedReplies.length} Antworten anzeigen`}
           >
-            <Text style={{ fontSize: 13, marginRight: 6 }}>💬</Text>
+            <Ionicons name="chatbubble-outline" size={13} color={colors.accent} style={{ marginRight: 6 }} />
             <Text style={[styles.simulatedRepliesToggleText, { color: colors.textPrimary }]}>
               {simulatedReplies.length} Antworten aus dem Lern-Salon anzeigen
             </Text>
@@ -832,8 +924,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
                     styles.simulatedReplyCard,
                     {
                       backgroundColor: colors.surfaceSecondary,
-                      borderColor: colors.borderSubtle,
-                      borderLeftColor: colors.accent
+                      borderColor: colors.borderSubtle
                     }
                   ]}
                 >
@@ -862,10 +953,13 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
 
       {/* Special Format Compact Callout: Comic Alt-Text Bonus Punchline / Book Thesis / Sound Track */}
       {item.memeMeta && !(escalationStages && escalationStages.length >= 3) && (
-        <View style={[styles.compactCallout, { backgroundColor: colors.surfaceSecondary, borderLeftColor: spaceColor }]}>
-          <Text style={[styles.compactCalloutLabel, { color: spaceColor }]}>
-            🎁 {item.memeMeta.satireContext || 'Bonus-Punchline (Alt-Text)'}
-          </Text>
+        <View style={[styles.compactCallout, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <View style={styles.calloutLabelRow}>
+            <Ionicons name="gift-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+            <Text style={[styles.compactCalloutLabel, { color: colors.accent, marginBottom: 0 }]}>
+              {item.memeMeta.satireContext || 'Bonus-Punchline (Alt-Text)'}
+            </Text>
+          </View>
           <Text style={[styles.compactCalloutText, { color: colors.textPrimary }]}>
             „{item.memeMeta.punchline}“
           </Text>
@@ -873,10 +967,13 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
       )}
 
       {item.bookMeta && (
-        <View style={[styles.compactCallout, { backgroundColor: colors.surfaceSecondary, borderLeftColor: '#A855F7' }]}>
-          <Text style={[styles.compactCalloutLabel, { color: '#A855F7' }]}>
-            📚 {item.bookMeta.author} • ★ {item.bookMeta.rating}/5
-          </Text>
+        <View style={[styles.compactCallout, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+          <View style={styles.calloutLabelRow}>
+            <Ionicons name="book-outline" size={12} color={colors.accent} style={{ marginRight: 4 }} />
+            <Text style={[styles.compactCalloutLabel, { color: colors.accent, marginBottom: 0 }]}>
+              {item.bookMeta.author} · {item.bookMeta.rating}/5
+            </Text>
+          </View>
           <Text style={[styles.compactCalloutText, { color: colors.textPrimary, fontStyle: 'italic' }]}>
             „{item.bookMeta.oneSentenceThesis}“
           </Text>
@@ -1005,8 +1102,9 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
               accessibilityRole="button"
               accessibilityLabel="Weniger davon"
             >
+              <Ionicons name="ban-outline" size={12} color={colors.textMuted} style={{ marginRight: 4 }} />
               <Text style={[styles.actionChipText, { color: colors.textMuted }]} numberOfLines={1}>
-                🚫 Weniger
+                Weniger
               </Text>
             </TouchableOpacity>
           )}
@@ -1099,7 +1197,10 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
 
               {item.memeMeta?.punchline && (
                 <View style={styles.lightboxPunchlineBox}>
-                  <Text style={styles.lightboxPunchlineLabel}>🎁 Bonus-Punchline (Alt-Text):</Text>
+                  <View style={styles.calloutLabelRow}>
+                    <Ionicons name="gift-outline" size={13} color="#38BDF8" style={{ marginRight: 5 }} />
+                    <Text style={[styles.lightboxPunchlineLabel, { marginBottom: 0 }]}>Bonus-Punchline (Alt-Text):</Text>
+                  </View>
                   <Text style={styles.lightboxPunchlineText}>„{item.memeMeta.punchline}“</Text>
                 </View>
               )}
@@ -1131,18 +1232,13 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.lg,
     borderWidth: 1,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
+    marginBottom: spacing.md
   },
   heroCard: {
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.lg,
+    paddingVertical: spacing.xl,
     marginBottom: spacing.lg
   },
   topHeaderRow: {
@@ -1191,6 +1287,8 @@ const styles = StyleSheet.create({
     gap: 6
   },
   provenancePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: radius.pill,
@@ -1213,28 +1311,28 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: typography.fontFamilies.serif,
     fontWeight: '700',
-    letterSpacing: -0.2,
-    marginBottom: 6
+    letterSpacing: -0.25,
+    marginBottom: 8
   },
   heroTitle: {
-    fontSize: 22,
-    lineHeight: 29
+    fontSize: 23,
+    lineHeight: 30
   },
   standardTitle: {
-    fontSize: 18.5,
-    lineHeight: 25
+    fontSize: 19,
+    lineHeight: 26
   },
   subtitle: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 14.5,
+    lineHeight: 21,
     fontWeight: '500',
-    marginBottom: 8
+    marginBottom: 10
   },
   imageContainer: {
     width: '100%',
     borderRadius: radius.md,
     overflow: 'hidden',
-    marginVertical: 8,
+    marginVertical: 10,
     backgroundColor: '#0F172A',
     position: 'relative',
     alignItems: 'center',
@@ -1242,11 +1340,9 @@ const styles = StyleSheet.create({
   },
   comicStageContainer: {
     width: '100%',
-    minHeight: 240,
-    maxHeight: 640,
     borderRadius: radius.md,
     overflow: 'hidden',
-    marginVertical: 8,
+    marginVertical: 10,
     padding: 12,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
@@ -1298,11 +1394,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     overflow: 'hidden',
-    marginVertical: 8
+    marginVertical: 10
   },
   artImageWrapper: {
     width: '100%',
-    minHeight: 280,
     position: 'relative',
     backgroundColor: '#0F172A'
   },
@@ -1311,8 +1406,9 @@ const styles = StyleSheet.create({
     height: '100%'
   },
   neuBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
+    flexDirection: 'row',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
     borderRadius: radius.pill,
     borderWidth: 0.5,
     alignItems: 'center',
@@ -1481,19 +1577,25 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
   feedText: {
-    fontSize: 14.5,
-    lineHeight: 22,
-    marginBottom: 8
+    fontSize: 15,
+    lineHeight: 23,
+    marginBottom: 10
   },
   quick20sFeedText: {
-    fontSize: 15,
-    lineHeight: 23.5
+    fontSize: 15.5,
+    lineHeight: 24
+  },
+  calloutLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 3
   },
   keyInsightCallout: {
     borderRadius: radius.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    marginBottom: 8
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 10
   },
   keyInsightLabel: {
     fontSize: 11,
@@ -1502,15 +1604,15 @@ const styles = StyleSheet.create({
   },
   keyInsightText: {
     fontSize: 13,
-    lineHeight: 18.5,
+    lineHeight: 19,
     fontWeight: '500'
   },
   compactCallout: {
-    borderLeftWidth: 3,
+    borderWidth: 1,
     borderRadius: radius.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginBottom: 8
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 10
   },
   compactCalloutLabel: {
     fontSize: 11,
@@ -1844,8 +1946,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: radius.sm,
-    borderWidth: 0.5,
-    borderLeftWidth: 3
+    borderWidth: 1
   },
   simulatedReplyHeader: {
     flexDirection: 'row',

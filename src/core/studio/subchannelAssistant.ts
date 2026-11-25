@@ -56,7 +56,27 @@ export const SUBCHANNEL_VIBES: Record<SubchannelVibe, SubchannelVibeMeta> = {
   }
 };
 
+export const STUDIO_QUICK_THEMES: readonly string[] = [
+  'Erkenntnistheorie',
+  'Bauhaus-Architektur',
+  'Modulare Synthese',
+  'Didaktik-Forschung',
+  'Stoische Praxis',
+  'Quantenphysik'
+];
+
+/**
+ * Strips leading decorative emojis/variation selectors so flairs and vibe labels
+ * render cleanly alongside single Ionicons in the UI.
+ */
+export function stripLeadingDecorativeEmoji(input: string): string {
+  return (input || '')
+    .replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/gu, '')
+    .trim();
+}
+
 export interface AiAssistedSubchannelDraft {
+  suggestedTitle?: string;
   handle: string;
   flair: string;
   description: string;
@@ -103,6 +123,7 @@ export function generateDeterministicSubchannelDraft(
   switch (effectiveVibe) {
     case 'visual':
       return {
+        suggestedTitle: cleanTitle,
         handle,
         flair: `🎨 ${cleanTitle.slice(0, 18)}`,
         description: `Visuelle Kultur, Ästhetik und historische Primärwerke rund um ${cleanTitle}. Offene Museumssammlungen und Bildanalysen.`,
@@ -116,6 +137,7 @@ export function generateDeterministicSubchannelDraft(
 
     case 'tech':
       return {
+        suggestedTitle: cleanTitle,
         handle,
         flair: `🛠️ ${cleanTitle.slice(0, 18)}`,
         description: `Technische Tiefenbohrungen, Systemarchitektur und handwerkliche Meisterschaft in ${cleanTitle}.`,
@@ -129,6 +151,7 @@ export function generateDeterministicSubchannelDraft(
 
     case 'research':
       return {
+        suggestedTitle: cleanTitle,
         handle,
         flair: `🔬 ${cleanTitle.slice(0, 18)}`,
         description: `Evidenzbasierte Studien, kognitionswissenschaftliche Grundlagen und konkrete Praxistransfers zu ${cleanTitle}.`,
@@ -142,6 +165,7 @@ export function generateDeterministicSubchannelDraft(
 
     case 'debate':
       return {
+        suggestedTitle: cleanTitle,
         handle,
         flair: `⚖️ ${cleanTitle.slice(0, 18)}`,
         description: `Dialektische Streitfragen, erkenntnistheoretische Begründungen und werteorientierte Gegenperspektiven zu ${cleanTitle}.`,
@@ -156,6 +180,7 @@ export function generateDeterministicSubchannelDraft(
     case 'contemplation':
     default:
       return {
+        suggestedTitle: cleanTitle,
         handle,
         flair: `🌱 ${cleanTitle.slice(0, 18)}`,
         description: `Achtsame Sammlung, kontemplative Praxis und philosophische Selbstreflexion im Themenraum ${cleanTitle}.`,
@@ -247,6 +272,7 @@ Antworte ausschließlich im JSON-Format:
       : fallback.primaryTopic;
 
     return {
+      suggestedTitle: typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : cleanTitle,
       handle: normalizeSpaceHandle(parsed.handle || cleanTitle),
       flair: (parsed.flair || fallback.flair).slice(0, 24),
       description: (parsed.description || fallback.description).slice(0, 300),

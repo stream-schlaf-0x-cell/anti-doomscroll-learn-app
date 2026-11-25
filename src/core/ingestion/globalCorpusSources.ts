@@ -930,21 +930,6 @@ export const GLOBAL_CORPUS_RESERVE_SOURCES: RawFeedSource[] = [
     description: "Weltweites Netzwerk investigativer Journalisten (Panama Papers, FinCEN Files)."
   },
   {
-    id: "fc-tagesschau-faktenfinder",
-    name: "Tagesschau Faktenfinder",
-    url: "https://www.tagesschau.de/faktenfinder/index~rss2.xml",
-    homepageUrl: "https://www.tagesschau.de/faktenfinder/",
-    primaryTopic: "philosophy_ethics",
-    topics: ["philosophy_ethics","science_society"],
-    defaultEvidenceTier: "publisher_excerpt",
-    defaultAuthor: "ARD Faktenfinder",
-    language: "de",
-    reliabilityTier: "tier_a",
-    sourceDomain: "fact_check",
-    defaultEnabled: false,
-    description: "Verifizierte Faktenchecks und Recherchen zu Desinformationskampagnen von ARD-aktuell."
-  },
-  {
     id: "fc-zdf-faktencheck",
     name: "ZDFheute Faktenprüfung",
     url: "https://www.zdf.de/nachrichten/thema/faktencheck-100.html",
@@ -1005,36 +990,6 @@ export const GLOBAL_CORPUS_RESERVE_SOURCES: RawFeedSource[] = [
     description: "Europäische Initiative für Kritisches Denken und Verifikation im Schulunterricht."
   },
   {
-    id: "fc-krautreporter",
-    name: "Krautreporter (Unabhängiger Magazinjournalismus)",
-    url: "https://krautreporter.de/rss",
-    homepageUrl: "https://krautreporter.de/",
-    primaryTopic: "philosophy_ethics",
-    topics: ["philosophy_ethics","science_society"],
-    defaultEvidenceTier: "publisher_excerpt",
-    defaultAuthor: "Krautreporter Genossenschaft",
-    language: "de",
-    reliabilityTier: "tier_b",
-    sourceDomain: "quality_news",
-    defaultEnabled: false,
-    description: "Werbefreier, leserfinanzierter Erklärjournalismus über Zusammenhänge und Hintergründe."
-  },
-  {
-    id: "fc-republik-ch",
-    name: "Republik Magazin Schweiz",
-    url: "https://www.republik.ch/feed",
-    homepageUrl: "https://www.republik.ch/",
-    primaryTopic: "philosophy_ethics",
-    topics: ["philosophy_ethics","science_society"],
-    defaultEvidenceTier: "publisher_excerpt",
-    defaultAuthor: "Republik Genossenschaft",
-    language: "de",
-    reliabilityTier: "tier_b",
-    sourceDomain: "quality_news",
-    defaultEnabled: false,
-    description: "Unabhängiges Schweizer Digitalmagazin für Politik, Wirtschaft und Kultur."
-  },
-  {
     id: "fc-katapult-magazin",
     name: "Katapult Magazin",
     url: "https://katapult-magazin.de/de/feed",
@@ -1093,21 +1048,6 @@ export const GLOBAL_CORPUS_RESERVE_SOURCES: RawFeedSource[] = [
     sourceDomain: "quality_news",
     defaultEnabled: false,
     description: "Internationale Monatszeitung für tiefgehende geopolitische und gesellschaftliche Analysen."
-  },
-  {
-    id: "rs-nature-neuroscience",
-    name: "Nature Neuroscience",
-    url: "https://www.nature.com/neuro.rss",
-    homepageUrl: "https://www.nature.com/neuro/",
-    primaryTopic: "health_biohacking",
-    topics: ["health_biohacking","science_society","contemplation_mind"],
-    defaultEvidenceTier: "publisher_excerpt",
-    defaultAuthor: "Nature Neuroscience Editors",
-    language: "en",
-    reliabilityTier: "tier_a",
-    sourceDomain: "science_research",
-    defaultEnabled: false,
-    description: "Spitzenforschung über Gehirnfunktion, synaptische Plastizität und Kognitionsmuster."
   },
   {
     id: "rs-nature-climate",
@@ -1528,21 +1468,6 @@ export const GLOBAL_CORPUS_RESERVE_SOURCES: RawFeedSource[] = [
     sourceDomain: "law_ethics_privacy",
     defaultEnabled: false,
     description: "Europas größte Hackervereinigung mit fundierten Stellungnahmen zu IT-Sicherheit und Überwachung."
-  },
-  {
-    id: "law-eff-org",
-    name: "Electronic Frontier Foundation (EFF Deeplinks)",
-    url: "https://www.eff.org/rss/updates.xml",
-    homepageUrl: "https://www.eff.org/",
-    primaryTopic: "philosophy_ethics",
-    topics: ["philosophy_ethics","ai_apple"],
-    defaultEvidenceTier: "publisher_excerpt",
-    defaultAuthor: "Electronic Frontier Foundation",
-    language: "en",
-    reliabilityTier: "tier_a",
-    sourceDomain: "law_ethics_privacy",
-    defaultEnabled: false,
-    description: "Führende internationale NGO für digitale Bürgerrechte, Verschlüsselung und freies Wissen."
   },
   {
     id: "ds-zenodo-cern",
@@ -2355,21 +2280,6 @@ export const GLOBAL_CORPUS_RESERVE_SOURCES: RawFeedSource[] = [
     description: "Molekulare Mechanismen von Langlebigkeit, Stoffwechsel und Fasten."
   },
   {
-    id: "rs-nature-biotech",
-    name: "Nature Biotechnology",
-    url: "https://www.nature.com/nbt.rss",
-    homepageUrl: "https://www.nature.com/nbt.rss",
-    primaryTopic: "science_society",
-    topics: ["science_society","health_biohacking"],
-    defaultEvidenceTier: "publisher_excerpt",
-    defaultAuthor: "Nature Biotechnology",
-    language: "en",
-    reliabilityTier: "tier_a",
-    sourceDomain: "science_research",
-    defaultEnabled: false,
-    description: "Durchbrüche in Bioengineering, CRISPR und synthetischer Biologie."
-  },
-  {
     id: "rs-nature-genetics",
     name: "Nature Genetics",
     url: "https://www.nature.com/ng.rss",
@@ -2413,21 +2323,6 @@ export const GLOBAL_CORPUS_RESERVE_SOURCES: RawFeedSource[] = [
     sourceDomain: "science_research",
     defaultEnabled: false,
     description: "Fundamentale Quantenphysik, Festkörper- und Astrophysik."
-  },
-  {
-    id: "rs-nature-communications",
-    name: "Nature Communications",
-    url: "https://www.nature.com/ncomms.rss",
-    homepageUrl: "https://www.nature.com/ncomms.rss",
-    primaryTopic: "science_society",
-    topics: ["science_society","philosophy_ethics"],
-    defaultEvidenceTier: "publisher_excerpt",
-    defaultAuthor: "Nature Communications",
-    language: "en",
-    reliabilityTier: "tier_a",
-    sourceDomain: "science_research",
-    defaultEnabled: false,
-    description: "Interdisziplinäre Open-Access-Spitzenforschung der Nature-Gruppe."
   },
   {
     id: "rs-science-immunology",
@@ -2758,21 +2653,6 @@ export const GLOBAL_CORPUS_RESERVE_SOURCES: RawFeedSource[] = [
     sourceDomain: "science_research",
     defaultEnabled: false,
     description: "Offizielles Journal des European College of Neuropsychopharmacology (ECNP)."
-  },
-  {
-    id: "rs-nature-human-behaviour",
-    name: "Nature Human Behaviour",
-    url: "https://www.nature.com/nathumbehav.rss",
-    homepageUrl: "https://www.nature.com/nathumbehav.rss",
-    primaryTopic: "contemplation_mind",
-    topics: ["contemplation_mind","philosophy_ethics","science_society"],
-    defaultEvidenceTier: "publisher_excerpt",
-    defaultAuthor: "Nature Human Behaviour",
-    language: "en",
-    reliabilityTier: "tier_a",
-    sourceDomain: "science_research",
-    defaultEnabled: false,
-    description: "Psychologische, verhaltensökonomische und soziologische Spitzenforschung."
   },
   {
     id: "mw-who-digital-health",
@@ -3478,21 +3358,6 @@ export const GLOBAL_CORPUS_RESERVE_SOURCES: RawFeedSource[] = [
     sourceDomain: "quality_news",
     defaultEnabled: false,
     description: "Aktuelle Berichte über Raumfahrt, Archäologie und Naturwissenschaften."
-  },
-  {
-    id: "fc-zeit-wissen",
-    name: "ZEIT ONLINE Wissen",
-    url: "https://newsfeed.zeit.de/wissen/index",
-    homepageUrl: "https://newsfeed.zeit.de/wissen/index",
-    primaryTopic: "science_society",
-    topics: ["science_society","philosophy_ethics"],
-    defaultEvidenceTier: "publisher_excerpt",
-    defaultAuthor: "ZEIT ONLINE Wissen",
-    language: "de",
-    reliabilityTier: "tier_a",
-    sourceDomain: "quality_news",
-    defaultEnabled: false,
-    description: "Hintergründe zu Forschung, Kosmologie und Bildungspolitik."
   },
   {
     id: "fc-zeit-chancen",

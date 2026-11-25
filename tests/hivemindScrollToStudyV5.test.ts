@@ -6,9 +6,14 @@ import {
   HivemindLearningService,
   HIVEMIND_TRACKS_STORAGE_KEY,
   generateHivemindLearningTrack,
+  generateNextHivemindChapter,
   extractTextFromUploadedFile,
   parsePdfBufferTextFallback,
-  buildShowcaseStarterTracks
+  buildShowcaseStarterTracks,
+  inferTrackTopicAndEmoji,
+  salvageHivemindCardsFromRawJson,
+  shuffleQuizOptions,
+  parseWikipediaUrl
 } from '../src/core/learning/hivemindLearningService';
 import { mergeSyncSnapshots, AtmenSyncSnapshot } from '../src/core/sync/cloudSyncService';
 import { satisfiesDefaultCuratedStandard, satisfiesCuratedBodyContract } from '../src/core/enrichment/batchEnricher';
@@ -303,5 +308,197 @@ endobj`;
       () => extractTextFromUploadedFile(scanPdf, 'scan.pdf'),
       /kein auslesbarer Text/i
     );
+  });
+
+  it('7. inferTrackTopicAndEmoji returns strict TopicTag science_society for physics/science & metadata has no decorative emojis', async () => {
+    assert.equal(inferTrackTopicAndEmoji('Quantenphysik und Kosmologie').topic, 'science_society');
+    assert.equal(inferTrackTopicAndEmoji('Experimental Physics & Science').topic, 'science_society');
+    assert.equal(inferTrackTopicAndEmoji('Wissenschaftliche Revolution').topic, 'science_society');
+
+    const storage = new AtemStorage(new MemoryStorageDriver());
+    const track = await generateHivemindLearningTrack({
+      titleOrTopic: 'Physik der Wärme',
+      sourceType: 'topic',
+      rawText: 'Entropie beschreibt die Richtung spontaner Prozesse in abgeschlossenen Systemen und verbindet Mikro- mit Makrozuständen.',
+      cardCount: 12,
+      storage,
+      skipNetworkFetch: true
+    });
+
+    assert.equal(track.items[0].primaryTopic, 'science_society');
+    for (const item of track.items) {
+      assert.equal(item.provenanceSummary.startsWith('Lernpfad: '), true, `Expected clean provenanceSummary, got: ${item.provenanceSummary}`);
+      assert.equal(item.provenanceSummary.includes('🧠'), false);
+      const replies = item.hivemindMeta?.simulatedReplies || [];
+      for (const rep of replies) {
+        assert.ok(['Kontext', 'Einwand', 'Transfer', 'Synthese'].includes(rep.roleBadge), `Unexpected roleBadge: ${rep.roleBadge}`);
+      }
+    }
+  });
+
+  it('8. salvageHivemindCardsFromRawJson recovers valid cards from truncated fenced JSON and fills tail deterministically when >= 6 cards', async () => {
+    const truncatedRaw = '```json\n' + JSON.stringify({
+      subtitle: 'Kompakte Übersicht {Test}',
+      cards: Array.from({ length: 6 }, (_, idx) => ({
+        cardArchetype: idx % 4 === 3 ? 'milestone_quiz' : 'story_thread',
+        title: `Karte ${idx + 1}: "Zitat \\"Test\\"" & {Klammer}`,
+        subtitle: `Untertitel ${idx + 1}`,
+        feedText: `Substantieller Lerntext für Karte ${idx + 1} mit geschweiften Klammern {a, b} und Anführungszeichen.`,
+        body: `Ausführlicher Reader-Text für Karte ${idx + 1}. `.repeat(10),
+        keyInsight: `Merksatz ${idx + 1} bleibt eindeutig.`
+      }))
+    }).slice(0, -2) + ', {"cardArchetype":"story_thread","title":"Abgebrochene Karte 7","feedText":"Unvollständig...';
+
+    const salvaged = salvageHivemindCardsFromRawJson(truncatedRaw);
+    assert.equal(salvaged.subtitle, 'Kompakte Übersicht {Test}');
+    assert.equal(salvaged.cards.length, 6, 'Must recover all 6 complete cards and drop the truncated 7th');
+    assert.equal(salvaged.cards[0].title, 'Karte 1: "Zitat \\"Test\\"" & {Klammer}');
+
+    // Verify generateHivemindLearningTrack accepts >= 6 salvaged AI cards and fills tail up to 12
+    const origFetch = globalThis.fetch;
+    const storage = new AtemStorage(new MemoryStorageDriver());
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: truncatedRaw }] } }],
+        usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 500 }
+      })
+    })) as unknown as typeof fetch;
+
+    try {
+      const track = await generateHivemindLearningTrack({
+        titleOrTopic: 'Salvage-Test',
+        sourceType: 'topic',
+        rawText: 'Ausreichend Kontexttext über Erkenntnistheorie und Logik für eventuelle Restkarten.',
+        cardCount: 12,
+        storage,
+        skipNetworkFetch: true,
+        credentials: { provider: 'gemini', apiKey: 'test-key-123', model: 'gemini-2.5-flash' }
+      });
+      assert.equal(track.usedAi, true, 'Partial AI output with 6 salvaged cards must be accepted');
+      assert.equal(track.items.length, 12, 'Missing tail cards must be filled deterministically up to targetCount');
+      assert.ok(track.items[0].title.startsWith('Karte 1'));
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it('9. shuffleQuizOptions deterministically varies correctIndex across non-zero indices while keeping the right answer accurate', () => {
+    const baseQuiz = {
+      question: 'Was beschreibt der kategorische Imperativ?',
+      options: [
+        'Handle nur nach derjenigen Maxime, durch die du zugleich wollen kannst, dass sie ein allgemeines Gesetz werde.',
+        'Maximiere stets den kurzfristigen eigenen Nutzen.',
+        'Folge ausschließlich traditionellen Gewohnheiten.',
+        'Vermeide jede rationale Begründung von Normen.'
+      ],
+      correctIndex: 0,
+      explanation: 'Warum Option A stimmt. Kant formuliert ein universalisierbares Prüfverfahren.'
+    };
+
+    const seeds = Array.from({ length: 12 }, (_, idx) => `track-kant-step-${(idx + 1) * 4}`);
+    const results = seeds.map(seed => shuffleQuizOptions(baseQuiz, seed));
+    const distinctIndices = new Set(results.map(r => r.correctIndex));
+
+    assert.ok(distinctIndices.size >= 3, `Expected varied correctIndex across seeds, got: ${Array.from(distinctIndices).join(',')}`);
+    assert.ok(results.some(r => r.correctIndex !== 0), 'At least one shuffled quiz must have non-zero correctIndex');
+
+    for (let i = 0; i < results.length; i++) {
+      const res = results[i];
+      assert.equal(res.options.length, 4);
+      assert.equal(
+        res.options[res.correctIndex],
+        baseQuiz.options[0],
+        'Moved correctIndex must point to the exact original correct answer'
+      );
+      assert.equal(res.explanation.includes('Option A'), false, 'Misleading "Option A" phrasing must be removed');
+      // Deterministic for the same seedKey
+      assert.deepEqual(shuffleQuizOptions(baseQuiz, seeds[i]), res);
+    }
+  });
+
+  it('10. Hardened PDF extraction handles /Filter [/FlateDecode], stream spaces, WinAnsi German umlauts & hyphenated line breaks', async () => {
+    const zlib = await import('zlib');
+
+    // Build WinAnsi/Latin1 PDF stream with umlauts, WinAnsi quotes/en-dash (\204, \223, \226) and hyphenated line break
+    const latin1Content =
+      'BT /F1 12 Tf 72 712 Td ' +
+      '(Erkenntnis-) Tj T* ' +
+      '(theorie pr\\374ft Gr\\374nde, Ma\\337st\\344be und \\204Vernunft\\223 \\226 auch f\\374r \\304sthetik.) Tj ET';
+    const compressed = zlib.deflateSync(Buffer.from(latin1Content, 'latin1'));
+    const header = Buffer.from(
+      `%PDF-1.5\n1 0 obj\n<< /Length ${compressed.length} /Filter [/FlateDecode] >>\nstream   \r\n`,
+      'latin1'
+    );
+    const footer = Buffer.from('\nendstream\nendobj\n%%EOF', 'latin1');
+    const pdfBytes = Uint8Array.from(Buffer.concat([header, compressed, footer]));
+
+    const extracted = await extractTextFromUploadedFile(pdfBytes, 'umlauts.pdf');
+    assert.ok(extracted.includes('Erkenntnistheorie'), `Expected rejoined hyphenated word, got: ${extracted}`);
+    assert.ok(extracted.includes('prüft Gründe, Maßstäbe'), `Expected German umlauts, got: ${extracted}`);
+    assert.ok(extracted.includes('„Vernunft“ – auch für Ästhetik'), `Expected WinAnsi quotes/dash/Ä, got: ${extracted}`);
+  });
+
+  it('11. Supports topic, pdf_document, url (Wikipedia slug & language subdomain) modes and generateNextHivemindChapter', async () => {
+    assert.deepEqual(parseWikipediaUrl('https://de.wikipedia.org/wiki/Erkenntnistheorie'), {
+      lang: 'de',
+      slug: 'Erkenntnistheorie'
+    });
+    assert.deepEqual(parseWikipediaUrl('https://en.wikipedia.org/wiki/Epistemology'), {
+      lang: 'en',
+      slug: 'Epistemology'
+    });
+
+    const storage = new AtemStorage(new MemoryStorageDriver());
+    const fetchedUrls: string[] = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const urlStr = typeof input === 'string' ? input : input.toString();
+      fetchedUrls.push(urlStr);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          extract:
+            'Epistemology is the branch of philosophy concerned with knowledge. ' +
+            'It investigates the origin, nature, methods, and limits of human justification and truth.',
+          content_urls: { desktop: { page: 'https://en.wikipedia.org/wiki/Epistemology' } }
+        })
+      };
+    }) as unknown as typeof fetch;
+
+    try {
+      const urlTrack = await generateHivemindLearningTrack({
+        titleOrTopic: 'Epistemology',
+        sourceType: 'url',
+        sourceUrl: 'https://en.wikipedia.org/wiki/Epistemology',
+        cardCount: 12,
+        storage
+      });
+      assert.equal(urlTrack.sourceType, 'url');
+      assert.ok(
+        fetchedUrls.some(u => u.includes('https://en.wikipedia.org/api/rest_v1/page/summary/Epistemology')),
+        `Expected en.wikipedia REST summary call, got: ${fetchedUrls.join(', ')}`
+      );
+      assert.equal(urlTrack.items.length, 12);
+      assert.ok(
+        urlTrack.items.some(it => it.body.includes('branch of philosophy concerned with knowledge')),
+        'Wikipedia extract should seed the generated cards'
+      );
+
+      // Expand track with Chapter 2 via generateNextHivemindChapter
+      const expanded = await generateNextHivemindChapter(urlTrack.id, {
+        storage,
+        skipNetworkFetch: true
+      });
+      assert.equal(expanded.items.length, 24, 'Chapter expansion must append +12 cards');
+      assert.equal(expanded.totalItemsCount, 24);
+      assert.equal(expanded.currentChapterIndex, 2);
+      assert.equal(expanded.items[0].hivemindMeta?.totalSteps, 24);
+      assert.equal(expanded.items[23].hivemindMeta?.stepIndex, 24);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 });

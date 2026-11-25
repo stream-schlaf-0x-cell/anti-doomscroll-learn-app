@@ -39,6 +39,8 @@ import { DeepeningCard } from '../../ui/components/DeepeningCard';
 import { typography, radius, spacing } from '../../ui/theme';
 import {
   optimizeImageUrl,
+  assessEditorialImage,
+  computeEditorialImagePresentation,
   extractLoadedImageDimensions,
   isLowResolutionEditorialImage
 } from '../../core/utils/imageQuality';
@@ -89,6 +91,8 @@ export const ReaderScreen: React.FC = () => {
   const [selectedTag, setSelectedTag] = useState<'einwand' | 'unterricht' | 'these' | 'notiz'>('einwand');
   const [isSubmittingNote, setIsSubmittingNote] = useState<boolean>(false);
   const [readerImageAspectRatio, setReaderImageAspectRatio] = useState<number | null>(null);
+  const [readerNaturalDims, setReaderNaturalDims] = useState<{ width: number; height: number } | null>(null);
+  const [readerColumnWidth, setReaderColumnWidth] = useState<number>(() => Math.min(width - 36, 720));
   const [showReaderImageLightbox, setShowReaderImageLightbox] = useState<boolean>(false);
   const [readerImageUseRawUrl, setReaderImageUseRawUrl] = useState<boolean>(false);
   const [readerImageHidden, setReaderImageHidden] = useState<boolean>(false);
@@ -179,6 +183,7 @@ export const ReaderScreen: React.FC = () => {
   useEffect(() => {
     setReaderImageUseRawUrl(false);
     setReaderImageHidden(false);
+    setReaderNaturalDims(null);
     const uri = selectedArticle?.artMeta?.highResImageUrl || selectedArticle?.imageUrl;
     if (!uri) {
       setReaderImageAspectRatio(null);
@@ -189,11 +194,12 @@ export const ReaderScreen: React.FC = () => {
       uri,
       (w, h) => {
         if (!cancelled && w > 0 && h > 0) {
+          setReaderNaturalDims({ width: w, height: h });
           setReaderImageAspectRatio(w / h);
         }
       },
       () => {
-        // Fallback handled by onLoad on <Image>
+        // Fallback handled by onLoad on <Image> / <img>
       }
     );
     return () => {
@@ -314,6 +320,42 @@ export const ReaderScreen: React.FC = () => {
   const readerPhotoUri = activeArticle.imageUrl
     ? (readerImageUseRawUrl ? activeArticle.imageUrl : (optimizeImageUrl(activeArticle.imageUrl) || activeArticle.imageUrl))
     : '';
+  const isReaderArt = selectedArticle.format === 'art_showcase' || Boolean(selectedArticle.artMeta);
+  const isReaderMeme = selectedArticle.format === 'meme' || Boolean(selectedArticle.memeMeta);
+  const readerArtUri =
+    optimizeImageUrl(selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl || '', 1600) ||
+    selectedArticle.artMeta?.highResImageUrl ||
+    selectedArticle.imageUrl ||
+    '';
+  const readerEditorialAssessment = assessEditorialImage(
+    selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl,
+    {
+      format: selectedArticle.format,
+      title: selectedArticle.title,
+      isMeme: isReaderMeme
+    }
+  );
+  const readerImagePresentation = computeEditorialImagePresentation({
+    naturalWidth: readerNaturalDims?.width,
+    naturalHeight: readerNaturalDims?.height,
+    category: readerEditorialAssessment.category,
+    isArt: isReaderArt,
+    isMeme: isReaderMeme,
+    viewportWidth: width
+  });
+  const readerImageFrameHeight = Math.round(
+    Math.min(readerImagePresentation.maxFrameHeight, readerColumnWidth / readerImagePresentation.frameAspectRatio)
+  );
+  const handleReaderLoadedDimensions = (loadedW: number, loadedH: number) => {
+    if (!(loadedW > 0) || !(loadedH > 0)) return;
+    if (!isReaderArt && !isReaderMeme && isLowResolutionEditorialImage(loadedW, loadedH)) {
+      setReaderImageHidden(true);
+      return;
+    }
+    setReaderNaturalDims({ width: loadedW, height: loadedH });
+    setReaderImageAspectRatio(loadedW / loadedH);
+  };
+
   const handleReaderPhotoError = () => {
     if (!readerImageUseRawUrl && readerPhotoUri !== activeArticle.imageUrl) {
       setReaderImageUseRawUrl(true);
@@ -459,34 +501,34 @@ export const ReaderScreen: React.FC = () => {
     md += `**Quelle**: [${publisher}](${originalUrl}) • **Autor**: ${author} • **Thema**: ${selectedArticle.primaryTopic || 'allgemein'} • **Gelesen**: ${dateStr}\n\n`;
 
     if (selectedArticle.keyInsight) {
-      md += `> **💡 Kernpunkt**: „${selectedArticle.keyInsight}“\n\n`;
+      md += `> **Kernpunkt**: „${selectedArticle.keyInsight}“\n\n`;
     }
 
     if (selectedArticle.feedText) {
-      md += `## ⚡ Kurz-Check\n${selectedArticle.feedText}\n\n`;
+      md += `## Kurz-Check\n${selectedArticle.feedText}\n\n`;
     }
 
-    md += `## 📖 Ausführliche Lektüre\n${fullArticleText}\n\n`;
+    md += `## Ausführliche Lektüre\n${fullArticleText}\n\n`;
 
     if (selectedArticle.deepeningOptions?.counterArgument) {
-      md += `> **⚖️ Dialektische Gegenposition**: ${selectedArticle.deepeningOptions.counterArgument}\n\n`;
+      md += `> **Dialektische Gegenposition**: ${selectedArticle.deepeningOptions.counterArgument}\n\n`;
     }
 
     if (selectedArticle.deepeningOptions?.didacticSeed) {
-      md += `> **🏫 Unterrichts-Impuls**: ${selectedArticle.deepeningOptions.didacticSeed}\n\n`;
+      md += `> **Unterrichts-Impuls**: ${selectedArticle.deepeningOptions.didacticSeed}\n\n`;
     }
 
     const userNotes = currentInteraction?.userNotes || [];
     if (userNotes.length > 0) {
-      md += `## ✍️ Eigene Reflexionen & Sparring\n\n`;
+      md += `## Eigene Reflexionen & Sparring\n\n`;
       for (const note of userNotes) {
         const tagLabel = note.tag === 'einwand'
-          ? '⚡ Einwand'
+          ? 'Einwand'
           : note.tag === 'unterricht'
-          ? '🏫 Unterricht'
+          ? 'Unterricht'
           : note.tag === 'these'
-          ? '💡 Eigene These'
-          : '📝 Notiz';
+          ? 'Eigene These'
+          : 'Notiz';
         const noteDate = new Date(note.createdAt).toLocaleDateString('de-DE', {
           hour: '2-digit',
           minute: '2-digit',
@@ -529,7 +571,7 @@ export const ReaderScreen: React.FC = () => {
       <View style={[styles.socraticSalonBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
         <View style={styles.socraticSalonHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-            <Text style={{ fontSize: 16, marginRight: 8 }}>💬</Text>
+            <Ionicons name="chatbubbles-outline" size={17} color={colors.accent} style={{ marginRight: 8 }} />
             <Text style={[styles.socraticSalonTitle, { color: colors.textPrimary }]}>
               Sokratischer Salon · 3 Perspektiven zum Beitrag
             </Text>
@@ -542,7 +584,7 @@ export const ReaderScreen: React.FC = () => {
         {/* 1. Kontext & Einordnung */}
         <View style={[styles.socraticPerspectiveCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
           <View style={styles.socraticPerspectiveHeader}>
-            <Text style={{ fontSize: 14, marginRight: 6 }}>🔍</Text>
+            <Ionicons name="search-outline" size={14} color={colors.accent} style={{ marginRight: 6 }} />
             <Text style={[styles.socraticPerspectiveTag, { color: colors.accent }]}>
               Kontext & Einordnung
             </Text>
@@ -558,7 +600,7 @@ export const ReaderScreen: React.FC = () => {
         {/* 2. Der Blinde Fleck */}
         <View style={[styles.socraticPerspectiveCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
           <View style={styles.socraticPerspectiveHeader}>
-            <Text style={{ fontSize: 14, marginRight: 6 }}>⚡</Text>
+            <Ionicons name="flash-outline" size={14} color="#F59E0B" style={{ marginRight: 6 }} />
             <Text style={[styles.socraticPerspectiveTag, { color: '#F59E0B' }]}>
               Der Blinde Fleck
             </Text>
@@ -574,7 +616,7 @@ export const ReaderScreen: React.FC = () => {
         {/* 3. Impuls für Denken & Praxis */}
         <View style={[styles.socraticPerspectiveCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
           <View style={styles.socraticPerspectiveHeader}>
-            <Text style={{ fontSize: 14, marginRight: 6 }}>💡</Text>
+            <Ionicons name="bulb-outline" size={14} color="#10B981" style={{ marginRight: 6 }} />
             <Text style={[styles.socraticPerspectiveTag, { color: '#10B981' }]}>
               Impuls für Denken & Praxis
             </Text>
@@ -707,7 +749,7 @@ export const ReaderScreen: React.FC = () => {
                 style={{ marginRight: 6 }}
               />
               <Text style={styles.craftExportBtnText}>
-                {craftCopied ? 'In Zwischenablage kopiert!' : '📋 Für Craft kopieren'}
+                {craftCopied ? 'In Zwischenablage kopiert!' : 'Für Craft kopieren'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -729,10 +771,10 @@ export const ReaderScreen: React.FC = () => {
           <View style={styles.tagSelectorRow}>
             {(
               [
-                { id: 'einwand', label: '⚡ Einwand' },
-                { id: 'unterricht', label: '🏫 Unterricht' },
-                { id: 'these', label: '💡 These' },
-                { id: 'notiz', label: '📝 Notiz' }
+                { id: 'einwand', label: 'Einwand', icon: 'flash-outline' as const },
+                { id: 'unterricht', label: 'Unterricht', icon: 'school-outline' as const },
+                { id: 'these', label: 'These', icon: 'bulb-outline' as const },
+                { id: 'notiz', label: 'Notiz', icon: 'document-text-outline' as const }
               ] as const
             ).map((t) => {
               const isSelected = selectedTag === t.id;
@@ -748,6 +790,12 @@ export const ReaderScreen: React.FC = () => {
                     }
                   ]}
                 >
+                  <Ionicons
+                    name={t.icon}
+                    size={12}
+                    color={isSelected ? '#FFFFFF' : colors.textSecondary}
+                    style={{ marginRight: 4 }}
+                  />
                   <Text
                     style={[
                       styles.tagSelectorText,
@@ -809,12 +857,19 @@ export const ReaderScreen: React.FC = () => {
             </Text>
             {userNotes.map((note) => {
               const tagLabel = note.tag === 'einwand'
-                ? '⚡ Einwand'
+                ? 'Einwand'
                 : note.tag === 'unterricht'
-                ? '🏫 Unterricht'
+                ? 'Unterricht'
                 : note.tag === 'these'
-                ? '💡 Eigene These'
-                : '📝 Notiz';
+                ? 'Eigene These'
+                : 'Notiz';
+              const tagIcon = note.tag === 'einwand'
+                ? ('flash-outline' as const)
+                : note.tag === 'unterricht'
+                ? ('school-outline' as const)
+                : note.tag === 'these'
+                ? ('bulb-outline' as const)
+                : ('document-text-outline' as const);
               return (
                 <View
                   key={note.id}
@@ -822,6 +877,7 @@ export const ReaderScreen: React.FC = () => {
                 >
                   <View style={styles.userNoteTop}>
                     <View style={[styles.userNoteTag, { backgroundColor: colors.accentSubtle }]}>
+                      <Ionicons name={tagIcon} size={11} color={colors.accent} style={{ marginRight: 4 }} />
                       <Text style={[styles.userNoteTagText, { color: colors.accent }]}>{tagLabel}</Text>
                     </View>
                     <Text style={[styles.userNoteDate, { color: colors.textMuted }]}>
@@ -879,44 +935,35 @@ export const ReaderScreen: React.FC = () => {
             </Text>
           </TouchableOpacity>
 
-          {/* Center Magazine Brand - Always Clickable to go Home */}
-          <TouchableOpacity
-            onPress={goHome}
-            style={styles.centerBrand}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Zurück zur Startseite"
-          >
-            <AtmenSymbol size={26} isDark={isDark} style={{ marginRight: 8 }} />
-            <Text style={[styles.brandTitle, { color: colors.textPrimary }]}>
-              atmen <Text style={{ fontWeight: '400', fontStyle: 'italic', color: colors.textMuted }}>magazin</Text>
-            </Text>
-          </TouchableOpacity>
-
-          {/* Right Tools: Progress, Font Size, Theme, Home & Save */}
-          <View style={styles.navRight}>
-            {/* Direct Home Button */}
+          {/* Center Magazine Brand - Desktop/Tablet only to keep mobile top bar serene */}
+          {width >= 768 && (
             <TouchableOpacity
               onPress={goHome}
-              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.centerBrand}
+              activeOpacity={0.7}
               accessibilityRole="button"
-              accessibilityLabel="Zur Startseite"
+              accessibilityLabel="Zurück zur Startseite"
             >
-              <Ionicons name="home-outline" size={16} color={colors.accent} />
+              <AtmenSymbol size={24} isDark={isDark} style={{ marginRight: 8 }} />
+              <Text style={[styles.brandTitle, { color: colors.textPrimary }]}>
+                atmen <Text style={{ fontWeight: '400', fontStyle: 'italic', color: colors.textMuted }}>magazin</Text>
+              </Text>
             </TouchableOpacity>
+          )}
 
+          {/* Right Tools: Progress, Font Size, Theme, Investigation & Save */}
+          <View style={styles.navRight}>
             {/* Reading Progress Pill */}
             <View style={[styles.readingProgressPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
               <Text style={[styles.readingProgressText, { color: colors.textSecondary }]}>
-                {scrollPercent}% • noch {remainingMinutes}m
+                {scrollPercent}% · {remainingMinutes}m
               </Text>
             </View>
 
             {/* Font Size Adjuster */}
             <TouchableOpacity
               onPress={cycleFontSize}
-              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
+              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               accessibilityRole="button"
               accessibilityLabel={`Schriftgröße ändern, aktuell: ${fontPref}`}
@@ -929,44 +976,50 @@ export const ReaderScreen: React.FC = () => {
             {/* Theme Toggle */}
             <TouchableOpacity
               onPress={() => setThemePreference(isDark ? 'light' : 'dark')}
-              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
+              style={[styles.navButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               accessibilityRole="button"
               accessibilityLabel={isDark ? 'Helles Erscheinungsbild aktivieren' : 'Dunkles Erscheinungsbild aktivieren'}
             >
-              <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={16} color={colors.textSecondary} />
+              <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={15} color={colors.textSecondary} />
             </TouchableOpacity>
 
             {/* Investigation (Neugier ausführen) Button */}
             {isFeatureEnabled(profile, 'investigation') && (
               <TouchableOpacity
                 onPress={() => openInvestigation(selectedArticle)}
-                style={[styles.navButton, { backgroundColor: colors.surfaceSecondary }]}
+                style={[styles.navButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 accessibilityRole="button"
                 accessibilityLabel="Untersuchung zu diesem Beitrag starten"
               >
-                <Ionicons name="telescope-outline" size={16} color={colors.accent} />
+                <Ionicons name="telescope-outline" size={15} color={colors.accent} />
               </TouchableOpacity>
             )}
 
             {/* Save / Bookmark Button */}
             <TouchableOpacity
               onPress={() => toggleSaveItem(selectedArticle.id)}
-              style={[styles.navButton, { backgroundColor: isSaved ? colors.accentSubtle : colors.surfaceSecondary }]}
+              style={[
+                styles.navButton,
+                {
+                  backgroundColor: isSaved ? colors.accentSubtle : colors.surfaceSecondary,
+                  borderColor: isSaved ? colors.accent : colors.borderSubtle
+                }
+              ]}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               accessibilityRole="button"
               accessibilityLabel={isSaved ? 'Aus Bibliothek entfernen' : 'In Bibliothek speichern'}
             >
               <Ionicons
                 name={isSaved ? 'bookmark' : 'bookmark-outline'}
-                size={16}
+                size={15}
                 color={isSaved ? colors.accent : colors.textPrimary}
               />
             </TouchableOpacity>
 
-            {/* Craft 1-Click Export Pill Button */}
-            {isFeatureEnabled(profile, 'craft_obsidian_export') && (
+            {/* Craft 1-Click Export Pill Button (Desktop/Tablet) */}
+            {width >= 768 && isFeatureEnabled(profile, 'craft_obsidian_export') && (
               <TouchableOpacity
                 onPress={handleCopyToCraft}
                 style={[
@@ -992,20 +1045,28 @@ export const ReaderScreen: React.FC = () => {
               </TouchableOpacity>
             )}
 
-            {/* Raindrop.io 1-Click Export Button */}
-            <TouchableOpacity
-              onPress={handleSaveToRaindrop}
-              style={[styles.navButton, { backgroundColor: isRaindropSaved ? '#0284C7' + '22' : colors.surfaceSecondary }]}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityRole="button"
-              accessibilityLabel="In Raindrop.io speichern"
-            >
-              <Ionicons
-                name={isRaindropSaved ? 'water' : 'water-outline'}
-                size={16}
-                color={isRaindropSaved ? '#0284C7' : colors.textPrimary}
-              />
-            </TouchableOpacity>
+            {/* Raindrop.io 1-Click Export Button (Desktop/Tablet) */}
+            {width >= 768 && (
+              <TouchableOpacity
+                onPress={handleSaveToRaindrop}
+                style={[
+                  styles.navButton,
+                  {
+                    backgroundColor: isRaindropSaved ? '#0284C7' + '22' : colors.surfaceSecondary,
+                    borderColor: colors.borderSubtle
+                  }
+                ]}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel="In Raindrop.io speichern"
+              >
+                <Ionicons
+                  name={isRaindropSaved ? 'water' : 'water-outline'}
+                  size={15}
+                  color={isRaindropSaved ? '#0284C7' : colors.textPrimary}
+                />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </View>
@@ -1025,7 +1086,15 @@ export const ReaderScreen: React.FC = () => {
       >
         <View style={[styles.scrollInner, isDesktop && styles.desktopScrollInner]}>
           <View style={isDesktop ? styles.desktopTwoColContainer : undefined}>
-            <View style={isDesktop ? styles.desktopLeftCol : undefined}>
+            <View
+              style={isDesktop ? styles.desktopLeftCol : undefined}
+              onLayout={(e) => {
+                const w = e.nativeEvent.layout.width;
+                if (w > 0) {
+                  setReaderColumnWidth(prev => (Math.abs(prev - w) > 1 ? w : prev));
+                }
+              }}
+            >
               {/* Magazine Kicker Header */}
               <View style={styles.kickerRow}>
                 <Text style={[styles.kickerText, { color: colors.accent }]}>
@@ -1102,36 +1171,58 @@ export const ReaderScreen: React.FC = () => {
                 >
                   <Ionicons name="globe-outline" size={17} color="#FFFFFF" style={{ marginRight: 8 }} />
                   <Text style={styles.primaryDirectSourceBtnText}>
-                    🌐 Originalartikel in Safari / Firefox öffnen ↗
+                    Originalartikel in Safari / Firefox öffnen ↗
                   </Text>
                 </TouchableOpacity>
               )}
 
               {/* Museum-Grade Artwork Showcase OR Authentic Article Image */}
-              {(selectedArticle.format === 'art_showcase' || !!selectedArticle.artMeta) &&
-              (selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl) ? (
+              {isReaderArt && (selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl) ? (
                 <TouchableOpacity
                   activeOpacity={0.95}
                   onPress={() => setShowReaderImageLightbox(true)}
                   style={[styles.readerArtShowcaseContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
                 >
-                  <View style={[styles.readerArtImageWrapper, { height: isDesktop ? 520 : 380 }]}>
-                    <Image
-                      source={{
-                        uri: optimizeImageUrl(
-                          selectedArticle.artMeta?.highResImageUrl || selectedArticle.imageUrl || '',
-                          1600
-                        )
-                      }}
-                      style={styles.readerArtFullImage}
-                      resizeMode="contain"
-                      onLoad={(e) => {
-                        const dims = extractLoadedImageDimensions(e);
-                        if (dims) {
-                          setReaderImageAspectRatio(dims.width / dims.height);
+                  <View
+                    style={[
+                      styles.readerArtImageWrapper,
+                      {
+                        height: readerImageFrameHeight,
+                        backgroundColor: colors.surfaceSecondary
+                      }
+                    ]}
+                  >
+                    {Platform.OS === 'web' ? (
+                      React.createElement('img', {
+                        src: readerArtUri,
+                        alt: selectedArticle.title,
+                        loading: 'lazy',
+                        decoding: 'async',
+                        onLoad: (e: React.SyntheticEvent<HTMLImageElement>) => {
+                          const img = e.currentTarget;
+                          handleReaderLoadedDimensions(img.naturalWidth, img.naturalHeight);
+                        },
+                        style: {
+                          width: '100%',
+                          height: '100%',
+                          display: 'block',
+                          objectFit: readerImagePresentation.resizeMode,
+                          objectPosition: readerImagePresentation.objectPosition
                         }
-                      }}
-                    />
+                      })
+                    ) : (
+                      <Image
+                        source={{ uri: readerArtUri }}
+                        style={styles.readerArtFullImage}
+                        resizeMode={readerImagePresentation.resizeMode}
+                        onLoad={(e) => {
+                          const dims = extractLoadedImageDimensions(e);
+                          if (dims) {
+                            handleReaderLoadedDimensions(dims.width, dims.height);
+                          }
+                        }}
+                      />
+                    )}
                     <View style={styles.readerImageZoomBadge}>
                       <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
                       <Text style={styles.readerImageZoomText}>Vollbild</Text>
@@ -1145,71 +1236,63 @@ export const ReaderScreen: React.FC = () => {
                       styles.readerImageContainer,
                       {
                         borderColor: colors.borderSubtle,
-                        backgroundColor:
-                          selectedArticle.format === 'meme' || Boolean(selectedArticle.memeMeta)
-                            ? '#FFFFFF'
-                            : colors.surfaceSecondary
+                        backgroundColor: isReaderMeme ? '#FFFFFF' : colors.surfaceSecondary
                       }
                     ]}
                   >
                     <TouchableOpacity
                       activeOpacity={0.95}
                       onPress={() => setShowReaderImageLightbox(true)}
-                      style={[
-                        selectedArticle.format === 'meme' || Boolean(selectedArticle.memeMeta)
-                          ? {
-                              width: '100%',
-                              aspectRatio: readerImageAspectRatio || 1.2,
-                              minHeight: 340,
-                              maxHeight: 820,
-                              padding: 16,
-                              backgroundColor: '#FFFFFF',
-                              alignItems: 'center',
-                              justifyContent: 'center'
-                            }
-                          : readerImageAspectRatio
-                          ? readerImageAspectRatio >= 1.05
-                            ? {
-                                width: '100%',
-                                aspectRatio: Math.min(2.4, readerImageAspectRatio),
-                                maxHeight: isDesktop ? 520 : 400,
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                              }
-                            : {
-                                width: '100%',
-                                height: isDesktop ? 480 : 380,
-                                backgroundColor: colors.surfaceSecondary,
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                              }
-                          : {
-                              width: '100%',
-                              height: isDesktop ? 440 : 340,
-                              backgroundColor: colors.surfaceSecondary,
-                              alignItems: 'center',
-                              justifyContent: 'center'
-                            }
-                      ]}
+                      style={{
+                        width: '100%',
+                        height: readerImageFrameHeight,
+                        padding: isReaderMeme ? 16 : 0,
+                        backgroundColor: isReaderMeme
+                          ? '#FFFFFF'
+                          : readerImagePresentation.useMatteFrame
+                          ? colors.surfaceSecondary
+                          : colors.surfaceSecondary,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        overflow: 'hidden'
+                      }}
                     >
-                      <Image
-                        source={{ uri: readerPhotoUri }}
-                        style={{ width: '100%', height: '100%' }}
-                        resizeMode="contain"
-                        onError={handleReaderPhotoError}
-                        onLoad={(e) => {
-                          const dims = extractLoadedImageDimensions(e);
-                          if (dims) {
-                            const isVisualFormat =
-                              selectedArticle.format === 'meme' || Boolean(selectedArticle.memeMeta);
-                            if (!isVisualFormat && isLowResolutionEditorialImage(dims.width, dims.height)) {
-                              setReaderImageHidden(true);
-                              return;
-                            }
-                            setReaderImageAspectRatio(dims.width / dims.height);
+                      {Platform.OS === 'web' ? (
+                        React.createElement('img', {
+                          src: readerPhotoUri,
+                          alt: selectedArticle.title,
+                          loading: 'lazy',
+                          decoding: 'async',
+                          onLoad: (e: React.SyntheticEvent<HTMLImageElement>) => {
+                            const img = e.currentTarget;
+                            handleReaderLoadedDimensions(img.naturalWidth, img.naturalHeight);
+                          },
+                          onError: handleReaderPhotoError,
+                          style: {
+                            width: '100%',
+                            height: '100%',
+                            display: 'block',
+                            objectFit: readerImagePresentation.resizeMode,
+                            objectPosition: readerImagePresentation.objectPosition
                           }
-                        }}
-                      />
+                        })
+                      ) : (
+                        <Image
+                          source={{ uri: readerPhotoUri }}
+                          style={[
+                            { width: '100%', height: '100%' },
+                            { objectPosition: readerImagePresentation.objectPosition } as any
+                          ]}
+                          resizeMode={readerImagePresentation.resizeMode}
+                          onError={handleReaderPhotoError}
+                          onLoad={(e) => {
+                            const dims = extractLoadedImageDimensions(e);
+                            if (dims) {
+                              handleReaderLoadedDimensions(dims.width, dims.height);
+                            }
+                          }}
+                        />
+                      )}
                       <View style={styles.readerImageZoomBadge}>
                         <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
                         <Text style={styles.readerImageZoomText}>Vollbild</Text>
@@ -1225,9 +1308,12 @@ export const ReaderScreen: React.FC = () => {
                           borderTopColor: colors.borderSubtle
                         }}
                       >
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: colors.accent, marginBottom: 4 }}>
-                          🎁 {selectedArticle.memeMeta.satireContext || 'Bonus-Punchline (Original-Alt-Text)'}
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                          <Ionicons name="gift-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: colors.accent }}>
+                            {selectedArticle.memeMeta.satireContext || 'Bonus-Punchline (Original-Alt-Text)'}
+                          </Text>
+                        </View>
                         <Text style={{ fontSize: 14, lineHeight: 20, color: colors.textPrimary, fontStyle: 'italic' }}>
                           „{selectedArticle.memeMeta.punchline}“
                         </Text>
@@ -1256,8 +1342,9 @@ export const ReaderScreen: React.FC = () => {
                       </Text>
                     </View>
                     <View style={[styles.synthesisTypeBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                      <Ionicons name="document-text-outline" size={12} color={colors.textSecondary} style={{ marginRight: 4 }} />
                       <Text style={[styles.synthesisTypeBadgeText, { color: colors.textSecondary, fontWeight: '700' }]}>
-                        📄 Kernsätze aus dem Text
+                        Kernsätze aus dem Text
                       </Text>
                     </View>
                   </View>
@@ -1282,8 +1369,14 @@ export const ReaderScreen: React.FC = () => {
                       </Text>
                     </View>
                     <View style={[styles.synthesisTypeBadge, { backgroundColor: isAiSynthesized ? colors.accentSubtle : colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                      <Ionicons
+                        name={isAiSynthesized ? 'sparkles-outline' : 'document-text-outline'}
+                        size={12}
+                        color={isAiSynthesized ? colors.accent : colors.textSecondary}
+                        style={{ marginRight: 4 }}
+                      />
                       <Text style={[styles.synthesisTypeBadgeText, { color: isAiSynthesized ? colors.accent : colors.textSecondary, fontWeight: '700' }]}>
-                        {isAiSynthesized ? '🤖 KI-Synthese' : '📄 Originalauszug / Lokale Extraktion'}
+                        {isAiSynthesized ? 'KI-Synthese' : 'Originalauszug / Lokale Extraktion'}
                       </Text>
                     </View>
                   </View>
@@ -1445,7 +1538,7 @@ export const ReaderScreen: React.FC = () => {
                 >
                   <Ionicons name="globe-outline" size={17} color={colors.accent} style={{ marginRight: 8 }} />
                   <Text style={[styles.primaryDirectSourceBtnText, { color: colors.accent, fontWeight: '700' }]}>
-                    🌐 Vollständigen Originalartikel bei {publisherDisplay} lesen ↗
+                    Vollständigen Originalartikel bei {publisherDisplay} lesen ↗
                   </Text>
                 </TouchableOpacity>
               )}
@@ -1480,8 +1573,8 @@ export const ReaderScreen: React.FC = () => {
                 />
                 <Text style={[styles.extraToolsToggleText, { color: colors.textPrimary }]}>
                   {showExtraTools
-                    ? '➖ Weitere Werkzeuge & Perspektiven einklappen'
-                    : '➕ Weitere Werkzeuge & Perspektiven (Salon, Vertiefung, Herkunft)'}
+                    ? 'Weitere Werkzeuge & Perspektiven einklappen'
+                    : 'Weitere Werkzeuge & Perspektiven (Salon, Vertiefung, Herkunft)'}
                 </Text>
               </TouchableOpacity>
 
@@ -1549,7 +1642,7 @@ export const ReaderScreen: React.FC = () => {
                 {validKeyInsight && (
                   <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                     <View style={styles.networkCardBadgeRow}>
-                      <Text style={{ fontSize: 13, marginRight: 5 }}>💡</Text>
+                      <Ionicons name="bulb-outline" size={14} color={colors.accent} style={{ marginRight: 6 }} />
                       <Text style={[styles.networkCardLabel, { color: colors.accent }]}>Inhaltlicher Kernpunkt</Text>
                     </View>
                     <Text style={[styles.networkCardText, { color: colors.textPrimary }]}>
@@ -1560,9 +1653,9 @@ export const ReaderScreen: React.FC = () => {
 
                 {/* 3.2 Lehr- & Praxis-Transfer (nur wenn konkret >= 35 Wörter vorhanden) */}
                 {isFeatureEnabled(profile, 'didactic_transfer') && validDidacticTransfer && (
-                  <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: '#10B98140', borderLeftColor: '#10B981', borderLeftWidth: 3 }]}>
+                  <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                     <View style={styles.networkCardBadgeRow}>
-                      <Text style={{ fontSize: 13, marginRight: 5 }}>🏫</Text>
+                      <Ionicons name="school-outline" size={14} color="#10B981" style={{ marginRight: 6 }} />
                       <Text style={[styles.networkCardLabel, { color: '#10B981' }]}>Praxis- & Unterrichts-Transfer</Text>
                     </View>
                     <Text style={[styles.networkCardText, { color: colors.textSecondary }]}>
@@ -1573,11 +1666,11 @@ export const ReaderScreen: React.FC = () => {
 
                 {/* 3.3 Konkrete Gegenperspektive (nur wenn substantiell >= 35 Wörter hinterlegt) */}
                 {validCounterPerspective && (
-                  <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: '#8B5CF640', borderLeftColor: '#8B5CF6', borderLeftWidth: 3 }]}>
+                  <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                     <View style={styles.networkCardBadgeRow}>
                       <View style={styles.counterBadgePill}>
                         <Ionicons name="git-compare-outline" size={12} color="#8B5CF6" style={{ marginRight: 4 }} />
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#8B5CF6' }}>⚖️ Gegenperspektive & Einwand</Text>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#8B5CF6' }}>Gegenperspektive & Einwand</Text>
                       </View>
                     </View>
                     <Text style={[styles.networkCardText, { color: colors.textSecondary }]}>
@@ -1588,9 +1681,9 @@ export const ReaderScreen: React.FC = () => {
 
                 {/* 3.4 Zeitloser Klassiker-Verweis (nur bei echter inhaltlicher Übereinstimmung >= 35 Wörter) */}
                 {validEvergreenContext && (
-                  <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: '#D9770640', borderLeftColor: '#D97706', borderLeftWidth: 3 }]}>
+                  <View style={[styles.networkCardSection, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                     <View style={styles.networkCardBadgeRow}>
-                      <Text style={{ fontSize: 13, marginRight: 5 }}>🏛</Text>
+                      <Ionicons name="library-outline" size={14} color="#D97706" style={{ marginRight: 6 }} />
                       <Text style={[styles.networkCardLabel, { color: '#D97706' }]}>Inhaltlich verwandter Klassiker</Text>
                     </View>
                     <Text style={[styles.networkCardText, { color: colors.textSecondary }]}>
@@ -1895,8 +1988,14 @@ export const ReaderScreen: React.FC = () => {
                   ]}
                   accessibilityRole="button"
                 >
+                  <Ionicons
+                    name="sparkles-outline"
+                    size={12}
+                    color={currentInteraction?.timeWorthFeedback === 'very_worthwhile' ? '#FFFFFF' : colors.accent}
+                    style={{ marginRight: 5 }}
+                  />
                   <Text style={[styles.feedbackMiniPillText, { color: currentInteraction?.timeWorthFeedback === 'very_worthwhile' ? '#FFFFFF' : colors.textPrimary }]}>
-                    ✨ Sehr wertvoll
+                    Sehr wertvoll
                   </Text>
                 </TouchableOpacity>
 
@@ -1908,8 +2007,14 @@ export const ReaderScreen: React.FC = () => {
                   ]}
                   accessibilityRole="button"
                 >
+                  <Ionicons
+                    name="thumbs-up-outline"
+                    size={12}
+                    color={colors.textSecondary}
+                    style={{ marginRight: 5 }}
+                  />
                   <Text style={[styles.feedbackMiniPillText, { color: colors.textPrimary }]}>
-                    👍 Gut investiert
+                    Gut investiert
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -2006,7 +2111,10 @@ export const ReaderScreen: React.FC = () => {
 
               {selectedArticle.memeMeta?.punchline && (
                 <View style={styles.readerLightboxPunchlineBox}>
-                  <Text style={styles.readerLightboxPunchlineLabel}>🎁 Bonus-Punchline (Alt-Text):</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                    <Ionicons name="gift-outline" size={13} color="#F59E0B" style={{ marginRight: 5 }} />
+                    <Text style={[styles.readerLightboxPunchlineLabel, { marginBottom: 0 }]}>Bonus-Punchline (Alt-Text):</Text>
+                  </View>
                   <Text style={styles.readerLightboxPunchlineText}>„{selectedArticle.memeMeta.punchline}“</Text>
                 </View>
               )}
@@ -2086,7 +2194,7 @@ const styles = StyleSheet.create({
   },
   navBar: {
     paddingHorizontal: spacing.pageHorizontal,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderBottomWidth: 0.5
   },
   navBarInner: {
@@ -2154,6 +2262,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
+    borderWidth: 0.5,
     justifyContent: 'center',
     alignItems: 'center'
   },
@@ -2499,6 +2608,8 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(128,128,128,0.2)'
   },
   ebeneTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: radius.xs
@@ -2544,6 +2655,8 @@ const styles = StyleSheet.create({
     gap: 8
   },
   synthesisTypeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: radius.xs,
@@ -2565,6 +2678,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs
   },
   feedbackMiniPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: radius.pill,
@@ -2683,6 +2798,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm
   },
   tagSelectorPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: radius.pill,
@@ -2734,6 +2851,8 @@ const styles = StyleSheet.create({
     marginBottom: 4
   },
   userNoteTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: radius.xs

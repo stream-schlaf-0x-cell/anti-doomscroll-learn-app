@@ -260,13 +260,13 @@ test('Rich Feed Discovery, Slop Eradication, Hard Quarantine & Clean Reader Suit
 
     // 1. Prominent top button
     assert.ok(
-      readerScreenSrc.includes('🌐 Originalartikel in Safari / Firefox öffnen ↗'),
+      readerScreenSrc.includes('Originalartikel in Safari / Firefox öffnen ↗'),
       'ReaderScreen must include prominent header button to open original article'
     );
 
     // 2. Second button at end of article text
     assert.ok(
-      readerScreenSrc.includes('🌐 Vollständigen Originalartikel bei'),
+      readerScreenSrc.includes('Vollständigen Originalartikel bei'),
       'ReaderScreen must include second convenient button at text end'
     );
 
@@ -282,7 +282,7 @@ test('Rich Feed Discovery, Slop Eradication, Hard Quarantine & Clean Reader Suit
       'ReaderScreen must use showExtraTools state to keep advanced salon tools collapsed by default'
     );
     assert.ok(
-      readerScreenSrc.includes('➕ Weitere Werkzeuge & Perspektiven'),
+      readerScreenSrc.includes('Weitere Werkzeuge & Perspektiven'),
       'ReaderScreen must show accordion toggle button for additional perspectives'
     );
     assert.ok(

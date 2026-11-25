@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,14 +14,27 @@ import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import { typography, radius, spacing } from '../theme';
 import { TopicTag, TOPIC_SPACE_MAP, TOPIC_METADATA } from '../../core/domain/types';
-import { SubchannelFeedPriority, normalizeSpaceHandle } from '../../core/spaces/spaceRepository';
+import { getEffectiveTopicWeight } from '../../core/domain/ranking';
+import {
+  Subchannel,
+  SubchannelFeedPriority,
+  normalizeSpaceHandle
+} from '../../core/spaces/spaceRepository';
 import {
   SUBCHANNEL_VIBES,
   SubchannelVibe,
-  generateSubchannelDraft
+  STUDIO_QUICK_THEMES,
+  generateSubchannelDraft,
+  stripLeadingDecorativeEmoji
 } from '../../core/studio/subchannelAssistant';
+import {
+  RecursiveLearningEngine,
+  LearningEngineState
+} from '../../core/recommendations/recursiveLearningEngine';
+import { appStorage } from '../../core/data/storage';
 
-export type MasterTab = 'channels' | 'feed_control';
+export type MasterTab = 'channels' | 'feed_control' | 'new_space' | 'taste';
+type InternalStudioTab = 'new_space' | 'channels' | 'taste';
 
 interface UltraMasterModalProps {
   visible: boolean;
@@ -29,7 +42,57 @@ interface UltraMasterModalProps {
   initialTab?: MasterTab | string;
 }
 
-export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onClose, initialTab }) => {
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
+
+const LEARNING_STATE_STORAGE_KEY = '@atem:recursive_learning_state';
+
+const PRIORITY_OPTIONS: readonly { id: SubchannelFeedPriority; label: string }[] = [
+  { id: 'high', label: 'Oft' },
+  { id: 'normal', label: 'Normal' },
+  { id: 'channel_only', label: 'Nur im Tab' }
+];
+
+const MIX_PRESETS: readonly {
+  id: string;
+  label: string;
+  focus: number;
+  socratic: number;
+  serendipity: number;
+}[] = [
+  { id: 'balanced', label: 'Ausgewogen (60 / 20 / 20)', focus: 0.6, socratic: 0.2, serendipity: 0.2 },
+  { id: 'deep_focus', label: 'Fokus (80 / 10 / 10)', focus: 0.8, socratic: 0.1, serendipity: 0.1 },
+  { id: 'open_horizon', label: 'Entdeckung (40 / 30 / 30)', focus: 0.4, socratic: 0.3, serendipity: 0.3 }
+];
+
+const TOPIC_OPTIONS: readonly TopicTag[] = [
+  'contemplation_mind',
+  'philosophy_ethics',
+  'german_didactics',
+  'ai_apple',
+  'science_society',
+  'art_aesthetics',
+  'sound_synthesis'
+];
+
+function resolveInitialTab(initialTab?: MasterTab | string): InternalStudioTab {
+  if (initialTab === 'feed_control' || initialTab === 'learning' || initialTab === 'taste') {
+    return 'taste';
+  }
+  if (initialTab === 'channels') {
+    return 'channels';
+  }
+  return 'new_space';
+}
+
+function toIoniconName(name?: string, fallback: IoniconName = 'layers-outline'): IoniconName {
+  return (name && name.trim().length > 0 ? name : fallback) as IoniconName;
+}
+
+export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({
+  visible,
+  onClose,
+  initialTab
+}) => {
   const {
     colors,
     profile,
@@ -46,20 +109,11 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
     clearFeedbackMemory
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<MasterTab>('channels');
+  const [activeTab, setActiveTab] = useState<InternalStudioTab>(() => resolveInitialTab(initialTab));
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (visible && initialTab) {
-      if (initialTab === 'feed_control' || initialTab === 'learning') {
-        setActiveTab('feed_control');
-      } else {
-        setActiveTab('channels');
-      }
-    }
-  }, [visible, initialTab]);
-
-  // One-Input Subchannel Assistant State
+  // Bereich 1: Neuer Raum
   const [newChannelTitle, setNewChannelTitle] = useState<string>('');
   const [newChannelHandle, setNewChannelHandle] = useState<string>('');
   const [hasCustomHandle, setHasCustomHandle] = useState<boolean>(false);
@@ -70,20 +124,79 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
   const [newChannelSources, setNewChannelSources] = useState<string>('');
   const [newChannelPrompt, setNewChannelPrompt] = useState<string>('');
   const [newChannelPriority, setNewChannelPriority] = useState<SubchannelFeedPriority>('normal');
-  const [isGeneratingAiDraft, setIsGeneratingAiDraft] = useState<boolean>(false);
-  const [isCreatingChannel, setIsCreatingChannel] = useState<boolean>(false);
+  const [draftTitle, setDraftTitle] = useState<string>('');
+  const [draftIcon, setDraftIcon] = useState<string>('layers-outline');
+  const [draftAccentColor, setDraftAccentColor] = useState<string>('');
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState<boolean>(false);
   const [hasGeneratedDraft, setHasGeneratedDraft] = useState<boolean>(false);
   const [isAiGeneratedBadge, setIsAiGeneratedBadge] = useState<boolean>(false);
+  const [isGeneratingAiDraft, setIsGeneratingAiDraft] = useState<boolean>(false);
+  const [isCreatingChannel, setIsCreatingChannel] = useState<boolean>(false);
 
-  // Learning Engine Telemetry State
+  // Bereich 3: Mein Geschmack
+  const [engineState, setEngineState] = useState<LearningEngineState | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
-  };
+  useEffect(() => {
+    if (visible) {
+      setActiveTab(resolveInitialTab(initialTab));
+      setShowClearConfirm(false);
+    }
+  }, [visible, initialTab]);
 
-  // Handle title change: auto-derive handle unless user typed a custom one
+  useEffect(() => {
+    if (!visible) return;
+    let active = true;
+    RecursiveLearningEngine.getEngineState()
+      .then(state => {
+        if (active) {
+          setEngineState(state);
+        }
+      })
+      .catch(() => {
+        // Non-fatal: keep existing state
+      });
+    return () => {
+      active = false;
+    };
+  }, [visible]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showToast = useCallback((msg: string) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToastMessage(msg);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimerRef.current = null;
+    }, 3200);
+  }, []);
+
+  const resetCreationForm = useCallback(() => {
+    setNewChannelTitle('');
+    setNewChannelHandle('');
+    setHasCustomHandle(false);
+    setNewChannelDesc('');
+    setNewChannelFlair('');
+    setNewChannelSources('');
+    setNewChannelPrompt('');
+    setNewChannelPriority('normal');
+    setDraftTitle('');
+    setDraftIcon('layers-outline');
+    setDraftAccentColor('');
+    setHasGeneratedDraft(false);
+    setIsAiGeneratedBadge(false);
+    setShowAdvancedOptions(false);
+  }, []);
+
   const handleTitleChange = (text: string) => {
     setNewChannelTitle(text);
     if (!hasCustomHandle) {
@@ -91,41 +204,46 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
     }
   };
 
-  // AI-Assisted Subchannel Draft Generation
+  const handleQuickThemeSelect = (themeLabel: string) => {
+    setNewChannelTitle(themeLabel);
+    if (!hasCustomHandle) {
+      setNewChannelHandle(normalizeSpaceHandle(themeLabel));
+    }
+    if (hasGeneratedDraft) {
+      setHasGeneratedDraft(false);
+    }
+  };
+
   const handleGenerateAiDraft = async () => {
     if (!newChannelTitle.trim()) {
-      showToast('Bitte zuerst einen Titel für den Subchannel eingeben');
+      showToast('Bitte zuerst ein Thema eingeben');
       return;
     }
     setIsGeneratingAiDraft(true);
     try {
       const draft = await generateSubchannelDraft(newChannelTitle, newChannelVibe);
+      setDraftTitle(draft.suggestedTitle || newChannelTitle.trim());
       setNewChannelHandle(draft.handle);
-      setNewChannelFlair(draft.flair);
+      setNewChannelFlair(stripLeadingDecorativeEmoji(draft.flair));
       setNewChannelDesc(draft.description);
       setNewChannelTopic(draft.primaryTopic);
       setNewChannelSources(draft.seedSources.join(', '));
-      if (draft.suggestedAntithesis) {
-        setNewChannelPrompt(draft.suggestedAntithesis);
-      }
+      setDraftIcon(draft.icon);
+      setDraftAccentColor(draft.accentColor);
+      setNewChannelPrompt(draft.suggestedAntithesis || '');
       setHasGeneratedDraft(true);
       setIsAiGeneratedBadge(draft.isAiGenerated);
-      showToast(
-        draft.isAiGenerated
-          ? '✓ KI-Vorschlag & kuratierte Quellen geladen!'
-          : '✓ Vorschlag & kuratierte Quellen geladen!'
-      );
     } catch {
-      showToast('Fehler bei der KI-Vorschlagsgenerierung');
+      showToast('Vorschlag konnte nicht erstellt werden');
     } finally {
       setIsGeneratingAiDraft(false);
     }
   };
 
-  // Channel Creation
   const handleCreateChannel = async () => {
-    if (!newChannelTitle.trim()) {
-      showToast('Bitte einen Namen für den Subchannel eingeben');
+    const titleToUse = (newChannelTitle || draftTitle).trim();
+    if (!titleToUse) {
+      showToast('Bitte einen Namen für den Raum eingeben');
       return;
     }
     setIsCreatingChannel(true);
@@ -135,31 +253,27 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
         .map(s => s.trim())
         .filter(Boolean);
 
+      const cleanFlair = stripLeadingDecorativeEmoji(newChannelFlair);
+
       const created = await createSpace({
-        title: newChannelTitle.trim(),
+        title: titleToUse,
         handle: newChannelHandle.trim() || undefined,
         description: newChannelDesc.trim() || undefined,
-        flair: newChannelFlair.trim() || undefined,
+        flair: cleanFlair || undefined,
+        icon: draftIcon || 'layers-outline',
+        accentColor: draftAccentColor || colors.accent,
         primaryTopic: newChannelTopic,
         rssFeeds: seedSources,
         antithesisPrompt: newChannelPrompt.trim() || undefined,
         feedPriority: newChannelPriority
       });
 
-      // Reset form
-      setNewChannelTitle('');
-      setNewChannelHandle('');
-      setHasCustomHandle(false);
-      setNewChannelDesc('');
-      setNewChannelFlair('');
-      setNewChannelSources('');
-      setNewChannelPrompt('');
-      setHasGeneratedDraft(false);
-
-      showToast(`✓ Subchannel „${created.handle}“ erfolgreich erstellt und aktiviert!`);
+      resetCreationForm();
+      showToast(`Raum ${created.handle} aktiviert`);
       await refreshFeed();
-    } catch (err: any) {
-      showToast(err?.message || 'Fehler beim Erstellen des Subchannels');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Fehler beim Aktivieren des Raums';
+      showToast(msg);
     } finally {
       setIsCreatingChannel(false);
     }
@@ -168,68 +282,291 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
   const handleDeleteChannel = async (id: string, handle: string) => {
     const ok = await deleteSpace(id);
     if (ok) {
-      showToast(`Subchannel ${handle} entfernt`);
+      showToast(`Raum ${handle} entfernt`);
       await refreshFeed();
     }
   };
 
   const handlePriorityChange = async (id: string, priority: SubchannelFeedPriority) => {
     await setSpaceFeedPriority(id, priority);
-    showToast(`Priorität aktualisiert`);
+    showToast('Stream-Präsenz aktualisiert');
     await refreshFeed();
   };
 
-  // Feed Mix calculation
-  const currentMix = profile?.feedMixRatio || { focusRatio: 0.60, socraticRatio: 0.20, serendipityRatio: 0.20 };
+  const handleResetDomainTrust = useCallback(async (domain: string) => {
+    try {
+      const current = await RecursiveLearningEngine.getEngineState();
+      const nextState: LearningEngineState = {
+        ...current,
+        domainTrustScores: {
+          ...current.domainTrustScores,
+          [domain]: 1.0
+        }
+      };
+      await appStorage.setItem(LEARNING_STATE_STORAGE_KEY, JSON.stringify(nextState));
+      setEngineState(nextState);
+      showToast(`Quellen-Gewicht für ${domain} zurückgesetzt`);
+      await refreshFeed();
+    } catch {
+      showToast('Quellen-Gewicht konnte nicht entfernt werden');
+    }
+  }, [refreshFeed, showToast]);
+
+  const handleResetTasteProfile = useCallback(async () => {
+    try {
+      await clearFeedbackMemory();
+      const neutralState: LearningEngineState = {
+        events: [],
+        domainTrustScores: {},
+        processedInteractions: {},
+        appliedInteractions: {},
+        totalLearningCycles: 0,
+        lastTunedAt: new Date().toISOString()
+      };
+      await appStorage.setItem(LEARNING_STATE_STORAGE_KEY, JSON.stringify(neutralState));
+      setEngineState(neutralState);
+      setShowClearConfirm(false);
+      showToast('Geschmacksprofil zurückgesetzt');
+      await refreshFeed();
+    } catch {
+      showToast('Geschmacksprofil konnte nicht zurückgesetzt werden');
+    }
+  }, [clearFeedbackMemory, refreshFeed, showToast]);
+
+  // Derived collections
+  const customSpaces = useMemo(() => spaces.filter(s => s.isCustom), [spaces]);
+  const defaultSpaces = useMemo(() => spaces.filter(s => !s.isCustom), [spaces]);
+
+  const parsedSeedDomains = useMemo(
+    () =>
+      newChannelSources
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean),
+    [newChannelSources]
+  );
+
+  // Feed mix calculations
+  const currentMix = profile?.feedMixRatio || {
+    focusRatio: 0.6,
+    socraticRatio: 0.2,
+    serendipityRatio: 0.2
+  };
   const focusPct = Math.round(currentMix.focusRatio * 100);
   const socraticPct = Math.round(currentMix.socraticRatio * 100);
-  const serendipityPct = Math.round(currentMix.serendipityRatio * 100);
+  const serendipityPct = Math.max(0, 100 - focusPct - socraticPct);
 
-  // Feedback Memory signals
+  // Live learned topic weights sorted descending
+  const sortedTopicWeights = useMemo(() => {
+    const keys = new Set<TopicTag>(Object.keys(TOPIC_METADATA) as TopicTag[]);
+    for (const k of Object.keys(profile?.explicitInterests || {})) {
+      if (k in TOPIC_METADATA) keys.add(k as TopicTag);
+    }
+    for (const k of Object.keys(profile?.derivedWeights || {})) {
+      if (k in TOPIC_METADATA) keys.add(k as TopicTag);
+    }
+
+    return Array.from(keys)
+      .map(topic => {
+        const effective = getEffectiveTopicWeight(profile, topic);
+        const explicit = profile?.explicitInterests?.[topic] ?? 0.5;
+        const derived = profile?.derivedWeights?.[topic];
+        const deltaPct = typeof derived === 'number' ? Math.round((derived - explicit) * 100) : 0;
+        const meta = TOPIC_METADATA[topic];
+        return {
+          topic,
+          label: meta?.label || stripLeadingDecorativeEmoji(TOPIC_SPACE_MAP[topic]?.flair || topic),
+          effective,
+          effectivePct: Math.round(effective * 100),
+          deltaPct
+        };
+      })
+      .sort((a, b) => b.effective - a.effective);
+  }, [profile]);
+
+  // Learning engine trust scores + feedback memory signals
+  const boostedTrustDomains = useMemo(
+    () =>
+      Object.entries(engineState?.domainTrustScores || {})
+        .filter(([, score]) => score > 1.03)
+        .sort((a, b) => b[1] - a[1]),
+    [engineState?.domainTrustScores]
+  );
+  const dampenedTrustDomains = useMemo(
+    () =>
+      Object.entries(engineState?.domainTrustScores || {})
+        .filter(([, score]) => score < 0.97)
+        .sort((a, b) => a[1] - b[1]),
+    [engineState?.domainTrustScores]
+  );
+
   const feedbackMem = profile?.feedbackMemory || {};
-  const boostedDomains = useMemo(() => Object.entries(feedbackMem.boostedDomains || {}), [feedbackMem.boostedDomains]);
-  const penalizedDomains = useMemo(() => Object.entries(feedbackMem.penalizedDomains || {}), [feedbackMem.penalizedDomains]);
-  const boostedKeywords = useMemo(() => Object.entries(feedbackMem.boostedKeywords || {}), [feedbackMem.boostedKeywords]);
+  const boostedDomains = useMemo(
+    () => Object.entries(feedbackMem.boostedDomains || {}),
+    [feedbackMem.boostedDomains]
+  );
+  const penalizedDomains = useMemo(
+    () => Object.entries(feedbackMem.penalizedDomains || {}),
+    [feedbackMem.penalizedDomains]
+  );
+  const boostedKeywords = useMemo(
+    () => Object.entries(feedbackMem.boostedKeywords || {}),
+    [feedbackMem.boostedKeywords]
+  );
+  const penalizedKeywords = useMemo(
+    () => Object.entries(feedbackMem.penalizedKeywords || {}),
+    [feedbackMem.penalizedKeywords]
+  );
+
+  const renderSpaceCard = (s: Subchannel) => {
+    const currentPriority: SubchannelFeedPriority = s.feedPriority || (s.pinned ? 'high' : 'normal');
+    const spaceColor = s.accentColor || colors.accent;
+    const cleanFlair = stripLeadingDecorativeEmoji(s.flair);
+
+    return (
+      <View
+        key={s.id}
+        style={[
+          styles.roomCard,
+          { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+        ]}
+      >
+        <View style={styles.roomTopRow}>
+          <View style={[styles.roomIconBox, { backgroundColor: spaceColor + '1A' }]}>
+            <Ionicons name={toIoniconName(s.icon)} size={18} color={spaceColor} />
+          </View>
+
+          <View style={styles.roomMetaCol}>
+            <View style={styles.roomHeaderLine}>
+              <Text style={[styles.roomTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                {s.title}
+              </Text>
+              <Text style={[styles.roomHandle, { color: spaceColor }]}>{s.handle}</Text>
+            </View>
+            {cleanFlair.length > 0 && cleanFlair.toLowerCase() !== s.title.toLowerCase() && (
+              <Text style={[styles.roomFlair, { color: colors.textMuted }]} numberOfLines={1}>
+                {cleanFlair}
+              </Text>
+            )}
+            <Text style={[styles.roomDesc, { color: colors.textSecondary }]} numberOfLines={2}>
+              {s.description}
+            </Text>
+          </View>
+
+          <View style={styles.roomActions}>
+            <TouchableOpacity
+              onPress={() => void togglePinSpace(s.id)}
+              style={[
+                styles.iconActionBtn,
+                {
+                  backgroundColor: s.pinned ? colors.accentSubtle : colors.surface,
+                  borderColor: s.pinned ? colors.accent : colors.borderSubtle
+                }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={s.pinned ? 'Raum lösen' : 'Raum anpinnen'}
+            >
+              <Ionicons
+                name={s.pinned ? 'pin' : 'pin-outline'}
+                size={15}
+                color={s.pinned ? colors.accent : colors.textMuted}
+              />
+            </TouchableOpacity>
+
+            {s.isCustom && (
+              <TouchableOpacity
+                onPress={() => void handleDeleteChannel(s.id, s.handle)}
+                style={[
+                  styles.iconActionBtn,
+                  { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={`Eigenen Raum ${s.title} löschen`}
+              >
+                <Ionicons name="trash-outline" size={15} color={colors.danger} />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        <View
+          style={[
+            styles.prioritySegmentTrack,
+            { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+          ]}
+        >
+          {PRIORITY_OPTIONS.map(option => {
+            const isSelected = currentPriority === option.id;
+            return (
+              <TouchableOpacity
+                key={option.id}
+                onPress={() => void handlePriorityChange(s.id, option.id)}
+                style={[
+                  styles.prioritySegmentBtn,
+                  isSelected && { backgroundColor: colors.accent }
+                ]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isSelected }}
+              >
+                <Text
+                  style={[
+                    styles.prioritySegmentText,
+                    { color: isSelected ? '#FFFFFF' : colors.textSecondary }
+                  ]}
+                >
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+    );
+  };
+
+  const hasPositiveSignals =
+    boostedTrustDomains.length > 0 || boostedDomains.length > 0 || boostedKeywords.length > 0;
+  const hasDampenedSignals =
+    dampenedTrustDomains.length > 0 || penalizedDomains.length > 0 || penalizedKeywords.length > 0;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <Pressable
-          accessibilityLabel="Hintergrund schließen"
+          accessibilityLabel="Studio schließen"
           onPress={onClose}
           style={StyleSheet.absoluteFill}
         />
+
         <View
-          style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+          style={[
+            styles.card,
+            { backgroundColor: colors.surface, borderColor: colors.border }
+          ]}
           onStartShouldSetResponder={() => true}
-          // @ts-ignore - web click propagation guard
-          onClick={(e: any) => {
-            if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
-          }}
         >
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
             <View style={styles.headerLeft}>
-              <View style={[styles.iconEmblem, { backgroundColor: '#F59E0B' + '22' }]}>
-                <Ionicons name="sparkles" size={18} color="#F59E0B" />
+              <View style={[styles.headerEmblem, { backgroundColor: colors.accentSubtle }]}>
+                <Ionicons name="sparkles-outline" size={18} color={colors.accent} />
               </View>
-              <View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
-                    ✨ AI Studio & Subchannels
-                  </Text>
-                  <View style={styles.ultraPill}>
-                    <Text style={styles.ultraPillText}>SOUVERÄN</Text>
-                  </View>
-                </View>
+              <View style={styles.headerTextWrap}>
+                <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
+                  AI Studio
+                </Text>
                 <Text style={[styles.headerSubtitle, { color: colors.textMuted }]}>
-                  Eigene Räume mit 1 Klick anlegen & deinen kognitiven Feed steuern
+                  Räume gestalten und deinen Geschmack steuern
                 </Text>
               </View>
             </View>
+
             <TouchableOpacity
               onPress={onClose}
-              style={[styles.closeBtn, { backgroundColor: colors.surfaceSecondary }]}
+              style={[
+                styles.closeBtn,
+                { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+              ]}
               accessibilityRole="button"
               accessibilityLabel="Studio schließen"
             >
@@ -237,108 +574,279 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
             </TouchableOpacity>
           </View>
 
+          {/* 3-Tab Segmented Switcher */}
+          <View style={[styles.segmentedBarWrap, { borderBottomColor: colors.borderSubtle }]}>
+            <View
+              style={[
+                styles.segmentedTrack,
+                { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+              ]}
+            >
+              {(
+                [
+                  {
+                    id: 'new_space' as InternalStudioTab,
+                    label: 'Neuer Raum',
+                    icon: 'add-circle-outline' as IoniconName
+                  },
+                  {
+                    id: 'channels' as InternalStudioTab,
+                    label: `Meine Räume (${spaces.length})`,
+                    icon: 'layers-outline' as IoniconName
+                  },
+                  {
+                    id: 'taste' as InternalStudioTab,
+                    label: 'Mein Geschmack',
+                    icon: 'options-outline' as IoniconName
+                  }
+                ] as const
+              ).map(tab => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <TouchableOpacity
+                    key={tab.id}
+                    onPress={() => setActiveTab(tab.id)}
+                    style={[
+                      styles.segmentedItem,
+                      isActive && {
+                        backgroundColor: colors.surface,
+                        borderColor: colors.border
+                      }
+                    ]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: isActive }}
+                  >
+                    <Ionicons
+                      name={tab.icon}
+                      size={15}
+                      color={isActive ? colors.accent : colors.textMuted}
+                    />
+                    <Text
+                      style={[
+                        styles.segmentedItemText,
+                        { color: isActive ? colors.textPrimary : colors.textSecondary }
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {tab.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
           {/* Toast */}
           {toastMessage && (
-            <View style={[styles.toast, { backgroundColor: colors.accent }]}>
-              <Text style={styles.toastText}>{toastMessage}</Text>
+            <View
+              style={[
+                styles.toast,
+                { backgroundColor: colors.surfaceSecondary, borderColor: colors.accent }
+              ]}
+            >
+              <Ionicons name="checkmark-circle-outline" size={15} color={colors.accent} />
+              <Text style={[styles.toastText, { color: colors.textPrimary }]}>{toastMessage}</Text>
             </View>
           )}
 
-          {/* Clean 2-Tab Navigation Bar */}
-          <View style={[styles.tabBar, { borderBottomColor: colors.borderSubtle, backgroundColor: colors.surfaceSecondary }]}>
-            <TouchableOpacity
-              onPress={() => setActiveTab('channels')}
-              style={[
-                styles.tabItem,
-                activeTab === 'channels' && { borderBottomColor: '#F59E0B', backgroundColor: colors.surface }
-              ]}
-              accessibilityRole="tab"
-              accessibilityLabel="Subchannels verwalten"
-            >
-              <Ionicons
-                name="compass-outline"
-                size={15}
-                color={activeTab === 'channels' ? '#F59E0B' : colors.textMuted}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.tabItemText,
-                  { color: activeTab === 'channels' ? '#F59E0B' : colors.textSecondary, fontWeight: '700' }
-                ]}
-              >
-                🧭 Subchannels verwalten ({spaces.length})
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setActiveTab('feed_control')}
-              style={[
-                styles.tabItem,
-                activeTab === 'feed_control' && { borderBottomColor: '#3B82F6', backgroundColor: colors.surface }
-              ]}
-              accessibilityRole="tab"
-              accessibilityLabel="Feed-Steuerung und Geschmack"
-            >
-              <Ionicons
-                name="options-outline"
-                size={15}
-                color={activeTab === 'feed_control' ? '#3B82F6' : colors.textMuted}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.tabItemText,
-                  { color: activeTab === 'feed_control' ? '#3B82F6' : colors.textSecondary, fontWeight: '700' }
-                ]}
-              >
-                🎚️ Feed-Steuerung & Geschmack
-              </Text>
-            </TouchableOpacity>
-          </View>
-
           {/* Content Area */}
           <View style={styles.contentContainer}>
-            {/* TAB 1: Subchannels verwalten */}
-            {activeTab === 'channels' && (
-              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                {/* One-Input AI Assisted Subchannel Creator Box */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
-                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                      ✨ Neuen Subchannel anlegen (1-Klick KI-Assistent)
-                    </Text>
-                    {hasGeneratedDraft && (
-                      <View style={[styles.flairBadge, { backgroundColor: isAiGeneratedBadge ? '#10B98120' : colors.surface }]}>
-                        <Text style={{ fontSize: 10, fontWeight: '800', color: isAiGeneratedBadge ? '#10B981' : colors.textMuted }}>
-                          {isAiGeneratedBadge ? '🟢 KI-Vorschlag aktiv' : '⚪ Vorschlag aktiv'}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                    Gib einfach den Titel deines Wunsch-Raumes ein. Die KI ergänzt auf Knopfdruck Beschreibung, Flair, Quellen und Themengebiet.
+            {/* BEREICH 1: Neuer Raum (1-Step Magic) */}
+            {activeTab === 'new_space' && (
+              <ScrollView
+                style={styles.tabScroll}
+                contentContainerStyle={styles.tabScrollContent}
+                keyboardShouldPersistTaps="handled"
+              >
+                <View style={styles.creationBlock}>
+                  <Text style={[styles.promptHeading, { color: colors.textPrimary }]}>
+                    Welches Thema möchtest du als eigenen Raum?
                   </Text>
 
-                  <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
-                    {/* Row 1: Title and Handle */}
-                    <View style={{ flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' }}>
-                      <View style={{ flex: 1, minWidth: 220 }}>
-                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
-                          Titel des Raumes (Erforderlich):
-                        </Text>
-                        <TextInput
-                          value={newChannelTitle}
-                          onChangeText={handleTitleChange}
-                          placeholder="Thema oder Raum eingeben, z.B. Geopolitik, Literatur, Kybernetik …"
-                          placeholderTextColor={colors.textMuted}
-                          style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                  <TextInput
+                    value={newChannelTitle}
+                    onChangeText={handleTitleChange}
+                    placeholder="z. B. Erkenntnistheorie, Bauhaus-Architektur, Modulare Synthese…"
+                    placeholderTextColor={colors.textMuted}
+                    style={[
+                      styles.spaciousInput,
+                      {
+                        backgroundColor: colors.surfaceSecondary,
+                        borderColor: colors.border,
+                        color: colors.textPrimary
+                      }
+                    ]}
+                    returnKeyType="done"
+                    onSubmitEditing={() => void handleGenerateAiDraft()}
+                  />
+
+                  <View style={styles.quickChipsRow}>
+                    {STUDIO_QUICK_THEMES.map(themeName => {
+                      const isPicked = newChannelTitle.trim().toLowerCase() === themeName.toLowerCase();
+                      return (
+                        <TouchableOpacity
+                          key={themeName}
+                          onPress={() => handleQuickThemeSelect(themeName)}
+                          style={[
+                            styles.quickChip,
+                            {
+                              backgroundColor: isPicked ? colors.accentSubtle : colors.surfaceSecondary,
+                              borderColor: isPicked ? colors.accent : colors.borderSubtle
+                            }
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.quickChipText,
+                              { color: isPicked ? colors.accent : colors.textSecondary }
+                            ]}
+                          >
+                            {themeName}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={() => void handleGenerateAiDraft()}
+                    disabled={isGeneratingAiDraft || !newChannelTitle.trim()}
+                    style={[
+                      styles.primaryBtn,
+                      {
+                        backgroundColor: colors.accent,
+                        opacity: newChannelTitle.trim() ? 1 : 0.48
+                      }
+                    ]}
+                    accessibilityRole="button"
+                  >
+                    {isGeneratingAiDraft ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="sparkles-outline" size={16} color="#FFFFFF" />
+                        <Text style={styles.primaryBtnText}>Vorschlag erstellen</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {/* Vorschau-Karte (nur nach Generierung sichtbar) */}
+                {hasGeneratedDraft && (
+                  <View
+                    style={[
+                      styles.previewCard,
+                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }
+                    ]}
+                  >
+                    <View style={styles.previewHeaderRow}>
+                      <View
+                        style={[
+                          styles.previewIconBox,
+                          { backgroundColor: (draftAccentColor || colors.accent) + '1F' }
+                        ]}
+                      >
+                        <Ionicons
+                          name={toIoniconName(draftIcon)}
+                          size={19}
+                          color={draftAccentColor || colors.accent}
                         />
                       </View>
 
-                      <View style={{ flex: 1, minWidth: 200 }}>
-                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
-                          Handle (z.B. c/geopolitik):
+                      <View style={styles.previewTitleCol}>
+                        <Text style={[styles.previewTitle, { color: colors.textPrimary }]}>
+                          {newChannelTitle.trim() || draftTitle}
+                        </Text>
+                        <Text style={[styles.previewHandle, { color: draftAccentColor || colors.accent }]}>
+                          {newChannelHandle || normalizeSpaceHandle(newChannelTitle)}
+                        </Text>
+                      </View>
+
+                      <View
+                        style={[
+                          styles.originTag,
+                          { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+                        ]}
+                      >
+                        <Text style={[styles.originTagText, { color: colors.textSecondary }]}>
+                          {isAiGeneratedBadge ? 'KI-Entwurf' : 'Kuratiert'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {newChannelDesc.trim().length > 0 && (
+                      <Text style={[styles.previewDesc, { color: colors.textSecondary }]}>
+                        {newChannelDesc}
+                      </Text>
+                    )}
+
+                    {parsedSeedDomains.length > 0 && (
+                      <View style={styles.seedDomainsRow}>
+                        {parsedSeedDomains.map(domain => (
+                          <View
+                            key={domain}
+                            style={[
+                              styles.seedDomainPill,
+                              { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+                            ]}
+                          >
+                            <Text style={[styles.seedDomainText, { color: colors.textSecondary }]}>
+                              {domain}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    <TouchableOpacity
+                      onPress={() => void handleCreateChannel()}
+                      disabled={isCreatingChannel || !newChannelTitle.trim()}
+                      style={[
+                        styles.primaryBtn,
+                        { backgroundColor: colors.success, marginTop: spacing.md }
+                      ]}
+                      accessibilityRole="button"
+                    >
+                      {isCreatingChannel ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="checkmark-circle-outline" size={17} color="#FFFFFF" />
+                          <Text style={styles.primaryBtnText}>Raum aktivieren</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Collapsed-by-default Erweiterte Optionen Accordion */}
+                <View
+                  style={[
+                    styles.accordionBox,
+                    { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+                  ]}
+                >
+                  <TouchableOpacity
+                    onPress={() => setShowAdvancedOptions(prev => !prev)}
+                    style={styles.accordionHeader}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: showAdvancedOptions }}
+                  >
+                    <Text style={[styles.accordionTitle, { color: colors.textSecondary }]}>
+                      Erweiterte Optionen
+                    </Text>
+                    <Ionicons
+                      name={showAdvancedOptions ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color={colors.textMuted}
+                    />
+                  </TouchableOpacity>
+
+                  {showAdvancedOptions && (
+                    <View style={styles.accordionBody}>
+                      <View>
+                        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                          Handle
                         </Text>
                         <TextInput
                           value={newChannelHandle}
@@ -346,540 +854,643 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
                             setNewChannelHandle(text);
                             setHasCustomHandle(true);
                           }}
-                          placeholder="c/..."
+                          placeholder="c/thema"
                           placeholderTextColor={colors.textMuted}
-                          style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                          style={[
+                            styles.fieldInput,
+                            {
+                              backgroundColor: colors.surfaceSecondary,
+                              borderColor: colors.borderSubtle,
+                              color: colors.textPrimary
+                            }
+                          ]}
                         />
                       </View>
-                    </View>
 
-                    {/* Vibe Selector */}
-                    <View style={{ marginTop: 2 }}>
-                      <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 6 }]}>
-                        Tonalität & Vibe wählen:
-                      </Text>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                        {(Object.keys(SUBCHANNEL_VIBES) as SubchannelVibe[]).map(vibeKey => {
-                          const vMeta = SUBCHANNEL_VIBES[vibeKey];
-                          const isSelected = newChannelVibe === vibeKey;
-                          return (
-                            <TouchableOpacity
-                              key={vibeKey}
-                              onPress={() => setNewChannelVibe(vibeKey)}
-                              style={[
-                                styles.vibeChip,
-                                {
-                                  backgroundColor: isSelected ? colors.accent : colors.surface,
-                                  borderColor: isSelected ? colors.accent : colors.borderSubtle
-                                }
-                              ]}
-                            >
-                              <Text style={[styles.vibeChipText, { color: isSelected ? '#FFFFFF' : colors.textPrimary }]}>
-                                {vMeta.label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    </View>
-
-                    {/* AI Autofill Button */}
-                    <TouchableOpacity
-                      onPress={handleGenerateAiDraft}
-                      disabled={isGeneratingAiDraft || !newChannelTitle.trim()}
-                      style={[
-                        styles.aiAssistantBtn,
-                        {
-                          backgroundColor: newChannelTitle.trim() ? '#8B5CF6' : colors.surface,
-                          borderColor: '#8B5CF6',
-                          opacity: newChannelTitle.trim() ? 1 : 0.6
-                        }
-                      ]}
-                    >
-                      {isGeneratingAiDraft ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <Ionicons name="sparkles" size={15} color={newChannelTitle.trim() ? '#FFFFFF' : colors.textMuted} style={{ marginRight: 6 }} />
-                          <Text style={[styles.aiAssistantBtnText, { color: newChannelTitle.trim() ? '#FFFFFF' : colors.textMuted }]}>
-                            ✨ Von KI ausfüllen & kuratierte Quellen finden
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-
-                    {/* Editable Details (Freely adjustable before activation) */}
-                    <View style={{ marginTop: spacing.xs, gap: spacing.xs }}>
-                      <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
-                        Beschreibung & Fokus:
-                      </Text>
-                      <TextInput
-                        value={newChannelDesc}
-                        onChangeText={setNewChannelDesc}
-                        placeholder="Kurze kognitive Ausrichtung des Channels..."
-                        placeholderTextColor={colors.textMuted}
-                        style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                      />
-
-                      <View style={{ flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap' }}>
-                        <View style={{ flex: 1, minWidth: 160 }}>
-                          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
-                            Badge Flair:
-                          </Text>
-                          <TextInput
-                            value={newChannelFlair}
-                            onChangeText={setNewChannelFlair}
-                            placeholder="z.B. 🌱 Achtsamkeit"
-                            placeholderTextColor={colors.textMuted}
-                            style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                          />
-                        </View>
-
-                        <View style={{ flex: 2, minWidth: 220 }}>
-                          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
-                            Kuratierte Seed-Quellen (Domains):
-                          </Text>
-                          <TextInput
-                            value={newChannelSources}
-                            onChangeText={setNewChannelSources}
-                            placeholder="z.B. plumvillage.org, tricycle.org"
-                            placeholderTextColor={colors.textMuted}
-                            style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
-                          />
-                        </View>
-                      </View>
-
-                      {/* Primary Topic Chips */}
-                      <View style={{ marginTop: 2 }}>
-                        <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 4 }]}>
-                          Primäres Wissensgebiet:
+                      <View>
+                        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                          Tonalität
                         </Text>
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                          {(['contemplation_mind', 'philosophy_ethics', 'german_didactics', 'ai_apple', 'science_society', 'art_aesthetics', 'sound_synthesis'] as TopicTag[]).map(t => (
-                            <TouchableOpacity
-                              key={t}
-                              onPress={() => setNewChannelTopic(t)}
-                              style={[
-                                styles.topicSelectChip,
-                                {
-                                  backgroundColor: newChannelTopic === t ? colors.accent : colors.surface,
-                                  borderColor: colors.borderSubtle
-                                }
-                              ]}
-                            >
-                              <Text style={[styles.topicSelectText, { color: newChannelTopic === t ? '#FFFFFF' : colors.textSecondary }]}>
-                                {TOPIC_SPACE_MAP[t]?.flair || t}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
+                        <View style={styles.chipWrap}>
+                          {(Object.keys(SUBCHANNEL_VIBES) as SubchannelVibe[]).map(vibeKey => {
+                            const vMeta = SUBCHANNEL_VIBES[vibeKey];
+                            const isSelected = newChannelVibe === vibeKey;
+                            return (
+                              <TouchableOpacity
+                                key={vibeKey}
+                                onPress={() => setNewChannelVibe(vibeKey)}
+                                style={[
+                                  styles.optionChip,
+                                  {
+                                    backgroundColor: isSelected
+                                      ? colors.accent
+                                      : colors.surfaceSecondary,
+                                    borderColor: isSelected ? colors.accent : colors.borderSubtle
+                                  }
+                                ]}
+                              >
+                                <Ionicons
+                                  name={toIoniconName(vMeta.icon)}
+                                  size={13}
+                                  color={isSelected ? '#FFFFFF' : colors.textSecondary}
+                                />
+                                <Text
+                                  style={[
+                                    styles.optionChipText,
+                                    { color: isSelected ? '#FFFFFF' : colors.textPrimary }
+                                  ]}
+                                >
+                                  {stripLeadingDecorativeEmoji(vMeta.label)}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
                         </View>
                       </View>
 
-                      {/* Optional Antithesis Prompt */}
-                      <View style={{ marginTop: 2 }}>
-                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
-                          Optionale Leitfrage / Antithese (Optional):
+                      <View>
+                        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                          Wissensgebiet
+                        </Text>
+                        <View style={styles.chipWrap}>
+                          {TOPIC_OPTIONS.map(topicKey => {
+                            const isSelected = newChannelTopic === topicKey;
+                            const label =
+                              TOPIC_METADATA[topicKey]?.label ||
+                              stripLeadingDecorativeEmoji(TOPIC_SPACE_MAP[topicKey]?.flair || topicKey);
+                            return (
+                              <TouchableOpacity
+                                key={topicKey}
+                                onPress={() => setNewChannelTopic(topicKey)}
+                                style={[
+                                  styles.optionChip,
+                                  {
+                                    backgroundColor: isSelected
+                                      ? colors.accent
+                                      : colors.surfaceSecondary,
+                                    borderColor: isSelected ? colors.accent : colors.borderSubtle
+                                  }
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.optionChipText,
+                                    { color: isSelected ? '#FFFFFF' : colors.textSecondary }
+                                  ]}
+                                >
+                                  {label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+
+                      <View>
+                        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                          Quellen-Domains
+                        </Text>
+                        <TextInput
+                          value={newChannelSources}
+                          onChangeText={setNewChannelSources}
+                          placeholder="plato.stanford.edu, aeon.co, spektrum.de"
+                          placeholderTextColor={colors.textMuted}
+                          style={[
+                            styles.fieldInput,
+                            {
+                              backgroundColor: colors.surfaceSecondary,
+                              borderColor: colors.borderSubtle,
+                              color: colors.textPrimary
+                            }
+                          ]}
+                        />
+                      </View>
+
+                      <View>
+                        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                          Optionale Leitfrage
                         </Text>
                         <TextInput
                           value={newChannelPrompt}
                           onChangeText={setNewChannelPrompt}
-                          placeholder="Welche kritische Grundannahme hinterfragt dieser Raum?"
+                          placeholder="Welche kritische Gegenfrage soll diesen Raum begleiten?"
                           placeholderTextColor={colors.textMuted}
-                          style={[styles.textInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.textPrimary }]}
+                          style={[
+                            styles.fieldInput,
+                            {
+                              backgroundColor: colors.surfaceSecondary,
+                              borderColor: colors.borderSubtle,
+                              color: colors.textPrimary
+                            }
+                          ]}
                         />
                       </View>
 
-                      {/* Feed Priority for new channel */}
-                      <View style={{ marginTop: 2 }}>
-                        <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 4 }]}>
-                          Standard-Präsenz im Stream:
+                      <View>
+                        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                          Präsenz im Stream
                         </Text>
-                        <View style={{ flexDirection: 'row', gap: 6 }}>
-                          {[
-                            { id: 'high' as SubchannelFeedPriority, label: '🔥 Oft im Feed' },
-                            { id: 'normal' as SubchannelFeedPriority, label: 'Normal' },
-                            { id: 'channel_only' as SubchannelFeedPriority, label: 'Nur im Channel-Tab' }
-                          ].map(p => (
-                            <TouchableOpacity
-                              key={p.id}
-                              onPress={() => setNewChannelPriority(p.id)}
-                              style={[
-                                styles.priorityPill,
-                                {
-                                  backgroundColor: newChannelPriority === p.id ? colors.accent : colors.surface,
-                                  borderColor: newChannelPriority === p.id ? colors.accent : colors.borderSubtle
-                                }
-                              ]}
-                            >
-                              <Text style={[styles.priorityPillText, { color: newChannelPriority === p.id ? '#FFFFFF' : colors.textSecondary }]}>
-                                {p.label}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
+                        <View
+                          style={[
+                            styles.prioritySegmentTrack,
+                            { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                          ]}
+                        >
+                          {PRIORITY_OPTIONS.map(option => {
+                            const isSelected = newChannelPriority === option.id;
+                            return (
+                              <TouchableOpacity
+                                key={option.id}
+                                onPress={() => setNewChannelPriority(option.id)}
+                                style={[
+                                  styles.prioritySegmentBtn,
+                                  isSelected && { backgroundColor: colors.accent }
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.prioritySegmentText,
+                                    { color: isSelected ? '#FFFFFF' : colors.textSecondary }
+                                  ]}
+                                >
+                                  {option.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
                         </View>
                       </View>
-                    </View>
 
-                    {/* Activation Button */}
-                    <TouchableOpacity
-                      onPress={handleCreateChannel}
-                      disabled={isCreatingChannel || !newChannelTitle.trim()}
-                      style={[
-                        styles.primaryActionBtn,
-                        {
-                          backgroundColor: '#F59E0B',
-                          marginTop: spacing.sm,
-                          opacity: newChannelTitle.trim() ? 1 : 0.6
-                        }
-                      ]}
-                    >
-                      {isCreatingChannel ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <Ionicons name="add-circle" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                          <Text style={styles.primaryActionBtnText}>Subchannel jetzt aktivieren</Text>
-                        </>
+                      {!hasGeneratedDraft && newChannelTitle.trim().length > 0 && (
+                        <TouchableOpacity
+                          onPress={() => void handleCreateChannel()}
+                          disabled={isCreatingChannel}
+                          style={[
+                            styles.secondaryBtn,
+                            { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }
+                          ]}
+                        >
+                          <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>
+                            Direkt ohne Vorschlag aktivieren
+                          </Text>
+                        </TouchableOpacity>
                       )}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                {/* Subchannels List & Priority Adjuster */}
-                <View style={{ marginTop: spacing.lg }}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 4 }]}>
-                    Verfügbare Subchannels ({spaces.length})
-                  </Text>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginBottom: spacing.md }]}>
-                    Steuere die Priorität jedes Channels: „🔥 Oft im Feed“, „Normal“ oder „Nur im Channel-Tab“ (aus dem Hauptfeed ausgeschlossen).
-                  </Text>
-
-                  {spaces.map(s => {
-                    const currentPriority: SubchannelFeedPriority = s.feedPriority || (s.pinned ? 'high' : 'normal');
-                    return (
-                      <View
-                        key={s.id}
-                        style={[styles.channelCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, flex: 1 }}>
-                          <View style={[styles.channelIconBox, { backgroundColor: (s.accentColor || '#5282B8') + '20' }]}>
-                            <Ionicons name={(s.icon as any) || 'layers-outline'} size={18} color={s.accentColor || '#5282B8'} />
-                          </View>
-                          <View style={{ flex: 1 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                              <Text style={[styles.channelHandle, { color: s.accentColor || '#5282B8' }]}>{s.handle}</Text>
-                              <View style={[styles.flairBadge, { backgroundColor: (s.accentColor || '#5282B8') + '18' }]}>
-                                <Text style={[styles.flairBadgeText, { color: s.accentColor || '#5282B8' }]}>{s.flair}</Text>
-                              </View>
-                              {s.isCustom && (
-                                <View style={[styles.customBadge, { backgroundColor: '#F59E0B20' }]}>
-                                  <Text style={styles.customBadgeText}>CUSTOM</Text>
-                                </View>
-                              )}
-                            </View>
-                            <Text style={[styles.channelTitle, { color: colors.textPrimary }]}>{s.title}</Text>
-                            <Text style={[styles.channelDesc, { color: colors.textMuted }]}>{s.description}</Text>
-
-                            {/* 3-State Feed Priority Selector */}
-                            <View style={{ flexDirection: 'row', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                              {[
-                                { id: 'high' as SubchannelFeedPriority, label: '🔥 Oft im Feed' },
-                                { id: 'normal' as SubchannelFeedPriority, label: 'Normal' },
-                                { id: 'channel_only' as SubchannelFeedPriority, label: 'Nur im Channel-Tab' }
-                              ].map(p => {
-                                const isCurrent = currentPriority === p.id;
-                                return (
-                                  <TouchableOpacity
-                                    key={p.id}
-                                    onPress={() => handlePriorityChange(s.id, p.id)}
-                                    style={[
-                                      styles.priorityChip,
-                                      {
-                                        backgroundColor: isCurrent ? colors.accent : colors.surface,
-                                        borderColor: isCurrent ? colors.accent : colors.borderSubtle
-                                      }
-                                    ]}
-                                  >
-                                    <Text style={[styles.priorityChipText, { color: isCurrent ? '#FFFFFF' : colors.textSecondary }]}>
-                                      {p.label}
-                                    </Text>
-                                  </TouchableOpacity>
-                                );
-                              })}
-                            </View>
-                          </View>
-                        </View>
-
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
-                          <TouchableOpacity
-                            onPress={() => void togglePinSpace(s.id)}
-                            style={[styles.iconActionBtn, { backgroundColor: colors.surface }]}
-                            accessibilityLabel={s.pinned ? 'Channel lösen' : 'Channel anpinnen'}
-                          >
-                            <Ionicons name={s.pinned ? 'pin' : 'pin-outline'} size={15} color={s.pinned ? '#F59E0B' : colors.textMuted} />
-                          </TouchableOpacity>
-
-                          {s.isCustom && (
-                            <TouchableOpacity
-                              onPress={() => void handleDeleteChannel(s.id, s.handle)}
-                              style={[styles.iconActionBtn, { backgroundColor: colors.surface }]}
-                              accessibilityLabel="Custom Channel löschen"
-                            >
-                              <Ionicons name="trash-outline" size={15} color="#EF4444" />
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                      </View>
-                    );
-                  })}
+                    </View>
+                  )}
                 </View>
               </ScrollView>
             )}
 
-            {/* TAB 2: Feed-Steuerung & Geschmack */}
-            {activeTab === 'feed_control' && (
+            {/* BEREICH 2: Meine Räume */}
+            {activeTab === 'channels' && (
               <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
-                {/* Intro / Transparency Banner */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    🧠 Kognitive Feed-Steuerung & Geschmack
+                <View style={styles.groupSection}>
+                  <Text style={[styles.groupHeading, { color: colors.textPrimary }]}>
+                    Eigene Räume
                   </Text>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted }]}>
-                    Atem passt Empfehlungen transparent an deine Upvotes (▲), Downvotes (▼) und „🚫 Weniger davon“-Signale an. Hier kannst du alle gelernten Gewichte einsehen, feintunen oder gezielt zurücksetzen.
-                  </Text>
+                  {customSpaces.length === 0 ? (
+                    <View
+                      style={[
+                        styles.emptyBox,
+                        { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                      ]}
+                    >
+                      <Text style={[styles.emptyText, { color: colors.textMuted }]}>
+                        Du hast noch keine eigenen Räume angelegt.
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setActiveTab('new_space')}
+                        style={[
+                          styles.secondaryBtn,
+                          { borderColor: colors.border, backgroundColor: colors.surface }
+                        ]}
+                      >
+                        <Ionicons name="add-circle-outline" size={15} color={colors.accent} />
+                        <Text style={[styles.secondaryBtnText, { color: colors.accent }]}>
+                          Ersten Raum gestalten
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.roomList}>{customSpaces.map(renderSpaceCard)}</View>
+                  )}
                 </View>
 
-                {/* Feed-Mix Ratio (Sovereign Dial) */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 4 }]}>
-                    Souveränes Mischverhältnis des Streams
+                <View style={styles.groupSection}>
+                  <Text style={[styles.groupHeading, { color: colors.textPrimary }]}>
+                    Standard-Räume
                   </Text>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginBottom: spacing.md }]}>
-                    Bestimme die Balance zwischen deinen gelernten Schwerpunkten, kritischer Reibung und überraschenden Entdeckungen.
+                  <View style={styles.roomList}>{defaultSpaces.map(renderSpaceCard)}</View>
+                </View>
+              </ScrollView>
+            )}
+
+            {/* BEREICH 3: Mein Geschmack (Live Learned Mirror) */}
+            {activeTab === 'taste' && (
+              <ScrollView style={styles.tabScroll} contentContainerStyle={styles.tabScrollContent}>
+                {/* Stream-Balance: Fokus · Kritisch · Entdeckung */}
+                <View
+                  style={[
+                    styles.tasteSection,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                  ]}
+                >
+                  <Text style={[styles.groupHeading, { color: colors.textPrimary }]}>
+                    Stream-Balance
+                  </Text>
+                  <Text style={[styles.sectionSubcopy, { color: colors.textMuted }]}>
+                    Verhältnis zwischen deinen Kernthemen, kritischer Reibung und offenen Entdeckungen.
                   </Text>
 
-                  <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md }}>
-                    <View style={[styles.mixMetricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                      <Text style={[styles.mixMetricValue, { color: '#10B981' }]}>{focusPct}%</Text>
-                      <Text style={[styles.mixMetricLabel, { color: colors.textSecondary }]}>🎯 Fokus</Text>
-                      <Text style={[styles.mixMetricSub, { color: colors.textMuted }]}>Kerninteressen</Text>
+                  <View style={[styles.proportionalBar, { backgroundColor: colors.surface }]}>
+                    {focusPct > 0 && (
+                      <View style={{ flex: focusPct, backgroundColor: colors.success }} />
+                    )}
+                    {socraticPct > 0 && (
+                      <View style={{ flex: socraticPct, backgroundColor: colors.accent }} />
+                    )}
+                    {serendipityPct > 0 && (
+                      <View style={{ flex: serendipityPct, backgroundColor: '#7E72B5' }} />
+                    )}
+                  </View>
+
+                  <View style={styles.mixLegendRow}>
+                    <View style={styles.mixLegendItem}>
+                      <View style={[styles.mixDot, { backgroundColor: colors.success }]} />
+                      <Text style={[styles.mixLegendLabel, { color: colors.textSecondary }]}>
+                        Fokus {focusPct}%
+                      </Text>
                     </View>
-                    <View style={[styles.mixMetricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                      <Text style={[styles.mixMetricValue, { color: '#F59E0B' }]}>{socraticPct}%</Text>
-                      <Text style={[styles.mixMetricLabel, { color: colors.textSecondary }]}>⚖️ Sokratisch</Text>
-                      <Text style={[styles.mixMetricSub, { color: colors.textMuted }]}>Kritische Reibung</Text>
+                    <View style={styles.mixLegendItem}>
+                      <View style={[styles.mixDot, { backgroundColor: colors.accent }]} />
+                      <Text style={[styles.mixLegendLabel, { color: colors.textSecondary }]}>
+                        Kritisch {socraticPct}%
+                      </Text>
                     </View>
-                    <View style={[styles.mixMetricCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
-                      <Text style={[styles.mixMetricValue, { color: '#3B82F6' }]}>{serendipityPct}%</Text>
-                      <Text style={[styles.mixMetricLabel, { color: colors.textSecondary }]}>🌌 Serendipity</Text>
-                      <Text style={[styles.mixMetricSub, { color: colors.textMuted }]}>Offene Funde</Text>
+                    <View style={styles.mixLegendItem}>
+                      <View style={[styles.mixDot, { backgroundColor: '#7E72B5' }]} />
+                      <Text style={[styles.mixLegendLabel, { color: colors.textSecondary }]}>
+                        Entdeckung {serendipityPct}%
+                      </Text>
                     </View>
                   </View>
 
-                  <Text style={[styles.inputLabel, { color: colors.textSecondary, marginBottom: 6 }]}>
-                    Mischverhältnis auf Knopfdruck anpassen:
+                  <View style={styles.presetRow}>
+                    {MIX_PRESETS.map(preset => {
+                      const isActive =
+                        Math.round(preset.focus * 100) === focusPct &&
+                        Math.round(preset.socratic * 100) === socraticPct;
+                      return (
+                        <TouchableOpacity
+                          key={preset.id}
+                          onPress={async () => {
+                            await updateFeedMixRatio(
+                              preset.focus,
+                              preset.socratic,
+                              preset.serendipity
+                            );
+                            showToast(`Mischverhältnis: ${preset.label}`);
+                          }}
+                          style={[
+                            styles.presetBtn,
+                            {
+                              backgroundColor: isActive ? colors.accentSubtle : colors.surface,
+                              borderColor: isActive ? colors.accent : colors.borderSubtle
+                            }
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.presetBtnText,
+                              { color: isActive ? colors.accent : colors.textPrimary }
+                            ]}
+                          >
+                            {preset.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {/* Live Learned Topic Weights */}
+                <View
+                  style={[
+                    styles.tasteSection,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                  ]}
+                >
+                  <Text style={[styles.groupHeading, { color: colors.textPrimary }]}>
+                    Themen-Gewichte
                   </Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                    {[
-                      { label: 'Ausgewogen (60 / 20 / 20)', focus: 0.60, socratic: 0.20, serendipity: 0.20 },
-                      { label: 'Tiefgang & Fokus (80 / 10 / 10)', focus: 0.80, socratic: 0.10, serendipity: 0.10 },
-                      { label: 'Offener Horizont (40 / 30 / 30)', focus: 0.40, socratic: 0.30, serendipity: 0.30 }
-                    ].map(preset => (
-                      <TouchableOpacity
-                        key={preset.label}
-                        onPress={async () => {
-                          await updateFeedMixRatio(preset.focus, preset.socratic, preset.serendipity);
-                          showToast(`✓ Mischverhältnis gesetzt: ${preset.label}`);
-                        }}
-                        style={[styles.smallPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, borderWidth: 1 }]}
-                      >
-                        <Text style={[styles.smallPillText, { color: colors.textPrimary }]}>
-                          {preset.label}
-                        </Text>
-                      </TouchableOpacity>
+                  <Text style={[styles.sectionSubcopy, { color: colors.textMuted }]}>
+                    Effektive Gewichtung aus deinen Voreinstellungen und gelernten Lesesignalen.
+                  </Text>
+
+                  <View style={styles.topicList}>
+                    {sortedTopicWeights.map(row => (
+                      <View key={row.topic} style={styles.topicRow}>
+                        <View style={styles.topicHeaderRow}>
+                          <View style={styles.topicLabelGroup}>
+                            <Text style={[styles.topicLabel, { color: colors.textPrimary }]}>
+                              {row.label}
+                            </Text>
+                            {row.deltaPct !== 0 && (
+                              <View
+                                style={[
+                                  styles.deltaPill,
+                                  {
+                                    backgroundColor:
+                                      row.deltaPct > 0
+                                        ? colors.success + '1F'
+                                        : colors.danger + '1F'
+                                  }
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.deltaPillText,
+                                    { color: row.deltaPct > 0 ? colors.success : colors.danger }
+                                  ]}
+                                >
+                                  {row.deltaPct > 0 ? `+${row.deltaPct}%` : `${row.deltaPct}%`} gelernt
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+
+                          <View style={styles.topicControls}>
+                            <Text style={[styles.topicPct, { color: colors.textSecondary }]}>
+                              {row.effectivePct}%
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() => {
+                                const next = Math.max(
+                                  0.05,
+                                  Math.round((row.effective - 0.1) * 100) / 100
+                                );
+                                void updateTopicWeight(row.topic, next);
+                              }}
+                              style={[
+                                styles.stepBtn,
+                                { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+                              ]}
+                              accessibilityLabel={`Gewicht für ${row.label} verringern`}
+                            >
+                              <Ionicons name="remove" size={14} color={colors.textPrimary} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => {
+                                const next = Math.min(
+                                  1.0,
+                                  Math.round((row.effective + 0.1) * 100) / 100
+                                );
+                                void updateTopicWeight(row.topic, next);
+                              }}
+                              style={[
+                                styles.stepBtn,
+                                { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+                              ]}
+                              accessibilityLabel={`Gewicht für ${row.label} erhöhen`}
+                            >
+                              <Ionicons name="add" size={14} color={colors.textPrimary} />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+
+                        <View style={[styles.barTrack, { backgroundColor: colors.surface }]}>
+                          <View
+                            style={[
+                              styles.barFill,
+                              { width: `${row.effectivePct}%`, backgroundColor: colors.accent }
+                            ]}
+                          />
+                        </View>
+                      </View>
                     ))}
                   </View>
                 </View>
 
-                {/* Learned Topic Affinities */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 8 }]}>
-                    Aktuell gelernte Themen-Affinitäten (Interessen-Gewichte):
+                {/* Learned Signals: Boosted & Dampened Domains & Keywords */}
+                <View
+                  style={[
+                    styles.tasteSection,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                  ]}
+                >
+                  <Text style={[styles.groupHeading, { color: colors.textPrimary }]}>
+                    Gelernte Signale
                   </Text>
-                  {Object.entries(profile.explicitInterests || {}).map(([topic, weight]) => {
-                    const pct = Math.round((weight as number) * 100);
-                    const meta = TOPIC_SPACE_MAP[topic as TopicTag];
-                    return (
-                      <View key={topic} style={{ marginBottom: 12 }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                          <Text style={[styles.topicBarLabel, { color: colors.textPrimary }]}>
-                            {meta?.flair || TOPIC_METADATA[topic as TopicTag]?.label || topic}
-                          </Text>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <Text style={[styles.topicBarValue, { color: colors.accent }]}>{pct}%</Text>
-                            <TouchableOpacity
-                              onPress={() => updateTopicWeight(topic as TopicTag, Math.max(0.05, (weight as number) - 0.1))}
-                              style={[styles.adjustWeightBtn, { backgroundColor: colors.surfaceSecondary }]}
-                              accessibilityLabel={`Gewicht für ${topic} verringern`}
-                            >
-                              <Text style={{ fontSize: 13, color: colors.textPrimary, fontWeight: '800' }}>-</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => updateTopicWeight(topic as TopicTag, Math.min(1.0, (weight as number) + 0.1))}
-                              style={[styles.adjustWeightBtn, { backgroundColor: colors.surfaceSecondary }]}
-                              accessibilityLabel={`Gewicht für ${topic} erhöhen`}
-                            >
-                              <Text style={{ fontSize: 13, color: colors.textPrimary, fontWeight: '800' }}>+</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                        <View style={[styles.barTrack, { backgroundColor: colors.surfaceSecondary }]}>
-                          <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: colors.accent }]} />
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
+                  <Text style={[styles.sectionSubcopy, { color: colors.textMuted }]}>
+                    Vertrauenswerte und Feedback-Muster aus deinen Reaktionen. Ein Tippen entfernt das Signal.
+                  </Text>
 
-                {/* Favored Sources & Domains */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <Ionicons name="arrow-up-circle" size={16} color="#10B981" />
-                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                      ▲ Bevorzugte Quellen & Domains ({boostedDomains.length})
-                    </Text>
-                  </View>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginBottom: 8 }]}>
-                    Quellen, die du durch Upvotes gestärkt hast. Klicke auf ✕, um die Bevorzugung zu entfernen.
-                  </Text>
-                  {boostedDomains.length === 0 ? (
-                    <Text style={{ fontSize: 12, color: colors.textMuted, fontStyle: 'italic' }}>
-                      Noch keine Quellen aktiv verstärkt.
-                    </Text>
-                  ) : (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                      {boostedDomains.map(([dom, count]) => (
-                        <View key={dom} style={[styles.signalPill, { backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.3)' }]}>
-                          <Text style={[styles.signalPillText, { color: '#059669' }]}>
-                            {dom} ({count >= 0 ? `+${count}` : count})
-                          </Text>
+                  <View style={styles.signalBlock}>
+                    <View style={styles.signalGroupHeader}>
+                      <Ionicons name="arrow-up-circle-outline" size={15} color={colors.success} />
+                      <Text style={[styles.signalGroupTitle, { color: colors.textPrimary }]}>
+                        Bevorzugte Quellen & Themen
+                      </Text>
+                    </View>
+
+                    {!hasPositiveSignals ? (
+                      <Text style={[styles.emptySignalText, { color: colors.textMuted }]}>
+                        Noch keine verstärkten Quellen oder Schlagworte gespeichert.
+                      </Text>
+                    ) : (
+                      <View style={styles.chipWrap}>
+                        {boostedTrustDomains.map(([domain, score]) => {
+                          const pctBoost = Math.round((score - 1.0) * 100);
+                          return (
+                            <TouchableOpacity
+                              key={`trust-up-${domain}`}
+                              onPress={() => void handleResetDomainTrust(domain)}
+                              style={[
+                                styles.signalChip,
+                                {
+                                  backgroundColor: colors.success + '18',
+                                  borderColor: colors.success + '44'
+                                }
+                              ]}
+                              accessibilityLabel={`Vertrauen für ${domain} entfernen`}
+                            >
+                              <Text style={[styles.signalChipText, { color: colors.success }]}>
+                                {domain} (+{pctBoost}%)
+                              </Text>
+                              <Ionicons name="close" size={13} color={colors.success} />
+                            </TouchableOpacity>
+                          );
+                        })}
+
+                        {boostedDomains.map(([dom, count]) => (
                           <TouchableOpacity
+                            key={`mem-dom-up-${dom}`}
                             onPress={() => void removeFeedbackBoost('domain', dom)}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            style={{ marginLeft: 6 }}
+                            style={[
+                              styles.signalChip,
+                              {
+                                backgroundColor: colors.success + '18',
+                                borderColor: colors.success + '44'
+                              }
+                            ]}
+                            accessibilityLabel={`Bevorzugung für ${dom} entfernen`}
                           >
-                            <Ionicons name="close" size={13} color="#059669" />
+                            <Text style={[styles.signalChipText, { color: colors.success }]}>
+                              {dom} ({count >= 0 ? `+${count}` : count})
+                            </Text>
+                            <Ionicons name="close" size={13} color={colors.success} />
                           </TouchableOpacity>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-                </View>
+                        ))}
 
-                {/* Top Upvoted Concepts & Keywords */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <Ionicons name="pricetag-outline" size={16} color="#3B82F6" />
-                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                      ▲ Verstärkte Schlagworte & Themen ({boostedKeywords.length})
-                    </Text>
-                  </View>
-                  {boostedKeywords.length === 0 ? (
-                    <Text style={{ fontSize: 12, color: colors.textMuted, fontStyle: 'italic' }}>
-                      Noch keine Schlagworte durch Upvotes hervorgehoben.
-                    </Text>
-                  ) : (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                      {boostedKeywords.map(([kw, count]) => (
-                        <View key={kw} style={[styles.signalPill, { backgroundColor: 'rgba(59, 130, 246, 0.12)', borderColor: 'rgba(59, 130, 246, 0.3)' }]}>
-                          <Text style={[styles.signalPillText, { color: '#2563EB' }]}>
-                            #{kw} (+{count})
-                          </Text>
+                        {boostedKeywords.map(([kw, count]) => (
                           <TouchableOpacity
+                            key={`mem-kw-up-${kw}`}
                             onPress={() => void removeFeedbackBoost('keyword', kw)}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            style={{ marginLeft: 6 }}
+                            style={[
+                              styles.signalChip,
+                              {
+                                backgroundColor: colors.accentSubtle,
+                                borderColor: colors.accent + '44'
+                              }
+                            ]}
+                            accessibilityLabel={`Schlagwort ${kw} entfernen`}
                           >
-                            <Ionicons name="close" size={13} color="#2563EB" />
+                            <Text style={[styles.signalChipText, { color: colors.accent }]}>
+                              #{kw} (+{count})
+                            </Text>
+                            <Ionicons name="close" size={13} color={colors.accent} />
                           </TouchableOpacity>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-                </View>
-
-                {/* Blocked / Downvoted Domains & "Weniger davon" */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <Ionicons name="ban-outline" size={16} color="#EF4444" />
-                    <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                      ▼ Abgestrafte Quellen & „🚫 Weniger davon“ ({penalizedDomains.length})
-                    </Text>
+                        ))}
+                      </View>
+                    )}
                   </View>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginBottom: 8 }]}>
-                    Quellen oder Themen, die du mit „🚫 Weniger davon“ oder Downvotes belegt hast.
-                  </Text>
-                  {penalizedDomains.length === 0 ? (
-                    <Text style={{ fontSize: 12, color: colors.textMuted, fontStyle: 'italic' }}>
-                      Keine Quellen blockiert.
-                    </Text>
-                  ) : (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                      {penalizedDomains.map(([dom, count]) => (
-                        <View key={dom} style={[styles.signalPill, { backgroundColor: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)' }]}>
-                          <Text style={[styles.signalPillText, { color: '#DC2626' }]}>
-                            {dom} ({count})
-                          </Text>
-                          <TouchableOpacity
-                            onPress={() => void removeFeedbackPenalty('domain', dom)}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            style={{ marginLeft: 6 }}
-                          >
-                            <Ionicons name="close" size={13} color="#DC2626" />
-                          </TouchableOpacity>
-                        </View>
-                      ))}
+
+                  <View style={[styles.signalBlock, { marginTop: spacing.md }]}>
+                    <View style={styles.signalGroupHeader}>
+                      <Ionicons name="remove-circle-outline" size={15} color={colors.danger} />
+                      <Text style={[styles.signalGroupTitle, { color: colors.textPrimary }]}>
+                        Gedämpfte Quellen & Themen
+                      </Text>
                     </View>
-                  )}
+
+                    {!hasDampenedSignals ? (
+                      <Text style={[styles.emptySignalText, { color: colors.textMuted }]}>
+                        Keine gedämpften Quellen oder Schlagworte aktiv.
+                      </Text>
+                    ) : (
+                      <View style={styles.chipWrap}>
+                        {dampenedTrustDomains.map(([domain, score]) => {
+                          const pctDrop = Math.round((score - 1.0) * 100);
+                          return (
+                            <TouchableOpacity
+                              key={`trust-down-${domain}`}
+                              onPress={() => void handleResetDomainTrust(domain)}
+                              style={[
+                                styles.signalChip,
+                                {
+                                  backgroundColor: colors.danger + '18',
+                                  borderColor: colors.danger + '44'
+                                }
+                              ]}
+                              accessibilityLabel={`Dämpfung für ${domain} aufheben`}
+                            >
+                              <Text style={[styles.signalChipText, { color: colors.danger }]}>
+                                {domain} ({pctDrop}%)
+                              </Text>
+                              <Ionicons name="close" size={13} color={colors.danger} />
+                            </TouchableOpacity>
+                          );
+                        })}
+
+                        {penalizedDomains.map(([dom, count]) => (
+                          <TouchableOpacity
+                            key={`mem-dom-down-${dom}`}
+                            onPress={() => void removeFeedbackPenalty('domain', dom)}
+                            style={[
+                              styles.signalChip,
+                              {
+                                backgroundColor: colors.danger + '18',
+                                borderColor: colors.danger + '44'
+                              }
+                            ]}
+                            accessibilityLabel={`Dämpfung für ${dom} entfernen`}
+                          >
+                            <Text style={[styles.signalChipText, { color: colors.danger }]}>
+                              {dom} (-{Math.abs(count)})
+                            </Text>
+                            <Ionicons name="close" size={13} color={colors.danger} />
+                          </TouchableOpacity>
+                        ))}
+
+                        {penalizedKeywords.map(([kw, count]) => (
+                          <TouchableOpacity
+                            key={`mem-kw-down-${kw}`}
+                            onPress={() => void removeFeedbackPenalty('keyword', kw)}
+                            style={[
+                              styles.signalChip,
+                              {
+                                backgroundColor: colors.danger + '18',
+                                borderColor: colors.danger + '44'
+                              }
+                            ]}
+                            accessibilityLabel={`Gedämpftes Schlagwort ${kw} entfernen`}
+                          >
+                            <Text style={[styles.signalChipText, { color: colors.danger }]}>
+                              #{kw} (-{Math.abs(count)})
+                            </Text>
+                            <Ionicons name="close" size={13} color={colors.danger} />
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                  </View>
                 </View>
 
-                {/* Sovereign Reset Action */}
-                <View style={[styles.sectionBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: spacing.md }]}>
-                  <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
-                    Lern-Historie zurücksetzen
+                {/* Geschmacksprofil zurücksetzen */}
+                <View
+                  style={[
+                    styles.tasteSection,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                  ]}
+                >
+                  <Text style={[styles.groupHeading, { color: colors.textPrimary }]}>
+                    Geschmacksprofil zurücksetzen
                   </Text>
-                  <Text style={[styles.sectionDesc, { color: colors.textMuted, marginBottom: spacing.md }]}>
-                    Löscht alle erfassten Signal-Verstärkungen, Downvote-Strafen und setzt die Themen-Gewichtung auf die Standard-Werte zurück.
+                  <Text style={[styles.sectionSubcopy, { color: colors.textMuted }]}>
+                    Entfernt alle gelernten Quellen-Gewichte, Themen-Deltas und Feedback-Signale.
                   </Text>
 
                   {showClearConfirm ? (
-                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                    <View style={styles.confirmRow}>
                       <TouchableOpacity
-                        onPress={async () => {
-                          await clearFeedbackMemory();
-                          setShowClearConfirm(false);
-                          showToast('✓ Feedback-Gedächtnis vollständig zurückgesetzt');
-                          await refreshFeed();
-                        }}
-                        style={[styles.primaryActionBtn, { backgroundColor: '#EF4444' }]}
+                        onPress={() => void handleResetTasteProfile()}
+                        style={[styles.dangerBtn, { backgroundColor: colors.danger }]}
                       >
-                        <Text style={styles.primaryActionBtnText}>Ja, jetzt unwiderruflich zurücksetzen</Text>
+                        <Text style={styles.primaryBtnText}>Jetzt zurücksetzen</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => setShowClearConfirm(false)}
-                        style={[styles.secondaryActionBtn, { borderColor: colors.borderSubtle }]}
+                        style={[
+                          styles.secondaryBtn,
+                          { borderColor: colors.border, backgroundColor: colors.surface }
+                        ]}
                       >
-                        <Text style={[styles.secondaryActionBtnText, { color: colors.textPrimary }]}>Abbrechen</Text>
+                        <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>
+                          Abbrechen
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   ) : (
                     <TouchableOpacity
                       onPress={() => setShowClearConfirm(true)}
-                      style={[styles.secondaryActionBtn, { borderColor: colors.borderSubtle }]}
+                      style={[
+                        styles.secondaryBtn,
+                        { borderColor: colors.border, backgroundColor: colors.surface, alignSelf: 'flex-start' }
+                      ]}
                     >
-                      <Ionicons name="refresh-outline" size={15} color={colors.textPrimary} style={{ marginRight: 6 }} />
-                      <Text style={[styles.secondaryActionBtnText, { color: colors.textPrimary }]}>
-                        🔄 Feedback-Gedächtnis & Geschmack zurücksetzen
+                      <Ionicons name="refresh-outline" size={15} color={colors.textPrimary} />
+                      <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>
+                        Geschmacksprofil zurücksetzen
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -896,27 +1507,26 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({ visible, onC
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: 'rgba(6, 10, 18, 0.72)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.md
   },
   card: {
     width: '100%',
-    maxWidth: 820,
+    maxWidth: 780,
     maxHeight: '92%',
     borderRadius: radius.lg,
     borderWidth: 1,
     overflow: 'hidden',
-    display: 'flex',
     flexDirection: 'column'
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
     borderBottomWidth: 1
   },
   headerLeft: {
@@ -925,76 +1535,76 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     flex: 1
   },
-  iconEmblem: {
+  headerEmblem: {
     width: 38,
     height: 38,
     borderRadius: radius.md,
     justifyContent: 'center',
     alignItems: 'center'
   },
+  headerTextWrap: {
+    flex: 1
+  },
   headerTitle: {
-    fontSize: typography.sizes.body,
-    fontWeight: '800'
-  },
-  ultraPill: {
-    backgroundColor: '#F59E0B22',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: radius.sm
-  },
-  ultraPillText: {
-    color: '#F59E0B',
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.5
+    fontSize: typography.sizes.title2,
+    fontWeight: '700',
+    letterSpacing: -0.2
   },
   headerSubtitle: {
-    fontSize: typography.sizes.micro,
+    fontSize: typography.sizes.caption,
     marginTop: 2
   },
   closeBtn: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: radius.full,
+    borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center'
   },
-  toast: {
-    position: 'absolute',
-    top: 65,
-    left: 20,
-    right: 20,
-    zIndex: 999,
-    paddingVertical: 8,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4
-  },
-  toastText: {
-    color: '#FFFFFF',
-    fontSize: typography.sizes.caption,
-    fontWeight: '700'
-  },
-  tabBar: {
-    flexDirection: 'row',
+  segmentedBarWrap: {
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
     borderBottomWidth: 1
   },
-  tabItem: {
+  segmentedTrack: {
+    flexDirection: 'row',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: 3,
+    gap: 4
+  },
+  segmentedItem: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
+    gap: 6,
+    paddingVertical: 9,
     paddingHorizontal: spacing.sm,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent'
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: 'transparent'
   },
-  tabItemText: {
-    fontSize: typography.sizes.caption
+  segmentedItemText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600'
+  },
+  toast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginHorizontal: spacing.xl,
+    marginTop: spacing.md,
+    paddingVertical: 9,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1
+  },
+  toastText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600'
   },
   contentContainer: {
     flex: 1
@@ -1003,184 +1613,386 @@ const styles = StyleSheet.create({
     flex: 1
   },
   tabScrollContent: {
-    padding: spacing.lg
+    padding: spacing.xl,
+    gap: spacing.xl
   },
-  sectionBox: {
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 0.5
+  creationBlock: {
+    gap: spacing.md
   },
-  sectionTitle: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '800'
-  },
-  sectionDesc: {
-    fontSize: typography.sizes.caption,
-    marginTop: 3,
-    lineHeight: 18
-  },
-  inputLabel: {
-    fontSize: typography.sizes.micro,
+  promptHeading: {
+    fontSize: typography.sizes.body,
     fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3
+    lineHeight: typography.lineHeights.body
   },
-  textInput: {
+  spaciousInput: {
     borderWidth: 1,
     borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8,
-    fontSize: typography.sizes.bodySmall,
-    marginTop: 4
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 14,
+    fontSize: typography.sizes.body
   },
-  vibeChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+  quickChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm
+  },
+  quickChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
     borderRadius: radius.pill,
     borderWidth: 1
   },
-  vibeChipText: {
-    fontSize: 11,
+  quickChipText: {
+    fontSize: typography.sizes.caption,
     fontWeight: '600'
   },
-  aiAssistantBtn: {
+  primaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 9,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    marginTop: 4
+    gap: 8,
+    paddingVertical: 13,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radius.md
   },
-  aiAssistantBtnText: {
-    fontSize: 12,
+  primaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.bodySmall,
     fontWeight: '700'
   },
-  topicSelectChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: radius.sm,
-    borderWidth: 0.5
-  },
-  topicSelectText: {
-    fontSize: 10,
-    fontWeight: '700'
-  },
-  priorityPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
+  secondaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.md,
     borderWidth: 1
   },
-  priorityPillText: {
-    fontSize: 11,
+  secondaryBtnText: {
+    fontSize: typography.sizes.caption,
     fontWeight: '600'
   },
-  primaryActionBtn: {
+  dangerBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
     paddingHorizontal: spacing.lg,
-    borderRadius: radius.pill
+    borderRadius: radius.md
   },
-  primaryActionBtnText: {
-    color: '#FFFFFF',
-    fontSize: typography.sizes.caption,
-    fontWeight: '700'
+  previewCard: {
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: spacing.md
   },
-  secondaryActionBtn: {
+  previewHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.pill,
-    borderWidth: 0.5
+    gap: spacing.md
   },
-  secondaryActionBtnText: {
-    fontSize: typography.sizes.micro,
+  previewIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  previewTitleCol: {
+    flex: 1
+  },
+  previewTitle: {
+    fontSize: typography.sizes.body,
     fontWeight: '700'
   },
-  channelCard: {
+  previewHandle: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600',
+    marginTop: 2
+  },
+  originTag: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  originTagText: {
+    fontSize: typography.sizes.micro,
+    fontWeight: '600'
+  },
+  previewDesc: {
+    fontSize: typography.sizes.bodySmall,
+    lineHeight: typography.lineHeights.bodySmall
+  },
+  seedDomainsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6
+  },
+  seedDomainPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  seedDomainText: {
+    fontSize: typography.sizes.micro,
+    fontWeight: '600'
+  },
+  accordionBox: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    overflow: 'hidden'
+  },
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md
+  },
+  accordionTitle: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '600'
+  },
+  accordionBody: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.lg,
+    gap: spacing.md
+  },
+  fieldLabel: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600',
+    marginBottom: 6
+  },
+  fieldInput: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    fontSize: typography.sizes.bodySmall
+  },
+  chipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm
+  },
+  optionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  optionChipText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600'
+  },
+  groupSection: {
+    gap: spacing.md
+  },
+  groupHeading: {
+    fontSize: typography.sizes.body,
+    fontWeight: '700'
+  },
+  sectionSubcopy: {
+    fontSize: typography.sizes.caption,
+    lineHeight: typography.lineHeights.caption,
+    marginTop: 2
+  },
+  emptyBox: {
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    alignItems: 'flex-start',
+    gap: spacing.md
+  },
+  emptyText: {
+    fontSize: typography.sizes.bodySmall
+  },
+  roomList: {
+    gap: spacing.md
+  },
+  roomCard: {
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: spacing.md
+  },
+  roomTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 0.5,
-    marginBottom: spacing.sm
+    gap: spacing.md
   },
-  channelIconBox: {
+  roomIconBox: {
     width: 36,
     height: 36,
     borderRadius: radius.md,
     justifyContent: 'center',
-    alignItems: 'center'
-  },
-  channelHandle: {
-    fontSize: typography.sizes.caption,
-    fontWeight: '800'
-  },
-  channelTitle: {
-    fontSize: typography.sizes.bodySmall,
-    fontWeight: '700',
-    marginTop: 1
-  },
-  channelDesc: {
-    fontSize: typography.sizes.micro,
-    lineHeight: 16,
+    alignItems: 'center',
     marginTop: 2
   },
-  flairBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: radius.sm
+  roomMetaCol: {
+    flex: 1,
+    gap: 3
   },
-  flairBadgeText: {
-    fontSize: 9,
-    fontWeight: '800'
+  roomHeaderLine: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+    gap: spacing.sm
   },
-  customBadge: {
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: radius.sm
-  },
-  customBadgeText: {
-    color: '#F59E0B',
-    fontSize: 8,
-    fontWeight: '900'
-  },
-  priorityChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radius.pill,
-    borderWidth: 1
-  },
-  priorityChipText: {
-    fontSize: 10,
+  roomTitle: {
+    fontSize: typography.sizes.bodySmall,
     fontWeight: '700'
   },
-  iconActionBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.full,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  topicBarLabel: {
+  roomHandle: {
     fontSize: typography.sizes.caption,
     fontWeight: '600'
   },
-  topicBarValue: {
-    fontSize: typography.sizes.caption,
-    fontWeight: '800'
+  roomFlair: {
+    fontSize: typography.sizes.micro,
+    fontWeight: '500'
   },
-  adjustWeightBtn: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+  roomDesc: {
+    fontSize: typography.sizes.caption,
+    lineHeight: typography.lineHeights.caption,
+    marginTop: 2
+  },
+  roomActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  iconActionBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  prioritySegmentTrack: {
+    flexDirection: 'row',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    padding: 3,
+    gap: 4
+  },
+  prioritySegmentBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    borderRadius: radius.xs
+  },
+  prioritySegmentText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600'
+  },
+  tasteSection: {
+    padding: spacing.lg,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: spacing.md
+  },
+  proportionalBar: {
+    height: 10,
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+    flexDirection: 'row',
+    gap: 2
+  },
+  mixLegendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.lg
+  },
+  mixLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  mixDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4
+  },
+  mixLegendLabel: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums']
+  },
+  presetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm
+  },
+  presetBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  presetBtnText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600'
+  },
+  topicList: {
+    gap: spacing.md,
+    marginTop: spacing.xs
+  },
+  topicRow: {
+    gap: 6
+  },
+  topicHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm
+  },
+  topicLabelGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    flex: 1
+  },
+  topicLabel: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '600'
+  },
+  deltaPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radius.pill
+  },
+  deltaPillText: {
+    fontSize: typography.sizes.micro,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums']
+  },
+  topicControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  topicPct: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '700',
+    minWidth: 36,
+    textAlign: 'right',
+    fontVariant: ['tabular-nums']
+  },
+  stepBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: radius.full,
+    borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center'
   },
@@ -1193,45 +2005,38 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 3
   },
-  mixMetricCard: {
-    flex: 1,
-    padding: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 0.5,
-    alignItems: 'center'
+  signalBlock: {
+    gap: spacing.sm
   },
-  mixMetricValue: {
-    fontSize: typography.sizes.title1,
-    fontWeight: '900',
-    marginBottom: 2
-  },
-  mixMetricLabel: {
-    fontSize: typography.sizes.caption,
-    fontWeight: '700'
-  },
-  mixMetricSub: {
-    fontSize: typography.sizes.micro,
-    marginTop: 1
-  },
-  smallPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radius.pill
-  },
-  smallPillText: {
-    fontSize: 11,
-    fontWeight: '600'
-  },
-  signalPill: {
+  signalGroupHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-    borderWidth: 0.5
+    gap: 6
   },
-  signalPillText: {
-    fontSize: 11,
-    fontWeight: '700'
+  signalGroupTitle: {
+    fontSize: typography.sizes.bodySmall,
+    fontWeight: '600'
+  },
+  emptySignalText: {
+    fontSize: typography.sizes.caption
+  },
+  signalChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  signalChipText: {
+    fontSize: typography.sizes.caption,
+    fontWeight: '600'
+  },
+  confirmRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    alignItems: 'center'
   }
 });

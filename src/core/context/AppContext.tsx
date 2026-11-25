@@ -27,7 +27,7 @@ import { libraryRepository } from '../data/libraryRepository';
 import { userProfileRepository } from '../data/userProfileRepository';
 import { DEFAULT_USER_PROFILE, DEFAULT_STARTER_INTERESTS } from '../data/fixtures';
 import { appStorage, CorruptedDataError, StorageUnavailableError } from '../data/storage';
-import { RecursiveLearningEngine } from '../recommendations/recursiveLearningEngine';
+import { RecursiveLearningEngine, applyGentleFeedbackDecay, LearningTelemetryEvent } from '../recommendations/recursiveLearningEngine';
 import { WeatherService, WeatherData } from '../weather/weatherService';
 import { DailyGenerationService } from '../daily/dailyGenerationService';
 import { ContinuousLiveNewsService } from '../data/continuousLiveNewsService';
@@ -152,6 +152,19 @@ export function revertDismissFeedbackFromProfile(profile: UserProfile, item: Fee
   };
 }
 
+export function buildItemSnapshot(item: FeedItem): NonNullable<ReadingInteraction['itemSnapshot']> {
+  return {
+    title: item.title,
+    subtitle: item.subtitle || undefined,
+    publisher: item.sourceReferences?.[0]?.publisher || item.sourceBroadcasterName || undefined,
+    sourceDomain: item.sourceDomain || undefined,
+    space: item.space || undefined,
+    primaryTopic: item.primaryTopic,
+    canonicalUrl: item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || undefined,
+    estimatedReadingMinutes: item.estimatedReadingMinutes
+  };
+}
+
 /**
  * Pure, synchronous 0ms state updater for optimistic voting.
  * Updates interaction state immediately and adjusts upvotesCount in-place without reordering items.
@@ -160,7 +173,8 @@ export function computeOptimisticVoteState<T extends FeedItem>(
   prevInteractions: Record<string, ReadingInteraction>,
   items: T[],
   itemId: string,
-  direction: 'up' | 'down' | 'clear'
+  direction: 'up' | 'down' | 'clear',
+  itemSnapshot?: ReadingInteraction['itemSnapshot']
 ): {
   nextInteractions: Record<string, ReadingInteraction>;
   nextItems: T[];
@@ -170,7 +184,9 @@ export function computeOptimisticVoteState<T extends FeedItem>(
     itemId,
     saved: false,
     progressPercent: 0,
-    furthestPositionPercent: 0
+    furthestPositionPercent: 0,
+    userNotes: [],
+    voteScore: 0
   };
   const prevVoteScore = prevInt.voteScore ?? 0;
   const nextVoteScore: -1 | 0 | 1 = direction === 'up' ? 1 : direction === 'down' ? -1 : 0;
@@ -186,7 +202,9 @@ export function computeOptimisticVoteState<T extends FeedItem>(
   const nextInteraction: ReadingInteraction = {
     ...prevInt,
     voteScore: nextVoteScore,
-    feedback: nextFeedback
+    feedback: nextFeedback,
+    upvotedAt: direction === 'up' ? (prevInt.upvotedAt ?? new Date().toISOString()) : undefined,
+    itemSnapshot: itemSnapshot ?? prevInt.itemSnapshot
   };
 
   const nextInteractions: Record<string, ReadingInteraction> = {
@@ -430,6 +448,62 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const storageGenerationRef = useRef<number>(0);
   const backgroundCoordinatorRef = useRef<BackgroundCoordinator | null>(null);
 
+  const resolveFeedItemById = useCallback(async (id: string): Promise<FeedItem | null> => {
+    const fromRefs =
+      latestDailyEditionRef.current.find(i => i.id === id) ??
+      latestDiscoveryItemsRef.current.find(i => i.id === id) ??
+      latestOpenWebItemsRef.current.find(i => i.id === id) ??
+      (latestSelectedArticleRef.current?.id === id ? latestSelectedArticleRef.current : null) ??
+      latestSavedArticlesRef.current.find(i => i.id === id) ??
+      null;
+    if (fromRefs) return fromRefs;
+    const fromFeed = await feedRepository.getItemById(id);
+    if (fromFeed) return fromFeed;
+    return libraryRepository.getSavedArticle(id);
+  }, []);
+
+  const handleArticleCompleted = useCallback((id: string) => {
+    void (async () => {
+      try {
+        const item = await resolveFeedItemById(id);
+        let learnedRes: { updatedProfile: UserProfile; event: LearningTelemetryEvent | null } | null = null;
+        if (item) {
+          learnedRes = await RecursiveLearningEngine.recordInteractionEvent(
+            latestProfileRef.current,
+            item,
+            'completed_reading'
+          );
+        }
+        const committed = await userProfileRepository.updateProfile(curr => {
+          const existingCompleted = curr.behavioralSignals?.completedReadIds || [];
+          const nextCompleted = [id, ...existingCompleted.filter(x => x !== id)].slice(0, 200);
+          const baseProfile = learnedRes?.event
+            ? {
+                ...curr,
+                derivedWeights: {
+                  ...(curr.derivedWeights || {}),
+                  ...(learnedRes.updatedProfile.derivedWeights || {})
+                },
+                feedbackMemory: learnedRes.updatedProfile.feedbackMemory
+              }
+            : curr;
+          return {
+            ...baseProfile,
+            behavioralSignals: {
+              recentOpenedIds: baseProfile.behavioralSignals?.recentOpenedIds || [],
+              recentSavedIds: baseProfile.behavioralSignals?.recentSavedIds || [],
+              completedReadIds: nextCompleted
+            }
+          };
+        });
+        latestProfileRef.current = committed;
+        setProfile(committed);
+      } catch {
+        // Non-fatal background completion learning
+      }
+    })();
+  }, [resolveFeedItemById]);
+
   // Extracted controller: debounced reading progress persistence
   const {
     updateReadingProgress,
@@ -438,7 +512,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   } = useReadingProgressController({
     latestInteractionsRef,
     setInteractions,
-    storageGenerationRef
+    storageGenerationRef,
+    onArticleCompleted: handleArticleCompleted
   });
 
   // Extracted controller: Cloud Sync, pairing & debounced push
@@ -903,6 +978,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return;
         }
         throw libErr;
+      }
+
+      // Prime RecursiveLearningEngine cache & apply gentle feedback decay if >24h elapsed
+      await RecursiveLearningEngine.getEngineState().catch(() => null);
+      const decayedProfile = applyGentleFeedbackDecay(loadedProfile);
+      if (decayedProfile !== loadedProfile) {
+        try {
+          loadedProfile = await userProfileRepository.updateProfile(curr => applyGentleFeedbackDecay(curr));
+        } catch {
+          loadedProfile = decayedProfile;
+        }
       }
 
       setProfile(loadedProfile);
@@ -1409,6 +1495,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return next;
           });
           const timer = setTimeout(() => {
+            void (async () => {
+              try {
+                const res = await RecursiveLearningEngine.recordInteractionEvent(
+                  latestProfileRef.current,
+                  articleToSave,
+                  'bookmark_saved'
+                );
+                const committed = await userProfileRepository.updateProfile(curr => {
+                  const existingSaved = curr.behavioralSignals?.recentSavedIds || [];
+                  const nextSaved = [id, ...existingSaved.filter(x => x !== id)].slice(0, 200);
+                  const base = res.event
+                    ? {
+                        ...curr,
+                        derivedWeights: {
+                          ...(curr.derivedWeights || {}),
+                          ...(res.updatedProfile.derivedWeights || {})
+                        },
+                        feedbackMemory: res.updatedProfile.feedbackMemory
+                      }
+                    : curr;
+                  return {
+                    ...base,
+                    behavioralSignals: {
+                      recentOpenedIds: base.behavioralSignals?.recentOpenedIds || [],
+                      recentSavedIds: nextSaved,
+                      completedReadIds: base.behavioralSignals?.completedReadIds || []
+                    }
+                  };
+                });
+                latestProfileRef.current = committed;
+                setProfile(committed);
+              } catch {
+                // Non-fatal bookmark learning
+              }
+            })();
             void RaindropService.syncArticleIfConnected(articleToSave);
             void BackupService.saveAutoBackup();
             scheduleCloudSyncPushRef.current();
@@ -1505,7 +1626,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (res.event) {
           const updatedProfile = await userProfileRepository.updateProfile(fresh => ({
             ...fresh,
-            derivedWeights: res.updatedProfile.derivedWeights
+            derivedWeights: res.updatedProfile.derivedWeights,
+            feedbackMemory: res.updatedProfile.feedbackMemory
           }));
           latestProfileRef.current = updatedProfile;
           setProfile(updatedProfile);
@@ -1545,27 +1667,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const voteItem = useCallback(async (id: string, direction: 'up' | 'down' | 'clear') => {
+    let foundItem: FeedItem | null =
+      latestDailyEditionRef.current.find(i => i.id === id) ??
+      latestDiscoveryItemsRef.current.find(i => i.id === id) ??
+      latestOpenWebItemsRef.current.find(i => i.id === id) ??
+      (latestSelectedArticleRef.current?.id === id ? latestSelectedArticleRef.current : null) ??
+      latestSavedArticlesRef.current.find(i => i.id === id) ??
+      null;
+    const syncSnapshot = foundItem
+      ? buildItemSnapshot(foundItem)
+      : latestInteractionsRef.current[id]?.itemSnapshot;
+
     const { nextInteractions } = computeOptimisticVoteState(
       latestInteractionsRef.current,
       [],
       id,
-      direction
+      direction,
+      syncSnapshot
     );
     latestInteractionsRef.current = nextInteractions;
     setInteractions(nextInteractions);
 
     try {
-      const updated = await libraryRepository.voteItem(id, direction);
+      if (!foundItem) {
+        foundItem = (await feedRepository.getItemById(id)) ?? (await libraryRepository.getSavedArticle(id));
+      }
+      const itemSnapshot = foundItem
+        ? buildItemSnapshot(foundItem)
+        : latestInteractionsRef.current[id]?.itemSnapshot;
+      const updated = await libraryRepository.voteItem(id, direction, itemSnapshot);
       const committedInteractions = { ...latestInteractionsRef.current, [id]: updated };
       latestInteractionsRef.current = committedInteractions;
       setInteractions(committedInteractions);
 
       const timer = setTimeout(async () => {
         try {
-          let item = await feedRepository.getItemById(id);
-          if (!item) {
-            item = await libraryRepository.getSavedArticle(id);
-          }
+          const item = foundItem ?? (await resolveFeedItemById(id));
           if (item && (direction === 'up' || direction === 'down')) {
             const isUp = direction === 'up';
             const eventType = isUp ? 'upvote' : 'downvote';
@@ -1573,7 +1710,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const res = await RecursiveLearningEngine.recordInteractionEvent(votedPreview, item, eventType);
 
             const committed = await userProfileRepository.updateProfile(curr => {
-              const voted = applyVoteFeedbackToProfile(curr, item!, direction);
+              const voted = applyVoteFeedbackToProfile(curr, item, direction);
               return res.event
                 ? { ...voted, derivedWeights: res.updatedProfile.derivedWeights }
                 : voted;
@@ -1595,7 +1732,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {
       setErrorMessage('Bewertung konnte nicht gespeichert werden.');
     }
-  }, []);
+  }, [resolveFeedItemById]);
 
   const dismissItem = useCallback(async (id: string, itemOverride?: FeedItem) => {
     setDismissedItemIds(prev => {
@@ -1758,8 +1895,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const clearFeedbackMemory = useCallback(async () => {
     try {
+      await RecursiveLearningEngine.resetState();
       const committed = await userProfileRepository.updateProfile(curr => ({
         ...curr,
+        derivedWeights: {},
         feedbackMemory: {
           boostedTopics: {},
           penalizedTopics: {},
@@ -1783,11 +1922,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateTopicWeight = useCallback(async (topic: TopicTag, weight: number) => {
     try {
+      const clamped = Math.max(0, Math.min(1, weight));
       const committed = await userProfileRepository.updateProfile(curr => ({
         ...curr,
         explicitInterests: {
           ...curr.explicitInterests,
-          [topic]: Math.max(0, Math.min(1, weight))
+          [topic]: clamped
+        },
+        derivedWeights: {
+          ...(curr.derivedWeights || {}),
+          [topic]: clamped
         }
       }));
       latestProfileRef.current = committed;

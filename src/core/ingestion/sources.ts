@@ -2671,7 +2671,7 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "bobblume-bildung",
+    "id": "bob-blume-netzlehrer",
     "name": "Bob Blume – Netzlehrer (Bildung & Didaktik)",
     "url": "https://bobblume.de/feed/",
     "primaryTopic": "german_didactics",
@@ -2723,7 +2723,7 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "en"
   },
   {
-    "id": "attack-magazine",
+    "id": "attack-magazine-synth",
     "name": "Attack Magazine (Synth Programming, Rhythm & Production)",
     "url": "https://www.attackmagazine.com/feed/",
     "primaryTopic": "sound_synthesis",
@@ -3456,7 +3456,7 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
   {
     "id": "asimov-press",
     "name": "Asimov Press (Biotechnology & Scientific Essays)",
-    "url": "https://www.asimov.press/feed",
+    "url": "https://asimov.press/feed",
     "primaryTopic": "science_society",
     "topics": [
       "science_society",
@@ -4890,6 +4890,198 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "MDR Sachsen Redaktion",
     "language": "de"
+  },
+  {
+    "id": "brandeins-magazin",
+    "name": "brand eins",
+    "url": "https://www.brandeins.de/rss",
+    "primaryTopic": "opportunities_growth",
+    "topics": [
+      "opportunities_growth",
+      "science_society",
+      "philosophy_ethics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "brand eins Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "krautreporter-magazin",
+    "name": "Krautreporter (Unabhängiger Magazinjournalismus)",
+    "url": "https://krautreporter.de/feed",
+    "homepageUrl": "https://krautreporter.de/",
+    "primaryTopic": "philosophy_ethics",
+    "topics": [
+      "philosophy_ethics",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Krautreporter Genossenschaft",
+    "language": "de",
+    "reliabilityTier": "tier_b",
+    "sourceDomain": "quality_news",
+    "description": "Werbefreier, leserfinanzierter Erklärjournalismus über Zusammenhänge und Hintergründe.",
+    "isChallengingPerspective": true
+  },
+  {
+    "id": "republik-ch",
+    "name": "Republik Magazin Schweiz",
+    "url": "https://www.republik.ch/feed.xml",
+    "homepageUrl": "https://www.republik.ch/",
+    "primaryTopic": "philosophy_ethics",
+    "topics": [
+      "philosophy_ethics",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Republik Genossenschaft",
+    "language": "de",
+    "reliabilityTier": "tier_b",
+    "sourceDomain": "quality_news",
+    "description": "Unabhängiges Schweizer Digitalmagazin für Politik, Wirtschaft und Kultur.",
+    "isChallengingPerspective": true
+  },
+  {
+    "id": "bpb-apuz",
+    "name": "bpb: Aus Politik und Zeitgeschichte (APuZ)",
+    "url": "https://www.bpb.de/apuz/rss",
+    "homepageUrl": "https://www.bpb.de/shop/zeitschriften/apuz/",
+    "primaryTopic": "german_didactics",
+    "topics": [
+      "german_didactics",
+      "philosophy_ethics",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Bundeszentrale für politische Bildung",
+    "language": "de",
+    "isTeachingRelated": true
+  },
+  {
+    "id": "zeit-wissen",
+    "name": "ZEIT Wissen",
+    "url": "https://newsfeed.zeit.de/wissen/index",
+    "homepageUrl": "https://www.zeit.de/wissen/index",
+    "primaryTopic": "science_society",
+    "topics": [
+      "science_society",
+      "philosophy_ethics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "ZEIT ONLINE Wissen",
+    "language": "de",
+    "reliabilityTier": "tier_a",
+    "sourceDomain": "quality_news",
+    "description": "Hintergründe zu Forschung, Kosmologie und Bildungspolitik."
+  },
+  {
+    "id": "zeit-kultur",
+    "name": "ZEIT Kultur",
+    "url": "https://newsfeed.zeit.de/kultur/index",
+    "primaryTopic": "art_aesthetics",
+    "topics": [
+      "art_aesthetics",
+      "book_mastery",
+      "philosophy_ethics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "ZEIT ONLINE Kultur",
+    "language": "de"
+  },
+  {
+    "id": "sz-wissen",
+    "name": "Süddeutsche Zeitung Wissen",
+    "url": "https://rss.sueddeutsche.de/rss/Wissen",
+    "primaryTopic": "science_society",
+    "topics": [
+      "science_society",
+      "health_biohacking"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Süddeutsche Zeitung Wissen",
+    "language": "de"
+  },
+  {
+    "id": "sz-kultur",
+    "name": "Süddeutsche Zeitung Kultur",
+    "url": "https://rss.sueddeutsche.de/rss/Kultur",
+    "primaryTopic": "art_aesthetics",
+    "topics": [
+      "art_aesthetics",
+      "book_mastery",
+      "philosophy_ethics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Süddeutsche Zeitung Kultur",
+    "language": "de"
+  },
+  {
+    "id": "praefaktisch-philosophie",
+    "name": "praefaktisch – Philosophieblog",
+    "url": "https://www.praefaktisch.de/feed/",
+    "primaryTopic": "philosophy_ethics",
+    "topics": [
+      "philosophy_ethics",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "praefaktisch Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "works-in-progress",
+    "name": "Works in Progress",
+    "url": "https://worksinprogress.co/feed/",
+    "primaryTopic": "science_society",
+    "topics": [
+      "science_society",
+      "opportunities_growth",
+      "philosophy_ethics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Works in Progress",
+    "language": "en"
+  },
+  {
+    "id": "the-conversation-global",
+    "name": "The Conversation (Global)",
+    "url": "https://theconversation.com/global/articles.atom",
+    "primaryTopic": "science_society",
+    "topics": [
+      "science_society",
+      "philosophy_ethics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "The Conversation",
+    "language": "en"
+  },
+  {
+    "id": "noema-magazine",
+    "name": "Noema Magazine",
+    "url": "https://www.noemamag.com/feed/",
+    "primaryTopic": "philosophy_ethics",
+    "topics": [
+      "philosophy_ethics",
+      "science_society",
+      "ai_apple"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Noema Magazine",
+    "language": "en",
+    "isChallengingPerspective": true
+  },
+  {
+    "id": "sound-on-sound",
+    "name": "Sound On Sound",
+    "url": "https://www.soundonsound.com/rss.xml",
+    "primaryTopic": "sound_synthesis",
+    "topics": [
+      "sound_synthesis",
+      "ai_apple"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Sound On Sound",
+    "language": "en"
   }
 ];
 

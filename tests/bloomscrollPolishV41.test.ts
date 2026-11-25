@@ -13,7 +13,7 @@ import {
   AtmenSyncSnapshot
 } from '../src/core/sync/cloudSyncService';
 import { AtemStorage, MemoryStorageDriver } from '../src/core/data/storage';
-import { atmenAiClient, saveAiCredentials, loadAiCredentials } from '../src/core/ai/atmenAiClient';
+import { saveAiCredentials, loadAiCredentials } from '../src/core/ai/atmenAiClient';
 import { FeedItemSchema, FeedItem } from '../src/core/domain/types';
 
 test('Bloomscroll Polish V4.1 — Eliminate the 8 Live iPhone Stumbling Blocks', async (t) => {
@@ -118,8 +118,8 @@ test('Bloomscroll Polish V4.1 — Eliminate the 8 Live iPhone Stumbling Blocks',
 
     const feedCardTsx = fs.readFileSync(path.join(rootDir, 'src/ui/components/FeedCard.tsx'), 'utf8');
     assert.ok(
-      feedCardTsx.includes('✨ Neu'),
-      'FeedCard must render subtle "✨ Neu" badge for freshly arrived items'
+      feedCardTsx.includes('styles.neuBadge') && feedCardTsx.includes('>Neu</Text>'),
+      'FeedCard must render subtle "Neu" badge for freshly arrived items'
     );
   });
 

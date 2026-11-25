@@ -22,7 +22,8 @@ import {
   hivemindLearningService,
   generateHivemindLearningTrack,
   generateNextHivemindChapter,
-  extractTextFromUploadedFile
+  extractTextFromUploadedFile,
+  buildChaptersForTrack
 } from '../../core/learning/hivemindLearningService';
 
 export interface HivemindStreamModalProps {
@@ -81,8 +82,9 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = '.pdf,.txt,.md,.json';
-    fileInput.onchange = async (e: any) => {
-      const file = e?.target?.files?.[0];
+    fileInput.onchange = async (e: Event) => {
+      const target = e.target as HTMLInputElement | null;
+      const file = target?.files?.[0];
       if (!file) return;
       setError(null);
       setUploadedFileName(file.name);
@@ -197,8 +199,8 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
       }
       await recomputeFeed();
       scheduleCloudSyncPush();
-    } catch (e: any) {
-      setError(e?.message || 'Nächstes Kapitel konnte nicht geladen werden.');
+    } catch (e: unknown) {
+      setError(e instanceof Error && e.message ? e.message : 'Nächstes Kapitel konnte nicht geladen werden.');
     } finally {
       setExpandingTrackId(null);
     }
@@ -413,6 +415,66 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                   multiline
                   numberOfLines={5}
                 />
+
+                {documentTextInput.trim().length > 0 && (() => {
+                  const trimmed = documentTextInput.trim();
+                  const charCount = trimmed.length;
+                  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+                  const estimatedChapters = buildChaptersForTrack(
+                    titleInput.trim() || uploadedFileName || 'Dokument',
+                    trimmed
+                  ).length;
+                  const compactExcerpt = trimmed.replace(/\s+/g, ' ');
+                  const previewExcerpt = compactExcerpt.length > 320
+                    ? `${compactExcerpt.slice(0, 320)}…`
+                    : compactExcerpt;
+
+                  return (
+                    <View
+                      style={[
+                        styles.textPreviewCard,
+                        { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                      ]}
+                    >
+                      <View style={styles.textPreviewHeader}>
+                        <View style={styles.textPreviewTitleRow}>
+                          <Ionicons
+                            name="document-text-outline"
+                            size={15}
+                            color={colors.accent}
+                            style={{ marginRight: 6 }}
+                          />
+                          <Text style={[styles.textPreviewTitle, { color: colors.textPrimary }]}>
+                            Text-Vorschau
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setDocumentTextInput('');
+                            setUploadedFileName(null);
+                            setError(null);
+                          }}
+                          style={[
+                            styles.clearPreviewBtn,
+                            { borderColor: colors.borderSubtle, backgroundColor: colors.surface }
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Text leeren"
+                        >
+                          <Text style={[styles.clearPreviewBtnText, { color: colors.textSecondary }]}>
+                            Text leeren
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={[styles.textPreviewMeta, { color: colors.textMuted }]}>
+                        {charCount.toLocaleString('de-DE')} Zeichen · {wordCount.toLocaleString('de-DE')} Wörter · ca. {estimatedChapters} Kapitel
+                      </Text>
+                      <Text style={[styles.textPreviewExcerpt, { color: colors.textSecondary }]} numberOfLines={4}>
+                        {previewExcerpt}
+                      </Text>
+                    </View>
+                  );
+                })()}
               </View>
             )}
 
@@ -585,7 +647,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                       </Text>
                       <Text style={[styles.progressStepsLabel, { color: colors.textMuted }]}>
                         {isFinished
-                          ? '✓ Komplett gemeistert'
+                          ? 'Komplett gemeistert'
                           : `Nächster Schritt: ${nextStepIndex} von ${totalCount}`}
                       </Text>
                     </View>
@@ -815,6 +877,44 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     flex: 1
+  },
+  textPreviewCard: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    gap: 6
+  },
+  textPreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8
+  },
+  textPreviewTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  textPreviewTitle: {
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  clearPreviewBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  clearPreviewBtnText: {
+    fontSize: 11.5,
+    fontWeight: '600'
+  },
+  textPreviewMeta: {
+    fontSize: 11.5,
+    fontWeight: '600'
+  },
+  textPreviewExcerpt: {
+    fontSize: 12.5,
+    lineHeight: 18
   },
   ambientOptionRow: {
     flexDirection: 'row',

@@ -440,10 +440,10 @@ const MainNavigator: React.FC = () => {
               </Text>
             </TouchableOpacity>
 
-            {/* Tab 3: Netzwerk */}
+            {/* Tab 3: Kosmos */}
             <TouchableOpacity
               accessibilityRole="tab"
-              accessibilityLabel="Netzwerk"
+              accessibilityLabel="Kosmos"
               accessibilityState={{ selected: activeTab === 'network' }}
               onPress={() => setActiveTab('network')}
               style={styles.tabItem}
@@ -460,7 +460,7 @@ const MainNavigator: React.FC = () => {
                   { color: activeTab === 'network' ? colors.accent : colors.textMuted }
                 ]}
               >
-                Netzwerk
+                Kosmos
               </Text>
             </TouchableOpacity>
 

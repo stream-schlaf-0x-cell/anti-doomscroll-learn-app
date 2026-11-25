@@ -57,4 +57,7 @@ public/exports/
 __pycache__/
 *.pyc
 
+# Local agent skills
+.agents/
+
 

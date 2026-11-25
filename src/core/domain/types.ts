@@ -807,7 +807,8 @@ export const UserProfileSchema = z.object({
     boostedDomains: z.record(z.string(), z.number()).default({}),
     penalizedDomains: z.record(z.string(), z.number()).default({}),
     boostedSpaces: z.record(z.string(), z.number()).default({}),
-    penalizedSpaces: z.record(z.string(), z.number()).default({})
+    penalizedSpaces: z.record(z.string(), z.number()).default({}),
+    lastFeedbackDecayAt: z.string().optional()
   }).default({
     boostedTopics: {},
     penalizedTopics: {},
@@ -903,7 +904,18 @@ export const ReadingInteractionSchema = z.object({
   feedback: z.enum(['more_like_this', 'less_like_this', 'neutral', 'already_known', 'more_depth']).optional(),
   timeWorthFeedback: z.enum(['very_worthwhile', 'worthwhile', 'neutral', 'not_worthwhile']).optional(),
   userNotes: z.array(UserNoteSchema).default([]),
-  voteScore: z.number().default(0) // +1 for upvote, -1 for downvote
+  voteScore: z.number().default(0), // +1 for upvote, -1 for downvote
+  upvotedAt: z.string().optional(),
+  itemSnapshot: z.object({
+    title: z.string(),
+    subtitle: z.string().optional(),
+    publisher: z.string().optional(),
+    sourceDomain: z.string().optional(),
+    space: z.string().optional(),
+    primaryTopic: TopicTagSchema.optional(),
+    canonicalUrl: z.string().optional(),
+    estimatedReadingMinutes: z.number().optional()
+  }).optional()
 });
 export type ReadingInteraction = z.infer<typeof ReadingInteractionSchema>;
 
