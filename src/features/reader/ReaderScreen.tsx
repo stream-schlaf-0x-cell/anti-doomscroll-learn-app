@@ -265,10 +265,10 @@ export const ReaderScreen: React.FC = () => {
     };
   }, [flushReadingProgress]);
 
-  const handleClose = useCallback(async () => {
-    await flushReadingProgress();
+  const handleClose = useCallback(() => {
     closeArticle();
-  }, [flushReadingProgress, closeArticle]);
+    void flushReadingProgress();
+  }, [closeArticle, flushReadingProgress]);
 
   // Web Keyboard Shortcuts: Escape to close, s to save/bookmark
   useEffect(() => {

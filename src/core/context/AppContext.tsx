@@ -289,7 +289,7 @@ interface AppContextValue {
   setSearchQuery: (query: string) => void;
   selectedArticleId: string | null;
   selectedArticle: FeedItem | null;
-  openArticle: (id: string) => Promise<void>;
+  openArticle: (id: string, fallbackItem?: FeedItem) => Promise<void>;
   closeArticle: () => void;
   goHome: () => void;
   feedScrollToTopSignal: number;
@@ -370,7 +370,7 @@ interface AppContextValue {
 const DISMISSED_ITEMS_STORAGE_KEY = '@atem:dismissed_items:v1';
 
 export interface AppActionsContextValue {
-  openArticle: (id: string) => Promise<void>;
+  openArticle: (id: string, fallbackItem?: FeedItem) => Promise<void>;
   toggleSaveItem: (id: string) => Promise<void>;
   voteItem: (id: string, direction: 'up' | 'down' | 'clear') => Promise<void>;
   dismissItem: (id: string, itemOverride?: FeedItem) => Promise<{ item: FeedItem | null; domain: string; keywords: string[] }>;
@@ -1034,92 +1034,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Non-fatal
       }
 
-      // 1. Instant Cache-First Boot Hydration: pre-warm < 100 KB Boot-Deck + fast local stores (<50ms on warm boot)
+      // 1. Hydrate local stores, run in-place migration, and pull public snapshot BEFORE Frame 1 renders
+      // so startupState stays on 'loading' until the initial feed is ready (zero boot-flicker).
+      await Promise.allSettled([
+        feedRepository.hydrateFromBootDeck?.(),
+        feedRepository.ensureInitialized?.(),
+        seenImpressionsService.getSeenIds(),
+        hivemindLearningService.getTracks()
+      ]);
+
       try {
-        await Promise.all([
-          feedRepository.hydrateFromBootDeck?.().catch(() => {}),
-          feedRepository.ensureInitialized?.().catch(() => {}),
-          seenImpressionsService.getSeenIds().catch(() => new Set<string>()),
-          hivemindLearningService.getTracks().catch(() => [])
-        ]);
-      } catch {
-        // Non-blocking fallback
+        await runInPlaceDataMigration(appStorage, feedRepository);
+      } catch (migErr) {
+        console.warn('In-place auto-migration skipped:', migErr);
       }
 
-      // Cold-Boot Freshness Gate: if repository only holds static vault/init fallbacks (< 15 real items),
-      // hydrate the public snapshot BEFORE Frame 1 renders (capped at 1400ms) so cold browsers never lock vault cards at #1.
       const preHydrateItems = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
       const realCount = preHydrateItems.filter(item => !isStaticFallbackItem(item)).length;
-      let didColdBootSnapshotHydrate = false;
-      if (realCount < 15) {
-        try {
-          const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
-          await Promise.race([
-            (async () => {
-              const res = await feedRepository.hydrateFromPublicSnapshot?.(currentSnapshotUrl);
-              if (res?.success) {
-                const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
-                setSnapshotSyncInfo(syncText);
-                await appStorage.setItem('@atem:snapshot_sync_info:v1', syncText).catch(() => {});
-                didColdBootSnapshotHydrate = true;
-              }
-            })().catch(() => {}),
-            sleep(1400)
-          ]);
-        } catch {
-          // Non-blocking cold-boot fallback
-        }
+      const snapshotBudgetMs = realCount < 15 ? 1500 : 900;
+
+      try {
+        const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+        await Promise.race([
+          (async () => {
+            const res = await feedRepository.hydrateFromPublicSnapshot?.(currentSnapshotUrl);
+            if (res?.success) {
+              const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
+              setSnapshotSyncInfo(syncText);
+              await appStorage.setItem('@atem:snapshot_sync_info:v1', syncText).catch(() => {});
+            }
+          })().catch(() => {}),
+          sleep(snapshotBudgetMs)
+        ]);
+      } catch {
+        // Non-blocking snapshot hydration fallback
       }
 
       await scheduleFeedRecompute(loadedProfile, loadedInteractions, initialEdition);
       setStartupState({ status: 'ready' });
       setIsHydrated(true);
-
-      // 2. Non-blocking post-hydration migration & IndexedDB/public snapshot sync (NO eager reservoir download!)
-      void (async () => {
-        const beforeCount = feedRepository.getAllItems ? feedRepository.getAllItems().length : 0;
-        let snapshotInserted = 0;
-        let migMutated = false;
-
-        try {
-          const migResult = await runInPlaceDataMigration(appStorage, feedRepository);
-          if (migResult && typeof migResult === 'object' && ('migrated' in migResult || 'updatedCount' in migResult)) {
-            const m = migResult as { migrated?: boolean; updatedCount?: number };
-            if (m.migrated || (m.updatedCount ?? 0) > 0) {
-              migMutated = true;
-            }
-          }
-        } catch (migErr) {
-          console.warn('In-place auto-migration skipped:', migErr);
-        }
-
-        if (!didColdBootSnapshotHydrate) {
-          try {
-            await Promise.race([
-              (async () => {
-                const res = await feedRepository.hydrateFromPublicSnapshot?.(currentSnapshotUrl);
-                if (res?.success) {
-                  const syncText = `Stand ${res.snapshotDate || new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} • ${res.itemCount} Impulse`;
-                  setSnapshotSyncInfo(syncText);
-                  snapshotInserted = Number(res.insertedCount || 0);
-                }
-              })().catch(() => {}),
-              new Promise<void>(resolve => setTimeout(resolve, 2800))
-            ]);
-          } catch {
-            // Non-blocking fallback
-          }
-        }
-
-        const afterCount = feedRepository.getAllItems ? feedRepository.getAllItems().length : beforeCount;
-        if (migMutated || snapshotInserted > 0 || afterCount !== beforeCount) {
-          await scheduleFeedRecompute(
-            latestProfileRef.current,
-            latestInteractionsRef.current,
-            selectedEditionTypeRef.current
-          );
-        }
-      })();
 
       // 3. Single consolidated idle BackgroundCoordinator (>= 15s quiet settle; skips completely if >= 40 fresh unseen items exist)
       const coordinator = new BackgroundCoordinator({
@@ -1327,14 +1280,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { simulatedDate: res.simulatedDate, itemCount: res.generatedItems.length };
   }, [scheduleFeedRecompute]);
 
-  const openArticle = useCallback(async (id: string) => {
+  const openArticle = useCallback(async (id: string, fallbackItem?: FeedItem) => {
     void appearanceHistoryService.recordAppearances([id]);
     let item = await feedRepository.getItemById(id);
+    const foundInFeedRepo = Boolean(item);
     if (!item) {
       item = await libraryRepository.getSavedArticle(id);
     }
     if (!item) {
       item = latestSavedArticlesRef.current.find(a => a.id === id) ?? null;
+    }
+    if (!item) {
+      item = latestDailyEditionRef.current.find(i => i.id === id) ?? null;
+    }
+    if (!item) {
+      item = latestDiscoveryItemsRef.current.find(i => i.id === id) ?? null;
+    }
+    if (!item) {
+      item = latestOpenWebItemsRef.current.find(i => i.id === id) ?? null;
+    }
+    if (!item) {
+      const liveCache = (ContinuousLiveNewsService as unknown as { liveIngestedItems?: readonly FeedItem[] }).liveIngestedItems;
+      if (Array.isArray(liveCache)) {
+        item = liveCache.find(i => i.id === id) ?? null;
+      }
+      if (!item) {
+        item = ContinuousLiveNewsService.getEvergreenClassics().find(i => i.id === id) ?? null;
+      }
     }
     if (!item) {
       try {
@@ -1346,6 +1318,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             break;
           }
         }
+      } catch {
+        // Non-fatal
+      }
+    }
+    if (!item && fallbackItem) {
+      item = fallbackItem;
+    }
+    if (item && !foundInFeedRepo) {
+      try {
+        feedRepository.addItems?.([item], { operationType: 'background_sync', pinInserted: false });
       } catch {
         // Non-fatal
       }
@@ -1376,8 +1358,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       try {
-        if (window.location.search.includes('article=')) {
-          window.history.pushState({}, '', window.location.pathname);
+        const historyState = window.history.state as { articleId?: string } | null;
+        if (historyState?.articleId || window.location.search.includes('article=')) {
+          window.history.replaceState({}, '', window.location.pathname);
         }
       } catch {
         // Ignored

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -23,7 +23,8 @@ import {
   generateHivemindLearningTrack,
   generateNextHivemindChapter,
   extractTextFromUploadedFile,
-  buildChaptersForTrack
+  buildChaptersForTrack,
+  buildMultiDocumentChapterSpecs
 } from '../../core/learning/hivemindLearningService';
 
 export interface HivemindStreamModalProps {
@@ -34,6 +35,40 @@ export interface HivemindStreamModalProps {
 }
 
 type CreatorSourceMode = 'topic_book' | 'pdf_file' | 'url_wiki';
+
+interface UploadedDocumentEntry {
+  id: string;
+  name: string;
+  text: string;
+  wordCount: number;
+  status: 'ready' | 'error';
+  errorMessage?: string;
+}
+
+interface WebHistoryModalState {
+  atemModal?: string;
+}
+
+function cleanUploadedFileTitle(fileName: string): string {
+  return String(fileName || '')
+    .replace(/\.(pdf|txt|md|json)$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function buildCombinedTitleFromDocuments(docs: UploadedDocumentEntry[]): string {
+  const readyOrAll = docs.filter(d => d.status === 'ready');
+  const sourceList = readyOrAll.length > 0 ? readyOrAll : docs;
+  const cleanNames = sourceList
+    .map(d => cleanUploadedFileTitle(d.name))
+    .filter(Boolean);
+  if (cleanNames.length === 0) return '';
+  if (cleanNames.length === 1) return cleanNames[0];
+  if (cleanNames.length === 2) return `${cleanNames[0]} & ${cleanNames[1]}`;
+  if (cleanNames.length === 3) return `${cleanNames[0]} & ${cleanNames[1]} & ${cleanNames[2]}`;
+  return `${cleanNames[0]} & ${cleanNames[1]} (+${cleanNames.length - 2} weitere)`;
+}
 
 const QUICK_SUGGESTIONS = [
   { label: 'Kants Erkenntnistheorie', value: 'Kants Kritik der reinen Vernunft' },
@@ -54,7 +89,8 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
   const [titleInput, setTitleInput] = useState<string>('');
   const [documentTextInput, setDocumentTextInput] = useState<string>('');
   const [urlInput, setUrlInput] = useState<string>('');
-  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [uploadedDocuments, setUploadedDocuments] = useState<UploadedDocumentEntry[]>([]);
+  const [isParsingFiles, setIsParsingFiles] = useState<boolean>(false);
   const [mixNewTrackIntoMainFeed, setMixNewTrackIntoMainFeed] = useState<boolean>(true);
 
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
@@ -64,6 +100,119 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
   const [tracks, setTracks] = useState<HivemindLearningTrack[]>(() =>
     hivemindLearningService.getCachedTracks()
   );
+
+  const hasCustomTitleRef = useRef<boolean>(false);
+  const pushedHistoryEntryRef = useRef<boolean>(false);
+  const closedViaPopStateRef = useRef<boolean>(false);
+  const isClosingRef = useRef<boolean>(false);
+
+  const handleTitleInputChange = useCallback((nextText: string) => {
+    setTitleInput(nextText);
+    hasCustomTitleRef.current = nextText.trim().length > 0;
+  }, []);
+
+  const handleCloseModal = useCallback(() => {
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+
+    if (
+      Platform.OS === 'web' &&
+      typeof window !== 'undefined' &&
+      pushedHistoryEntryRef.current &&
+      !closedViaPopStateRef.current
+    ) {
+      pushedHistoryEntryRef.current = false;
+      const historyState = window.history.state as WebHistoryModalState | null;
+      if (historyState?.atemModal === 'hivemind') {
+        try {
+          window.history.back();
+        } catch {
+          // Ignored
+        }
+      }
+    } else {
+      pushedHistoryEntryRef.current = false;
+    }
+
+    onClose();
+  }, [onClose]);
+
+  const handleCloseForFocusTrack = useCallback(() => {
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+
+    if (
+      Platform.OS === 'web' &&
+      typeof window !== 'undefined' &&
+      pushedHistoryEntryRef.current
+    ) {
+      pushedHistoryEntryRef.current = false;
+      const historyState = window.history.state as WebHistoryModalState | null;
+      if (historyState?.atemModal === 'hivemind') {
+        try {
+          window.history.replaceState({}, '', window.location.href);
+        } catch {
+          // Ignored
+        }
+      }
+    }
+
+    onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!visible) {
+      pushedHistoryEntryRef.current = false;
+      closedViaPopStateRef.current = false;
+      isClosingRef.current = false;
+      return;
+    }
+
+    isClosingRef.current = false;
+    closedViaPopStateRef.current = false;
+
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return;
+    }
+
+    if (!pushedHistoryEntryRef.current) {
+      try {
+        window.history.pushState({ atemModal: 'hivemind' }, '', window.location.href);
+        pushedHistoryEntryRef.current = true;
+      } catch {
+        // Ignored
+      }
+    }
+
+    const onPopState = (event: PopStateEvent) => {
+      const currentState =
+        (window.history.state as WebHistoryModalState | null) ??
+        (event.state as WebHistoryModalState | null);
+      if (currentState?.atemModal !== 'hivemind') {
+        closedViaPopStateRef.current = true;
+        pushedHistoryEntryRef.current = false;
+        if (!isClosingRef.current) {
+          isClosingRef.current = true;
+          onClose();
+        }
+      }
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        handleCloseModal();
+      }
+    };
+
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [visible, onClose, handleCloseModal]);
 
   const loadTracks = useCallback(async () => {
     const loaded = await hivemindLearningService.getTracks();
@@ -77,46 +226,131 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
     return hivemindLearningService.subscribe(setTracks);
   }, [visible, loadTracks]);
 
-  const handleWebFilePick = () => {
+  const handleWebFilePick = (append: boolean = false) => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = '.pdf,.txt,.md,.json';
+    fileInput.multiple = true;
     fileInput.onchange = async (e: Event) => {
       const target = e.target as HTMLInputElement | null;
-      const file = target?.files?.[0];
-      if (!file) return;
+      const selectedFiles = target?.files ? Array.from(target.files) : [];
+      if (selectedFiles.length === 0) return;
+
       setError(null);
-      setUploadedFileName(file.name);
-      if (!titleInput.trim()) {
-        const baseName = String(file.name).replace(/\.(pdf|txt|md|json)$/i, '').replace(/[_-]+/g, ' ');
-        setTitleInput(baseName);
-      }
+      setIsParsingFiles(true);
+
+      const extractedEntries: UploadedDocumentEntry[] = [];
       try {
-        const extracted = await extractTextFromUploadedFile(file, file.name);
-        if (extracted && extracted.length >= 20) {
-          setDocumentTextInput(extracted);
-        } else {
-          setError('Aus der Datei konnte nur wenig Text extrahiert werden. Du kannst den Text auch direkt unten einfügen.');
+        for (let idx = 0; idx < selectedFiles.length; idx++) {
+          const file = selectedFiles[idx];
+          const entryId = `doc-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`;
+          try {
+            const extracted = await extractTextFromUploadedFile(file, file.name);
+            const trimmed = (extracted || '').trim();
+            if (trimmed.length >= 20) {
+              const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+              extractedEntries.push({
+                id: entryId,
+                name: file.name,
+                text: trimmed,
+                wordCount,
+                status: 'ready'
+              });
+            } else {
+              extractedEntries.push({
+                id: entryId,
+                name: file.name,
+                text: '',
+                wordCount: 0,
+                status: 'error',
+                errorMessage: 'Wenig oder kein auslesbarer Text erkannt (evtl. gescanntes PDF).'
+              });
+            }
+          } catch (err: unknown) {
+            extractedEntries.push({
+              id: entryId,
+              name: file.name,
+              text: '',
+              wordCount: 0,
+              status: 'error',
+              errorMessage:
+                err instanceof Error && err.message
+                  ? err.message
+                  : 'Datei konnte nicht gelesen werden.'
+            });
+          }
         }
-      } catch (err: unknown) {
-        setError(
-          err instanceof Error && err.message
-            ? err.message
-            : 'Datei konnte nicht gelesen werden. Bitte Text direkt einfügen.'
-        );
+
+        setUploadedDocuments(prev => {
+          const nextDocs = append ? [...prev, ...extractedEntries] : extractedEntries;
+          if (!hasCustomTitleRef.current) {
+            const autoTitle = buildCombinedTitleFromDocuments(nextDocs);
+            if (autoTitle) {
+              setTitleInput(autoTitle);
+            }
+          }
+          return nextDocs;
+        });
+
+        const readyCount = extractedEntries.filter(d => d.status === 'ready').length;
+        const failedCount = extractedEntries.length - readyCount;
+        if (readyCount === 0 && failedCount > 0) {
+          setError(
+            failedCount === 1
+              ? extractedEntries[0].errorMessage || 'Aus der Datei konnte kein Text extrahiert werden.'
+              : 'Aus den ausgewählten Dateien konnte kein Text extrahiert werden. Du kannst den Text auch direkt unten einfügen.'
+          );
+        }
+      } finally {
+        setIsParsingFiles(false);
       }
     };
     fileInput.click();
   };
 
+  const handleRemoveUploadedDocument = (docId: string) => {
+    setUploadedDocuments(prev => {
+      const nextDocs = prev.filter(doc => doc.id !== docId);
+      if (!hasCustomTitleRef.current) {
+        setTitleInput(buildCombinedTitleFromDocuments(nextDocs));
+      }
+      return nextDocs;
+    });
+    setError(null);
+  };
+
   const handleGenerateTrack = async (customTopic?: string) => {
+    const readyUploadedDocs = uploadedDocuments.filter(
+      d => d.status === 'ready' && d.text.trim().length > 0
+    );
+    const manualText = sourceMode === 'pdf_file' ? documentTextInput.trim() : '';
+    const sourceDocumentsPayload =
+      sourceMode === 'pdf_file'
+        ? [
+            ...readyUploadedDocs.map(d => ({ name: d.name, text: d.text })),
+            ...(manualText
+              ? [{ name: titleInput.trim() || 'Manueller Text', text: manualText }]
+              : [])
+          ]
+        : [];
+
+    const fallbackTitleFromDocs = buildCombinedTitleFromDocuments(readyUploadedDocs);
     const effectiveTitle = (
       customTopic ??
-      (sourceMode === 'url_wiki' ? (titleInput.trim() || urlInput.trim()) : titleInput.trim())
+      (sourceMode === 'url_wiki'
+        ? titleInput.trim() || urlInput.trim()
+        : titleInput.trim() || fallbackTitleFromDocs)
     ).trim();
 
-    if (!effectiveTitle && !documentTextInput.trim()) {
+    if (sourceMode === 'pdf_file' && uploadedDocuments.length > 0 && sourceDocumentsPayload.length === 0) {
+      setError(
+        'Keine der hochgeladenen Dateien enthält auslesbaren Text. Bitte entferne fehlerhafte Dateien oder füge den Text manuell unten ein.'
+      );
+      return;
+    }
+
+    if (!effectiveTitle && sourceDocumentsPayload.length === 0 && !manualText) {
       setError('Bitte gib ein Thema, einen Buchtitel oder einen Quelltext ein.');
       return;
     }
@@ -127,16 +361,24 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
 
     try {
       const creds = await loadAiCredentials().catch(() => undefined);
+      const sourceLabel =
+        sourceMode === 'pdf_file' && readyUploadedDocs.length > 0
+          ? readyUploadedDocs.length === 1
+            ? `Datei: ${readyUploadedDocs[0].name}`
+            : `${readyUploadedDocs.length} Dokumente: ${readyUploadedDocs.map(d => d.name).slice(0, 3).join(', ')}${readyUploadedDocs.length > 3 ? '…' : ''}`
+          : undefined;
+
       const track = await generateHivemindLearningTrack({
-        titleOrTopic: effectiveTitle || uploadedFileName || 'Dokument-Lernpfad',
+        titleOrTopic: effectiveTitle || 'Dokument-Lernpfad',
         sourceType:
           sourceMode === 'pdf_file'
             ? 'pdf_document'
             : sourceMode === 'url_wiki'
             ? 'url'
             : 'topic',
-        sourceLabel: uploadedFileName ? `Datei: ${uploadedFileName}` : undefined,
-        rawDocumentText: sourceMode === 'pdf_file' ? documentTextInput.trim() : undefined,
+        sourceLabel,
+        rawDocumentText: sourceMode === 'pdf_file' && sourceDocumentsPayload.length === 0 ? manualText : undefined,
+        sourceDocuments: sourceDocumentsPayload.length > 0 ? sourceDocumentsPayload : undefined,
         sourceUrl: sourceMode === 'url_wiki' ? urlInput.trim() : undefined,
         targetCardCount: 12,
         mixIntoMainFeed: mixNewTrackIntoMainFeed,
@@ -155,13 +397,14 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
       scheduleCloudSyncPush();
 
       setTitleInput('');
+      hasCustomTitleRef.current = false;
       setDocumentTextInput('');
       setUrlInput('');
-      setUploadedFileName(null);
+      setUploadedDocuments([]);
 
       // Immediately open the newly created track in Focus Mode if handler provided
       if (onStartFocusTrack) {
-        onClose();
+        handleCloseForFocusTrack();
         onStartFocusTrack(track.id);
       }
     } catch (err: unknown) {
@@ -210,17 +453,42 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
     if (track.items.length > 0) {
       feedRepository.addItems(track.items);
     }
-    onClose();
     if (onStartFocusTrack) {
+      handleCloseForFocusTrack();
       onStartFocusTrack(track.id);
+    } else {
+      handleCloseModal();
     }
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={handleCloseModal}>
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         {/* Top Cockpit Header */}
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.borderSubtle }]}>
+          <View style={styles.headerTopBar}>
+            <TouchableOpacity
+              onPress={handleCloseModal}
+              style={[
+                styles.backToStreamBtn,
+                { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Zurück zum Stream"
+            >
+              <Text style={[styles.backToStreamText, { color: colors.textPrimary }]}>
+                ← Zurück zum Stream
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleCloseModal}
+              style={[styles.closeButton, { backgroundColor: colors.surfaceSecondary }]}
+              accessibilityRole="button"
+              accessibilityLabel="Hivemind schließen"
+            >
+              <Ionicons name="close" size={20} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
           <View style={styles.headerTitleGroup}>
             <View style={styles.headerBadgeRow}>
               <Ionicons name="school-outline" size={20} color={colors.accent} style={{ marginRight: 8 }} />
@@ -232,14 +500,6 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
               Verwandle jedes Thema, Buch oder PDF in einen interaktiven Lern-Feed mit Fortschrittsbalken
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={onClose}
-            style={[styles.closeButton, { backgroundColor: colors.surfaceSecondary }]}
-            accessibilityRole="button"
-            accessibilityLabel="Hivemind schließen"
-          >
-            <Ionicons name="close" size={20} color={colors.textPrimary} />
-          </TouchableOpacity>
         </View>
 
         <ScrollView
@@ -348,7 +608,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                   placeholder="z. B. Kants Erkenntnistheorie, Faust, Ableton Mixing, Sokrates…"
                   placeholderTextColor={colors.textMuted}
                   value={titleInput}
-                  onChangeText={setTitleInput}
+                  onChangeText={handleTitleInputChange}
                 />
 
                 <View style={styles.suggestionsWrap}>
@@ -356,7 +616,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                     <TouchableOpacity
                       key={s.label}
                       onPress={() => {
-                        setTitleInput(s.value);
+                        handleTitleInputChange(s.value);
                       }}
                       style={[styles.suggestionChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}
                     >
@@ -369,114 +629,224 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
               </>
             )}
 
-            {sourceMode === 'pdf_file' && (
-              <View style={{ gap: 10 }}>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle, minHeight: 44 }]}
-                  placeholder="Titel des Dokuments / Buches (z. B. Seminararbeit Erkenntnistheorie)"
-                  placeholderTextColor={colors.textMuted}
-                  value={titleInput}
-                  onChangeText={setTitleInput}
-                />
+            {sourceMode === 'pdf_file' && (() => {
+              const readyDocs = uploadedDocuments.filter(d => d.status === 'ready' && d.text.trim().length > 0);
+              const trimmedManual = documentTextInput.trim();
+              const combinedReadyWordCount =
+                readyDocs.reduce((sum, d) => sum + d.wordCount, 0) +
+                (trimmedManual ? trimmedManual.split(/\s+/).filter(Boolean).length : 0);
+              const allReadySources = [
+                ...readyDocs.map(d => ({ name: d.name, text: d.text })),
+                ...(trimmedManual ? [{ name: titleInput.trim() || 'Manueller Text', text: trimmedManual }] : [])
+              ];
+              const estimatedChapters =
+                allReadySources.length >= 2
+                  ? buildMultiDocumentChapterSpecs(titleInput.trim() || 'Dokument-Lernpfad', allReadySources).length
+                  : allReadySources.length === 1
+                  ? buildChaptersForTrack(titleInput.trim() || allReadySources[0].name, allReadySources[0].text).length
+                  : 0;
 
-                {Platform.OS === 'web' && (
-                  <TouchableOpacity
-                    onPress={handleWebFilePick}
-                    style={[
-                      styles.fileUploadBtn,
-                      { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="PDF, TXT oder Markdown Datei auswählen"
-                  >
-                    <Ionicons name="document-attach-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
-                    <Text style={[styles.fileUploadBtnText, { color: colors.accent }]}>
-                      {uploadedFileName
-                        ? `Geladen: ${uploadedFileName} (${documentTextInput.length} Zeichen)`
-                        : 'PDF, .txt oder .md Datei vom Gerät auswählen…'}
-                    </Text>
-                  </TouchableOpacity>
-                )}
+              return (
+                <View style={{ gap: 10 }}>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle, minHeight: 44 }]}
+                    placeholder="Titel des Lernpfads (wird bei mehreren PDFs automatisch kombiniert)"
+                    placeholderTextColor={colors.textMuted}
+                    value={titleInput}
+                    onChangeText={handleTitleInputChange}
+                  />
 
-                <TextInput
-                  style={[
-                    styles.input,
-                    {
-                      backgroundColor: colors.surfaceSecondary,
-                      color: colors.textPrimary,
-                      borderColor: colors.borderSubtle,
-                      minHeight: 110
-                    }
-                  ]}
-                  placeholder="Oder füge hier beliebigen Buch-, PDF-, Skript- oder Notiztext direkt aus der Zwischenablage ein…"
-                  placeholderTextColor={colors.textMuted}
-                  value={documentTextInput}
-                  onChangeText={setDocumentTextInput}
-                  multiline
-                  numberOfLines={5}
-                />
+                  {Platform.OS === 'web' && (
+                    <TouchableOpacity
+                      onPress={() => handleWebFilePick(uploadedDocuments.length > 0)}
+                      disabled={isParsingFiles}
+                      style={[
+                        styles.fileUploadBtn,
+                        { backgroundColor: colors.accentSubtle, borderColor: colors.accent, opacity: isParsingFiles ? 0.7 : 1 }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="PDF, TXT oder Markdown Dateien auswählen"
+                    >
+                      {isParsingFiles ? (
+                        <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 8 }} />
+                      ) : (
+                        <Ionicons name="document-attach-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                      )}
+                      <Text style={[styles.fileUploadBtnText, { color: colors.accent }]}>
+                        {isParsingFiles
+                          ? 'Lese Dokumente aus…'
+                          : uploadedDocuments.length > 0
+                          ? `${readyDocs.length} von ${uploadedDocuments.length} Dokumenten bereit (${combinedReadyWordCount.toLocaleString('de-DE')} Wörter)`
+                          : 'PDF(s), .txt oder .md Dateien vom Gerät auswählen…'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
 
-                {documentTextInput.trim().length > 0 && (() => {
-                  const trimmed = documentTextInput.trim();
-                  const charCount = trimmed.length;
-                  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
-                  const estimatedChapters = buildChaptersForTrack(
-                    titleInput.trim() || uploadedFileName || 'Dokument',
-                    trimmed
-                  ).length;
-                  const compactExcerpt = trimmed.replace(/\s+/g, ' ');
-                  const previewExcerpt = compactExcerpt.length > 320
-                    ? `${compactExcerpt.slice(0, 320)}…`
-                    : compactExcerpt;
-
-                  return (
+                  {uploadedDocuments.length > 0 && (
                     <View
                       style={[
-                        styles.textPreviewCard,
+                        styles.uploadedDocsContainer,
                         { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
                       ]}
                     >
-                      <View style={styles.textPreviewHeader}>
-                        <View style={styles.textPreviewTitleRow}>
-                          <Ionicons
-                            name="document-text-outline"
-                            size={15}
-                            color={colors.accent}
-                            style={{ marginRight: 6 }}
-                          />
-                          <Text style={[styles.textPreviewTitle, { color: colors.textPrimary }]}>
-                            Text-Vorschau
+                      <View style={styles.uploadedDocsHeader}>
+                        <Text style={[styles.uploadedDocsHeading, { color: colors.textPrimary }]}>
+                          Hochgeladene Dokumente ({uploadedDocuments.length})
+                        </Text>
+                        {estimatedChapters > 0 && (
+                          <Text style={[styles.uploadedDocsMeta, { color: colors.textMuted }]}>
+                            {combinedReadyWordCount.toLocaleString('de-DE')} Wörter · {estimatedChapters} Kapitel
                           </Text>
-                        </View>
+                        )}
+                      </View>
+
+                      {uploadedDocuments.map(doc => {
+                        const isReady = doc.status === 'ready';
+                        return (
+                          <View
+                            key={doc.id}
+                            style={[
+                              styles.uploadedDocRow,
+                              {
+                                backgroundColor: colors.surface,
+                                borderColor: isReady ? colors.borderSubtle : 'rgba(239, 68, 68, 0.45)'
+                              }
+                            ]}
+                          >
+                            <Ionicons
+                              name={isReady ? 'document-text-outline' : 'alert-circle-outline'}
+                              size={16}
+                              color={isReady ? colors.accent : '#EF4444'}
+                              style={{ marginRight: 8, marginTop: 1 }}
+                            />
+                            <View style={{ flex: 1 }}>
+                              <Text
+                                style={[styles.uploadedDocName, { color: colors.textPrimary }]}
+                                numberOfLines={1}
+                              >
+                                {doc.name}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.uploadedDocStatus,
+                                  { color: isReady ? colors.textMuted : '#EF4444' }
+                                ]}
+                              >
+                                {isReady
+                                  ? `${doc.wordCount.toLocaleString('de-DE')} Wörter · Bereit`
+                                  : doc.errorMessage || 'Fehler beim Auslesen'}
+                              </Text>
+                            </View>
+                            <TouchableOpacity
+                              onPress={() => handleRemoveUploadedDocument(doc.id)}
+                              style={[styles.removeDocBtn, { backgroundColor: colors.surfaceSecondary }]}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Dokument ${doc.name} entfernen`}
+                            >
+                              <Ionicons name="close" size={14} color={colors.textSecondary} />
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      })}
+
+                      {Platform.OS === 'web' && (
                         <TouchableOpacity
-                          onPress={() => {
-                            setDocumentTextInput('');
-                            setUploadedFileName(null);
-                            setError(null);
-                          }}
+                          onPress={() => handleWebFilePick(true)}
+                          disabled={isParsingFiles}
                           style={[
-                            styles.clearPreviewBtn,
-                            { borderColor: colors.borderSubtle, backgroundColor: colors.surface }
+                            styles.appendDocsBtn,
+                            { borderColor: colors.accent, backgroundColor: colors.surface }
                           ]}
                           accessibilityRole="button"
-                          accessibilityLabel="Text leeren"
+                          accessibilityLabel="Weitere PDFs oder Dokumente hinzufügen"
                         >
-                          <Text style={[styles.clearPreviewBtnText, { color: colors.textSecondary }]}>
-                            Text leeren
+                          <Ionicons name="add-circle-outline" size={15} color={colors.accent} style={{ marginRight: 6 }} />
+                          <Text style={[styles.appendDocsBtnText, { color: colors.accent }]}>
+                            + Weitere PDFs / Dokumente hinzufügen
                           </Text>
                         </TouchableOpacity>
-                      </View>
-                      <Text style={[styles.textPreviewMeta, { color: colors.textMuted }]}>
-                        {charCount.toLocaleString('de-DE')} Zeichen · {wordCount.toLocaleString('de-DE')} Wörter · ca. {estimatedChapters} Kapitel
-                      </Text>
-                      <Text style={[styles.textPreviewExcerpt, { color: colors.textSecondary }]} numberOfLines={4}>
-                        {previewExcerpt}
-                      </Text>
+                      )}
                     </View>
-                  );
-                })()}
-              </View>
-            )}
+                  )}
+
+                  <TextInput
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: colors.surfaceSecondary,
+                        color: colors.textPrimary,
+                        borderColor: colors.borderSubtle,
+                        minHeight: 110
+                      }
+                    ]}
+                    placeholder="Oder füge hier beliebigen Buch-, PDF-, Skript- oder Notiztext direkt aus der Zwischenablage ein…"
+                    placeholderTextColor={colors.textMuted}
+                    value={documentTextInput}
+                    onChangeText={setDocumentTextInput}
+                    multiline
+                    numberOfLines={5}
+                  />
+
+                  {trimmedManual.length > 0 && (() => {
+                    const charCount = trimmedManual.length;
+                    const wordCount = trimmedManual.split(/\s+/).filter(Boolean).length;
+                    const manualChapters = buildChaptersForTrack(
+                      titleInput.trim() || 'Dokument',
+                      trimmedManual
+                    ).length;
+                    const compactExcerpt = trimmedManual.replace(/\s+/g, ' ');
+                    const previewExcerpt = compactExcerpt.length > 320
+                      ? `${compactExcerpt.slice(0, 320)}…`
+                      : compactExcerpt;
+
+                    return (
+                      <View
+                        style={[
+                          styles.textPreviewCard,
+                          { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                        ]}
+                      >
+                        <View style={styles.textPreviewHeader}>
+                          <View style={styles.textPreviewTitleRow}>
+                            <Ionicons
+                              name="document-text-outline"
+                              size={15}
+                              color={colors.accent}
+                              style={{ marginRight: 6 }}
+                            />
+                            <Text style={[styles.textPreviewTitle, { color: colors.textPrimary }]}>
+                              Text-Vorschau
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setDocumentTextInput('');
+                              setError(null);
+                            }}
+                            style={[
+                              styles.clearPreviewBtn,
+                              { borderColor: colors.borderSubtle, backgroundColor: colors.surface }
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Text leeren"
+                          >
+                            <Text style={[styles.clearPreviewBtnText, { color: colors.textSecondary }]}>
+                              Text leeren
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={[styles.textPreviewMeta, { color: colors.textMuted }]}>
+                          {charCount.toLocaleString('de-DE')} Zeichen · {wordCount.toLocaleString('de-DE')} Wörter · ca. {manualChapters} Kapitel
+                        </Text>
+                        <Text style={[styles.textPreviewExcerpt, { color: colors.textSecondary }]} numberOfLines={4}>
+                          {previewExcerpt}
+                        </Text>
+                      </View>
+                    );
+                  })()}
+                </View>
+              );
+            })()}
 
             {sourceMode === 'url_wiki' && (
               <View style={{ gap: 10 }}>
@@ -485,7 +855,7 @@ export const HivemindStreamModal: React.FC<HivemindStreamModalProps> = ({
                   placeholder="Wikipedia-Artikel oder Thema (z. B. Stoa, Relativitätstheorie)"
                   placeholderTextColor={colors.textMuted}
                   value={titleInput}
-                  onChangeText={setTitleInput}
+                  onChangeText={handleTitleInputChange}
                 />
                 <TextInput
                   style={[styles.input, { backgroundColor: colors.surfaceSecondary, color: colors.textPrimary, borderColor: colors.borderSubtle, minHeight: 44 }]}
@@ -773,15 +1143,33 @@ const styles = StyleSheet.create({
     minHeight: 0
   },
   header: {
+    flexDirection: 'column',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    borderBottomWidth: 1,
+    gap: 10
+  },
+  headerTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1
+    gap: 12
+  },
+  backToStreamBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  backToStreamText: {
+    fontSize: 13,
+    fontWeight: '700'
   },
   headerTitleGroup: {
-    flex: 1
+    width: '100%'
   },
   headerBadgeRow: {
     flexDirection: 'row',
@@ -801,8 +1189,7 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: radius.pill,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: spacing.md
+    justifyContent: 'center'
   },
   scrollContent: {
     padding: spacing.md,
@@ -877,6 +1264,65 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     flex: 1
+  },
+  uploadedDocsContainer: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.sm,
+    gap: 8
+  },
+  uploadedDocsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingHorizontal: 4
+  },
+  uploadedDocsHeading: {
+    fontSize: 12.5,
+    fontWeight: '800'
+  },
+  uploadedDocsMeta: {
+    fontSize: 11.5,
+    fontWeight: '600'
+  },
+  uploadedDocRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    gap: 6
+  },
+  uploadedDocName: {
+    fontSize: 12.5,
+    fontWeight: '700'
+  },
+  uploadedDocStatus: {
+    fontSize: 11,
+    marginTop: 1
+  },
+  removeDocBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  appendDocsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.sm,
+    borderWidth: 1
+  },
+  appendDocsBtnText: {
+    fontSize: 12,
+    fontWeight: '700'
   },
   textPreviewCard: {
     borderRadius: radius.md,

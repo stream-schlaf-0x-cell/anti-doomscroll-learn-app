@@ -10,6 +10,9 @@ import {
   sanitizeCuratedFeedItem,
   isPoliticalOrProtestNews,
   stripSyntheticFillerSentences,
+  stripPublisherBoilerplate,
+  isAccessibleHealthLongevityItem,
+  isShoppingDealTitle,
   IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX
 } from '../enrichment/batchEnricher';
 import { isArdSource } from '../domain/ranking';
@@ -22,7 +25,7 @@ import {
   SHOWCASE_STARTER_TRACK_IDS
 } from '../learning/hivemindLearningService';
 
-export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-24-v14.0-living-endless-bloomscroll';
+export const CURRENT_DATA_MIGRATION_VERSION: string = '2026-11-26-v20.0-youtube-health-caschy-clean';
 
 function isUndatedVisualFormat(item: Partial<FeedItem>): boolean {
   return (
@@ -62,7 +65,15 @@ function isDeprecatedOrIrrelevantHarvestItem(item: Partial<FeedItem> | null | un
   const title = String(item.title || '');
   const context = `${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`;
   if (title && !isSupportedFeedLanguage(title, context)) return true;
+  if (isShoppingDealTitle(title)) return true;
   if (IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${title} ${context}`)) return true;
+  if (
+    (item.space === 'c/health_longevity' || item.primaryTopic === 'health_biohacking') &&
+    !item.hivemindMeta?.trackId &&
+    !isAccessibleHealthLongevityItem(item)
+  ) {
+    return true;
+  }
   return false;
 }
 export const DATA_MIGRATION_STORAGE_KEY = '@atem:data_migration_version:v1';
@@ -293,17 +304,17 @@ export async function runInPlaceDataMigration(
       continue;
     }
 
-    // WP 2: Purge or repair generic slop templates & synthetic filler sentences
-    item.feedText = stripSyntheticFillerSentences(item.feedText || '');
-    item.body = stripSyntheticFillerSentences(item.body || '');
+    // WP 2 & v20.0: Purge or repair generic slop templates, synthetic filler & Caschy/affiliate boilerplate
+    item.feedText = stripPublisherBoilerplate(stripSyntheticFillerSentences(item.feedText || ''), item.title);
+    item.body = stripPublisherBoilerplate(stripSyntheticFillerSentences(item.body || ''), item.title);
     if (item.articleBody) {
-      item.articleBody = stripSyntheticFillerSentences(item.articleBody);
+      item.articleBody = stripPublisherBoilerplate(stripSyntheticFillerSentences(item.articleBody), item.title);
     }
     if (item.subtitle) {
-      item.subtitle = stripSyntheticFillerSentences(item.subtitle);
+      item.subtitle = stripPublisherBoilerplate(stripSyntheticFillerSentences(item.subtitle), item.title);
     }
     if (item.keyInsight) {
-      item.keyInsight = stripSyntheticFillerSentences(item.keyInsight);
+      item.keyInsight = stripPublisherBoilerplate(stripSyntheticFillerSentences(item.keyInsight), item.title);
     }
 
     if (!item.feedText && (item.body || item.articleBody)) {
@@ -401,9 +412,18 @@ export async function runInPlaceDataMigration(
       const parsedDyn = JSON.parse(rawDyn);
       if (Array.isArray(parsedDyn)) {
         const cleanedDyn = parsedDyn
-          .filter((item: any) => item && typeof item === 'object')
-          .map((item: any) => sanitizeCuratedFeedItem(item))
-          .filter((item: any) => {
+          .filter((item: unknown): item is FeedItem => Boolean(item && typeof item === 'object'))
+          .map((item: FeedItem) => {
+            const cleaned = protectedUserItemIds.has(String(item.id || ''))
+              ? {
+                  ...item,
+                  feedText: stripPublisherBoilerplate(stripSyntheticFillerSentences(item.feedText || ''), item.title),
+                  body: stripPublisherBoilerplate(stripSyntheticFillerSentences(item.body || ''), item.title)
+                }
+              : sanitizeCuratedFeedItem(item);
+            return cleaned;
+          })
+          .filter((item: FeedItem) => {
             if (protectedUserItemIds.has(String(item.id || ''))) return true;
             if (isDeprecatedOrIrrelevantHarvestItem(item)) return false;
             if (!satisfiesCuratedBodyContract(item)) return false;
@@ -418,8 +438,8 @@ export async function runInPlaceDataMigration(
   }
 
   const finalItems = Array.from(cleanedMap.values())
-    .filter(item => !isDeprecatedOrIrrelevantHarvestItem(item))
-    .map(item => sanitizeCuratedFeedItem(item));
+    .filter(item => protectedUserItemIds.has(item.id) || !isDeprecatedOrIrrelevantHarvestItem(item))
+    .map(item => (protectedUserItemIds.has(item.id) ? item : sanitizeCuratedFeedItem(item)));
 
   // 5. Save upgraded articles to PersistentArticleStore, storage and repository
   try {

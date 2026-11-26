@@ -591,6 +591,14 @@ export function stripPublisherBoilerplate(raw: string, title?: string): string {
     .replace(/Tipp:\s*Nutze Deskmodder als bevorzugte Quelle[\s\S]*$/i, '')
     .replace(/Der Beitrag .* erschien zuerst auf [\s\S]*$/i, '')
     .replace(/Originalbeitrag veröffentlicht bei [^.\n]+\.?/gi, '')
+    .replace(/Dir gefällt,\s*was wir machen\?[\s\S]*$/i, '')
+    .replace(/(?:Dann hilft uns ein )?(?:Einkauf|inkauf) über unseren Amazon-Link:[\s\S]*$/i, '')
+    .replace(/Amazon\.de öffnen und wie gewohnt einkaufen[\s\S]*$/i, '')
+    .replace(/Für dich wird nichts teurer,\s*wir erhalten eine kleine Provision[\s\S]*$/i, '')
+    .replace(/Als Amazon-Partner verdienen wir an qualifizierten Verkäufen\.?[\s\S]*$/i, '')
+    .replace(/Wo du uns folgen kannst:[\s\S]*$/i, '')
+    .replace(/Auf dem Laufenden bleiben\?\s*Füge uns bei Google als bevorzugte Quelle hinzu[\s\S]*$/i, '')
+    .replace(/\s*Zum Beitrag:\s*[^\n]*/gi, '')
     .replace(/–––[\s\S]*?(Spende jetzt|Jetzt spenden)[\s\S]*?(–––|$)/gi, '')
     .replace(/\b\d+\s+posts?\s*-\s*\d+\s+participants?\s*Read full topic\b/gi, '')
     .replace(/And you can hear all this and more on today['’]s\s+[^\n.]+\.?/gi, '')
@@ -696,13 +704,13 @@ const JOURNAL_ERRATA_OR_TRIVIA_REGEX = /(?:^\s*\[?(?:corrections?|erratum|corrig
 const TRIVIAL_PR_OR_GADGET_REVIEW_REGEX = /(?:^test:\s*melofty\b|\bmelofty\s+pro\b|\bexpert-powered self-improvement with\b|\bsponsored\s+review\b|\baffordable\s+mini-?pc\b|\bkündigt\s+\d+-teilige\s+doku\s+[„"']timberlake\b)/i;
 /** Pure shopping / price-drop posts (Amazon Blitzangebote, "50 percent off this weekend") never belong in the feed. */
 export const SHOPPING_DEAL_TITLE_REGEX =
-  /(?:\bblitzangebote?\b|\bangebote?\s+des\s+tages\b|\bdeals?\s+des\s+tages\b|\btagesdeals?\b|\bprime\s+day\b|\bcyber\s+monday\b|\bblack\s+friday[-\s]+(?:deals?|angebote?)\b|\brabattcode\b|\bgutscheincode\b|\bschnäppchen\b|\b\d{1,2}\s*(?:%|percent|prozent)\s+(?:off|rabatt|reduziert|günstiger)\b|\bup\s+to\s+\d{1,2}\s*(?:%|percent)\s+off\b|\ball-time\s+low\b|\blowest\s+price\b|\bprice\s+drop\b|\bdeal\s+alert\b|\bbest\s+deals?\b)/i;
+  /(?:\bblitzangebote?\b|\bangebote?\s+des\s+tages\b|\bdeals?\s+des\s+tages\b|\btagesdeals?\b|\bprime\s+day\b|\bcyber\s+monday\b|\bblack\s+friday[-\s]+(?:deals?|angebote?)\b|\brabattcode\b|\bgutscheincode\b|\bschnäppchen\b|\b\d{1,2}\s*(?:%|percent|prozent)\s+(?:off|rabatt|reduziert|günstiger)\b|\bup\s+to\s+\d{1,2}\s*(?:%|percent)\s+off\b|\ball-time\s+low\b|\blowest\s+price\b|\bprice\s+drop\b|\bdeal\s+alert\b|\bbest\s+deals?\b|\btagesgeld\b|\bfestgeld\b|\bzinsen\s*p\.?\s*a\.?\b|\bgirokonto[-\s]*(?:prämie|bonus)\b|\bkreditkarte.*bonus\b)/i;
 
 export function isShoppingDealTitle(title: string): boolean {
   return SHOPPING_DEAL_TITLE_REGEX.test(title || '');
 }
 const CLINICAL_PATHOLOGY_JARGON_REGEX = /\b(carcinoma|oncology|chemotherapy|metastasis|randomized clinical trial|placebo-controlled|mortality rate|myocardial infarction|histopathology|adenocarcinoma)\b/i;
-export const IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX = /\b(saccharomyces cerevisiae|lipid droplets?|triacylglycerol|sterol esters?|gene knockout|yeast mutants?|galactose-inducible|protocol to induce|western blot|qrt-pcr|rt-pcr|histopathology|adenocarcinoma|carcinoma|oncology|chemotherapy|metastasis|peritoneal|mouse model|rat model|murine|in vitro assay|cell line|transfected|plasmid|primer sequence|escherichia coli|endoplasmic reticulum|hepg2|hela cells?|zebrafish|drosophila|protein that drives ageing|drives ageing without unleashing inflammation|interleukin-11|il-11|monoclonal antibod\w*|kinase inhibitor|phosphorylation|transcriptom\w*|proteom\w*|caenorhabditis elegans|arabidopsis|mrna expression|oligomer\w*|ribosom\w*)\b/i;
+export const IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX = /\b(?:saccharomyces cerevisiae|lipid droplets?|triacylglycerol|sterol esters?|gene knockout|yeast mutants?|galactose-inducible|protocol to induce|western blot|qrt-pcr|rt-pcr|histopathology|adenocarcinoma|carcinoma|oncology|chemotherapy|metastasis|peritoneal|mouse model|rat model|murine|in vitro assay|cell line|transfected|plasmid|primer sequence|escherichia coli|endoplasmic reticulum|hepg2|hela cells?|zebrafish|drosophila|protein that drives ageing|drives ageing without unleashing inflammation|interleukin-11|il-11|monoclonal antibod\w*|kinase inhibitor|phosphorylation|transcriptom\w*|proteom\w*|caenorhabditis elegans|arabidopsis|mrna expression|oligomer\w*|ribosom\w*|female mice|male mice|acute brain slices?|synaptic transmission|palmitoyl\w*|acyltransferase\w*|gabaa|deficiency modulates|prefrontal synaptic|robotic knee|drug-resistant epilepsy|electronic health record algorithm|rodent models?)\b|Methods[A-Z]/i;
 const GENERIC_PAPER_METADATA_REGEX = /^(Begutachtete\s+Open-Access-Studie|Open-Access-Forschungsarbeit|Peer-Reviewed\s+(Open-Access|Study)|Aus\s+(der\s+)?Zeitschrift\b|Originalbeitrag\s+veröffentlicht\s+bei)/i;
 
 /**
@@ -711,6 +719,44 @@ const GENERIC_PAPER_METADATA_REGEX = /^(Begutachtete\s+Open-Access-Studie|Open-A
  */
 export function isIncomprehensibleWetLabPaper(title: string, text = ''): boolean {
   return IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${title || ''} ${text || ''}`);
+}
+
+const SPECIALIST_HEALTH_JOURNAL_SOURCE_REGEX =
+  /\b(frontiersin\.org|frontiers\s+in|jneurosci|biorxiv|medrxiv|plosgenetics|plos\s*genetics|plosbiology|plos\s*biology|cell\s*stem\s*cell|cell\s*metabolism|nature\.com\/(?:ng|nm|neuro|natbiomedeng)|nature\s+(?:genetics|medicine|biomedical|neuroscience)|embopress|embo\s+journal|annals\s+of\s+neurology|academic\.oup\.com\/(?:brain|cercor)|cerebral\s+cortex|neuroimage|trends\s+in\s+neurosciences|medicalxpress|medical\s*xpress)\b/i;
+
+const HEALTH_WETLAB_OR_RODENT_TERMS_REGEX =
+  /\b(mice|mouse|rats?|rodent\w*|murine|zebrafish|drosophila|dolphins?|macaque|animal\s+model|knockout\s+mice|acute\s+brain\s+slices?|synaptic\s+transmission|prefrontal\s+synaptic|hippocampal\s+slices?|astrocyte|microglia|oligodendrocyte|mutational\s+spectrum|driver\s+genes|oncogenic|palmitoyl\w*|acyltransferase\w*|gabaa|zdhhc\d*|deficiency\s+modulates|robotic\s+knee|drug-resistant\s+epilepsy|electronic\s+health\s+record\s+algorithm)\b/i;
+
+const HEALTH_OFF_TOPIC_SPACE_OR_AI_REGEX =
+  /\b(astronaut\w*|space\s*agency|esa\s*training|spaceflight|spacecraft|alpine\s*fault|earthquake\w*|tectonic|context\s*scaling|llms?|large\s*language\s*model\w*|neural\s*network\w*|transformer\s*model|scaling\s*laws?|scott\s*aaronson|arxiv\.org)\b/i;
+
+const ACCESSIBLE_HUMAN_HEALTH_SIGNAL_REGEX =
+  /\b(gesundheit\w*|medizin\w*|prävention|vorbeug\w*|lebensstil|longevity|langlebigkeit|gesund\s*altern|healthy\s*aging|schlaf\w*|sleep\w*|circadian\w*|zirkadian\w*|ernährung\w*|nutrition\w*|diet|diät|kalorien|calor\w*|eiweiß|protein|ballaststoff\w*|fiber|vitamine?|mikronährstoff\w*|mikrobiom\w*|microbiome|darmflora|gut\s*health|blutzucker|blood\s*sugar|insulin|stoffwechsel|metabolis\w*|fasten|fasting|krafttraining|ausdauertraining|lauftraining|intervalltraining|hiit|vo2\s*max|fitness|exercise|workout|strength\s*training|resistance\s*training|endurance|cardio\w*|herz-?kreislauf|herzgesundheit|blutdruck|blood\s*pressure|bewegung|spaziergang|walking|muskel\w*|muscle\w*|hypertrophy|recovery|regeneration|stressbewältigung|resilienz|resilience|mental\s*health|psychische\s*gesundheit|wohlbefinden|well-?being|burnout|achtsamkeit|mindfulness|entspannung|atemtechnik|breathing|immunsystem|immune\s*health|impfung|vaccination|vorsorge|therapie|patient\w*|ärzt\w*|arzt|klinik|symptome?|krankheit\w*|allergi\w*|schmerz\w*|kopfschmerz|migräne|rücken|herzinfarkt|schlaganfall|diabetes|krebsvorsorge|gesundheitswesen|krankenkasse|gratitude|dankbarkeit|mitgefühl|compassion|loneliness|einsamkeit|happiness|emotional\s*well-?being|selbstfürsorge|self-?care)\b/i;
+
+/**
+ * Layman Health & Longevity Gate:
+ * Ensures `c/health_longevity` receives only accessible, human-relevant health, longevity,
+ * sleep, nutrition, fitness, mental wellbeing, and preventive medicine articles.
+ */
+export function isAccessibleHealthLongevityItem(item: Partial<FeedItem> | null | undefined): boolean {
+  if (!item || typeof item !== 'object') return false;
+  const title = (item.title || '').trim();
+  const prose = `${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`;
+  const fullText = `${title} ${prose}`;
+  const sourceBlob = `${item.id || ''} ${item.sourceDomain || ''} ${item.canonicalUrl || ''} ${
+    item.sourceReferences?.[0]?.publisher || ''
+  } ${item.sourceReferences?.[0]?.originalUrl || ''}`;
+
+  if (
+    isIncomprehensibleWetLabPaper(title, prose) ||
+    SPECIALIST_HEALTH_JOURNAL_SOURCE_REGEX.test(sourceBlob) ||
+    HEALTH_WETLAB_OR_RODENT_TERMS_REGEX.test(fullText) ||
+    HEALTH_OFF_TOPIC_SPACE_OR_AI_REGEX.test(fullText)
+  ) {
+    return false;
+  }
+
+  return ACCESSIBLE_HUMAN_HEALTH_SIGNAL_REGEX.test(fullText);
 }
 
 /**
@@ -843,6 +889,13 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
     return false;
   }
 
+  if (
+    (item.space === 'c/health_longevity' || item.primaryTopic === 'health_biohacking') &&
+    !isAccessibleHealthLongevityItem(item)
+  ) {
+    return false;
+  }
+
   const renderableText = getCardRenderableText(item);
   if (renderableText.length < 120) {
     return false;
@@ -951,6 +1004,15 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
   const isMisplacedInKunstGalerie =
     currentSpace === 'c/kunst_galerie' &&
     (!isGenuineArtShowcase && (isExplicitAiOrCodePost || !hasAuthenticArtSignal));
+  const isMisplacedInHealthLongevity =
+    (currentSpace === 'c/health_longevity' || item.primaryTopic === 'health_biohacking') &&
+    !item.hivemindMeta?.trackId &&
+    !isAccessibleHealthLongevityItem({
+      ...item,
+      title,
+      feedText: cleanedFeedText,
+      body: cleanedBody
+    });
   const isImagelessMemeItem =
     /^(?:live|openweb)-/i.test(item.id || '') &&
     (currentSpace === 'c/memes' || item.primaryTopic === 'memes_satire' || item.format === 'meme' || item.format === 'comic') &&
@@ -962,6 +1024,7 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     !isPartyPolitics &&
     !isProtestOrPolitical &&
     !isMisplacedInKunstGalerie &&
+    !isMisplacedInHealthLongevity &&
     !isImagelessMemeItem &&
     Boolean(item.primaryTopic) &&
     Boolean(currentSpace) &&
@@ -971,6 +1034,8 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
       ? 'ai_apple'
       : isMisplacedInKunstGalerie
       ? 'ai_apple'
+      : isMisplacedInHealthLongevity
+      ? (isExplicitAiOrCodePost ? 'ai_apple' : 'science_society')
       : isImagelessMemeItem
       ? 'science_society'
       : item.primaryTopic || 'science_society';
@@ -986,6 +1051,9 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
   if ((isProtestOrPolitical || isPartyPolitics) && correctedTopic === 'book_mastery') {
     correctedTopic = 'philosophy_ethics';
   }
+  if (isMisplacedInHealthLongevity && correctedTopic === 'health_biohacking') {
+    correctedTopic = isExplicitAiOrCodePost ? 'ai_apple' : 'science_society';
+  }
   if (isImagelessMemeItem && correctedTopic === 'memes_satire') {
     correctedTopic = classifyTopicDeterministically(title, routingText, 'science_society');
     if (correctedTopic === 'memes_satire') correctedTopic = 'science_society';
@@ -993,6 +1061,8 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
 
   let routedSpace: string | undefined = item.space;
   if (isImagelessMemeItem) {
+    routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/serendipity';
+  } else if (isMisplacedInHealthLongevity) {
     routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/serendipity';
   } else if (isAggregatorItem && currentSpace === 'c/kontemplation' && correctedTopic !== 'contemplation_mind') {
     routedSpace = TOPIC_SPACE_MAP[correctedTopic]?.space || 'c/dialektik';
@@ -1280,9 +1350,15 @@ export function evaluateSignalVsNoiseDeterministically(
     }
   }
 
-  // 2. Pure affiliate deals, promo, vouchers, commerce discounts
+  // 2. Pure affiliate deals, promo, vouchers, commerce discounts & Tagesgeld/Kreditkarten-Bonus
   const affiliateRegex = /\b(deal|deals|rabatt|rabattcode|gutschein|gutscheine|schnäppchen|kaufen|günstig kaufen|spartipp|affiliate|bestellen|preisvergleich|black friday|prime day|geschenktipp|werbung|anzeige|gesponsert|sponsored|shopping|cashback|sale)\b/i;
-  if (affiliateRegex.test(combined)) {
+  if (
+    affiliateRegex.test(combined) ||
+    isShoppingDealTitle(title) ||
+    /\b(tagesgeld|festgeld)\b|\bzinsen\s*p\.?\s*a\.?\b|\bgirokonto[-\s]*(?:prämie|bonus)\b|\bkreditkarte.*bonus\b/i.test(
+      combined
+    )
+  ) {
     return {
       score: 2,
       passed: false,
@@ -1429,9 +1505,9 @@ export function classifyTopicDeterministically(
     return 'german_didactics';
   }
 
-  // Health & Biohacking
+  // Health & Biohacking (only explicit fitness/exercise/longevity/human-health terms; never bare "training")
   if (
-    /\b(schlaf|circadian|longevity|fasten|ernährung|dopamin|cortisol|mikrobiom|training|herzfrequenz)\b/i.test(
+    /\b(schlaf|circadian|longevity|fasten|ernährung|dopamin|cortisol|mikrobiom|herzfrequenz|krafttraining|ausdauertraining|lauftraining|intervalltraining|hiit|vo2\s*max|strength training|resistance training|endurance training|aerobic exercise|mobility|bewegung|spaziergang)\b/i.test(
       combined
     )
   ) {

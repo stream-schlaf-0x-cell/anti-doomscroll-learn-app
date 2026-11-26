@@ -193,11 +193,10 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sciencedaily-mind-brain",
     "name": "ScienceDaily Mind & Brain",
     "url": "https://www.sciencedaily.com/rss/mind_brain.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
-      "contemplation_mind",
-      "science_society"
+      "science_society",
+      "contemplation_mind"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "ScienceDaily Research",
@@ -1243,9 +1242,8 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-top-health",
     "name": "ScienceDaily Top Health & Medicine",
     "url": "https://www.sciencedaily.com/rss/top/health.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
       "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -1269,9 +1267,8 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-biochemistry",
     "name": "ScienceDaily Biochemistry",
     "url": "https://www.sciencedaily.com/rss/matter_energy/biochemistry.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
       "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -1296,9 +1293,9 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-neuroscience",
     "name": "ScienceDaily Neuroscience",
     "url": "https://www.sciencedaily.com/rss/mind_brain/neuroscience.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
+      "science_society",
       "contemplation_mind"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -1401,9 +1398,8 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-molecular-biology",
     "name": "ScienceDaily Molecular Biology",
     "url": "https://www.sciencedaily.com/rss/plants_animals/molecular_biology.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
       "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -1439,9 +1435,8 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-genetics",
     "name": "ScienceDaily Genetics & Genomics",
     "url": "https://www.sciencedaily.com/rss/plants_animals/genetics.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
       "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -1589,9 +1584,9 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "nature-neuroscience-subj",
     "name": "Nature Neuroscience Research",
     "url": "https://www.nature.com/subjects/neuroscience.rss",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
+      "science_society",
       "contemplation_mind"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -1732,9 +1727,9 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "nature-neuro-journal",
     "name": "Nature Neuroscience Journal",
     "url": "https://www.nature.com/neuro.rss",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
+      "science_society",
       "contemplation_mind"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -1810,9 +1805,8 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-immune",
     "name": "ScienceDaily Immunology",
     "url": "https://www.sciencedaily.com/rss/health_medicine/immune_system.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
       "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -2423,9 +2417,8 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "medicalxpress",
     "name": "Medical Xpress (Clinical & Brain Research)",
     "url": "https://medicalxpress.com/rss-feed/",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
       "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -4234,9 +4227,8 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-epigenetics",
     "name": "ScienceDaily Epigenetics & Gene Expression",
     "url": "https://www.sciencedaily.com/rss/plants_animals/epigenetics.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
       "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -4374,9 +4366,8 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-stem-cells",
     "name": "ScienceDaily Stem Cells & Regenerative Medicine",
     "url": "https://www.sciencedaily.com/rss/health_medicine/stem_cells.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
       "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -4437,9 +4428,9 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-microbiome",
     "name": "ScienceDaily Microbiome & Gut-Brain Axis",
     "url": "https://www.sciencedaily.com/rss/plants_animals/microbiology.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking",
+      "science_society",
       "contemplation_mind"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
@@ -4502,9 +4493,9 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-brain-injury",
     "name": "ScienceDaily Neuroplasticity & Brain Recovery",
     "url": "https://www.sciencedaily.com/rss/mind_brain/brain_injury.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking"
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "ScienceDaily",
@@ -4717,9 +4708,9 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "sd-dementia",
     "name": "ScienceDaily Brain Aging & Alzheimer Research",
     "url": "https://www.sciencedaily.com/rss/mind_brain/alzheimer's.xml",
-    "primaryTopic": "health_biohacking",
+    "primaryTopic": "science_society",
     "topics": [
-      "health_biohacking"
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "ScienceDaily",
@@ -5159,6 +5150,123 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "Sound On Sound",
+    "language": "en"
+  },
+  {
+    "id": "ndr-ratgeber-gesundheit",
+    "name": "NDR Ratgeber Gesundheit",
+    "url": "https://www.ndr.de/ratgeber/gesundheit/index-rss.xml",
+    "primaryTopic": "health_biohacking",
+    "topics": [
+      "health_biohacking",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "NDR Gesundheit",
+    "language": "de"
+  },
+  {
+    "id": "zdf-heute-gesundheit",
+    "name": "ZDFheute Gesundheit",
+    "url": "https://www.zdf.de/rss/zdf/nachrichten/ratgeber/gesundheit",
+    "primaryTopic": "health_biohacking",
+    "topics": [
+      "health_biohacking",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "ZDFheute Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "quarks-gesundheit",
+    "name": "Quarks (Wissen & Gesundheit)",
+    "url": "https://www.quarks.de/feed/",
+    "primaryTopic": "health_biohacking",
+    "topics": [
+      "health_biohacking",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Quarks Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "spektrum-medizin",
+    "name": "Spektrum der Wissenschaft – Medizin",
+    "url": "https://www.spektrum.de/alias/rss/spektrum-de-medizin/996406",
+    "primaryTopic": "health_biohacking",
+    "topics": [
+      "health_biohacking",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Spektrum Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "spektrum-gehirn-geist",
+    "name": "Spektrum Gehirn & Geist",
+    "url": "https://www.spektrum.de/alias/rss/gehirn-und-geist/982623",
+    "primaryTopic": "health_biohacking",
+    "topics": [
+      "health_biohacking",
+      "contemplation_mind"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Gehirn & Geist Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "peter-attia-longevity",
+    "name": "Peter Attia MD (Longevity)",
+    "url": "https://peterattiamd.com/feed/",
+    "primaryTopic": "health_biohacking",
+    "topics": [
+      "health_biohacking",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Dr. Peter Attia",
+    "language": "en"
+  },
+  {
+    "id": "sleep-foundation-rss",
+    "name": "Sleep Foundation",
+    "url": "https://www.sleepfoundation.org/feed",
+    "primaryTopic": "health_biohacking",
+    "topics": [
+      "health_biohacking",
+      "contemplation_mind"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Sleep Foundation",
+    "language": "en"
+  },
+  {
+    "id": "greater-good-berkeley",
+    "name": "Greater Good Magazine (UC Berkeley)",
+    "url": "https://greatergood.berkeley.edu/site/rss/articles",
+    "primaryTopic": "health_biohacking",
+    "topics": [
+      "health_biohacking",
+      "contemplation_mind",
+      "philosophy_ethics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Greater Good Science Center",
+    "language": "en"
+  },
+  {
+    "id": "stronger-by-science",
+    "name": "Stronger By Science",
+    "url": "https://www.strongerbyscience.com/feed/",
+    "primaryTopic": "health_biohacking",
+    "topics": [
+      "health_biohacking"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Stronger By Science",
     "language": "en"
   }
 ];

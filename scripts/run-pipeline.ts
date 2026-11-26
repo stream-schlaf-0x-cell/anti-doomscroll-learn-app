@@ -14,9 +14,11 @@ import {
 import { SourceHealthInfo, getSourceKind } from '../src/core/ingestion/sourceHealth';
 import {
   BatchEditionEnricher,
+  isAccessibleHealthLongevityItem,
   isSupportedFeedLanguage,
   satisfiesDefaultCuratedStandard,
-  sanitizeCuratedFeedItem
+  sanitizeCuratedFeedItem,
+  stripPublisherBoilerplate
 } from '../src/core/enrichment/batchEnricher';
 import { enrichStubItemWithFulltext, harvestWebPageContent } from '../src/core/ingestion/webContentExtractor';
 import { enforceCuratedStreamDiversity, isSaxonyRegionalItem, isWithin14DayRelevanceWindow } from '../src/core/domain/ranking';
@@ -270,25 +272,32 @@ async function runIngestionPipeline() {
       batchIndices.map(async idx => {
         const it = fulltextEnriched[idx];
         const url = it.canonicalUrl || it.sourceReferences?.[0]?.originalUrl;
-        let updated = enrichStubItemWithFulltext(it);
+        let updated = enrichStubItemWithFulltext({
+          ...it,
+          feedText: stripPublisherBoilerplate(it.feedText || '', it.title),
+          body: stripPublisherBoilerplate(it.body || '', it.title),
+          ...(it.articleBody ? { articleBody: stripPublisherBoilerplate(it.articleBody, it.title) } : {})
+        });
         if (url && /^https?:\/\//i.test(url)) {
           try {
             const harvested = await harvestWebPageContent(url);
-            if (harvested?.fullMarkdownBody && harvested.fullMarkdownBody.trim().length > (updated.articleBody || '').trim().length) {
-              const richBody = harvested.fullMarkdownBody.trim();
-              const richLead = (harvested.essenceText || richBody.slice(0, 420)).trim();
-              updated = {
-                ...updated,
-                articleBody: richBody,
-                body: richBody,
-                feedText: updated.feedText && updated.feedText.length >= 160 ? updated.feedText : richLead,
-                wordCount: Math.max(updated.wordCount || 0, harvested.wordCount || richBody.split(/\s+/).length),
-                estimatedReadingMinutes: Math.max(
-                  updated.estimatedReadingMinutes || 1,
-                  harvested.estimatedReadingMinutes || Math.ceil(richBody.split(/\s+/).length / 180)
-                ),
-                evidenceTier: 'permitted_full_text'
-              };
+            if (harvested?.fullMarkdownBody) {
+              const richBody = stripPublisherBoilerplate(harvested.fullMarkdownBody.trim(), updated.title);
+              const richLead = stripPublisherBoilerplate((harvested.essenceText || richBody.slice(0, 420)).trim(), updated.title);
+              if (richBody.length > (updated.articleBody || '').trim().length) {
+                updated = {
+                  ...updated,
+                  articleBody: richBody,
+                  body: richBody,
+                  feedText: updated.feedText && updated.feedText.length >= 160 ? updated.feedText : richLead,
+                  wordCount: Math.max(updated.wordCount || 0, harvested.wordCount || richBody.split(/\s+/).length),
+                  estimatedReadingMinutes: Math.max(
+                    updated.estimatedReadingMinutes || 1,
+                    harvested.estimatedReadingMinutes || Math.ceil(richBody.split(/\s+/).length / 180)
+                  ),
+                  evidenceTier: 'permitted_full_text'
+                };
+              }
             }
           } catch {
             // Individual timeout falls back to deterministic fulltext stub cleanup
@@ -301,8 +310,19 @@ async function runIngestionPipeline() {
 
   const preCurated = fulltextEnriched
     .filter(i => isSupportedFeedLanguage(i.title || '', `${i.subtitle || ''} ${i.feedText || ''} ${i.body || ''}`))
+    .map(item => ({
+      ...item,
+      feedText: stripPublisherBoilerplate(item.feedText || '', item.title),
+      body: stripPublisherBoilerplate(item.body || '', item.title),
+      ...(item.articleBody ? { articleBody: stripPublisherBoilerplate(item.articleBody, item.title) } : {})
+    }))
     .map(sanitizeCuratedFeedItem)
     .map(item => enrichStubItemWithFulltext(item))
+    .filter(
+      item =>
+        (item.space !== 'c/health_longevity' && item.primaryTopic !== 'health_biohacking') ||
+        isAccessibleHealthLongevityItem(item)
+    )
     .filter(satisfiesDefaultCuratedStandard);
 
   // 5. Resilient Server-Side AI Enrichment (with automatic Gemini stable-flash fallback in stateless CI)
@@ -376,6 +396,12 @@ async function runIngestionPipeline() {
 
   for (const candidate of [...combinedCurated, ...previousReservoirItems]) {
     const clean = sanitizeCuratedFeedItem(candidate);
+    if (
+      (clean.space === 'c/health_longevity' || clean.primaryTopic === 'health_biohacking') &&
+      !isAccessibleHealthLongevityItem(clean)
+    ) {
+      continue;
+    }
     if (!satisfiesDefaultCuratedStandard(clean)) continue;
     if (clean.space !== 'c/kunst_galerie' && !isWithin14DayRelevanceWindow(clean, nowMs)) continue;
     if (reservoirIds.has(clean.id)) continue;

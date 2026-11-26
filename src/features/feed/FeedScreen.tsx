@@ -901,21 +901,25 @@ export const FeedScreen: React.FC = () => {
       const res = await SubchannelFlourishService.flourishChannel(channelObj, {
         existingIds,
         targetCount: 25,
+        force: true,
         onProgress: (_pct, label) => {
           if (!silent) setFlourishStageText(label);
         }
       });
-      if (res.items.length > 0) {
-        feedRepository.addItems(res.items);
+      const addedCount = res.addedItems.length;
+      if (addedCount > 0) {
+        feedRepository.addItems(res.addedItems);
         await recomputeFeed();
         if (!silent) {
           showTransientToast(
-            `${res.items.length} neue Fundstücke für ${selectedFilter} kuratiert (${res.mode === 'ai' ? 'KI-Synthese' : 'Primärquellen'})`,
+            `${addedCount} neue Fundstücke für ${selectedFilter} kuratiert (${res.mode === 'ai' ? 'KI-Synthese' : 'Primärquellen'})`,
             3500
           );
         }
+      } else if (!silent) {
+        showTransientToast('Kanal ist bereits auf dem neuesten Stand', 3000);
       }
-      return res.items.length;
+      return addedCount;
     } catch {
       return 0;
     } finally {
@@ -1435,8 +1439,6 @@ export const FeedScreen: React.FC = () => {
     const lockedSet = new Set(lockedIds);
     const itemMap = new Map(infiniteInterleavedBase.map(i => [i.id, i]));
 
-    const withinBootWindow =
-      hydratedAtRef.current === null || Date.now() < hydratedAtRef.current + 3000;
     const lockedSurvivingCount = lockedIds.filter(id => itemMap.has(id)).length;
     const shouldUnlockVaultFallback = shouldUnlockFallbackTopLock(
       lockedIds,
@@ -1445,7 +1447,6 @@ export const FeedScreen: React.FC = () => {
     if (
       infiniteInterleavedBase.length > 0 &&
       (shouldUnlockVaultFallback ||
-        (withinBootWindow && scrollOffsetYRef.current < 40) ||
         lockedSurvivingCount < Math.min(6, lockedIds.length))
     ) {
       lockedTopItemIdsRef.current = infiniteInterleavedBase.slice(0, 12).map(i => i.id);
@@ -2017,6 +2018,28 @@ export const FeedScreen: React.FC = () => {
       void curateNextStreamBatch('scroll');
     }
   }, [isHydrated, activeFeedOption, searchQuery, activeHivemindTrack, totalInfiniteAvailable, curateNextStreamBatch]);
+
+  // One-time non-blocking reservoir hydration when entering a channel with < 12 matching items (e.g. c/youtube)
+  React.useEffect(() => {
+    if (!isHydrated || selectedFilter === 'all' || reservoirHydratedInFeedRef.current) {
+      return;
+    }
+    const repoItems = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+    const matchingCount = repoItems.filter(matchesSelectedSpace).length;
+    if (matchingCount < 12 && feedRepository.hydrateFromReservoir) {
+      reservoirHydratedInFeedRef.current = true;
+      void feedRepository
+        .hydrateFromReservoir()
+        .then(res => {
+          if (res?.success && res.insertedCount > 0) {
+            void recomputeFeed();
+          }
+        })
+        .catch(() => {
+          // Non-blocking channel reservoir hydration
+        });
+    }
+  }, [isHydrated, selectedFilter, matchesSelectedSpace, recomputeFeed]);
 
   // Seamless infinite mind-scroll listener (triggers next items & background auto-replenishment well ahead of bottom)
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {

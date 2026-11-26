@@ -31,6 +31,85 @@ const InvestigationModal = React.lazy(() =>
   import('./src/features/investigation/InvestigationModal').then(m => ({ default: m.InvestigationModal }))
 );
 
+interface LazyErrorBoundaryProps {
+  children: React.ReactNode;
+  backgroundColor: string;
+  textPrimary: string;
+  textSecondary: string;
+  accentColor: string;
+  borderSubtle: string;
+  resetKey?: string;
+  onClose?: () => void;
+}
+
+interface LazyErrorBoundaryState {
+  hasError: boolean;
+}
+
+class LazyErrorBoundary extends React.Component<LazyErrorBoundaryProps, LazyErrorBoundaryState> {
+  constructor(props: LazyErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(_error: Error): LazyErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidUpdate(prevProps: LazyErrorBoundaryProps): void {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  private handleReload = (): void => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
+      window.location.reload();
+      return;
+    }
+    this.setState({ hasError: false });
+  };
+
+  render(): React.ReactNode {
+    if (!this.state.hasError) {
+      return this.props.children;
+    }
+    const { backgroundColor, textPrimary, textSecondary, accentColor, borderSubtle, onClose } = this.props;
+    return (
+      <View style={[styles.loadingContainer, { backgroundColor }]}>
+        <Ionicons name="refresh-circle-outline" size={44} color={accentColor} style={{ marginBottom: 12 }} />
+        <Text style={[styles.errorTitle, { color: textPrimary }]}>
+          Ansicht wird aktualisiert
+        </Text>
+        <Text style={[styles.errorDesc, { color: textSecondary }]}>
+          Diese Ansicht konnte nach einer Aktualisierung nicht geladen werden. Bitte lade die Seite neu.
+        </Text>
+        <TouchableOpacity
+          onPress={this.handleReload}
+          style={[styles.retryBtn, { backgroundColor: accentColor }]}
+          accessibilityRole="button"
+          accessibilityLabel="Neu laden"
+        >
+          <Text style={styles.retryBtnText}>Neu laden</Text>
+        </TouchableOpacity>
+        {onClose && (
+          <TouchableOpacity
+            onPress={() => {
+              this.setState({ hasError: false });
+              onClose();
+            }}
+            style={[styles.resetDataBtn, { borderColor: borderSubtle }]}
+            accessibilityRole="button"
+            accessibilityLabel="Schließen"
+          >
+            <Text style={[styles.resetDataBtnText, { color: textPrimary }]}>Schließen</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  }
+}
+
 const MainNavigator: React.FC = () => {
   const {
     profile,
@@ -43,6 +122,7 @@ const MainNavigator: React.FC = () => {
     setActiveTab,
     goHome,
     selectedArticleId,
+    closeArticle,
     colors,
     isDark,
     interactions,
@@ -311,23 +391,53 @@ const MainNavigator: React.FC = () => {
         </View>
         {activeTab === 'library' && (
           <View style={styles.tabPane}>
-            <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
-              <LibraryScreen />
-            </Suspense>
+            <LazyErrorBoundary
+              backgroundColor={colors.background}
+              textPrimary={colors.textPrimary}
+              textSecondary={colors.textSecondary}
+              accentColor={colors.accent}
+              borderSubtle={colors.borderSubtle}
+              resetKey="library"
+              onClose={() => setActiveTab('feed')}
+            >
+              <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
+                <LibraryScreen />
+              </Suspense>
+            </LazyErrorBoundary>
           </View>
         )}
         {activeTab === 'settings' && (
           <View style={styles.tabPane}>
-            <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
-              <SettingsScreen />
-            </Suspense>
+            <LazyErrorBoundary
+              backgroundColor={colors.background}
+              textPrimary={colors.textPrimary}
+              textSecondary={colors.textSecondary}
+              accentColor={colors.accent}
+              borderSubtle={colors.borderSubtle}
+              resetKey="settings"
+              onClose={() => setActiveTab('feed')}
+            >
+              <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
+                <SettingsScreen />
+              </Suspense>
+            </LazyErrorBoundary>
           </View>
         )}
         {activeTab === 'network' && (
           <View style={styles.tabPane}>
-            <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
-              <NetworkScreen />
-            </Suspense>
+            <LazyErrorBoundary
+              backgroundColor={colors.background}
+              textPrimary={colors.textPrimary}
+              textSecondary={colors.textSecondary}
+              accentColor={colors.accent}
+              borderSubtle={colors.borderSubtle}
+              resetKey="network"
+              onClose={() => setActiveTab('feed')}
+            >
+              <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
+                <NetworkScreen />
+              </Suspense>
+            </LazyErrorBoundary>
           </View>
         )}
       </View>
@@ -335,9 +445,19 @@ const MainNavigator: React.FC = () => {
       {/* Fullscreen Reader Overlay: Renders on top of tabs so originating tab & scroll are preserved */}
       {selectedArticleId && (
         <View style={styles.readerOverlay}>
-          <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
-            <ReaderScreen />
-          </Suspense>
+          <LazyErrorBoundary
+            backgroundColor={colors.background}
+            textPrimary={colors.textPrimary}
+            textSecondary={colors.textSecondary}
+            accentColor={colors.accent}
+            borderSubtle={colors.borderSubtle}
+            resetKey={selectedArticleId}
+            onClose={closeArticle}
+          >
+            <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
+              <ReaderScreen />
+            </Suspense>
+          </LazyErrorBoundary>
         </View>
       )}
 

@@ -689,28 +689,82 @@ export function enforceArdsSpacing<T extends FeedItem>(items: T[], minGap = 7): 
   return result;
 }
 
+const MULTI_CREATOR_DOMAINS = new Set(['youtube.com', 'm.youtube.com', 'youtu.be', 'reddit.com']);
+const GENERIC_CREATOR_LABELS = new Set([
+  'youtube',
+  'reddit',
+  'unknown',
+  'verifizierte quelle',
+  'test publisher'
+]);
+
+function resolveNormalizedCreatorOrSubreddit(item: FeedItem, resolvedDomain: string, urlStr: string): string | null {
+  const rawCandidates = [
+    item.youtubeMeta?.channelTitle,
+    item.sourceBroadcasterName,
+    item.sourceReferences?.[0]?.publisher,
+    item.externalCommunityScore?.platform
+  ];
+
+  for (const raw of rawCandidates) {
+    if (!raw) continue;
+    let normalized = raw.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!normalized) continue;
+    if (resolvedDomain === 'reddit.com' && normalized.startsWith('reddit r/')) {
+      normalized = normalized.slice('reddit '.length).trim();
+    }
+    if (GENERIC_CREATOR_LABELS.has(normalized)) continue;
+    return normalized;
+  }
+
+  if (resolvedDomain === 'reddit.com' && urlStr) {
+    const subMatch = urlStr.match(/\/r\/([^/?#]+)/i);
+    if (subMatch?.[1]) {
+      return `r/${subMatch[1].toLowerCase()}`;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Returns a normalized domain/publisher key for sliding-window diversity enforcement.
+ * Differentiates multi-creator/aggregator domains (YouTube, Reddit) by channel or subreddit.
  */
 export function getDomainDiversityKey(item: FeedItem): string {
   if (isArdSource(item)) return 'ard-tagesschau';
+  const urlStr = item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '';
+  let resolvedDomain: string | null = null;
+
   if (item.sourceDomain && item.sourceDomain.trim().length > 0) {
     const cleanDom = item.sourceDomain.toLowerCase().replace(/^www\./, '').trim();
     if (cleanDom !== 'example.com' && cleanDom !== 'example.org') {
-      return cleanDom;
+      resolvedDomain = cleanDom;
     }
   }
-  const urlStr = item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '';
-  if (urlStr) {
+  if (!resolvedDomain && urlStr) {
     try {
       const host = new URL(urlStr).hostname.toLowerCase().replace(/^www\./, '');
       if (host && host !== 'example.com' && host !== 'example.org') {
-        return host;
+        resolvedDomain = host;
       }
     } catch {
       // Fallback to publisher key
     }
   }
+
+  if (resolvedDomain) {
+    if (MULTI_CREATOR_DOMAINS.has(resolvedDomain)) {
+      const canonicalMultiDomain = resolvedDomain === 'reddit.com' ? 'reddit.com' : 'youtube.com';
+      const creatorKey = resolveNormalizedCreatorOrSubreddit(item, canonicalMultiDomain, urlStr);
+      if (creatorKey) {
+        return `${canonicalMultiDomain}:${creatorKey}`;
+      }
+      return canonicalMultiDomain;
+    }
+    return resolvedDomain;
+  }
+
   const pubKey = getNormalizedPublisherKey(item);
   if (pubKey === 'test publisher' || pubKey === 'unknown' || pubKey === 'verifizierte quelle') {
     return `item:${item.id}`;
@@ -891,6 +945,9 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
       : false;
     const hasNonAggLeft = (lastWasAgg || aggInRecent3) ? pool.some(x => !isAggregatorItem(x)) : false;
 
+    const recent3Keys = new Set(recent3.map(x => getDomainDiversityKey(x)));
+    let hasNonCollidingDomainLeft: boolean | null = null;
+
     for (let i = 0; i < pool.length; i++) {
       const cand = pool[i];
       const candIsArd = isArdSource(cand);
@@ -927,9 +984,14 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
       }
 
       const domKey = getDomainDiversityKey(cand);
-      const domainCollisionIn4 = recent3.some(x => getDomainDiversityKey(x) === domKey);
-      if (domainCollisionIn4 && (enforceArdCap || pool.some(x => !recent3.some(r => getDomainDiversityKey(r) === getDomainDiversityKey(x))))) {
-        continue;
+      const domainCollisionIn4 = recent3Keys.has(domKey);
+      if (domainCollisionIn4) {
+        if (hasNonCollidingDomainLeft === null) {
+          hasNonCollidingDomainLeft = pool.some(x => !recent3Keys.has(getDomainDiversityKey(x)));
+        }
+        if (hasNonCollidingDomainLeft) {
+          continue;
+        }
       }
 
       pickedIdx = i;
@@ -937,8 +999,19 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
     }
 
     if (pickedIdx === -1) {
-      // No remaining candidate can be placed without violating strict diversity constraints
-      break;
+      // Remaining pool could not satisfy all soft/window constraints (e.g. homogeneous channel or blocked ARD tail):
+      // fall back to picking the first candidate that does not violate the hard ARD cap.
+      const isArdViolating = (cand: T) =>
+        isArdSource(cand) && (ardPlaced >= maxArdAllowed || (enforceArdCap && ardInRecent9));
+      if (enforceMixedArtCap && hasNonArtLeft) {
+        pickedIdx = pool.findIndex(cand => !isArdViolating(cand) && !isArtShowcaseItem(cand));
+      }
+      if (pickedIdx === -1) {
+        pickedIdx = pool.findIndex(cand => !isArdViolating(cand));
+      }
+      if (pickedIdx === -1) {
+        break;
+      }
     }
 
     const [chosen] = pool.splice(pickedIdx, 1);

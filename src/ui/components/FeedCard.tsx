@@ -112,11 +112,20 @@ export interface FeedCardProps {
   isCompletedHivemindStep?: boolean;
 }
 
-const WEB_CARD_CONTAINMENT_STYLE: ViewStyle | undefined =
+const WEB_CARD_CONTAINMENT_IMAGE_STYLE: ViewStyle | undefined =
   Platform.OS === 'web'
     ? ({
         contentVisibility: 'auto',
-        containIntrinsicSize: '1px 380px',
+        containIntrinsicSize: 'auto 1px 540px',
+        contain: 'layout style paint'
+      } as unknown as ViewStyle)
+    : undefined;
+
+const WEB_CARD_CONTAINMENT_TEXT_STYLE: ViewStyle | undefined =
+  Platform.OS === 'web'
+    ? ({
+        contentVisibility: 'auto',
+        containIntrinsicSize: 'auto 1px 280px',
         contain: 'layout style paint'
       } as unknown as ViewStyle)
     : undefined;
@@ -465,7 +474,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   }, [item.id, item.keyInsight, item.title, displayFeedText, publisherName]);
 
   const handleCardPress = () => {
-    openArticle(item.id);
+    void openArticle(item.id, item);
   };
 
   const handleUpvote = () => {
@@ -507,7 +516,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
           borderColor: isFocused ? colors.accent : colors.borderSubtle
         },
         isHero && styles.heroCard,
-        WEB_CARD_CONTAINMENT_STYLE
+        hasValidImage ? WEB_CARD_CONTAINMENT_IMAGE_STYLE : WEB_CARD_CONTAINMENT_TEXT_STYLE
       ]}
     >
       {/* 1. SINGLE-LINE REDDIT HEADER: [c/space] (flexShrink: 0) • Publisher • Time */}

@@ -38,6 +38,15 @@ export function extractYoutubeVideoId(rawUrl: string): string | null {
   }
 }
 
+function normalizeDedupeUrl(rawUrl?: string): string | null {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  const ytId = extractYoutubeVideoId(trimmed);
+  if (ytId) return `yt:${ytId}`;
+  return trimmed.toLowerCase().replace(/\/+$/, '');
+}
+
 export type ChannelArchetype =
   | 'contemplation'
   | 'discourse_essay'
@@ -946,11 +955,13 @@ export class SubchannelFlourishService {
     primaryTopic: TopicTag,
     existingIds: Set<string>,
     existingUrls: Set<string>,
-    requireImage = false
+    requireImage = false,
+    forceRefresh = false
   ): Promise<FeedItem[]> {
+    const loadOpts = forceRefresh ? { forceRefresh: true } : undefined;
     const [reservoirRes, snapshotRes] = await Promise.allSettled([
-      defaultSnapshotLoader.loadReservoir(undefined, 2500),
-      defaultSnapshotLoader.loadSnapshot(undefined, 2500)
+      defaultSnapshotLoader.loadReservoir(undefined, 2500, loadOpts),
+      defaultSnapshotLoader.loadSnapshot(undefined, 2500, loadOpts)
     ]);
 
     const combined: FeedItem[] = [];
@@ -963,11 +974,15 @@ export class SubchannelFlourishService {
 
     const out: FeedItem[] = [];
     const seenLocalIds = new Set<string>();
+    const seenLocalUrls = new Set<string>();
     const targetSpaceLower = spaceHandle.toLowerCase();
 
     for (const item of combined) {
       if (!item?.id || existingIds.has(item.id) || seenLocalIds.has(item.id)) continue;
-      if (item.canonicalUrl && existingUrls.has(item.canonicalUrl)) continue;
+      const rawUrl = item.canonicalUrl;
+      const normUrl = normalizeDedupeUrl(rawUrl);
+      if (rawUrl && (existingUrls.has(rawUrl) || seenLocalUrls.has(rawUrl))) continue;
+      if (normUrl && (existingUrls.has(normUrl) || seenLocalUrls.has(normUrl))) continue;
       const itemSpace = (item.space || '').toLowerCase();
       const matchesSpace = itemSpace === targetSpaceLower || item.primaryTopic === primaryTopic;
       if (!matchesSpace) continue;
@@ -975,6 +990,8 @@ export class SubchannelFlourishService {
         continue;
       }
       seenLocalIds.add(item.id);
+      if (rawUrl) seenLocalUrls.add(rawUrl);
+      if (normUrl) seenLocalUrls.add(normUrl);
       out.push({
         ...item,
         space: spaceHandle,
@@ -1380,15 +1397,15 @@ export class SubchannelFlourishService {
   ): Promise<SubchannelFlourishResult> {
     const queryProfile = this.buildQueryProfile(space);
     const spaceHandle = queryProfile.spaceHandle;
+    const force = Boolean(options?.force);
 
     const activeLock = this.activeFlourishLocks.get(spaceHandle);
-    if (activeLock && !options?.force) {
+    if (activeLock && !force) {
       return activeLock;
     }
 
     const task = (async (): Promise<SubchannelFlourishResult> => {
-      try {
-        options?.onProgress?.(15, `Erstelle Query-Profil für ${spaceHandle}…`);
+      options?.onProgress?.(15, `Erstelle Query-Profil für ${spaceHandle}…`);
         const minUnseen = options?.minUnseenCount ?? options?.targetCount ?? 20;
         const pool = options?.existingItems ?? (feedRepository.getAllItems ? feedRepository.getAllItems() : []);
         const currentChannelItems = pool.filter(
@@ -1397,7 +1414,7 @@ export class SubchannelFlourishService {
             (queryProfile.archetype !== 'visual_gallery' || Boolean(item.imageUrl && item.imageUrl.trim().length > 0))
         );
 
-        if (!options?.force && currentChannelItems.length >= minUnseen) {
+        if (!force && currentChannelItems.length >= minUnseen) {
           return {
             spaceHandle,
             flourished: false,
@@ -1430,7 +1447,14 @@ export class SubchannelFlourishService {
           ...pool.map(i => i.id),
           ...(options?.existingIds ? [...options.existingIds] : [])
         ]);
-        const preExistingUrls = new Set(pool.map(i => i.canonicalUrl).filter(Boolean) as string[]);
+        const preExistingUrls = new Set<string>();
+        for (const item of pool) {
+          if (item.canonicalUrl) {
+            preExistingUrls.add(item.canonicalUrl);
+            const norm = normalizeDedupeUrl(item.canonicalUrl);
+            if (norm) preExistingUrls.add(norm);
+          }
+        }
 
         // Execute parallel specialist & research lanes
         let openAlexItems: FeedItem[] = [];
@@ -1444,13 +1468,13 @@ export class SubchannelFlourishService {
         if (!options?.skipNetworkInTests) {
           if (isYoutubeChannel) {
             const [snapshotYt, redditYt] = await Promise.all([
-              this.fetchUnseenFromSnapshots('c/youtube', 'youtube_gems', preExistingIds, preExistingUrls, false),
+              this.fetchUnseenFromSnapshots('c/youtube', 'youtube_gems', preExistingIds, preExistingUrls, false, force),
               this.fetchYoutubeVideoEssayLane(queryProfile, today)
             ]);
             specialistItems = [...redditYt, ...snapshotYt];
           } else if (isMemesChannel) {
             const [snapshotMemes, redditMemes] = await Promise.all([
-              this.fetchUnseenFromSnapshots('c/memes', 'memes_satire', preExistingIds, preExistingUrls, true),
+              this.fetchUnseenFromSnapshots('c/memes', 'memes_satire', preExistingIds, preExistingUrls, true, force),
               this.fetchMemesComicsLane(queryProfile, today)
             ]);
             specialistItems = [...redditMemes, ...snapshotMemes];
@@ -1553,11 +1577,8 @@ export class SubchannelFlourishService {
             : await this.synthesizeAndTranslateLane(rawCombined, queryProfile, creds);
         usedAi = usedAi || lane4Result.usedAi;
 
-        const existingIds = new Set([
-          ...pool.map(i => i.id),
-          ...(options?.existingIds ? [...options.existingIds] : [])
-        ]);
-        const existingUrls = new Set(pool.map(i => i.canonicalUrl).filter(Boolean));
+        const existingIds = new Set(preExistingIds);
+        const existingUrls = new Set(preExistingUrls);
         const deduplicated: FeedItem[] = [];
 
         for (const candidate of lane4Result.items) {
@@ -1589,12 +1610,14 @@ export class SubchannelFlourishService {
             continue;
           }
           if (existingIds.has(sanitized.id)) continue;
-          if (sanitized.canonicalUrl && existingUrls.has(sanitized.canonicalUrl) && deduplicated.length >= 4) {
-            continue;
-          }
+          const rawUrl = sanitized.canonicalUrl;
+          const normUrl = normalizeDedupeUrl(rawUrl);
+          if (rawUrl && existingUrls.has(rawUrl)) continue;
+          if (normUrl && existingUrls.has(normUrl)) continue;
 
           existingIds.add(sanitized.id);
-          if (sanitized.canonicalUrl) existingUrls.add(sanitized.canonicalUrl);
+          if (rawUrl) existingUrls.add(rawUrl);
+          if (normUrl) existingUrls.add(normUrl);
           deduplicated.push(sanitized);
         }
 
@@ -1614,16 +1637,19 @@ export class SubchannelFlourishService {
             openAlexCount: openAlexItems.length,
             communityCount: communityItems.length,
             wikipediaCount: wikiItems.length,
-            llmSynthesizedCount: llmSynthesizedItems.length + (lane4Result.usedAi ? lane4Result.items.length : 0)
+            llmSynthesizedCount: lane4Result.usedAi
+              ? Math.max(llmSynthesizedItems.length, lane4Result.items.length)
+              : llmSynthesizedItems.length
           },
           usedAi
         };
-      } finally {
-        this.activeFlourishLocks.delete(spaceHandle);
-      }
     })();
 
     this.activeFlourishLocks.set(spaceHandle, task);
-    return task;
+    return task.finally(() => {
+      if (this.activeFlourishLocks.get(spaceHandle) === task) {
+        this.activeFlourishLocks.delete(spaceHandle);
+      }
+    });
   }
 }

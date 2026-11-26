@@ -191,6 +191,15 @@
       (function () {
         var BUNDLE_RE = /_expo\/static\/js\/web\/([^"'\s>?]+\.js)/;
         var lastCheck = 0;
+        var hiddenAt = document.visibilityState === 'hidden' ? Date.now() : 0;
+        var lastScrollAt = 0;
+        window.addEventListener(
+          'scroll',
+          function () {
+            lastScrollAt = Date.now();
+          },
+          { passive: true, capture: true }
+        );
         function getCurrentBundle() {
           var scripts = document.scripts || [];
           for (var i = 0; i < scripts.length; i++) {
@@ -216,14 +225,28 @@
                   if (sessionStorage.getItem('atem_updated_bundle') === latest) return;
                   sessionStorage.setItem('atem_updated_bundle', latest);
                 } catch (e) {}
-                window.location.reload();
+                var ev = new CustomEvent('atem:update-available', {
+                  cancelable: true,
+                  detail: { bundle: latest }
+                });
+                var notCancelled = window.dispatchEvent(ev);
+                if (notCancelled && Date.now() - lastScrollAt >= 5000) {
+                  window.location.reload();
+                }
               }
             })
             .catch(function () {});
         }
-        setTimeout(checkForAppUpdate, 1500);
         document.addEventListener('visibilitychange', function () {
-          if (document.visibilityState === 'visible') checkForAppUpdate();
+          if (document.visibilityState === 'hidden') {
+            hiddenAt = Date.now();
+          } else if (document.visibilityState === 'visible') {
+            var elapsedHidden = hiddenAt > 0 ? Date.now() - hiddenAt : 0;
+            hiddenAt = 0;
+            if (elapsedHidden >= 60000) {
+              checkForAppUpdate();
+            }
+          }
         });
         window.addEventListener('pageshow', function (ev) {
           if (ev.persisted) checkForAppUpdate();

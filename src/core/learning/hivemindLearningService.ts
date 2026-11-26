@@ -48,12 +48,18 @@ export interface HivemindLearningTrack {
   fallbackReason?: string;
 }
 
+export interface HivemindSourceDocument {
+  name: string;
+  text: string;
+}
+
 export interface GenerateHivemindTrackOptions {
   titleOrTopic: string;
   sourceType?: 'topic' | 'book' | 'pdf_document' | 'url';
   sourceLabel?: string;
   rawDocumentText?: string;
   rawText?: string;
+  sourceDocuments?: HivemindSourceDocument[];
   sourceUrl?: string;
   targetCardCount?: number; // 12 to 16
   cardCount?: number;
@@ -1260,6 +1266,203 @@ function buildDeterministicBlueprintsFromSubject(
   return blueprints;
 }
 
+function normalizeSourceDocuments(
+  docs?: { name: string; text: string }[]
+): HivemindSourceDocument[] {
+  if (!Array.isArray(docs)) return [];
+  return docs
+    .map((doc, idx) => ({
+      name: String(doc?.name || `Dokument ${idx + 1}`).trim() || `Dokument ${idx + 1}`,
+      text: String(doc?.text || '').trim()
+    }))
+    .filter(doc => doc.text.length > 0);
+}
+
+/**
+ * Allocates character budget fairly across EVERY uploaded document
+ * (guaranteed equal floor per document + proportional share + surplus redistribution)
+ * and formats each with `=== DOKUMENT i/N: <name> ===` headers so later PDFs
+ * are never truncated away by a long first PDF.
+ */
+export function buildMultiDocumentSynthesisContext(
+  docs: { name: string; text: string }[],
+  maxTotalChars: number = 12000
+): string {
+  const validDocs = normalizeSourceDocuments(docs);
+  if (validDocs.length === 0 || maxTotalChars <= 0) return '';
+
+  const n = validDocs.length;
+  const headers = validDocs.map((doc, idx) => `=== DOKUMENT ${idx + 1}/${n}: ${doc.name} ===\n`);
+  const separatorOverhead = Math.max(0, n - 1) * 2;
+  const totalHeaderOverhead = headers.reduce((sum, h) => sum + h.length, 0) + separatorOverhead;
+  const availableBodyBudget = Math.max(0, maxTotalChars - totalHeaderOverhead);
+
+  if (availableBodyBudget === 0) {
+    return headers.map(h => h.trimEnd()).join('\n\n').slice(0, maxTotalChars);
+  }
+
+  // 1. Guaranteed minimum floor per document (50% of budget split equally across all N docs)
+  const guaranteedFloor = Math.max(1, Math.floor((availableBodyBudget * 0.5) / n));
+  const allocations = validDocs.map(doc => Math.min(doc.text.length, guaranteedFloor));
+  let remainingBudget = Math.max(
+    0,
+    availableBodyBudget - allocations.reduce((sum, a) => sum + a, 0)
+  );
+
+  // 2. Proportional water-filling redistribution of remaining budget to docs with remaining text
+  while (remainingBudget > 0) {
+    const unsatisfiedIndices: number[] = [];
+    let totalRemainingDemand = 0;
+    for (let i = 0; i < n; i++) {
+      const demand = validDocs[i].text.length - allocations[i];
+      if (demand > 0) {
+        unsatisfiedIndices.push(i);
+        totalRemainingDemand += demand;
+      }
+    }
+    if (unsatisfiedIndices.length === 0 || totalRemainingDemand === 0) break;
+
+    let distributedThisRound = 0;
+    for (const i of unsatisfiedIndices) {
+      const demand = validDocs[i].text.length - allocations[i];
+      const share = Math.floor((remainingBudget * demand) / totalRemainingDemand);
+      const grant = Math.min(demand, share);
+      if (grant > 0) {
+        allocations[i] += grant;
+        distributedThisRound += grant;
+      }
+    }
+
+    // Distribute integer rounding remainder 1 char at a time so no budget is wasted
+    let leftover = remainingBudget - distributedThisRound;
+    if (distributedThisRound === 0 && leftover > 0) {
+      for (const i of unsatisfiedIndices) {
+        if (leftover <= 0) break;
+        const demand = validDocs[i].text.length - allocations[i];
+        if (demand > 0) {
+          allocations[i] += 1;
+          distributedThisRound += 1;
+          leftover -= 1;
+        }
+      }
+    }
+
+    if (distributedThisRound === 0) break;
+    remainingBudget -= distributedThisRound;
+  }
+
+  const sections = validDocs.map((doc, idx) => {
+    const budget = allocations[idx];
+    let excerpt = doc.text;
+    if (excerpt.length > budget) {
+      const marker = '… [gekürzt]';
+      excerpt =
+        budget > marker.length + 12
+          ? `${excerpt.slice(0, budget - marker.length).trimEnd()}${marker}`
+          : excerpt.slice(0, budget);
+    }
+    return `${headers[idx]}${excerpt}`;
+  });
+
+  return sections.join('\n\n');
+}
+
+function formatCleanDocChapterName(rawName: string): string {
+  return String(rawName || 'Dokument')
+    .replace(/\.(pdf|txt|md|json)$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim() || 'Dokument';
+}
+
+/**
+ * Creates a multi-chapter curriculum spanning ALL uploaded documents cleanly:
+ * - Chapter 1 (isGenerated: true): Cross-document overview synthesis
+ * - Chapters 2..N+1: Dedicated deep-dive chapter per uploaded document
+ * - Final chapter: Comparative synthesis & transfer across all documents
+ */
+export function buildMultiDocumentChapterSpecs(
+  title: string,
+  docs: { name: string; text: string }[]
+): HivemindChapterSpec[] {
+  const validDocs = normalizeSourceDocuments(docs);
+  if (validDocs.length === 0) {
+    return buildChaptersForTrack(title, '');
+  }
+  if (validDocs.length === 1) {
+    return buildChaptersForTrack(title, validDocs[0].text);
+  }
+
+  const n = validDocs.length;
+  const overviewChunk = buildMultiDocumentSynthesisContext(validDocs, 8000);
+  const chapters: HivemindChapterSpec[] = [
+    {
+      chapterIndex: 1,
+      title: `Kapitel 1: Überblick & Querschnitts-Synthese (${n} Dokumente)`,
+      focusPromptOrChunk: overviewChunk,
+      isGenerated: true
+    }
+  ];
+
+  validDocs.forEach((doc, idx) => {
+    const cleanDocName = formatCleanDocChapterName(doc.name);
+    chapters.push({
+      chapterIndex: idx + 2,
+      title: `Kapitel ${idx + 2}: ${cleanDocName} — Vertiefung`,
+      focusPromptOrChunk: `=== DOKUMENT ${idx + 1}/${n}: ${doc.name} ===\n${doc.text.slice(0, 7500)}`,
+      isGenerated: false
+    });
+  });
+
+  chapters.push({
+    chapterIndex: n + 2,
+    title: `Kapitel ${n + 2}: Vergleichende Synthese & Transfer (${title})`,
+    focusPromptOrChunk: `VERGLEICHENDE GESAMTSYNTHESE ALLER ${n} DOKUMENTE (${validDocs.map(d => d.name).join(', ')}):\n\n${overviewChunk}`,
+    isGenerated: false
+  });
+
+  return chapters;
+}
+
+function buildDeterministicBlueprintsFromDocuments(
+  title: string,
+  docs: HivemindSourceDocument[],
+  targetCount: number
+): HivemindCardBlueprint[] {
+  if (docs.length < 2) {
+    return buildDeterministicBlueprintsFromSubject(title, docs[0]?.text || '', targetCount);
+  }
+  const count = Math.max(10, Math.min(16, targetCount));
+  const perDocSegments = docs.map(doc => {
+    const segs = splitTextIntoMeaningfulSegments(doc.text, Math.max(2, Math.ceil(count / docs.length)));
+    return {
+      docName: formatCleanDocChapterName(doc.name),
+      segs: segs.length > 0 ? segs : [doc.text]
+    };
+  });
+
+  // Interleave segments round-robin across ALL documents so every PDF is represented in Chapter 1
+  const interleavedChunks: string[] = [];
+  const cursors = perDocSegments.map(() => 0);
+  while (interleavedChunks.length < count) {
+    let addedInPass = false;
+    for (let d = 0; d < perDocSegments.length && interleavedChunks.length < count; d++) {
+      const entry = perDocSegments[d];
+      const seg = entry.segs[cursors[d] % entry.segs.length];
+      interleavedChunks.push(`[${entry.docName}] ${seg}`);
+      cursors[d] += 1;
+      addedInPass = true;
+    }
+    if (!addedInPass) break;
+  }
+
+  return buildDeterministicBlueprintsFromSubject(
+    title,
+    interleavedChunks.join('\n\n'),
+    count
+  );
+}
+
 /**
  * Generates a full 12–16 card Hivemind Learning Track from any topic, book title, URL, or uploaded PDF/text.
  */
@@ -1268,13 +1471,31 @@ export async function generateHivemindLearningTrack(
 ): Promise<HivemindLearningTrack> {
   const cleanTitle = (options.titleOrTopic || '').trim() || 'Wissens-Expedition';
   const docText = options.rawDocumentText ?? options.rawText;
-  const sourceType = options.sourceType || (docText ? 'pdf_document' : 'topic');
+  const rawDocs = normalizeSourceDocuments(options.sourceDocuments);
+  const trimmedDocText = (docText || '').trim();
+  const hasSeparateManualText =
+    trimmedDocText.length > 0 &&
+    !rawDocs.some(d => trimmedDocText.includes(d.text.slice(0, Math.min(120, d.text.length))));
+  const effectiveDocs: HivemindSourceDocument[] =
+    rawDocs.length > 0
+      ? hasSeparateManualText
+        ? [...rawDocs, { name: 'Zusätzlicher Quelltext', text: trimmedDocText }]
+        : rawDocs
+      : [];
+  const isMultiDoc = effectiveDocs.length >= 2;
+  const sourceType =
+    options.sourceType || (docText || effectiveDocs.length > 0 ? 'pdf_document' : 'topic');
   const targetCount = Math.max(10, Math.min(16, options.targetCardCount || options.cardCount || 12));
-  const { topic, emoji } = inferTrackTopicAndEmoji(`${cleanTitle} ${(docText || '').slice(0, 400)}`);
+  const topicProbe = `${cleanTitle} ${(effectiveDocs[0]?.text || docText || '').slice(0, 400)}`;
+  const { topic, emoji } = inferTrackTopicAndEmoji(topicProbe);
 
   options.onProgress?.(15, `Analysiere Material zu „${cleanTitle}“…`);
 
-  let contextText = (docText || '').trim();
+  let contextText = isMultiDoc
+    ? buildMultiDocumentSynthesisContext(effectiveDocs, 12000)
+    : effectiveDocs.length === 1
+    ? effectiveDocs[0].text
+    : trimmedDocText;
   let resolvedUrl = options.sourceUrl;
 
   if (!contextText && !options.skipNetworkFetch) {
@@ -1318,10 +1539,17 @@ export async function generateHivemindLearningTrack(
   if (canUseAi && creds) {
     options.onProgress?.(55, 'KI strukturiert 12-teiligen Lern-Feed (Story, 4-Stufen-Memes & Quiz)…');
     try {
-      const docExcerpt = contextText ? `\n\nQUELLTEXT / DOKUMENT-AUSZUG:\n${contextText.slice(0, 7500)}` : '';
+      const excerptLimit = isMultiDoc ? 12000 : 7500;
+      const docExcerpt = contextText ? `\n\nQUELLTEXT / DOKUMENT-AUSZUG:\n${contextText.slice(0, excerptLimit)}` : '';
+      const multiDocGuidance = isMultiDoc
+        ? `\nMULTI-DOKUMENT-SYNTHESE (${effectiveDocs.length} Dokumente: ${effectiveDocs.map(d => d.name).join(', ')}):
+- Decke JEDES der ${effectiveDocs.length} Dokumente substanziell im Curriculum ab (kein Dokument darf untergehen!).
+- Arbeite explizite Querverbindungen, Ergänzungen und Kontraste zwischen den Dokumenten heraus.
+- Forme einen kohärenten deutschen Lernpfad über alle hochgeladenen Quellen hinweg.`
+        : '';
       const prompt = `Du bist der didaktische Chef-Architekt von "Atmen Hivemind — Scroll to Study".
 Zerlege das Thema / Buch / Dokument "${cleanTitle}" in genau ${targetCount} aufeinander aufbauende, hochgradig fesselnde Lern-Karten auf Deutsch.
-${docExcerpt}
+${multiDocGuidance}${docExcerpt}
 
 WICHTIGE FORMAT-REGELN:
 Wechsle im Rhythmus durch diese 4 Archetypen (cardArchetype):
@@ -1374,7 +1602,9 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
       if (salvaged.cards.length >= 6) {
         blueprints = normalizeAiCardBlueprints(salvaged.cards, cleanTitle, 0, targetCount);
         if (blueprints.length < targetCount) {
-          const detFill = buildDeterministicBlueprintsFromSubject(cleanTitle, contextText, targetCount);
+          const detFill = isMultiDoc
+            ? buildDeterministicBlueprintsFromDocuments(cleanTitle, effectiveDocs, targetCount)
+            : buildDeterministicBlueprintsFromSubject(cleanTitle, contextText, targetCount);
           while (blueprints.length < targetCount) {
             const fillIdx = blueprints.length;
             blueprints.push(detFill[fillIdx % detFill.length]);
@@ -1399,11 +1629,15 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
 
   if (blueprints.length === 0) {
     options.onProgress?.(75, 'Erstelle strukturierten 12-Karten-Lernpfad…');
-    blueprints = buildDeterministicBlueprintsFromSubject(cleanTitle, contextText, targetCount);
+    blueprints = isMultiDoc
+      ? buildDeterministicBlueprintsFromDocuments(cleanTitle, effectiveDocs, targetCount)
+      : buildDeterministicBlueprintsFromSubject(cleanTitle, contextText, targetCount);
   }
 
   const sourceLabel = options.sourceLabel || (
-    sourceType === 'pdf_document'
+    isMultiDoc
+      ? `${effectiveDocs.length} Dokumente: ${effectiveDocs.map(d => d.name).slice(0, 3).join(', ')}${effectiveDocs.length > 3 ? '…' : ''}`
+      : sourceType === 'pdf_document'
       ? `PDF / Dokument: ${cleanTitle}`
       : sourceType === 'book'
       ? `Buch-Synthese: ${cleanTitle}`
@@ -1427,16 +1661,19 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
   );
 
   const nowIso = new Date().toISOString();
-  const sourceTypeLabel =
-    sourceType === 'pdf_document'
-      ? 'PDF / Dokument'
-      : sourceType === 'book'
-      ? 'Buch-Curriculum'
-      : sourceType === 'url'
-      ? 'Web-Quelle'
-      : 'Themen-Pfad';
+  const sourceTypeLabel = isMultiDoc
+    ? `${effectiveDocs.length} Dokumente`
+    : sourceType === 'pdf_document'
+    ? 'PDF / Dokument'
+    : sourceType === 'book'
+    ? 'Buch-Curriculum'
+    : sourceType === 'url'
+    ? 'Web-Quelle'
+    : 'Themen-Pfad';
 
-  const chapters = buildChaptersForTrack(cleanTitle, contextText);
+  const chapters = isMultiDoc
+    ? buildMultiDocumentChapterSpecs(cleanTitle, effectiveDocs)
+    : buildChaptersForTrack(cleanTitle, contextText);
 
   const track: HivemindLearningTrack = {
     id: trackId,
@@ -1470,7 +1707,8 @@ Antworte AUSSCHLIESSLICH mit validem JSON:
 export function buildChaptersForTrack(
   title: string,
   rawText: string = '',
-  existingChapters?: HivemindChapterSpec[]
+  existingChapters?: HivemindChapterSpec[],
+  sourceDocuments?: { name: string; text: string }[]
 ): HivemindChapterSpec[] {
   if (Array.isArray(existingChapters) && existingChapters.length >= 2) {
     return existingChapters.map((ch, idx) => ({
@@ -1479,6 +1717,11 @@ export function buildChaptersForTrack(
       focusPromptOrChunk: String(ch.focusPromptOrChunk || title),
       isGenerated: Boolean(ch.isGenerated)
     }));
+  }
+
+  const validDocs = normalizeSourceDocuments(sourceDocuments);
+  if (validDocs.length >= 2) {
+    return buildMultiDocumentChapterSpecs(title, validDocs);
   }
 
   const cleanText = (rawText || '').trim();
