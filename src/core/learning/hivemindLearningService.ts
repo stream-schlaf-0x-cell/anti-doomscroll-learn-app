@@ -9,6 +9,7 @@ import { AtemStorage, appStorage } from '../data/storage';
 import {
   AiCredentials,
   callAiModel,
+  extractJsonFromAiResponse,
   hasAiConfiguration,
   loadAiCredentials
 } from '../ai/atmenAiClient';
@@ -660,7 +661,7 @@ export function salvageHivemindCardsFromRawJson(
   if (!cleaned) return { cards: [] };
 
   try {
-    const parsed: unknown = JSON.parse(cleaned);
+    const parsed = extractJsonFromAiResponse<unknown>(rawText);
     if (isPlainRecord(parsed) && Array.isArray(parsed.cards)) {
       return {
         ...(typeof parsed.subtitle === 'string' ? { subtitle: parsed.subtitle } : {}),
@@ -1299,8 +1300,9 @@ export async function generateHivemindLearningTrack(
   const creds = options.credentials ?? (await loadAiCredentials(options.storage).catch(() => undefined));
   const hasCreds = Boolean(creds && hasAiConfiguration(creds));
   const budgetCeilingEur = getEffectiveBudgetCeilingEur(Boolean(creds?.apiKey?.trim()));
+  const isPersonalByok = Boolean(creds?.apiKey?.trim() && creds?.persistApiKey === true);
   const canSpend = hasCreds
-    ? await defaultUsageLedger.canSpend(0.01, undefined, budgetCeilingEur).catch(() => true)
+    ? (isPersonalByok || (await defaultUsageLedger.canSpend(0.01, undefined, budgetCeilingEur).catch(() => true)))
     : false;
   const canUseAi = hasCreds && canSpend;
 
@@ -1585,8 +1587,9 @@ export async function generateNextHivemindChapter(
 
   const hasChapterAiCreds = Boolean(creds && hasAiConfiguration(creds));
   const chapterBudgetCeiling = getEffectiveBudgetCeilingEur(Boolean(creds?.apiKey?.trim()));
+  const isChapterPersonalByok = Boolean(creds?.apiKey?.trim() && creds?.persistApiKey === true);
   const chapterCanSpend = hasChapterAiCreds
-    ? await defaultUsageLedger.canSpend(0.01, undefined, chapterBudgetCeiling).catch(() => true)
+    ? (isChapterPersonalByok || (await defaultUsageLedger.canSpend(0.01, undefined, chapterBudgetCeiling).catch(() => true)))
     : false;
   if (!hasChapterAiCreds) {
     fallbackReason = 'Kein aktiver KI-Schlüssel konfiguriert; Kapitel wurde lokal strukturiert.';

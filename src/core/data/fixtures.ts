@@ -1177,7 +1177,8 @@ export const DEFAULT_USER_PROFILE: UserProfile = {
     theme: 'dark',
     palette: 'tidalglass',
     fontSize: 'md',
-    languageMix: 'bilingual'
+    languageMix: 'bilingual',
+    externalBrowser: 'safari'
   },
   editionPreferences: {
     timezone: 'Europe/Berlin',

@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   Image,
-  Linking,
   Modal,
   ScrollView,
   useWindowDimensions,
@@ -40,6 +39,7 @@ import { SubchannelBadge } from './SubchannelBadge';
 import { formatRelativeTime } from '../../core/feed/feedPresentation';
 import { hivemindLearningService } from '../../core/learning/hivemindLearningService';
 import { QuizCheckpointCard } from './QuizCheckpointCard';
+import { openExternalInBrowser } from '../../core/utils/externalBrowser';
 
 export { areFeedCardPropsEqual, formatPersonalVoteLabel, stripLeadingTitleDuplicate, formatRelativeTime };
 
@@ -254,11 +254,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
 
   const handleOpenOriginalSource = () => {
     if (!originalUrl) return;
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.open) {
-      window.open(originalUrl, '_blank', 'noopener,noreferrer');
-    } else {
-      void Linking.openURL(originalUrl).catch(() => {});
-    }
+    openExternalInBrowser(originalUrl);
   };
 
   const interaction = propInteraction;

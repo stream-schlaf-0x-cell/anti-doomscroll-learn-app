@@ -20,8 +20,10 @@ import {
   hasAiConfiguration,
   AiCredentials,
   callAiWithGoogleSearch,
-  callAiModel
+  callAiModel,
+  extractJsonFromAiResponse
 } from '../ai/atmenAiClient';
+import { AiHttpError } from '../ai/aiTransport';
 import {
   ContinuousLiveNewsService,
   buildSubstantiveHackerNewsCopy,
@@ -1941,16 +1943,15 @@ export class OpenWebHarvester {
 
       const extractJsonArray = (rawText: string): Record<string, unknown>[] => {
         try {
-          const cleaned = (rawText || '')
-            .replace(/^```(?:json)?\s*/i, '')
-            .replace(/```\s*$/i, '')
-            .trim();
-          const bracketMatch = cleaned.match(/\[[\s\S]*\]/);
-          const candidateStr = bracketMatch ? bracketMatch[0] : cleaned;
-          const parsed = JSON.parse(candidateStr);
-          return Array.isArray(parsed)
-            ? parsed.filter((x): x is Record<string, unknown> => Boolean(x && typeof x === 'object'))
+          const parsed = extractJsonFromAiResponse<unknown>(rawText);
+          const list = Array.isArray(parsed)
+            ? parsed
+            : (parsed && typeof parsed === 'object' && Array.isArray((parsed as { items?: unknown[] }).items))
+            ? (parsed as { items: unknown[] }).items
+            : (parsed && typeof parsed === 'object' && Array.isArray((parsed as { articles?: unknown[] }).articles))
+            ? (parsed as { articles: unknown[] }).articles
             : [];
+          return list.filter((x): x is Record<string, unknown> => Boolean(x && typeof x === 'object'));
         } catch {
           return [];
         }
@@ -1986,8 +1987,10 @@ export class OpenWebHarvester {
       if (parsedArray.length === 0) {
         return {
           items: [],
-          usedAI: Boolean(stage1Res.text),
-          modelUsed
+          usedAI: false,
+          modelUsed,
+          errorClass: 'response_invalid',
+          errorMessage: 'Die KI-Websuche lieferte keine verwertbaren strukturierten Artikel.'
         };
       }
 
@@ -2120,15 +2123,19 @@ export class OpenWebHarvester {
         usedAI: true,
         modelUsed
       };
-    } catch (err: any) {
-      const msg = err?.message || 'Fehler bei der Live-Webrecherche.';
-      const status = err?.status;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err || 'Fehler bei der Live-Webrecherche.');
+      const status = err instanceof AiHttpError ? err.status : undefined;
       const errorClass =
-        status === 401
+        status === 401 || status === 403
           ? 'auth_error'
           : status === 429
           ? 'rate_limit'
-          : msg.toLowerCase().includes('timeout')
+          : status === 404
+          ? 'model_not_found'
+          : err instanceof SyntaxError
+          ? 'response_invalid'
+          : msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('zeitüberschreitung')
           ? 'timeout'
           : 'network_error';
       return {

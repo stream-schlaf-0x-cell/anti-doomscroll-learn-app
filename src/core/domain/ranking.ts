@@ -156,18 +156,51 @@ export function isBalancingSource(item: FeedItem): boolean {
 }
 
 /**
- * Checks whether an item anchors regional Saxony / Dresden / Leipzig focus.
+ * Detects Dresden, Leipzig & Saxony regional news and local editorial outlets.
  */
-export function matchesSaxonyRegion(item: FeedItem): boolean {
-  const text = `${item.title} ${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''} ${item.sourceBroadcasterName || ''} ${item.sourceDomain || ''} ${item.canonicalUrl || ''}`.toLowerCase();
+export function isSaxonyRegionalItem(
+  item: Pick<
+    FeedItem,
+    | 'title'
+    | 'subtitle'
+    | 'feedText'
+    | 'body'
+    | 'sourceBroadcasterName'
+    | 'sourceDomain'
+    | 'canonicalUrl'
+    | 'sourceReferences'
+  >
+): boolean {
+  const publisher = item.sourceReferences?.[0]?.publisher || '';
+  const text = `${item.title || ''} ${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''} ${publisher} ${item.sourceBroadcasterName || ''} ${item.sourceDomain || ''} ${item.canonicalUrl || ''}`.toLowerCase();
   return (
     text.includes('sachsen') ||
     text.includes('dresden') ||
     text.includes('leipzig') ||
     text.includes('mdr') ||
-    text.includes('regions=14') ||
-    false
+    text.includes('neustadt-geflüster') ||
+    text.includes('neustadt-gefluester') ||
+    text.includes('neustadt-ticker.de') ||
+    text.includes('leipziger zeitung') ||
+    text.includes('l-iz.de') ||
+    /\bl-iz\b/i.test(text) ||
+    text.includes('kreuzer leipzig') ||
+    text.includes('kreuzer-leipzig.de') ||
+    text.includes('leipziger volkszeitung') ||
+    text.includes('lvz.de') ||
+    /\blvz\b/i.test(text) ||
+    text.includes('chemnitz') ||
+    text.includes('lausitz') ||
+    text.includes('erzgebirge') ||
+    text.includes('regions=14')
   );
+}
+
+/**
+ * Checks whether an item anchors regional Saxony / Dresden / Leipzig focus.
+ */
+export function matchesSaxonyRegion(item: FeedItem): boolean {
+  return isSaxonyRegionalItem(item);
 }
 
 export const DISCOURSE_CONCEPTS: { topic: TopicTag; concept: string; framework: string }[] = [
@@ -506,6 +539,14 @@ export function scoreFeedItem(
     }
   }
 
+  // Regional Dresden / Leipzig / Saxony relevance boost
+  const weatherCity = (profile?.editionPreferences?.weatherCity || '').trim().toLowerCase();
+  const isSaxonyCityOrDefault = !weatherCity || weatherCity === 'dresden' || weatherCity === 'leipzig';
+  const hasSaxonyRegionalBoost = isSaxonyCityOrDefault && isSaxonyRegionalItem(item);
+  if (hasSaxonyRegionalBoost) {
+    rawScore += 0.14;
+  }
+
   const totalScore = Math.round(rawScore * 1000) / 1000;
 
   const topicLabel = getTopicLabel(item.primaryTopic);
@@ -520,6 +561,10 @@ export function scoreFeedItem(
     `Explizites Feedback-Signal: ${Math.round(feedbackAdjustment * 100)}%`,
     `Format & Lesezeit (~${mins} Min.): ${Math.round(readingTimeFit * 100)}%`
   ];
+
+  if (hasSaxonyRegionalBoost) {
+    whyFactors.push('Regionaler Fokus (Dresden / Leipzig / Sachsen): +14%');
+  }
 
   if (credibilityBonus >= 0.08) {
     whyFactors.push(`Hohe Quellen-Reliabilität: Tier A Verifikation (+${Math.round(credibilityBonus * 100)}%)`);
@@ -790,12 +835,15 @@ export function getEffectiveSpaceHandle(
 }
 
 export function isAggregatorItem(
-  item: Pick<FeedItem, 'id' | 'sourceReferences' | 'sourceBroadcasterName'>
+  item: Pick<FeedItem, 'id' | 'sourceReferences' | 'sourceBroadcasterName' | 'externalCommunityScore'>
 ): boolean {
   const pub = `${item.sourceBroadcasterName || ''} ${item.sourceReferences?.[0]?.publisher || ''}`.toLowerCase();
+  const platform = (item.externalCommunityScore?.platform || '').toLowerCase();
   return (
     /^(?:openweb-)?(?:hn|reddit)-/i.test(item.id || '') ||
-    /\((?:via\s+)?(?:hn|hacker news|reddit)\)|^r\//i.test(pub)
+    /\((?:via\s+)?(?:hn|hacker news|reddit)\)|^r\//i.test(pub) ||
+    platform === 'hn' ||
+    platform === 'hacker news'
   );
 }
 
@@ -836,6 +884,9 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
     const recent4 = result.slice(-4); // at least 4 intervening cards => >= 5 card gap for artworks
     const recent3 = result.slice(-3); // 3 intervening cards => index difference >= 4
     const lastSpace = result.length > 0 ? getEffectiveSpaceHandle(result[result.length - 1]) : null;
+    const secondLastSpace = result.length > 1 ? getEffectiveSpaceHandle(result[result.length - 2]) : null;
+    const twoConsecutiveSameSpace = Boolean(lastSpace && secondLastSpace && lastSpace === secondLastSpace);
+    const lastWasAgg = result.length > 0 && isAggregatorItem(result[result.length - 1]);
     const ardInRecent9 = recent9.some(x => isArdSource(x));
     const artInRecent4 = recent4.some(x => isArtShowcaseItem(x));
     const aggInRecent3 = recent3.some(x => isAggregatorItem(x));
@@ -847,13 +898,14 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
     const hasAltAnySpaceLeft = lastSpace
       ? pool.some(x => getEffectiveSpaceHandle(x) !== lastSpace)
       : false;
-    const hasNonAggLeft = aggInRecent3 ? pool.some(x => !isAggregatorItem(x)) : false;
+    const hasNonAggLeft = (lastWasAgg || aggInRecent3) ? pool.some(x => !isAggregatorItem(x)) : false;
 
     for (let i = 0; i < pool.length; i++) {
       const cand = pool[i];
       const candIsArd = isArdSource(cand);
       const candIsArt = isArtShowcaseItem(cand);
       const candIsVaultOrStatic = !isNonVault(cand);
+      const candSpace = getEffectiveSpaceHandle(cand);
 
       if (candIsArd) {
         if (ardPlaced >= maxArdAllowed || (enforceArdCap && ardInRecent9)) {
@@ -872,11 +924,14 @@ export function enforceCuratedStreamDiversity<T extends FeedItem>(items: T[]): T
       }
 
       const relevantAltSpaceLeft = candIsVaultOrStatic ? hasAltAnySpaceLeft : hasAltNonVaultSpaceLeft;
-      if (lastSpace && relevantAltSpaceLeft && getEffectiveSpaceHandle(cand) === lastSpace) {
+      if (lastSpace && relevantAltSpaceLeft && candSpace === lastSpace) {
+        continue;
+      }
+      if (twoConsecutiveSameSpace && hasAltAnySpaceLeft && candSpace === lastSpace) {
         continue;
       }
 
-      if (aggInRecent3 && hasNonAggLeft && isAggregatorItem(cand)) {
+      if ((lastWasAgg || aggInRecent3) && hasNonAggLeft && isAggregatorItem(cand)) {
         continue;
       }
 
@@ -976,15 +1031,23 @@ export function isWithin14DayRelevanceWindow(
     item.space === 'c/memes';
   if (isVisualTimeless) return true;
 
+  const isYoutubeGem =
+    item.format === 'youtube_gem' ||
+    item.space === 'c/youtube' ||
+    item.primaryTopic === 'youtube_gems';
+
   // Undated non-visual entries fall back to firstSeenAt / publishedAt so undated RSS essays still age out after 14 days
   const refDateStr =
     item.publicationDateReliable === false
       ? (item.firstSeenAt || item.publishedAt)
       : item.publishedAt;
   const pubTime = refDateStr ? new Date(refDateStr).getTime() : NaN;
-  if (isNaN(pubTime)) return Boolean(item.isEvergreenGem);
+  if (isNaN(pubTime)) return isYoutubeGem || Boolean(item.isEvergreenGem);
 
   const hoursOld = Math.max(0, (nowMs - pubTime) / (1000 * 60 * 60));
+  if (isYoutubeGem) {
+    return hoursOld <= 1080; // 45 days for curated YouTube video-essays
+  }
   if (hoursOld > 336) return false;
 
   const wordCount = item.wordCount || 0;
@@ -1100,11 +1163,15 @@ export function rankBloomScrollFeed(
     let teachingCount30 = 0;
     let challengingCount30 = 0;
     let artCount30 = 0;
+    let memeCount30 = 0;
     for (const s of window30) {
       topicCounts30.set(s.primaryTopic, (topicCounts30.get(s.primaryTopic) || 0) + 1);
       if (s.isTeachingRelated || s.primaryTopic === 'german_didactics') teachingCount30++;
       if (s.isChallengingPerspective) challengingCount30++;
       if (isArtShowcaseItem(s) || getCardRhythmFormat(s) === 'visual_art') artCount30++;
+      if (s.primaryTopic === 'memes_satire' || s.format === 'meme' || s.format === 'comic' || getEffectiveSpaceHandle(s) === 'c/memes') {
+        memeCount30++;
+      }
     }
     const aiCount30 = topicCounts30.get('ai_apple') || 0;
 
@@ -1121,16 +1188,17 @@ export function rankBloomScrollFeed(
     let bestIdx = 0;
     let bestWindowScore = -Infinity;
 
-    // Evaluate top candidates in remaining pool (plus top challenging/teaching/AI candidates if under target)
+    // Evaluate top candidates in remaining pool (plus top challenging/teaching/AI/meme candidates if under target)
     const evalLimit = Math.min(remaining.length, 120);
     const candidateIndices: number[] = [];
     for (let i = 0; i < evalLimit; i++) {
       candidateIndices.push(i);
     }
-    if (challengingCount30 < 2 || teachingCount30 < 2 || aiCount30 < 3) {
+    if (challengingCount30 < 2 || teachingCount30 < 2 || aiCount30 < 3 || memeCount30 < 2) {
       let extraChall = 0;
       let extraTeach = 0;
       let extraAi = 0;
+      let extraMeme = 0;
       for (let i = evalLimit; i < remaining.length; i++) {
         const c = remaining[i];
         if (challengingCount30 < 2 && c.isChallengingPerspective && extraChall < 10) {
@@ -1142,8 +1210,15 @@ export function rankBloomScrollFeed(
         } else if (aiCount30 < 3 && c.primaryTopic === 'ai_apple' && extraAi < 10) {
           candidateIndices.push(i);
           extraAi++;
+        } else if (
+          memeCount30 < 2 &&
+          (c.primaryTopic === 'memes_satire' || c.format === 'meme' || c.format === 'comic' || getEffectiveSpaceHandle(c) === 'c/memes') &&
+          extraMeme < 4
+        ) {
+          candidateIndices.push(i);
+          extraMeme++;
         }
-        if (extraChall >= 10 && extraTeach >= 10 && extraAi >= 10) break;
+        if (extraChall >= 10 && extraTeach >= 10 && extraAi >= 10 && extraMeme >= 4) break;
       }
     }
 
@@ -1273,9 +1348,21 @@ export function rankBloomScrollFeed(
       if (cand.sourceTrustLevel === 'encyclopedia' && pubCountIn30 >= 2) {
         utility -= 2.5;
       }
-      if (cand.primaryTopic === 'memes_satire' || cand.format === 'meme') {
-        if (topicCountIn6 >= 1) utility -= 1.4;
-        if (topicCountIn30 >= 3) utility -= 3.2;
+      if (cand.primaryTopic === 'memes_satire' || cand.format === 'meme' || cand.format === 'comic' || candSpace === 'c/memes') {
+        const recentMemeCount = recentWindow.filter(
+          x =>
+            x.primaryTopic === 'memes_satire' ||
+            x.format === 'meme' ||
+            x.format === 'comic' ||
+            getEffectiveSpaceHandle(x) === 'c/memes'
+        ).length;
+        if (recentMemeCount >= 1) utility -= 2.2;
+        else if (memeCount30 >= 3) utility -= 3.2;
+        else if (pos >= 3 && pos % 7 >= 5 && memeCount30 < 2) {
+          utility += 2.6;
+        } else if (pos >= 4 && memeCount30 === 0) {
+          utility += 1.9;
+        }
       }
       if (candRhythm === 'visual_art' || isArtShowcaseItem(cand)) {
         const recentArtCount = recentWindow.filter(
@@ -1716,6 +1803,61 @@ export function interleaveTodayNewsStream<T extends FeedItem>(items: T[]): T[] {
   return result;
 }
 
+/**
+ * Enforces strict anti-clustering even across pinned / newly arrived items:
+ * - Never places > 2 items of the same space consecutively (when any alternative exists)
+ * - Never places > 1 (HN) / aggregator item back-to-back (when any alternative exists)
+ * Preserves pin priority order as closely as possible without violating clustering guards.
+ */
+function enforcePinAndStreamAntiClustering<T extends FeedItem>(pins: T[], body: T[]): T[] {
+  const remaining = [...pins, ...body];
+  if (remaining.length <= 1) return remaining;
+
+  const result: T[] = [];
+  while (remaining.length > 0) {
+    const last1 = result.length > 0 ? result[result.length - 1] : null;
+    const last2 = result.length > 1 ? result[result.length - 2] : null;
+    const last1Space = last1 ? getEffectiveSpaceHandle(last1) : null;
+    const last2Space = last2 ? getEffectiveSpaceHandle(last2) : null;
+    const twoConsecutiveSameSpace = Boolean(last1Space && last2Space && last1Space === last2Space);
+    const lastWasAggregator = Boolean(last1 && isAggregatorItem(last1));
+
+    let chosenIdx = -1;
+    // Pass 1: satisfy both anti-clustering constraints
+    for (let i = 0; i < remaining.length; i++) {
+      const cand = remaining[i];
+      const violatesSpace = twoConsecutiveSameSpace && getEffectiveSpaceHandle(cand) === last1Space;
+      const violatesAgg = lastWasAggregator && isAggregatorItem(cand);
+      if (!violatesSpace && !violatesAgg) {
+        chosenIdx = i;
+        break;
+      }
+    }
+    // Pass 2: if all remaining violate at least one constraint, avoid back-to-back aggregators first
+    if (chosenIdx === -1) {
+      for (let i = 0; i < remaining.length; i++) {
+        if (!(lastWasAggregator && isAggregatorItem(remaining[i]))) {
+          chosenIdx = i;
+          break;
+        }
+      }
+    }
+    // Pass 3: avoid > 2 consecutive same space
+    if (chosenIdx === -1) {
+      for (let i = 0; i < remaining.length; i++) {
+        if (!(twoConsecutiveSameSpace && getEffectiveSpaceHandle(remaining[i]) === last1Space)) {
+          chosenIdx = i;
+          break;
+        }
+      }
+    }
+    if (chosenIdx === -1) chosenIdx = 0;
+
+    result.push(remaining.splice(chosenIdx, 1)[0]);
+  }
+  return result;
+}
+
 export function sortFeedForDisplay(
   items: ScoredFeedItem[],
   requestedMode: FeedSortMode,
@@ -1730,14 +1872,13 @@ export function sortFeedForDisplay(
     unique.delete(id);
     return [item];
   });
-  const remaining = [...unique.values()];
 
   // Pin-to-Top Guarantee: items with recent pinnedManualRunAt (within 15 minutes) sort to index 0, 1, 2...
   const nowMs = Date.now();
   const FIFTEEN_MIN_MS = 15 * 60 * 1000;
   const manualPinned: ScoredFeedItem[] = [];
   if (!options.ignorePins) {
-    for (const item of remaining) {
+    for (const item of [...unique.values()]) {
       if (typeof item.pinnedManualRunAt === 'number' && (nowMs - item.pinnedManualRunAt) <= FIFTEEN_MIN_MS) {
         manualPinned.push(item);
         unique.delete(item.id);
@@ -1745,6 +1886,7 @@ export function sortFeedForDisplay(
     }
     manualPinned.sort((a, b) => (b.pinnedManualRunAt || 0) - (a.pinnedManualRunAt || 0));
   }
+  const remaining = [...unique.values()];
   const effectiveTopPins = [...manualPinned, ...pinned];
 
   const isGem = (item: ScoredFeedItem) =>
@@ -1764,7 +1906,7 @@ export function sortFeedForDisplay(
       seenRecords: options.seenRecords
     });
     const withSerendipity = interleaveSerendipitySlot(ranked, options.seenItemIds);
-    return [...liveHorizonTopPins, ...withSerendipity];
+    return enforcePinAndStreamAntiClustering(liveHorizonTopPins, withSerendipity);
   }
 
   // 2a. "⚡ Heute" (True Today News Contract: diverse current news <= 18h / <= 36h, NEVER Hivemind or old papers, capped ARD)
@@ -1850,7 +1992,7 @@ export function sortFeedForDisplay(
       return b.id.localeCompare(a.id);
     });
 
-    return [...todayTopPins, ...interleaveTodayNewsStream(sorted)];
+    return enforcePinAndStreamAntiClustering(todayTopPins, interleaveTodayNewsStream(sorted));
   }
 
   // 2b. Legacy 'new' sort mode (preserves full pool ordering for backward-compatible unit tests)
@@ -1879,7 +2021,7 @@ export function sortFeedForDisplay(
       if (seenB !== seenA) return seenB - seenA;
       return b.id.localeCompare(a.id);
     });
-    return [...effectiveTopPins, ...enforceArdsSpacing(sorted, 7)];
+    return enforcePinAndStreamAntiClustering(effectiveTopPins, enforceArdsSpacing(sorted, 7));
   }
 
   // 3. "🧭 Diskurs" (1-14d Deep Debates & Option A: The Bigger Picture)
@@ -1910,7 +2052,7 @@ export function sortFeedForDisplay(
       return b.id.localeCompare(a.id);
     });
     const disjoint = demoteItemsLeadingOtherHorizons(sorted, discourseBase, ['today'], options.seenItemIds, options.seenRecords);
-    return [...liveHorizonTopPins, ...enforceCuratedStreamDiversity(disjoint)];
+    return enforcePinAndStreamAntiClustering(liveHorizonTopPins, enforceCuratedStreamDiversity(disjoint));
   }
 
   // 4. "🏆 Top" (30-Day Review of highest impact items)
@@ -1938,7 +2080,7 @@ export function sortFeedForDisplay(
       return b.id.localeCompare(a.id);
     });
     const disjoint = demoteItemsLeadingOtherHorizons(sorted, topBase, ['today', 'discourse'], options.seenItemIds, options.seenRecords);
-    return [...liveHorizonTopPins, ...enforceCuratedStreamDiversity(disjoint)];
+    return enforcePinAndStreamAntiClustering(liveHorizonTopPins, enforceCuratedStreamDiversity(disjoint));
   }
 
   // 5. "💎 Zeitlos" (Timeless essays, art, literature, music, evergreen concepts)
@@ -1955,7 +2097,7 @@ export function sortFeedForDisplay(
       return b.id.localeCompare(a.id);
     });
     const disjoint = demoteItemsLeadingOtherHorizons(sorted, remaining, ['today', 'discourse'], options.seenItemIds, options.seenRecords);
-    return [...effectiveTopPins, ...disjoint];
+    return enforcePinAndStreamAntiClustering(effectiveTopPins, disjoint);
   }
 
   // Fallback: Default hot/score order
@@ -1963,7 +2105,7 @@ export function sortFeedForDisplay(
     if (b.score !== a.score) return b.score - a.score;
     return b.id.localeCompare(a.id);
   });
-  return [...effectiveTopPins, ...sorted];
+  return enforcePinAndStreamAntiClustering(effectiveTopPins, sorted);
 }
 
 /**

@@ -19,7 +19,7 @@ import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 import { enrichItemWithInstantResearch } from './backgroundResearchPipeline';
 import { TOPIC_DIALECTICS, DialecticTemplate } from './dialecticTemplates';
 import { generateQuizForArticle } from '../quiz/quizGenerator';
-import { callAiModel, loadAiCredentials } from '../ai/atmenAiClient';
+import { callAiModel, extractJsonFromAiResponse, hasAiConfiguration, loadAiCredentials } from '../ai/atmenAiClient';
 export { TOPIC_DIALECTICS, DialecticTemplate };
 
 // Lightweight pool items (decoupled from massive compile-time JSON)
@@ -687,7 +687,7 @@ export async function generateHivemindStream(params: {
   // 1. Try AI call if credentials configured
   try {
     const creds = params.credentials ?? (await loadAiCredentials());
-    if (creds.apiKey?.trim()) {
+    if (hasAiConfiguration(creds)) {
       const prompt = `Du bist eine epistemische Dialektik-Engine für die kontemplative Bildungs-App Atmen.
 Erstelle eine 4-stufige tiefgründige Wissenssequenz (Hivemind-Stream) zur folgenden Leitfrage oder Thema:
 "${seed}"
@@ -716,15 +716,37 @@ Antworte ausschließlich mit dem JSON-Array.`;
         itemId: `hivemind-${Date.now()}`
       });
 
-      const parsed = JSON.parse(aiRes.text);
-      if (Array.isArray(parsed) && parsed.length >= 4) {
-        generatedStages = parsed.slice(0, 4);
-        isAiGenerated = true;
-        modelUsed = aiRes.modelUsed;
+      const rawParsed = extractJsonFromAiResponse<unknown>(aiRes.text);
+      const candidateArr = Array.isArray(rawParsed)
+        ? rawParsed
+        : (rawParsed && typeof rawParsed === 'object' && Array.isArray((rawParsed as { items?: unknown[] }).items))
+        ? (rawParsed as { items: unknown[] }).items
+        : (rawParsed && typeof rawParsed === 'object' && Array.isArray((rawParsed as { stages?: unknown[] }).stages))
+        ? (rawParsed as { stages: unknown[] }).stages
+        : null;
+      if (Array.isArray(candidateArr) && candidateArr.length >= 4) {
+        generatedStages = candidateArr
+          .slice(0, 4)
+          .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === 'object'))
+          .map(s => ({
+            title: String(s.title || synthesisTitle),
+            subtitle: String(s.subtitle || 'Epistemische Vertiefung'),
+            feedText: String(s.feedText || ''),
+            keyInsight: String(s.keyInsight || ''),
+            claim: String(s.claim || ''),
+            counterPerspective: String(s.counterPerspective || '')
+          }));
+        if (generatedStages.length >= 4) {
+          isAiGenerated = true;
+          modelUsed = aiRes.modelUsed;
+        } else {
+          generatedStages = null;
+        }
       }
     }
-  } catch {
+  } catch (err) {
     // Graceful fallback to deterministic synthesis
+    console.warn('generateHivemindStream AI fallback:', err);
     generatedStages = null;
     isAiGenerated = false;
     modelUsed = undefined;

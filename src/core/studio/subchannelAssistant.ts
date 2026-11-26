@@ -1,5 +1,11 @@
 import { TopicTag } from '../domain/types';
-import { AiCredentials, callAiModel, hasAiConfiguration, loadAiCredentials } from '../ai/atmenAiClient';
+import {
+  AiCredentials,
+  callAiModel,
+  extractJsonFromAiResponse,
+  hasAiConfiguration,
+  loadAiCredentials
+} from '../ai/atmenAiClient';
 import { normalizeSpaceHandle } from '../spaces/spaceRepository';
 
 export type SubchannelVibe = 'contemplation' | 'debate' | 'research' | 'visual' | 'tech';
@@ -246,11 +252,15 @@ Antworte ausschließlich im JSON-Format:
     const res = await callAiModel(prompt, {
       jsonMode: true,
       maxTokens: 500,
-      timeoutMs: 12_000,
+      timeoutMs: 25_000,
       credentials: creds
     });
 
-    const parsed = JSON.parse(res.text);
+    const rawParsed = extractJsonFromAiResponse<unknown>(res.text);
+    if (!rawParsed || typeof rawParsed !== 'object' || Array.isArray(rawParsed)) {
+      throw new SyntaxError('Subchannel-Assistent lieferte kein gültiges JSON-Objekt.');
+    }
+    const parsed = rawParsed as Record<string, unknown>;
     const validTopics: TopicTag[] = [
       'philosophy_ethics',
       'german_didactics',
@@ -267,24 +277,35 @@ Antworte ausschließlich im JSON-Format:
     ];
 
     const fallback = generateDeterministicSubchannelDraft(cleanTitle, vibe);
-    const primaryTopic = validTopics.includes(parsed.primaryTopic)
-      ? (parsed.primaryTopic as TopicTag)
-      : fallback.primaryTopic;
+    const primaryTopic =
+      typeof parsed.primaryTopic === 'string' && validTopics.includes(parsed.primaryTopic as TopicTag)
+        ? (parsed.primaryTopic as TopicTag)
+        : fallback.primaryTopic;
+
+    const parsedHandle = typeof parsed.handle === 'string' ? parsed.handle : '';
+    const parsedFlair = typeof parsed.flair === 'string' && parsed.flair.trim() ? parsed.flair : fallback.flair;
+    const parsedDesc = typeof parsed.description === 'string' && parsed.description.trim()
+      ? parsed.description
+      : fallback.description;
+    const parsedSeeds = Array.isArray(parsed.seedSources)
+      ? parsed.seedSources.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+      : [];
 
     return {
       suggestedTitle: typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : cleanTitle,
-      handle: normalizeSpaceHandle(parsed.handle || cleanTitle),
-      flair: (parsed.flair || fallback.flair).slice(0, 24),
-      description: (parsed.description || fallback.description).slice(0, 300),
+      handle: normalizeSpaceHandle(parsedHandle || cleanTitle),
+      flair: parsedFlair.slice(0, 24),
+      description: parsedDesc.slice(0, 300),
       primaryTopic,
-      seedSources: Array.isArray(parsed.seedSources) && parsed.seedSources.length > 0
-        ? parsed.seedSources.slice(0, 4)
-        : fallback.seedSources,
+      seedSources: parsedSeeds.length > 0 ? parsedSeeds.slice(0, 4) : fallback.seedSources,
       accentColor: typeof parsed.accentColor === 'string' && parsed.accentColor.startsWith('#')
         ? parsed.accentColor
         : fallback.accentColor,
-      icon: parsed.icon || fallback.icon,
-      suggestedAntithesis: parsed.suggestedAntithesis || fallback.suggestedAntithesis,
+      icon: typeof parsed.icon === 'string' && parsed.icon.trim() ? parsed.icon.trim() : fallback.icon,
+      suggestedAntithesis:
+        typeof parsed.suggestedAntithesis === 'string' && parsed.suggestedAntithesis.trim()
+          ? parsed.suggestedAntithesis.trim()
+          : fallback.suggestedAntithesis,
       isAiGenerated: true
     };
   } catch (err) {

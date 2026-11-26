@@ -7,7 +7,7 @@ import {
   InvestigationDiff,
   EvidenceType
 } from './types';
-import { callAiModel } from '../ai/atmenAiClient';
+import { callAiModel, DEFAULT_GEMINI_MODEL, extractJsonFromAiResponse } from '../ai/atmenAiClient';
 import { appStorage, AtemStorage } from '../data/storage';
 
 export const INVESTIGATION_PROMPT_VERSION = '2026-10-18-v1';
@@ -195,56 +195,75 @@ ${s.contentSnippet.slice(0, 4000)}
       systemInstruction,
       jsonMode: true,
       maxTokens: 2500,
-      timeoutMs: 14000
+      timeoutMs: 35_000
     });
 
-    let parsed: any;
+    let parsedObj: Record<string, unknown>;
     try {
-      parsed = JSON.parse(response.text);
-    } catch {
-      // JSON repair fallback
-      const jsonMatch = response.text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('Antwort konnte nicht als strukturiertes JSON interpretiert werden.');
+      const extracted = extractJsonFromAiResponse<unknown>(response.text);
+      if (!extracted || typeof extracted !== 'object' || Array.isArray(extracted)) {
+        throw new SyntaxError('Antwort war kein JSON-Objekt.');
       }
+      parsedObj = extracted as Record<string, unknown>;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`Antwort konnte nicht als strukturiertes JSON interpretiert werden (${detail}).`);
     }
 
     const versionNum = previousResult ? previousResult.version + 1 : 1;
+    const rawClaims = Array.isArray(parsedObj.groundedClaims) ? parsedObj.groundedClaims : [];
+    const groundedClaims: GroundedClaim[] = rawClaims
+      .filter((c): c is Record<string, unknown> => Boolean(c && typeof c === 'object'))
+      .map((c, idx) => ({
+        id: typeof c.id === 'string' && c.id ? c.id : `claim-${versionNum}-${idx + 1}`,
+        claim: typeof c.claim === 'string' && c.claim ? c.claim : 'Belegte Aussage',
+        exactQuote: typeof c.exactQuote === 'string' ? c.exactQuote : '',
+        sourceId: typeof c.sourceId === 'string' && c.sourceId ? c.sourceId : sources[0]?.id || 'src-1',
+        sourceTitle: typeof c.sourceTitle === 'string' && c.sourceTitle ? c.sourceTitle : sources[0]?.title || 'Quelle',
+        sourceUrl: typeof c.sourceUrl === 'string' ? c.sourceUrl : sources[0]?.url,
+        evidenceType: (['observation', 'interpretation', 'causal_claim', 'normative_statement'].includes(String(c.evidenceType))
+          ? c.evidenceType
+          : 'interpretation') as EvidenceType,
+        confidence: (['direct_quote', 'reasonable_inference', 'unverified_claim'].includes(String(c.confidence))
+          ? c.confidence
+          : 'reasonable_inference') as GroundedClaim['confidence']
+      }));
 
     let diff: InvestigationDiff | undefined;
     if (previousResult) {
-      diff = this.calculateDiff(previousResult, parsed.groundedClaims || [], sources);
+      diff = this.calculateDiff(previousResult, groundedClaims, sources);
     }
+
+    const rawNextSteps = Array.isArray(parsedObj.suggestedNextSteps) ? parsedObj.suggestedNextSteps : [];
 
     return {
       version: versionNum,
       timestamp: new Date().toISOString(),
-      synthesisSummary: parsed.synthesisSummary || 'Synthese konnte erstellt werden.',
-      groundedClaims: (parsed.groundedClaims || []).map((c: any, idx: number) => ({
-        id: c.id || `claim-${versionNum}-${idx + 1}`,
-        claim: c.claim || 'Belegte Aussage',
-        exactQuote: c.exactQuote || '',
-        sourceId: c.sourceId || sources[0]?.id || 'src-1',
-        sourceTitle: c.sourceTitle || sources[0]?.title || 'Quelle',
-        sourceUrl: c.sourceUrl || sources[0]?.url,
-        evidenceType: (['observation', 'interpretation', 'causal_claim', 'normative_statement'].includes(c.evidenceType)
-          ? c.evidenceType
-          : 'interpretation') as EvidenceType,
-        confidence: c.confidence || 'reasonable_inference'
-      })),
-      limitationsAndCounterpoints: parsed.limitationsAndCounterpoints || [],
-      openQuestions: parsed.openQuestions || [],
-      suggestedNextSteps: (parsed.suggestedNextSteps || []).slice(0, 3).map((s: any, idx: number) => ({
-        id: s.id || `step-${idx + 1}`,
-        type: (['trace', 'challenge', 'connect', 'create'].includes(s.type) ? s.type : 'trace'),
-        label: s.label || 'Nächster Schritt',
-        promptOrAction: s.promptOrAction || '',
-        rationale: s.rationale || ''
-      })),
+      synthesisSummary:
+        typeof parsedObj.synthesisSummary === 'string' && parsedObj.synthesisSummary.trim()
+          ? parsedObj.synthesisSummary.trim()
+          : 'Synthese konnte erstellt werden.',
+      groundedClaims,
+      limitationsAndCounterpoints: Array.isArray(parsedObj.limitationsAndCounterpoints)
+        ? parsedObj.limitationsAndCounterpoints.map(String)
+        : [],
+      openQuestions: Array.isArray(parsedObj.openQuestions)
+        ? parsedObj.openQuestions.map(String)
+        : [],
+      suggestedNextSteps: rawNextSteps
+        .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === 'object'))
+        .slice(0, 3)
+        .map((s, idx) => ({
+          id: typeof s.id === 'string' && s.id ? s.id : `step-${idx + 1}`,
+          type: (['trace', 'challenge', 'connect', 'create'].includes(String(s.type))
+            ? s.type
+            : 'trace') as SuggestedAction['type'],
+          label: typeof s.label === 'string' && s.label ? s.label : 'Nächster Schritt',
+          promptOrAction: typeof s.promptOrAction === 'string' ? s.promptOrAction : '',
+          rationale: typeof s.rationale === 'string' ? s.rationale : ''
+        })),
       diffFromPreviousVersion: diff,
-      modelUsed: response.modelUsed || 'gemini-4-hydrogen',
+      modelUsed: response.modelUsed || DEFAULT_GEMINI_MODEL,
       promptVersion: INVESTIGATION_PROMPT_VERSION,
       executionMode: 'ai_real',
       tokenUsage: {

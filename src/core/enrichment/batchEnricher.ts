@@ -3,6 +3,8 @@ import { detectChannelArchetype, ChannelArchetype } from '../ingestion/subchanne
 import {
   callAiModel,
   AiCredentials,
+  DEFAULT_GEMINI_MODEL,
+  extractJsonFromAiResponse,
   loadAiCredentials,
   hasAiConfiguration,
   isProOrReasoningModelId,
@@ -58,6 +60,7 @@ export interface EnrichedItemData {
   primaryTopic: TopicTag;
   topics: TopicTag[];
   didacticTransfer: string;
+  modelUsed?: string;
 }
 
 export type CurationErrorClass =
@@ -121,7 +124,8 @@ const BatchDecisionSchema = z.object({
   topics: z.array(z.any()).max(5).nullable().optional().transform(arr =>
     Array.isArray(arr) ? arr.map(t => normalizeAiTopicTag(t)).slice(0, 3) : []
   ),
-  didacticTransfer: z.string().max(4000).nullable().optional().transform(v => v ?? '')
+  didacticTransfer: z.string().max(4000).nullable().optional().transform(v => v ?? ''),
+  modelUsed: z.string().max(120).optional()
 });
 
 export interface GatekeeperEvaluation {
@@ -739,6 +743,25 @@ export function isCrypticOrLowValueAggregatorStub(item: Partial<FeedItem> | null
   return false;
 }
 
+function isVerifiedYouTubeGemItem(item: FeedItem): boolean {
+  const isYt =
+    item.format === 'youtube_gem' ||
+    item.space === 'c/youtube' ||
+    item.primaryTopic === 'youtube_gems';
+  if (!isYt) return false;
+  const url = (item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '').trim();
+  const hasYtUrl = /youtube\.com|youtu\.be/i.test(url);
+  const hasValidThumb = Boolean(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
+  const title = (item.title || '').trim();
+  return (
+    hasYtUrl &&
+    hasValidThumb &&
+    title.length >= 12 &&
+    !isCelebrityFluff(title) &&
+    isSupportedFeedLanguage(title, item.feedText || item.subtitle || '')
+  );
+}
+
 /**
  * Directive 1: Hard Substance Gate & Zero Empty Cards Contract
  * Guarantees that any item admitted into a curated selection has at least 120 characters
@@ -778,6 +801,10 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
     if (!isLiveIngestedMeme) return true;
     const hasMemeImage = Boolean(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
     return hasMemeImage;
+  }
+
+  if (isVerifiedYouTubeGemItem(item)) {
+    return true;
   }
 
   const title = (item.title || '').trim();
@@ -852,7 +879,7 @@ export function satisfiesDefaultCuratedStandard(item: FeedItem | null | undefine
     item.primaryTopic === 'memes_satire' ||
     (item.primaryTopic === 'art_aesthetics' && !item.space);
 
-  if (isVisual) return true;
+  if (isVisual || isVerifiedYouTubeGemItem(item)) return true;
 
   const cleanFeed = stripSyntheticFillerSentences(item.feedText || '').trim();
   const cleanTitle = (item.title || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
@@ -1437,12 +1464,6 @@ export function classifyTopicDeterministically(
  * code fences and wrapped objects (`{ articles: [...] }`, `{ items: [...] }`).
  */
 function extractBatchDecisionArrayFromAiText(rawText: string): unknown {
-  let cleaned = (rawText || '').trim();
-  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenceMatch && fenceMatch[1]) {
-    cleaned = fenceMatch[1].trim();
-  }
-
   const unwrap = (val: unknown): unknown => {
     if (Array.isArray(val)) return val;
     if (val && typeof val === 'object') {
@@ -1454,21 +1475,7 @@ function extractBatchDecisionArrayFromAiText(rawText: string): unknown {
     return val;
   };
 
-  try {
-    return unwrap(JSON.parse(cleaned));
-  } catch {
-    const firstBracket = cleaned.indexOf('[');
-    const lastBracket = cleaned.lastIndexOf(']');
-    if (firstBracket >= 0 && lastBracket > firstBracket) {
-      return unwrap(JSON.parse(cleaned.slice(firstBracket, lastBracket + 1)));
-    }
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
-      return unwrap(JSON.parse(cleaned.slice(firstBrace, lastBrace + 1)));
-    }
-    throw new SyntaxError('Antwort des KI-Modells enthielt kein gültiges JSON-Array.');
-  }
+  return unwrap(extractJsonFromAiResponse<unknown>(rawText));
 }
 
 export class BatchEditionEnricher {
@@ -1508,6 +1515,12 @@ export class BatchEditionEnricher {
     const hasRealCounter = counterText.split(/\s+/).filter(Boolean).length >= 12;
     const transferText = decision.didacticTransfer?.trim() || '';
     const challengeText = decision.challengePrompt?.trim() || '';
+    const modelTag = decision.modelUsed?.trim();
+    const updatedProvenance = modelTag
+      ? (original.provenanceSummary?.includes(modelTag)
+          ? original.provenanceSummary
+          : `${original.provenanceSummary ? `${original.provenanceSummary} · ` : ''}KI (${modelTag})`)
+      : original.provenanceSummary;
     return {
       ...original,
       feedText: decision.feedText || original.feedText,
@@ -1536,7 +1549,9 @@ export class BatchEditionEnricher {
       didacticTransfer: transferText || original.didacticTransfer,
       didacticSeed: transferText || original.didacticSeed,
       curationScore: decision.curationScore,
-      aiAssisted: true
+      aiAssisted: true,
+      enrichmentTier: 'ai',
+      provenanceSummary: updatedProvenance
     };
   }
 
@@ -1740,8 +1755,9 @@ Antworte AUSSCHLIESSLICH als JSON-Array:
         itemId: `ai-gatekeeper-${Date.now()}`
       });
 
+      const resolvedModel = response.modelUsed || credentials.model || DEFAULT_GEMINI_MODEL;
       this.lastBatchReport.usedAI = true;
-      this.lastBatchReport.modelUsed = response.modelUsed || credentials.model;
+      this.lastBatchReport.modelUsed = resolvedModel;
       const parsed: unknown = extractBatchDecisionArrayFromAiText(response.text);
       if (Array.isArray(parsed)) {
         const wantedIds = new Set(pending.map(item => item.id));
@@ -1750,10 +1766,14 @@ Antworte AUSSCHLIESSLICH als JSON-Array:
         for (const entry of parsed) {
           const validated = BatchDecisionSchema.safeParse(entry);
           if (!validated.success || !wantedIds.has(validated.data.id)) continue;
-          decisions.set(validated.data.id, validated.data);
+          const enrichedDecision: EnrichedItemData = {
+            ...validated.data,
+            modelUsed: resolvedModel
+          };
+          decisions.set(validated.data.id, enrichedDecision);
           if (validated.data.curationScore >= 7) approvedCount++;
           const key = cacheKeys.get(validated.data.id);
-          if (key) await this.cache.set(key, validated.data);
+          if (key) await this.cache.set(key, enrichedDecision);
         }
         if (approvedCount === 0 && parsed.length > 0) {
           this.lastBatchReport.errorClass = 'no_approved_candidates';
@@ -1955,6 +1975,9 @@ export async function enrichArticleOnDemandWithAi(
       const didacticTransfer = typeof cached.didacticTransfer === 'string' && cached.didacticTransfer.trim().length > 60
         ? cached.didacticTransfer.trim()
         : undefined;
+      const cachedModel = typeof cached.modelUsed === 'string' && cached.modelUsed.trim()
+        ? cached.modelUsed.trim()
+        : (creds.model || DEFAULT_GEMINI_MODEL);
       return sanitizeCuratedFeedItem({
         ...item,
         feedText: cached.feedText,
@@ -1962,6 +1985,9 @@ export async function enrichArticleOnDemandWithAi(
         aiAssisted: true,
         enrichmentTier: 'ai',
         contentOrigin: 'enriched_ai',
+        provenanceSummary: `✦ KI-Vertiefung (${cachedModel}) · Quelle: ${
+          item.sourceReferences?.[0]?.publisher || item.sourceDomain || 'Fachquelle'
+        }`,
         ...(counterPerspective
           ? {
               perspectiveDetails: {
@@ -1991,7 +2017,8 @@ export async function enrichArticleOnDemandWithAi(
   }
 
   const budgetCeilingEur = getEffectiveBudgetCeilingEur(Boolean(creds.apiKey?.trim()));
-  const canSpend = await ledger.canSpend(0.002, undefined, budgetCeilingEur);
+  const isPersonalByok = Boolean(creds.apiKey?.trim() && creds.persistApiKey === true);
+  const canSpend = isPersonalByok || (await ledger.canSpend(0.002, undefined, budgetCeilingEur));
   if (!canSpend) {
     return sanitizeCuratedFeedItem(item);
   }
@@ -2025,17 +2052,21 @@ Antworte AUSSCHLIESSLICH als valides JSON-Objekt:
       itemId: `ondemand-enrich-${item.id}`
     });
 
-    const parsed = JSON.parse(res.text);
-    const keyInsight = typeof parsed?.keyInsight === 'string' && parsed.keyInsight.trim().length > 20
+    const parsedRaw = extractJsonFromAiResponse<unknown>(res.text);
+    const parsed = parsedRaw && typeof parsedRaw === 'object' && !Array.isArray(parsedRaw)
+      ? (parsedRaw as Record<string, unknown>)
+      : {};
+    const resolvedModel = res.modelUsed || creds.model || DEFAULT_GEMINI_MODEL;
+    const keyInsight = typeof parsed.keyInsight === 'string' && parsed.keyInsight.trim().length > 20
       ? parsed.keyInsight.trim()
       : item.keyInsight;
-    const feedText = typeof parsed?.feedText === 'string' && parsed.feedText.trim().length > 80
+    const feedText = typeof parsed.feedText === 'string' && parsed.feedText.trim().length > 80
       ? parsed.feedText.trim()
       : item.feedText;
-    const counterPerspective = typeof parsed?.counterPerspective === 'string' && parsed.counterPerspective.trim().length > 60
+    const counterPerspective = typeof parsed.counterPerspective === 'string' && parsed.counterPerspective.trim().length > 60
       ? parsed.counterPerspective.trim()
       : undefined;
-    const didacticTransfer = typeof parsed?.didacticTransfer === 'string' && parsed.didacticTransfer.trim().length > 60
+    const didacticTransfer = typeof parsed.didacticTransfer === 'string' && parsed.didacticTransfer.trim().length > 60
       ? parsed.didacticTransfer.trim()
       : undefined;
 
@@ -2044,7 +2075,8 @@ Antworte AUSSCHLIESSLICH als valides JSON-Objekt:
         feedText,
         keyInsight,
         counterPerspective: counterPerspective || '',
-        didacticTransfer: didacticTransfer || ''
+        didacticTransfer: didacticTransfer || '',
+        modelUsed: resolvedModel
       });
     }
 
@@ -2055,6 +2087,9 @@ Antworte AUSSCHLIESSLICH als valides JSON-Objekt:
       aiAssisted: true,
       enrichmentTier: 'ai',
       contentOrigin: 'enriched_ai',
+      provenanceSummary: `✦ KI-Vertiefung (${resolvedModel}) · Quelle: ${
+        item.sourceReferences?.[0]?.publisher || item.sourceDomain || 'Fachquelle'
+      }`,
       ...(counterPerspective
         ? {
             perspectiveDetails: {
@@ -2231,9 +2266,9 @@ Antworte ausschließlich im JSON-Format:
       });
 
       if (res?.text) {
-        const jsonMatch = res.text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
+        const parsedRaw = extractJsonFromAiResponse<unknown>(res.text);
+        if (parsedRaw && typeof parsedRaw === 'object' && !Array.isArray(parsedRaw)) {
+          const parsed = parsedRaw as Record<string, unknown>;
           if (parsed.context && parsed.blindSpot && parsed.impulse) {
             return {
               context: String(parsed.context).trim(),
@@ -2363,7 +2398,8 @@ export async function runBackgroundEditorialNewsroomBatch(
   }
 
   const ceilingEur = getEffectiveBudgetCeilingEur(Boolean(creds.apiKey?.trim()));
-  const canSpend = await defaultUsageLedger.canSpend(0.005, undefined, ceilingEur);
+  const isPersonalByok = Boolean(creds.apiKey?.trim() && creds.persistApiKey === true);
+  const canSpend = isPersonalByok || (await defaultUsageLedger.canSpend(0.005, undefined, ceilingEur));
   if (!canSpend) {
     return {
       enrichedItems: [],
@@ -2440,10 +2476,12 @@ Antworte ausschließlich als valides JSON-Objekt:
       itemId: `newsroom-batch-${Date.now()}`
     });
 
-    const cleanedJson = aiRes.text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-    const parsed = JSON.parse(cleanedJson);
-    const articlesArr: any[] = Array.isArray(parsed?.articles)
-      ? parsed.articles
+    const parsed = extractJsonFromAiResponse<unknown>(aiRes.text);
+    const parsedObj = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as { articles?: unknown[] })
+      : null;
+    const articlesArr: unknown[] = Array.isArray(parsedObj?.articles)
+      ? parsedObj.articles
       : Array.isArray(parsed)
       ? parsed
       : [];
@@ -2456,13 +2494,17 @@ Antworte ausschließlich als valides JSON-Objekt:
       };
     }
 
-    const byId = new Map<string, any>();
+    const byId = new Map<string, Record<string, unknown>>();
     for (const entry of articlesArr) {
-      if (entry && typeof entry.id === 'string') {
-        byId.set(entry.id, entry);
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        const rec = entry as Record<string, unknown>;
+        if (typeof rec.id === 'string') {
+          byId.set(rec.id, rec);
+        }
       }
     }
 
+    const resolvedNewsroomModel = aiRes.modelUsed || creds.model || DEFAULT_GEMINI_MODEL;
     const enrichedItems: FeedItem[] = [];
     for (const original of eligible) {
       const gen = byId.get(original.id);
@@ -2473,21 +2515,23 @@ Antworte ausschließlich als valides JSON-Objekt:
       if (nextFeedText.length < 100 || nextBody.length < 180) continue;
 
       const nextKeyInsight = stripSyntheticFillerSentences(String(gen.keyInsight || original.keyInsight || '').trim());
-      const rawQuiz = gen.quiz;
+      const rawQuizObj = gen.quiz && typeof gen.quiz === 'object' && !Array.isArray(gen.quiz)
+        ? (gen.quiz as { question?: unknown; options?: unknown; correctIndex?: unknown; explanation?: unknown })
+        : null;
       const validQuiz =
-        rawQuiz &&
-        typeof rawQuiz.question === 'string' &&
-        Array.isArray(rawQuiz.options) &&
-        rawQuiz.options.length >= 2
+        rawQuizObj &&
+        typeof rawQuizObj.question === 'string' &&
+        Array.isArray(rawQuizObj.options) &&
+        rawQuizObj.options.length >= 2
           ? {
               id: `quiz-${original.id}`,
-              question: String(rawQuiz.question).trim(),
-              options: rawQuiz.options.slice(0, 4).map((o: unknown) => String(o).trim()),
+              question: rawQuizObj.question.trim(),
+              options: rawQuizObj.options.slice(0, 4).map((o: unknown) => String(o).trim()),
               correctIndex: Math.min(
-                Math.max(0, Number(rawQuiz.correctIndex) || 0),
-                Math.min(3, rawQuiz.options.length - 1)
+                Math.max(0, Number(rawQuizObj.correctIndex) || 0),
+                Math.min(3, rawQuizObj.options.length - 1)
               ),
-              explanation: String(rawQuiz.explanation || '').trim(),
+              explanation: String(rawQuizObj.explanation || '').trim(),
               sourceArticleId: original.id,
               sourceArticleTitle: original.title
             }
@@ -2506,7 +2550,7 @@ Antworte ausschließlich als valides JSON-Objekt:
         contentOrigin: 'enriched_ai',
         wordCount,
         estimatedReadingMinutes: Math.max(2, Math.ceil(wordCount / 180)),
-        provenanceSummary: `✦ KI-Redaktion (${aiRes.modelUsed || creds.model || 'Gemini'}) · Quelle: ${
+        provenanceSummary: `✦ KI-Redaktion (${resolvedNewsroomModel}) · Quelle: ${
           original.sourceReferences?.[0]?.publisher || original.sourceDomain || 'Fachquelle'
         }`
       });
@@ -2516,7 +2560,7 @@ Antworte ausschließlich als valides JSON-Objekt:
       enrichedItems,
       processedCount: enrichedItems.length,
       usedAI: enrichedItems.length > 0,
-      modelUsed: aiRes.modelUsed
+      modelUsed: resolvedNewsroomModel
     };
   } catch {
     return {

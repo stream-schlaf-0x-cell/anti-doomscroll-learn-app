@@ -156,10 +156,7 @@ const MainNavigator: React.FC = () => {
           <View style={styles.desktopTopNavInner}>
             {/* Brand */}
             <TouchableOpacity
-              onPress={() => {
-                setActiveTab('feed');
-                goHome();
-              }}
+              onPress={goHome}
               style={styles.desktopBrandRow}
               activeOpacity={0.8}
               accessibilityRole="button"

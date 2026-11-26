@@ -4892,6 +4892,85 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "language": "de"
   },
   {
+    "id": "neustadt-gefluester-dresden",
+    "name": "Neustadt-Geflüster Dresden",
+    "url": "https://www.neustadt-ticker.de/feed",
+    "primaryTopic": "science_society",
+    "topics": [
+      "science_society",
+      "art_aesthetics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Neustadt-Geflüster Dresden",
+    "language": "de"
+  },
+  {
+    "id": "leipziger-zeitung-liz",
+    "name": "Leipziger Zeitung (L-IZ)",
+    "url": "https://www.l-iz.de/feed",
+    "primaryTopic": "science_society",
+    "topics": [
+      "science_society",
+      "philosophy_ethics"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Leipziger Zeitung Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "kreuzer-leipzig-magazin",
+    "name": "Kreuzer Leipzig",
+    "url": "https://kreuzer-leipzig.de/feed",
+    "primaryTopic": "art_aesthetics",
+    "topics": [
+      "art_aesthetics",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Kreuzer Leipzig Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "lvz-leipzig-sachsen",
+    "name": "Leipziger Volkszeitung (LVZ)",
+    "url": "https://www.lvz.de/arc/outboundfeeds/rss/",
+    "primaryTopic": "science_society",
+    "topics": [
+      "science_society",
+      "opportunities_growth"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "LVZ Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "mdr-kultur-sachsen",
+    "name": "MDR Kultur",
+    "url": "https://www.mdr.de/kultur/index-rss.xml",
+    "primaryTopic": "art_aesthetics",
+    "topics": [
+      "art_aesthetics",
+      "book_mastery",
+      "sound_synthesis"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "MDR Kultur Redaktion",
+    "language": "de"
+  },
+  {
+    "id": "mdr-wissen-mitteldeutschland",
+    "name": "MDR Wissen",
+    "url": "https://www.mdr.de/wissen/index-rss.xml",
+    "primaryTopic": "science_society",
+    "topics": [
+      "science_society",
+      "health_biohacking"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "MDR Wissen Redaktion",
+    "language": "de"
+  },
+  {
     "id": "brandeins-magazin",
     "name": "brand eins",
     "url": "https://www.brandeins.de/rss",

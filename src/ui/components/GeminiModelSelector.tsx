@@ -16,6 +16,7 @@ import {
   ModelStatus,
   GEMINI_MODEL_CATALOG,
   CATEGORY_LABELS,
+  DEFAULT_GEMINI_TEXT_MODEL,
   filterModelsForWorkflow,
   discoverLiveGeminiModels,
   validateModelChoice
@@ -90,7 +91,7 @@ export const GeminiModelSelector: React.FC<GeminiModelSelectorProps> = ({
       );
     }
 
-    // Sort: Recommended first, then by status (stable -> preview -> experimental -> legacy)
+    // Sort: Default Standard (gemini-4-hydrogen) first, then recommended, then by status (stable -> preview -> experimental -> legacy)
     const statusOrder: Record<ModelStatus, number> = {
       stable: 1,
       preview: 2,
@@ -99,6 +100,8 @@ export const GeminiModelSelector: React.FC<GeminiModelSelectorProps> = ({
     };
 
     return [...list].sort((a, b) => {
+      if (a.id === DEFAULT_GEMINI_TEXT_MODEL && b.id !== DEFAULT_GEMINI_TEXT_MODEL) return -1;
+      if (b.id === DEFAULT_GEMINI_TEXT_MODEL && a.id !== DEFAULT_GEMINI_TEXT_MODEL) return 1;
       if (a.recommended && !b.recommended) return -1;
       if (!a.recommended && b.recommended) return 1;
       return (statusOrder[a.status] || 5) - (statusOrder[b.status] || 5);
@@ -212,7 +215,7 @@ export const GeminiModelSelector: React.FC<GeminiModelSelectorProps> = ({
         <Ionicons name="search-outline" size={15} color={colors.textMuted} style={{ marginRight: 6 }} />
         <TextInput
           style={[styles.searchInput, { color: colors.textPrimary }]}
-          placeholder="Modell suchen (z. B. 3.8 Flash, Banana, Argon)..."
+          placeholder="Modell suchen (z. B. Hydrogen, Banana, Argon)..."
           placeholderTextColor={colors.textMuted}
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -362,6 +365,18 @@ export const GeminiModelSelector: React.FC<GeminiModelSelectorProps> = ({
                         {model.label}
                       </Text>
 
+                      {model.id === DEFAULT_GEMINI_TEXT_MODEL && (
+                        <View style={[styles.statusBadge, { backgroundColor: 'rgba(99, 102, 241, 0.16)' }]}>
+                          <Text style={[styles.statusBadgeText, { color: colors.accent }]}>Standard</Text>
+                        </View>
+                      )}
+
+                      {isSelected && (
+                        <View style={[styles.statusBadge, { backgroundColor: 'rgba(16, 185, 129, 0.16)' }]}>
+                          <Text style={[styles.statusBadgeText, { color: '#10B981' }]}>Aktiv</Text>
+                        </View>
+                      )}
+
                       {model.recommended && (
                         <View style={styles.recommendedBadge}>
                           <Text style={styles.recommendedBadgeText}>Empfohlen</Text>
@@ -463,7 +478,7 @@ export const GeminiModelSelector: React.FC<GeminiModelSelectorProps> = ({
       <View style={styles.footerRow}>
         <Ionicons name="shield-checkmark-outline" size={13} color={colors.textMuted} style={{ marginRight: 4 }} />
         <Text style={[styles.footerText, { color: colors.textMuted }]}>
-          Standard: Gemini 3.8 Flash • Geprüft nach Google Dokumentation Stand 18. Oktober 2026
+          Standard: Gemini 4 Hydrogen (gemini-4-hydrogen) • Geprüft nach Google Dokumentation Stand 18. Oktober 2026
         </Text>
       </View>
     </View>

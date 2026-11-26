@@ -244,14 +244,22 @@ test('Rich Feed Discovery, Slop Eradication, Hard Quarantine & Clean Reader Suit
       'ReaderScreen.tsx must not reference or render LinkPreviewModal'
     );
 
-    // Verify direct browser launch calls
-    assert.ok(
-      feedCardSrc.includes('Linking.openURL') && feedCardSrc.includes('window.open'),
-      'FeedCard.tsx must directly invoke native Linking.openURL and window.open for external sources'
+    // Verify direct browser launch calls routed through externalBrowser helper
+    const externalBrowserSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'src/core/utils/externalBrowser.ts'),
+      'utf8'
     );
     assert.ok(
-      readerScreenSrc.includes('Linking.openURL') && readerScreenSrc.includes('window.open'),
-      'ReaderScreen.tsx must directly invoke native Linking.openURL and window.open for external sources'
+      feedCardSrc.includes('openExternalInBrowser'),
+      'FeedCard.tsx must route external sources through openExternalInBrowser'
+    );
+    assert.ok(
+      readerScreenSrc.includes('openExternalInBrowser'),
+      'ReaderScreen.tsx must route external sources through openExternalInBrowser'
+    );
+    assert.ok(
+      externalBrowserSrc.includes('Linking.openURL') && externalBrowserSrc.includes('window.open'),
+      'externalBrowser.ts must support native Linking.openURL and web window.open for external sources'
     );
   });
 
@@ -260,7 +268,7 @@ test('Rich Feed Discovery, Slop Eradication, Hard Quarantine & Clean Reader Suit
 
     // 1. Prominent top button
     assert.ok(
-      readerScreenSrc.includes('Originalartikel in Safari / Firefox öffnen ↗'),
+      readerScreenSrc.includes('Originalartikel im Browser öffnen'),
       'ReaderScreen must include prominent header button to open original article'
     );
 

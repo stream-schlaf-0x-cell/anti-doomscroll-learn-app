@@ -6,11 +6,11 @@ import {
   Modal,
   TouchableOpacity,
   ScrollView,
-  ActivityIndicator,
-  Linking
+  ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NewsEvolutionBriefing } from '../../core/news/newsEvolutionService';
+import { openExternalInBrowser } from '../../core/utils/externalBrowser';
 import { ThemeColors, typography, radius, spacing } from '../theme';
 
 interface NewsEvolutionModalProps {
@@ -41,7 +41,7 @@ export const NewsEvolutionModal: React.FC<NewsEvolutionModalProps> = ({
     if (onOpenArticle && !url.startsWith('http')) {
       onOpenArticle(url);
     } else {
-      void Linking.openURL(url).catch(() => {});
+      openExternalInBrowser(url);
     }
   };
 

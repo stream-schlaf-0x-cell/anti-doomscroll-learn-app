@@ -11,6 +11,32 @@ import {
 import { AiCredentials, callAiModel, hasAiConfiguration, loadAiCredentials } from '../ai/atmenAiClient';
 import { feedRepository } from '../data/feedRepository';
 import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
+import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
+import { isRejectedLowResOrLogoUrl } from '../utils/imageQuality';
+import { ContinuousLiveNewsService } from '../data/continuousLiveNewsService';
+
+export function extractYoutubeVideoId(rawUrl: string): string | null {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '').replace(/^m\./, '');
+    if (host === 'youtube.com') {
+      if (parsed.pathname === '/watch') {
+        const v = parsed.searchParams.get('v')?.trim();
+        if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+      }
+      return null;
+    }
+    if (host === 'youtu.be') {
+      const id = parsed.pathname.replace(/^\/+/, '').split('/')[0]?.trim();
+      if (id && /^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
+      return null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export type ChannelArchetype =
   | 'contemplation'
@@ -635,6 +661,331 @@ export class SubchannelFlourishService {
   }
 
   /**
+   * Dedicated YouTube Lane: Pulls real YouTube video-essays from CORS-open Reddit video-essay feeds
+   * (`r/videoessay`, `r/mealtimevideos`, `r/curiousvideos`, `r/3blue1brown`, `r/kurzgesagt`),
+   * strictly validating `youtube.com/watch?v=` or `youtu.be/` URLs and constructing YouTube thumbnails.
+   */
+  public static async fetchYoutubeVideoEssayLane(
+    profile: SubchannelQueryProfile,
+    today: string
+  ): Promise<FeedItem[]> {
+    const subs = ['videoessay', 'mealtimevideos', 'curiousvideos', '3blue1brown', 'kurzgesagt'];
+    const items: FeedItem[] = [];
+    const seenVideoIds = new Set<string>();
+    const now = new Date().toISOString();
+
+    const results = await Promise.allSettled(
+      subs.map(async sub => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3200);
+        try {
+          const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/top.json?t=week&limit=10`;
+          const res = await fetch(url, {
+            signal: controller.signal,
+            headers: { Accept: 'application/json' }
+          });
+          if (!res.ok) return { sub, children: [] as any[] };
+          const json = await res.json();
+          const children = Array.isArray(json?.data?.children) ? json.data.children : [];
+          return { sub, children };
+        } finally {
+          clearTimeout(timeout);
+        }
+      })
+    );
+
+    for (const res of results) {
+      if (res.status !== 'fulfilled') continue;
+      const { sub, children } = res.value;
+      for (let i = 0; i < children.length; i++) {
+        const post = children[i]?.data;
+        if (!post || post.over_18 || post.stickied) continue;
+        const targetUrl = String(post.url_overridden_by_dest || post.url || '').trim();
+        const videoId = extractYoutubeVideoId(targetUrl);
+        if (!videoId || seenVideoIds.has(videoId)) continue;
+
+        const title = String(post.title || '').trim();
+        if (title.length < 14) continue;
+
+        seenVideoIds.add(videoId);
+        const selftext = String(post.selftext || '')
+          .replace(/&#x200B;/g, '')
+          .replace(/https?:\/\/\S+/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const score = typeof post.score === 'number' ? post.score : 0;
+        const numComments = typeof post.num_comments === 'number' ? post.num_comments : 0;
+        const channelTitle = String(post.media?.oembed?.author_name || post.author || `r/${sub}`).trim();
+        const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        const imageUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+        const pubDate = post.created_utc ? new Date(post.created_utc * 1000).toISOString() : now;
+
+        const hasSubstantiveSelftext =
+          selftext.length >= 160 &&
+          selftext.split(/\s+/).filter(Boolean).length >= 20 &&
+          !/^(?:watch the video|hier das video)/i.test(selftext);
+
+        const substantiveBody = hasSubstantiveSelftext
+          ? selftext.slice(0, 1400)
+          : `Dieses Video-Essay „${title}“ (empfohlen in r/${sub} mit ${score} Punkten und ${numComments} Kommentaren) entfaltet Hintergründe, visuelle Erklärungen und zentrale Denkanstöße direkt im Bewegtbild. Über den Direktlink auf YouTube lässt sich die Argumentation von ${channelTitle} in voller Länge vertiefen.`;
+
+        const feedExcerpt = hasSubstantiveSelftext
+          ? selftext.slice(0, 360)
+          : substantiveBody;
+
+        items.push({
+          id: `flourish-yt-${videoId}`,
+          type: 'deep_dive',
+          format: 'youtube_gem',
+          title,
+          subtitle: `YouTube Video-Essay • ${channelTitle} (r/${sub})`,
+          feedText: feedExcerpt,
+          body: substantiveBody,
+          articleBody: `### Video-Essay: ${title}\n\n- **Kanal / Kuration:** ${channelTitle} (r/${sub})\n- **Community-Resonanz:** ${score} Punkte · ${numComments} Kommentare\n- **Video-Quelle:** [${watchUrl}](${watchUrl})\n\n${substantiveBody}`,
+          imageUrl,
+          hasAuthenticImage: true,
+          topics: ['youtube_gems', 'science_society'],
+          primaryTopic: 'youtube_gems',
+          sourceReferences: [
+            {
+              publisher: channelTitle || 'YouTube',
+              originalUrl: watchUrl,
+              title,
+              publicationTimestamp: pubDate,
+              retrievalTimestamp: now,
+              author: channelTitle,
+              isVerified: true
+            }
+          ],
+          publishedAt: pubDate,
+          publicationDateReliable: Boolean(post.created_utc),
+          generatedAt: now,
+          estimatedReadingMinutes: 4,
+          relevanceExplanation: `Kuratiertes Video-Essay für ${profile.displayTitle} (c/youtube).`,
+          contentStatus: 'editorial_briefing',
+          isDailyEdition: false,
+          editionDate: today,
+          isDemonstration: false,
+          aiAssisted: false,
+          factReviewStatus: 'community_discussion',
+          provenanceSummary: `🎬 Video-Essay auf YouTube (via r/${sub})`,
+          wordCount: Math.max(25, substantiveBody.split(/\s+/).length),
+          evidenceTier: 'publisher_excerpt',
+          contentOrigin: 'live_ingested',
+          contentHash: `yt-${videoId}`,
+          canonicalUrl: watchUrl,
+          space: 'c/youtube',
+          flair: 'Video-Essay',
+          keyInsight: `${channelTitle}: Video-Essay zu „${title}“ (${watchUrl}).`,
+          youtubeMeta: {
+            videoId,
+            channelTitle,
+            duration: 'Video-Essay',
+            keyTakeaways: [
+              `Empfohlen aus r/${sub} (${score} Punkte, ${numComments} Kommentare)`,
+              `Direktlink: ${watchUrl}`
+            ]
+          },
+          externalCommunityScore: {
+            platform: `r/${sub}`,
+            points: score,
+            commentsCount: numComments,
+            discussionUrl: post.permalink ? `https://www.reddit.com${post.permalink}` : watchUrl
+          },
+          upvotesCount: 0,
+          awardsCount: { gold: 0, brain: 0, spark: 0 },
+          sourceTrustLevel: 'verified_creator',
+          sourceDomain: 'youtube.com',
+          sourceBroadcasterName: channelTitle,
+          isTeachingRelated: false,
+          isChallengingPerspective: false,
+          comments: []
+        });
+      }
+    }
+
+    return items;
+  }
+
+  /**
+   * Dedicated Memes & Comics Lane: Fetches visual memes/comics from `r/PhilosophyMemes`,
+   * `r/ScienceMemes`, and `r/HistoryMemes` with authentic image URLs (never text-only fallbacks).
+   */
+  public static async fetchMemesComicsLane(
+    profile: SubchannelQueryProfile,
+    today: string
+  ): Promise<FeedItem[]> {
+    const subs = ['PhilosophyMemes', 'ScienceMemes', 'HistoryMemes'];
+    const items: FeedItem[] = [];
+    const seenUrls = new Set<string>();
+    const now = new Date().toISOString();
+
+    const results = await Promise.allSettled(
+      subs.map(async sub => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3200);
+        try {
+          const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/top.json?t=week&limit=10`;
+          const res = await fetch(url, {
+            signal: controller.signal,
+            headers: { Accept: 'application/json' }
+          });
+          if (!res.ok) return { sub, children: [] as any[] };
+          const json = await res.json();
+          const children = Array.isArray(json?.data?.children) ? json.data.children : [];
+          return { sub, children };
+        } finally {
+          clearTimeout(timeout);
+        }
+      })
+    );
+
+    for (const res of results) {
+      if (res.status !== 'fulfilled') continue;
+      const { sub, children } = res.value;
+      for (let i = 0; i < children.length; i++) {
+        const post = children[i]?.data;
+        if (!post || post.over_18 || post.stickied || post.is_video) continue;
+        const title = String(post.title || '').trim();
+        if (title.length < 8) continue;
+
+        const directUrl = String(post.url_overridden_by_dest || post.url || '').trim();
+        const previewUrl = String(post.preview?.images?.[0]?.source?.url || '')
+          .replace(/&amp;/g, '&')
+          .trim();
+        const isImageExt = /\.(?:jpe?g|png|webp|gif)(?:[?#].*)?$/i.test(directUrl);
+        const isImageHost = /^https?:\/\/(?:i\.redd\.it|i\.imgur\.com)\//i.test(directUrl) && !/\.(?:mp4|gifv|webm)(?:[?#].*)?$/i.test(directUrl);
+        const imageUrl = isImageExt || isImageHost ? directUrl : previewUrl;
+
+        if (!imageUrl || isRejectedLowResOrLogoUrl(imageUrl, true) || seenUrls.has(imageUrl)) {
+          continue;
+        }
+        seenUrls.add(imageUrl);
+
+        const score = typeof post.score === 'number' ? post.score : 0;
+        const numComments = typeof post.num_comments === 'number' ? post.num_comments : 0;
+        const permalink = post.permalink ? `https://www.reddit.com${post.permalink}` : imageUrl;
+        const pubDate = post.created_utc ? new Date(post.created_utc * 1000).toISOString() : now;
+        const feedText = `Visuelle Satire aus r/${sub} (${score} Punkte, ${numComments} Kommentare): „${title}“ – pointierter Perspektivwechsel auf Philosophie, Wissenschaft und Geschichte.`;
+
+        items.push({
+          id: `flourish-meme-${sub.toLowerCase()}-${post.id || i}`,
+          type: 'quick_insight',
+          format: 'meme',
+          title,
+          subtitle: `r/${sub} • Visuelle Satire (${score} Punkte)`,
+          feedText,
+          body: feedText,
+          articleBody: `### ${title}\n\n${feedText}\n\n**Quelle:** [Beitrag in r/${sub}](${permalink})`,
+          imageUrl,
+          hasAuthenticImage: true,
+          topics: ['memes_satire', 'philosophy_ethics'],
+          primaryTopic: 'memes_satire',
+          sourceReferences: [
+            {
+              publisher: `Reddit r/${sub}`,
+              originalUrl: permalink,
+              title,
+              publicationTimestamp: pubDate,
+              retrievalTimestamp: now,
+              author: post.author ? `u/${post.author}` : `r/${sub}`,
+              isVerified: true
+            }
+          ],
+          publishedAt: pubDate,
+          publicationDateReliable: false,
+          generatedAt: now,
+          estimatedReadingMinutes: 1,
+          relevanceExplanation: `Visuelle Satire für ${profile.displayTitle} (c/memes).`,
+          contentStatus: 'editorial_briefing',
+          isDailyEdition: false,
+          editionDate: today,
+          isDemonstration: false,
+          aiAssisted: false,
+          factReviewStatus: 'community_discussion',
+          provenanceSummary: `🎭 Visuelle Satire (r/${sub})`,
+          wordCount: feedText.split(/\s+/).length,
+          evidenceTier: 'publisher_excerpt',
+          contentOrigin: 'live_ingested',
+          contentHash: `meme-${post.id || i}`,
+          canonicalUrl: permalink,
+          space: 'c/memes',
+          flair: 'Satire & Comics',
+          keyInsight: title,
+          memeMeta: {
+            templateName: `r/${sub}`,
+            punchline: title,
+            satireContext: `Visuelle Satire aus r/${sub} (${score} Punkte)`
+          },
+          externalCommunityScore: {
+            platform: `r/${sub}`,
+            points: score,
+            commentsCount: numComments,
+            discussionUrl: permalink
+          },
+          upvotesCount: 0,
+          awardsCount: { gold: 0, brain: 0, spark: 0 },
+          sourceTrustLevel: 'community_curated',
+          sourceDomain: 'reddit.com',
+          sourceBroadcasterName: `r/${sub}`,
+          isTeachingRelated: false,
+          isChallengingPerspective: false,
+          comments: []
+        });
+      }
+    }
+
+    return items;
+  }
+
+  /**
+   * Pulls unseen items matching a space from `feed-reservoir.json` and `feed-snapshot.json`.
+   */
+  public static async fetchUnseenFromSnapshots(
+    spaceHandle: string,
+    primaryTopic: TopicTag,
+    existingIds: Set<string>,
+    existingUrls: Set<string>,
+    requireImage = false
+  ): Promise<FeedItem[]> {
+    const [reservoirRes, snapshotRes] = await Promise.allSettled([
+      defaultSnapshotLoader.loadReservoir(undefined, 2500),
+      defaultSnapshotLoader.loadSnapshot(undefined, 2500)
+    ]);
+
+    const combined: FeedItem[] = [];
+    if (reservoirRes.status === 'fulfilled' && reservoirRes.value?.success) {
+      combined.push(...reservoirRes.value.items);
+    }
+    if (snapshotRes.status === 'fulfilled' && snapshotRes.value?.success) {
+      combined.push(...snapshotRes.value.items);
+    }
+
+    const out: FeedItem[] = [];
+    const seenLocalIds = new Set<string>();
+    const targetSpaceLower = spaceHandle.toLowerCase();
+
+    for (const item of combined) {
+      if (!item?.id || existingIds.has(item.id) || seenLocalIds.has(item.id)) continue;
+      if (item.canonicalUrl && existingUrls.has(item.canonicalUrl)) continue;
+      const itemSpace = (item.space || '').toLowerCase();
+      const matchesSpace = itemSpace === targetSpaceLower || item.primaryTopic === primaryTopic;
+      if (!matchesSpace) continue;
+      if (requireImage && (!item.imageUrl || isRejectedLowResOrLogoUrl(item.imageUrl, targetSpaceLower === 'c/memes'))) {
+        continue;
+      }
+      seenLocalIds.add(item.id);
+      out.push({
+        ...item,
+        space: spaceHandle,
+        primaryTopic
+      });
+    }
+
+    return out;
+  }
+
+  /**
    * Curated Deep Knowledge & Essay Seeder:
    * Ensures that even offline or in sandboxed environments, every custom `c/...` channel
    * receives 18–25+ tailored, substantive cards matching its concept profile and archetype.
@@ -642,6 +993,31 @@ export class SubchannelFlourishService {
   public static buildConceptualAnchorCards(profile: SubchannelQueryProfile, today: string): FeedItem[] {
     const now = new Date().toISOString();
     const safeSlug = profile.spaceHandle.replace(/[^a-z0-9]/gi, '_');
+
+    // YouTube channel never falls back to generic effortpostBlueprints
+    if (profile.spaceHandle === 'c/youtube' || profile.primaryTopic === 'youtube_gems') {
+      return REAL_KNOWLEDGE_VAULT.filter(
+        v => v.space === 'c/youtube' || v.primaryTopic === 'youtube_gems' || v.format === 'youtube_gem'
+      ).map(v => ({
+        ...v,
+        space: 'c/youtube',
+        primaryTopic: 'youtube_gems',
+        format: 'youtube_gem'
+      }));
+    }
+
+    // Memes channel never falls back to generic text cards
+    if (profile.spaceHandle === 'c/memes' || profile.primaryTopic === 'memes_satire') {
+      return REAL_KNOWLEDGE_VAULT.filter(
+        v =>
+          Boolean(v.imageUrl && v.imageUrl.trim().length > 0) &&
+          (v.space === 'c/memes' || v.primaryTopic === 'memes_satire' || v.format === 'meme' || v.format === 'comic')
+      ).map(v => ({
+        ...v,
+        space: 'c/memes',
+        primaryTopic: 'memes_satire'
+      }));
+    }
 
     // Visual Gallery Archetype: strictly visual cards with verified high-res imageUrl (never text-only anchor cards)
     if (profile.archetype === 'visual_gallery') {
@@ -1042,10 +1418,44 @@ export class SubchannelFlourishService {
         const today = new Date().toISOString().slice(0, 10);
         options?.onProgress?.(40, `Durchsuche Fachquellen, Sammlungen & Diskurse…`);
 
-        // Execute Lanes 1, 2, and 3 in parallel (including Art Institute of Chicago for visual_gallery)
-        const [openAlexItems, articItems, hnItems, redditItems, wikiItems] = options?.skipNetworkInTests
-          ? [[], [], [], [], []]
-          : await Promise.all([
+        const isYoutubeChannel =
+          spaceHandle === 'c/youtube' || queryProfile.primaryTopic === 'youtube_gems';
+        const isMemesChannel =
+          spaceHandle === 'c/memes' || queryProfile.primaryTopic === 'memes_satire';
+        const isRegionalSaxony = /\b(dresden|leipzig|sachsen|saxony|lausitz|erzgebirge|chemnitz|mitteldeutschland)\b/i.test(
+          `${spaceHandle} ${queryProfile.displayTitle} ${queryProfile.keywords.join(' ')}`
+        );
+
+        const preExistingIds = new Set([
+          ...pool.map(i => i.id),
+          ...(options?.existingIds ? [...options.existingIds] : [])
+        ]);
+        const preExistingUrls = new Set(pool.map(i => i.canonicalUrl).filter(Boolean) as string[]);
+
+        // Execute parallel specialist & research lanes
+        let openAlexItems: FeedItem[] = [];
+        let articItems: FeedItem[] = [];
+        let hnItems: FeedItem[] = [];
+        let redditItems: FeedItem[] = [];
+        let wikiItems: FeedItem[] = [];
+        let specialistItems: FeedItem[] = [];
+        let saxonyItems: FeedItem[] = [];
+
+        if (!options?.skipNetworkInTests) {
+          if (isYoutubeChannel) {
+            const [snapshotYt, redditYt] = await Promise.all([
+              this.fetchUnseenFromSnapshots('c/youtube', 'youtube_gems', preExistingIds, preExistingUrls, false),
+              this.fetchYoutubeVideoEssayLane(queryProfile, today)
+            ]);
+            specialistItems = [...redditYt, ...snapshotYt];
+          } else if (isMemesChannel) {
+            const [snapshotMemes, redditMemes] = await Promise.all([
+              this.fetchUnseenFromSnapshots('c/memes', 'memes_satire', preExistingIds, preExistingUrls, true),
+              this.fetchMemesComicsLane(queryProfile, today)
+            ]);
+            specialistItems = [...redditMemes, ...snapshotMemes];
+          } else {
+            const [oa, art, hn, rd, wk, sx] = await Promise.all([
               queryProfile.archetype === 'visual_gallery'
                 ? Promise.resolve([])
                 : OnTheFlyStreamService.searchOpenAlex(
@@ -1066,10 +1476,21 @@ export class SubchannelFlourishService {
                 queryProfile.primaryTopic,
                 spaceHandle,
                 today
-              )
+              ),
+              isRegionalSaxony
+                ? ContinuousLiveNewsService.fetchSaxonyRegionalNews(12)
+                : Promise.resolve([])
             ]);
+            openAlexItems = oa;
+            articItems = art;
+            hnItems = hn;
+            redditItems = rd;
+            wikiItems = wk;
+            saxonyItems = sx;
+          }
+        }
 
-        const communityItems = [...articItems, ...redditItems, ...hnItems];
+        const communityItems = [...specialistItems, ...articItems, ...redditItems, ...hnItems, ...saxonyItems];
         const conceptualAnchors = this.buildConceptualAnchorCards(queryProfile, today);
 
         let llmSynthesizedItems: FeedItem[] = [];
@@ -1084,7 +1505,14 @@ export class SubchannelFlourishService {
           }
         }
 
-        if (creds && hasAiConfiguration(creds) && !options?.skipNetworkInTests && queryProfile.archetype !== 'visual_gallery') {
+        if (
+          creds &&
+          hasAiConfiguration(creds) &&
+          !options?.skipNetworkInTests &&
+          queryProfile.archetype !== 'visual_gallery' &&
+          !isYoutubeChannel &&
+          !isMemesChannel
+        ) {
           options?.onProgress?.(65, `KI-Synthese & Übersetzung für ${spaceHandle}…`);
           try {
             const hivemind = await generateHivemindStream({
@@ -1107,16 +1535,22 @@ export class SubchannelFlourishService {
         }
 
         const rawCombined = [
+          ...specialistItems,
+          ...saxonyItems,
           ...articItems,
           ...llmSynthesizedItems,
           ...openAlexItems,
-          ...communityItems,
+          ...redditItems,
+          ...hnItems,
           ...wikiItems,
           ...conceptualAnchors
         ];
 
         // Pass combined candidates through Lane 4 (LLM synthesis & translation or deterministic sanitization)
-        const lane4Result = await this.synthesizeAndTranslateLane(rawCombined, queryProfile, creds);
+        const lane4Result =
+          isYoutubeChannel || isMemesChannel
+            ? { items: rawCombined, usedAi: false }
+            : await this.synthesizeAndTranslateLane(rawCombined, queryProfile, creds);
         usedAi = usedAi || lane4Result.usedAi;
 
         const existingIds = new Set([
@@ -1136,9 +1570,20 @@ export class SubchannelFlourishService {
               : [queryProfile.primaryTopic, ...(candidate.topics || [])].slice(0, 3)
           });
 
+          // Preserve explicit hqdefault.jpg thumbnails on YouTube gems
+          if (
+            isYoutubeChannel &&
+            candidate.imageUrl &&
+            candidate.imageUrl.includes('i.ytimg.com/vi/') &&
+            candidate.imageUrl.endsWith('/hqdefault.jpg')
+          ) {
+            sanitized.imageUrl = candidate.imageUrl;
+            sanitized.hasAuthenticImage = true;
+          }
+
           if (!satisfiesDefaultCuratedStandard(sanitized)) continue;
           if (
-            queryProfile.archetype === 'visual_gallery' &&
+            (queryProfile.archetype === 'visual_gallery' || isMemesChannel) &&
             (!sanitized.imageUrl || !sanitized.imageUrl.trim())
           ) {
             continue;

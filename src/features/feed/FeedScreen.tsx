@@ -13,12 +13,11 @@ import {
   ActivityIndicator,
   Platform,
   TextInput,
-  Linking,
   Modal,
   Animated
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { TopicTag, FeedItem, TOPIC_SPACE_MAP } from '../../core/domain/types';
+import { TopicTag, FeedItem, TOPIC_SPACE_MAP, UserProfile } from '../../core/domain/types';
 import { appStorage } from '../../core/data/storage';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
@@ -46,9 +45,9 @@ import { seenImpressionsService, SeenImpressionRecord } from '../../core/data/se
 import { OpenWebHarvester } from '../../core/ingestion/openWebHarvester';
 import { loadAiCredentials, hasAiConfiguration } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
+import { openExternalInBrowser } from '../../core/utils/externalBrowser';
 import { SubchannelFlourishService, detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
-import { PullToRefreshIndicator } from '../../ui/components/PullToRefreshIndicator';
 import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
 import {
   holdFeedPresentation,
@@ -60,8 +59,11 @@ import {
 } from '../../core/feed/feedPresentation';
 import {
   HORIZON_BAR_TOP_LOCK_Y,
+  PULL_REFRESH_DEADZONE,
+  PULL_REFRESH_HOLD_MS,
   PULL_REFRESH_THRESHOLD,
   PULL_REFRESH_MAX,
+  PULL_REFRESH_TOP_SETTLE_MS,
   PullToRefreshState,
   evaluateHorizonBarVisibility,
   evaluatePullToRefreshGesture,
@@ -216,6 +218,7 @@ export const FeedScreen: React.FC = () => {
   const lastClampedScrollYRef = React.useRef<number>(0);
   const wasAtTopRef = React.useRef<boolean>(true);
   const reachedTopAtRef = React.useRef<number>(Date.now());
+  const thresholdReachedAtRef = React.useRef<number | null>(null);
   const horizonBarAnim = React.useRef(new Animated.Value(1)).current;
 
   const setHorizonBarVisibility = useCallback((nextVisible: boolean) => {
@@ -765,15 +768,62 @@ export const FeedScreen: React.FC = () => {
     await defaultSpaceRepository.notify();
   }, []);
 
+  // Universal Subchannel Flourishing Engine (Work Package 2)
+  const [isFlourishingChannel, setIsFlourishingChannel] = useState<boolean>(false);
+  const [flourishStageText, setFlourishStageText] = useState<string>('');
+
+  const handleFlourishActiveChannel = useCallback(async (silent = false): Promise<number> => {
+    if (selectedFilter === 'all' || isFlourishingChannel) return 0;
+    const channelObj = subchannels.find(
+      s => s.handle.toLowerCase() === selectedFilter.toLowerCase() || s.primaryTopic === selectedFilter
+    ) || selectedFilter;
+
+    setIsFlourishingChannel(true);
+    if (!silent) {
+      setFlourishStageText('Suche neue Studien, Diskurse & Perspektiven…');
+    }
+    try {
+      const existingIds = new Set(
+        (feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id)
+      );
+      const res = await SubchannelFlourishService.flourishChannel(channelObj, {
+        existingIds,
+        targetCount: 25,
+        onProgress: (_pct, label) => {
+          if (!silent) setFlourishStageText(label);
+        }
+      });
+      if (res.items.length > 0) {
+        feedRepository.addItems(res.items);
+        await recomputeFeed();
+        if (!silent) {
+          showTransientToast(
+            `${res.items.length} neue Fundstücke für ${selectedFilter} kuratiert (${res.mode === 'ai' ? 'KI-Synthese' : 'Primärquellen'})`,
+            3500
+          );
+        }
+      }
+      return res.items.length;
+    } catch {
+      return 0;
+    } finally {
+      setIsFlourishingChannel(false);
+      setFlourishStageText('');
+    }
+  }, [selectedFilter, isFlourishingChannel, subchannels, recomputeFeed, showTransientToast]);
+
   const onRefresh = useCallback(async () => {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
+    thresholdReachedAtRef.current = null;
     setRefreshing(true);
     const refreshingPullState = evaluatePullToRefreshGesture({
       pullDeltaY: 0,
       isRefreshing: true,
       threshold: PULL_REFRESH_THRESHOLD,
-      maxPull: PULL_REFRESH_MAX
+      maxPull: PULL_REFRESH_MAX,
+      deadzone: PULL_REFRESH_DEADZONE,
+      holdMs: PULL_REFRESH_HOLD_MS
     });
     pullStateRef.current = refreshingPullState;
     setPullState(refreshingPullState);
@@ -814,48 +864,85 @@ export const FeedScreen: React.FC = () => {
       setHorizonBarVisibility(true);
       lastClampedScrollYRef.current = 0;
 
-      // 3. Force-refresh public snapshot alongside live feeds
-      await Promise.allSettled([
-        Promise.resolve(
-          (feedRepository as any).hydrateFromPublicSnapshot?.(undefined, { forceRefresh: true })
-        ),
-        refreshLiveFeed()
-      ]);
-      await recomputeFeed();
-      await loadSubchannels();
+      const isChannelRefresh =
+        selectedFilter !== 'all' &&
+        activeFeedOption !== 'live_news' &&
+        activeFeedOption !== 'classics' &&
+        activeFeedOption !== 'history';
 
-      // 4. Refresh seen sets & mode-specific feeds
-      const [updatedSeen, updatedRecords] = await Promise.all([
-        seenImpressionsService.getSeenIds(),
-        seenImpressionsService.getSeenRecordMap()
-      ]);
-      setSeenIds(updatedSeen);
-      setSeenRecordMap(updatedRecords);
-      if (activeFeedOption === 'live_news') {
-        await loadLiveNews(true);
-      } else if (activeFeedOption === 'classics') {
-        setClassicsItems(ContinuousLiveNewsService.getEvergreenClassics());
+      if (isChannelRefresh) {
+        // 3a. Context-aware channel refresh: sync snapshot/reservoir + flourish active channel (no global HN dump)
+        await Promise.allSettled([
+          Promise.resolve(
+            (feedRepository as any).hydrateFromPublicSnapshot?.(undefined, { forceRefresh: true })
+          ),
+          Promise.resolve(
+            feedRepository.hydrateFromReservoir?.()
+          )
+        ]);
+        const addedCount = await handleFlourishActiveChannel(false);
+        await recomputeFeed();
+        await loadSubchannels();
+
+        const [updatedSeen, updatedRecords] = await Promise.all([
+          seenImpressionsService.getSeenIds(),
+          seenImpressionsService.getSeenRecordMap()
+        ]);
+        setSeenIds(updatedSeen);
+        setSeenRecordMap(updatedRecords);
+        scrollToFeedTop(true);
+        if (addedCount === 0) {
+          showTransientToast('✓ Kanal mit frischen Inhalten aktualisiert', 3000);
+        }
+      } else {
+        // 3b. Global feed refresh: force-refresh public snapshot alongside live feeds
+        await Promise.allSettled([
+          Promise.resolve(
+            (feedRepository as any).hydrateFromPublicSnapshot?.(undefined, { forceRefresh: true })
+          ),
+          refreshLiveFeed()
+        ]);
+        await recomputeFeed();
+        await loadSubchannels();
+
+        // 4. Refresh seen sets & mode-specific feeds
+        const [updatedSeen, updatedRecords] = await Promise.all([
+          seenImpressionsService.getSeenIds(),
+          seenImpressionsService.getSeenRecordMap()
+        ]);
+        setSeenIds(updatedSeen);
+        setSeenRecordMap(updatedRecords);
+        if (activeFeedOption === 'live_news') {
+          await loadLiveNews(true);
+        } else if (activeFeedOption === 'classics') {
+          setClassicsItems(ContinuousLiveNewsService.getEvergreenClassics());
+        }
+
+        scrollToFeedTop(true);
+        showTransientToast('✓ Feed mit frischen Inhalten aktualisiert', 3000);
       }
-
-      scrollToFeedTop(true);
-      showTransientToast('✓ Feed mit frischen Inhalten aktualisiert', 3000);
     } finally {
       refreshingRef.current = false;
+      thresholdReachedAtRef.current = null;
       setRefreshing(false);
       const idlePullState = evaluatePullToRefreshGesture({
         pullDeltaY: 0,
         isRefreshing: false,
         threshold: PULL_REFRESH_THRESHOLD,
-        maxPull: PULL_REFRESH_MAX
+        maxPull: PULL_REFRESH_MAX,
+        deadzone: PULL_REFRESH_DEADZONE,
+        holdMs: PULL_REFRESH_HOLD_MS
       });
       pullStateRef.current = idlePullState;
       setPullState(idlePullState);
     }
   }, [
     activeFeedOption,
+    selectedFilter,
     recordCardAppearances,
     scheduleCloudSyncPush,
     setHorizonBarVisibility,
+    handleFlourishActiveChannel,
     refreshLiveFeed,
     recomputeFeed,
     loadSubchannels,
@@ -972,6 +1059,52 @@ export const FeedScreen: React.FC = () => {
 
   const dismissedSet = useMemo(() => new Set(dismissedItemIds), [dismissedItemIds]);
 
+  const latestProfileRef = React.useRef<UserProfile>(profile);
+  latestProfileRef.current = profile;
+
+  // Decouple Feed Ranking Memoization from visual preferences (theme, palette, fontSize, externalBrowser)
+  const rankingProfile = useMemo<UserProfile>(() => {
+    const base = latestProfileRef.current;
+    return {
+      ...base,
+      explicitInterests: profile.explicitInterests,
+      derivedWeights: profile.derivedWeights,
+      explicitGoals: profile.explicitGoals,
+      editorialTargets: profile.editorialTargets,
+      feedbackMemory: profile.feedbackMemory,
+      feedMixRatio: profile.feedMixRatio,
+      behavioralSignals: profile.behavioralSignals,
+      readingPreferences: {
+        ...base.readingPreferences,
+        preferredDuration: profile.readingPreferences.preferredDuration,
+        languageMix: profile.readingPreferences.languageMix
+      },
+      editionPreferences: base.editionPreferences
+        ? {
+            ...base.editionPreferences,
+            weatherCity: profile.editionPreferences?.weatherCity ?? base.editionPreferences.weatherCity
+          }
+        : base.editionPreferences,
+      language: profile.language,
+      region: profile.region,
+      mutedSources: profile.mutedSources
+    };
+  }, [
+    profile.explicitInterests,
+    profile.derivedWeights,
+    profile.explicitGoals,
+    profile.feedbackMemory,
+    profile.feedMixRatio,
+    profile.behavioralSignals,
+    profile.readingPreferences.preferredDuration,
+    profile.readingPreferences.languageMix,
+    profile.editionPreferences?.weatherCity,
+    profile.editorialTargets,
+    profile.language,
+    profile.region,
+    profile.mutedSources
+  ]);
+
   const latestScoredLiveItems = useMemo(() => {
     const currentInteractions = interactionsRef.current;
     let items = liveNewsItems.filter(item => !dismissedSet.has(item.id));
@@ -987,15 +1120,15 @@ export const FeedScreen: React.FC = () => {
     if (liveNewsWindowMode === 'chronological') {
       // In chronological mode, strictly preserve publication timestamp order without user interest re-sorting
       return items.map(item => {
-        const scored = scoreFeedItem(item, profile, currentInteractions);
+        const scored = scoreFeedItem(item, rankingProfile, currentInteractions);
         return {
           ...scored,
           score: 1.0
         };
       });
     }
-    return items.map(item => scoreFeedItem(item, profile, currentInteractions));
-  }, [liveNewsItems, dismissedSet, newsSearchQuery, liveNewsWindowMode, profile]);
+    return items.map(item => scoreFeedItem(item, rankingProfile, currentInteractions));
+  }, [liveNewsItems, dismissedSet, newsSearchQuery, liveNewsWindowMode, rankingProfile]);
   const scoredLiveItems = useReadingStableFeed(latestScoredLiveItems, isScrolledDown, `${presentationScope}:${liveNewsCategory}:${liveNewsWindowMode}:${newsSearchQuery}`);
 
   const scoredClassicsItems = useMemo(() => {
@@ -1003,17 +1136,17 @@ export const FeedScreen: React.FC = () => {
     const scored = classicsItems
       .filter(item => !dismissedSet.has(item.id))
       .filter(matchesSelectedSpace)
-      .map(item => scoreFeedItem(item, profile, currentInteractions));
+      .map(item => scoreFeedItem(item, rankingProfile, currentInteractions));
     return filterByQuery(scored);
-  }, [classicsItems, dismissedSet, matchesSelectedSpace, profile, filterByQuery]);
+  }, [classicsItems, dismissedSet, matchesSelectedSpace, rankingProfile, filterByQuery]);
 
   // OpenWeb harvested candidates scored once on ingest/load (decoupled from filter/sort switches and interactions)
   const scoredOpenWebItems = useMemo(() => {
     const currentInteractions = interactionsRef.current;
     return openWebItems
       .filter(item => !dismissedSet.has(item.id))
-      .map(item => scoreFeedItem(item, profile, currentInteractions));
-  }, [openWebItems, dismissedSet, profile]);
+      .map(item => scoreFeedItem(item, rankingProfile, currentInteractions));
+  }, [openWebItems, dismissedSet, rankingProfile]);
 
   // Pre-sanitized, pre-scored, and space-indexed master pool (runs ONLY when raw pools change, NEVER on space/sort switch or upvote)
   const preSanitizedMasterPool = useMemo(() => {
@@ -1047,7 +1180,7 @@ export const FeedScreen: React.FC = () => {
       if (normTitle.length >= 12) seenTitle.add(normTitle);
 
       const cached = getCachedSanitizedEntry(raw);
-      const scoredItem = scoreFeedItem(cached.item, profile, currentInteractions);
+      const scoredItem = scoreFeedItem(cached.item, rankingProfile, currentInteractions);
       const entry = {
         scoredItem,
         strictStandardOk: cached.strictStandardOk,
@@ -1066,7 +1199,7 @@ export const FeedScreen: React.FC = () => {
     }
 
     return { allEntries, bySpaceHandle };
-  }, [dailyEdition, scoredOpenWebItems, discoveryItems, scoredLiveItems, dismissedSet, profile, getCachedSanitizedEntry]);
+  }, [dailyEdition, scoredOpenWebItems, discoveryItems, scoredLiveItems, dismissedSet, rankingProfile, getCachedSanitizedEntry]);
 
   // Combined endless stream with O(1) Space Lookup, Always-On "Frisch kuratiert" Quality Gate & Sliding-Window Bloom-Ranking
   const latestInfiniteInterleavedBase = useMemo(() => {
@@ -1140,13 +1273,13 @@ export const FeedScreen: React.FC = () => {
       return hivemindLearningService.interleaveAmbientDripCards(
         combinedSorted,
         hivemindTracks,
-        it => scoreFeedItem(it, profile, currentInteractions),
+        it => scoreFeedItem(it, rankingProfile, currentInteractions),
         5
       );
     }
 
     return combinedSorted;
-  }, [preSanitizedMasterPool, selectedSpaceContext, matchesSelectedSpace, filterByQuery, profile, selectedFilter, searchQuery, activeHivemindTrackId, sortMode, pinnedIds, seenIds, seenRecordMap, hivemindTracks]);
+  }, [preSanitizedMasterPool, selectedSpaceContext, matchesSelectedSpace, filterByQuery, rankingProfile, selectedFilter, searchQuery, activeHivemindTrackId, sortMode, pinnedIds, seenIds, seenRecordMap, hivemindTracks]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
   // Viewport Top-Lock (Zero-Flicker Boot): Lock the visible top 12 cards immediately on frame 1
@@ -1281,9 +1414,9 @@ export const FeedScreen: React.FC = () => {
       .filter(item => !freshIds.has(item.id) && !dismissedSet.has(item.id) && !seenIds.has(item.id))
       .map(item => getCachedSanitizedEntry(item))
       .filter(entry => entry.strictStandardOk && matchesSelectedSpace(entry.item))
-      .map(entry => scoreFeedItem(entry.item, profile, currentInteractions));
+      .map(entry => scoreFeedItem(entry.item, rankingProfile, currentInteractions));
     return filterByQuery(scored);
-  }, [sortMode, lockedInfiniteBase, dismissedSet, seenIds, profile, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery]);
+  }, [sortMode, lockedInfiniteBase, dismissedSet, seenIds, rankingProfile, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery]);
 
   const scoredRevealedItems = useMemo(() => {
     if (revealedNewItems.length === 0) return [];
@@ -1302,9 +1435,9 @@ export const FeedScreen: React.FC = () => {
       })
       .map(item => getCachedSanitizedEntry(item))
       .filter(entry => entry.strictStandardOk && matchesSelectedSpace(entry.item))
-      .map(entry => scoreFeedItem(entry.item, profile, currentInteractions));
+      .map(entry => scoreFeedItem(entry.item, rankingProfile, currentInteractions));
     return filterByQuery(scored);
-  }, [revealedNewItems, dismissedSet, sortMode, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery, profile]);
+  }, [revealedNewItems, dismissedSet, sortMode, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery, rankingProfile]);
 
   const renderedInfiniteFreshItems = useMemo(() => {
     if (lastScopeForFreezeRef.current !== presentationScope) {
@@ -1354,15 +1487,15 @@ export const FeedScreen: React.FC = () => {
     if (curatedSelection && curatedSelection.items.length > 0) {
       return curatedSelection.items
         .filter(item => !dismissedSet.has(item.id))
-        .map(item => scoreFeedItem(item, profile, currentInteractions));
+        .map(item => scoreFeedItem(item, rankingProfile, currentInteractions));
     }
     if (activeFeedOption === 'live_news') return scoredLiveItems;
     if (activeFeedOption === 'classics') return scoredClassicsItems;
     if (activeFeedOption === 'history') {
-      return historyItems.map(h => scoreFeedItem(h.item, profile, currentInteractions));
+      return historyItems.map(h => scoreFeedItem(h.item, rankingProfile, currentInteractions));
     }
     return renderedInfiniteItems;
-  }, [curatedSelection, dismissedSet, activeFeedOption, renderedInfiniteItems, scoredLiveItems, scoredClassicsItems, historyItems, profile]);
+  }, [curatedSelection, dismissedSet, activeFeedOption, renderedInfiniteItems, scoredLiveItems, scoredClassicsItems, historyItems, rankingProfile]);
   currentFeedItemsRef.current = currentFeedItems;
 
   // 1-Tap "🚫 Weniger davon" state & Undo handler
@@ -1389,47 +1522,6 @@ export const FeedScreen: React.FC = () => {
     setLastDismissedItem(null);
     await undoDismissItem(idToRestore);
   }, [lastDismissedItem, undoDismissItem]);
-
-  // Universal Subchannel Flourishing Engine (Work Package 2)
-  const [isFlourishingChannel, setIsFlourishingChannel] = useState<boolean>(false);
-  const [flourishStageText, setFlourishStageText] = useState<string>('');
-
-  const handleFlourishActiveChannel = useCallback(async (silent = false) => {
-    if (selectedFilter === 'all' || isFlourishingChannel) return;
-    const channelObj = subchannels.find(
-      s => s.handle.toLowerCase() === selectedFilter.toLowerCase() || s.primaryTopic === selectedFilter
-    ) || selectedFilter;
-
-    setIsFlourishingChannel(true);
-    if (!silent) {
-      setFlourishStageText('Suche neue Studien, Diskurse & Perspektiven…');
-    }
-    try {
-      const existingIds = new Set(
-        (feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id)
-      );
-      const res = await SubchannelFlourishService.flourishChannel(channelObj, {
-        existingIds,
-        targetCount: 25,
-        onProgress: (_pct, label) => {
-          if (!silent) setFlourishStageText(label);
-        }
-      });
-      if (res.items.length > 0) {
-        feedRepository.addItems(res.items);
-        await recomputeFeed();
-        if (!silent) {
-          setSimToast(`⚡ ${res.items.length} neue Fundstücke für ${selectedFilter} kuratiert (${res.mode === 'ai' ? 'KI-Synthese' : 'Primärquellen'})`);
-          setTimeout(() => setSimToast(null), 3500);
-        }
-      }
-    } catch {
-      // Non-fatal
-    } finally {
-      setIsFlourishingChannel(false);
-      setFlourishStageText('');
-    }
-  }, [selectedFilter, isFlourishingChannel, subchannels, recomputeFeed]);
 
   // Automatic subchannel flourishing during reading disabled (Task 2: manual on-demand flourish only)
   // to prevent unprompted background network requests and UI reordering.
@@ -1874,8 +1966,17 @@ export const FeedScreen: React.FC = () => {
     let lockedAxis: 'none' | 'vertical' | 'horizontal' = 'none';
     let wheelAccum = 0;
     let wheelDecayTimer: ReturnType<typeof setTimeout> | null = null;
+    let holdTimer: ReturnType<typeof setTimeout> | null = null;
     let rafId: number | null = null;
     let pendingPullDelta: number | null = null;
+    let lastPullDelta = 0;
+
+    const clearHoldTimer = () => {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+    };
 
     const isAtFeedTop = (): boolean => {
       if (scrollOffsetYRef.current > 2) return false;
@@ -1887,12 +1988,56 @@ export const FeedScreen: React.FC = () => {
     };
 
     const applyPullDeltaImmediate = (deltaY: number) => {
-      const next = evaluatePullToRefreshGesture({
+      lastPullDelta = deltaY;
+      const preview = evaluatePullToRefreshGesture({
         pullDeltaY: deltaY,
         isRefreshing: refreshingRef.current,
         threshold: PULL_REFRESH_THRESHOLD,
-        maxPull: PULL_REFRESH_MAX
+        maxPull: PULL_REFRESH_MAX,
+        deadzone: PULL_REFRESH_DEADZONE,
+        holdMs: PULL_REFRESH_HOLD_MS
       });
+
+      if (refreshingRef.current) {
+        thresholdReachedAtRef.current = null;
+        clearHoldTimer();
+        pullStateRef.current = preview;
+        setPullState(preview);
+        return;
+      }
+
+      let next: PullToRefreshState;
+      if (preview.pullDistance >= PULL_REFRESH_THRESHOLD) {
+        const now = Date.now();
+        if (thresholdReachedAtRef.current === null) {
+          thresholdReachedAtRef.current = now;
+        }
+        const holdElapsedMs = now - thresholdReachedAtRef.current;
+        next = evaluatePullToRefreshGesture({
+          pullDeltaY: deltaY,
+          isRefreshing: false,
+          holdElapsedMs,
+          threshold: PULL_REFRESH_THRESHOLD,
+          maxPull: PULL_REFRESH_MAX,
+          deadzone: PULL_REFRESH_DEADZONE,
+          holdMs: PULL_REFRESH_HOLD_MS
+        });
+
+        if (next.phase === 'holding' && holdTimer === null) {
+          const remainingMs = Math.max(16, PULL_REFRESH_HOLD_MS - holdElapsedMs);
+          holdTimer = setTimeout(() => {
+            holdTimer = null;
+            if (!refreshingRef.current && thresholdReachedAtRef.current !== null) {
+              applyPullDeltaImmediate(lastPullDelta);
+            }
+          }, remainingMs);
+        }
+      } else {
+        thresholdReachedAtRef.current = null;
+        clearHoldTimer();
+        next = preview;
+      }
+
       const prev = pullStateRef.current;
       if (
         prev.phase !== next.phase ||
@@ -1923,7 +2068,10 @@ export const FeedScreen: React.FC = () => {
         rafId = null;
       }
       pendingPullDelta = null;
+      lastPullDelta = 0;
       wheelAccum = 0;
+      thresholdReachedAtRef.current = null;
+      clearHoldTimer();
       if (wheelDecayTimer) {
         clearTimeout(wheelDecayTimer);
         wheelDecayTimer = null;
@@ -1935,7 +2083,7 @@ export const FeedScreen: React.FC = () => {
 
     const handleTouchStart = (e: TouchEvent) => {
       if (refreshingRef.current || e.touches.length !== 1) return;
-      if (!isAtFeedTop()) {
+      if (!isAtFeedTop() || Date.now() - reachedTopAtRef.current < PULL_REFRESH_TOP_SETTLE_MS) {
         touchActive = false;
         return;
       }
@@ -1997,7 +2145,13 @@ export const FeedScreen: React.FC = () => {
         }
         applyPullDeltaImmediate(latestDelta);
       }
-      if (pullStateRef.current.readyToRelease && !refreshingRef.current) {
+      if (
+        pullStateRef.current.phase === 'ready' &&
+        pullStateRef.current.readyToRelease &&
+        !refreshingRef.current
+      ) {
+        thresholdReachedAtRef.current = null;
+        clearHoldTimer();
         void onRefreshRef.current();
       } else {
         resetPull();
@@ -2007,7 +2161,7 @@ export const FeedScreen: React.FC = () => {
     const handleWheel = (e: WheelEvent) => {
       if (refreshingRef.current) return;
       if (!isAtFeedTop()) {
-        if (wheelAccum > 0) {
+        if (wheelAccum > 0 || thresholdReachedAtRef.current !== null) {
           resetPull();
         }
         return;
@@ -2020,20 +2174,28 @@ export const FeedScreen: React.FC = () => {
         return;
       }
 
-      if (e.deltaY < -12 && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-        if (Date.now() - reachedTopAtRef.current < 260) {
+      if (e.deltaY < -18 && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        if (Date.now() - reachedTopAtRef.current < 650) {
           return;
         }
-        wheelAccum = Math.min(240, wheelAccum + Math.min(46, Math.abs(e.deltaY) * 0.85));
+        const maxWheelPull = PULL_REFRESH_DEADZONE + Math.ceil(PULL_REFRESH_MAX / 0.32) + 8;
+        wheelAccum = Math.min(maxWheelPull, wheelAccum + Math.min(34, Math.abs(e.deltaY) * 0.42));
         applyPullDeltaImmediate(wheelAccum);
 
         if (wheelDecayTimer) {
           clearTimeout(wheelDecayTimer);
         }
 
-        if (pullStateRef.current.readyToRelease) {
+        if (
+          thresholdReachedAtRef.current !== null &&
+          Date.now() - thresholdReachedAtRef.current >= PULL_REFRESH_HOLD_MS &&
+          pullStateRef.current.phase === 'ready' &&
+          pullStateRef.current.readyToRelease
+        ) {
           wheelAccum = 0;
           wheelDecayTimer = null;
+          thresholdReachedAtRef.current = null;
+          clearHoldTimer();
           void onRefreshRef.current();
           return;
         }
@@ -2041,6 +2203,9 @@ export const FeedScreen: React.FC = () => {
         wheelDecayTimer = setTimeout(() => {
           wheelDecayTimer = null;
           wheelAccum = 0;
+          lastPullDelta = 0;
+          thresholdReachedAtRef.current = null;
+          clearHoldTimer();
           if (!refreshingRef.current) {
             applyPullDeltaImmediate(0);
           }
@@ -2061,6 +2226,7 @@ export const FeedScreen: React.FC = () => {
       if (wheelDecayTimer) {
         clearTimeout(wheelDecayTimer);
       }
+      clearHoldTimer();
       node.removeEventListener('touchstart', handleTouchStart);
       node.removeEventListener('touchmove', handleTouchMove);
       node.removeEventListener('touchend', handleTouchEndOrCancel);
@@ -2471,7 +2637,7 @@ export const FeedScreen: React.FC = () => {
         const seenDate = new Date(record.lastSeenAt || record.firstSeenAt);
         const formattedDate = seenDate.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
         const formattedTime = seenDate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-        const scoredItem = scoreFeedItem(item, profile, interactions);
+        const scoredItem = scoreFeedItem(item, rankingProfile, interactions);
         return {
           kind: 'card',
           key: `${item.id}-hist-${index}`,
@@ -2485,7 +2651,7 @@ export const FeedScreen: React.FC = () => {
 
     if (activeHivemindTrack) {
       return activeHivemindTrack.items.map((rawItem, index) => {
-        const item = scoreFeedItem(rawItem, profile, interactions);
+        const item = scoreFeedItem(rawItem, rankingProfile, interactions);
         const isDone = activeHivemindTrack.completedItemIds.includes(item.id);
         return {
           kind: 'card',
@@ -2505,7 +2671,7 @@ export const FeedScreen: React.FC = () => {
       return curatedSelection.items.map((rawItem, index) => ({
         kind: 'card',
         key: rawItem.id,
-        item: scoreFeedItem(rawItem, profile, interactionsRef.current),
+        item: scoreFeedItem(rawItem, rankingProfile, interactionsRef.current),
         isHero: index === 0,
         isFocused: index === activeCardIndex,
         allowDismiss: true
@@ -2560,7 +2726,7 @@ export const FeedScreen: React.FC = () => {
     selectedFilter,
     searchQuery,
     activeCardIndex,
-    profile,
+    rankingProfile,
     interactions
   ]);
 
@@ -2999,18 +3165,118 @@ export const FeedScreen: React.FC = () => {
           )}
 
           {/* Interactive Pull-to-Refresh Indicator (Touch + Trackpad Overscroll + Clickable Pill) */}
-          {pullState.phase !== 'idle' && (
-            <View style={{ marginTop: isEndlessStreamMode ? stickyHorizonBarHeight + 2 : 6 }}>
-              <PullToRefreshIndicator
-                pullDistance={pullState.pullDistance}
-                progress={pullState.progress}
-                phase={pullState.phase}
-                onTriggerRefresh={() => void onRefresh()}
-                colors={colors}
-                isDark={isDark}
-              />
-            </View>
-          )}
+          {pullState.phase !== 'idle' && (() => {
+            const isReady = pullState.phase === 'ready';
+            const isHolding = pullState.phase === 'holding';
+            const isRefreshingPhase = pullState.phase === 'refreshing';
+            const containerHeight = isRefreshingPhase
+              ? 60
+              : Math.max(52, Math.min(PULL_REFRESH_MAX + 8, Math.round(pullState.pullDistance + 12)));
+            const rotationDeg = `${Math.round(Math.max(0, Math.min(1, pullState.progress)) * 180)}deg`;
+            const pillOpacity =
+              isRefreshingPhase || isReady || isHolding
+                ? 1
+                : Math.min(1, 0.45 + pullState.progress * 0.55);
+            const pullLabel = isRefreshingPhase
+              ? selectedFilter !== 'all'
+                ? 'Kanal wird aktualisiert…'
+                : 'Lade frische Inhalte…'
+              : isReady
+              ? 'Loslassen zum Aktualisieren'
+              : isHolding
+              ? 'Kurz halten…'
+              : 'Weiter ziehen zum Aktualisieren…';
+            const pillBackground = isReady
+              ? colors.accent
+              : isRefreshingPhase || isHolding
+              ? colors.accentSubtle
+              : colors.surface;
+            const pillBorderColor =
+              isReady || isHolding || isRefreshingPhase ? colors.accent : colors.border;
+            const textColor = isReady
+              ? '#FFFFFF'
+              : isRefreshingPhase || isHolding
+              ? colors.accent
+              : colors.textPrimary;
+            const iconColor = isReady ? '#FFFFFF' : colors.accent;
+
+            return (
+              <View
+                style={{
+                  marginTop: isEndlessStreamMode ? stickyHorizonBarHeight + 2 : 6,
+                  width: '100%',
+                  height: containerHeight,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden',
+                  paddingHorizontal: spacing.pageHorizontal
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => void onRefresh()}
+                  disabled={isRefreshingPhase}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={pullLabel}
+                  accessibilityState={{ busy: isRefreshingPhase }}
+                  style={{
+                    opacity: pillOpacity,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minHeight: 44,
+                    paddingHorizontal: 16,
+                    paddingVertical: 8,
+                    borderRadius: radius.pill,
+                    borderWidth: 1,
+                    gap: 8,
+                    backgroundColor: pillBackground,
+                    borderColor: pillBorderColor,
+                    shadowColor: isDark ? '#000000' : colors.accent,
+                    shadowOffset: { width: 0, height: 3 },
+                    shadowRadius: 8,
+                    shadowOpacity: isReady ? 0.24 : 0.08,
+                    elevation: 3
+                  }}
+                >
+                  {isRefreshingPhase ? (
+                    <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 2 }} />
+                  ) : (
+                    <View
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: 13,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: isReady ? 'rgba(255, 255, 255, 0.2)' : colors.accentSubtle,
+                        transform: [{ rotate: rotationDeg }]
+                      }}
+                    >
+                      <Ionicons
+                        name={isHolding ? 'time-outline' : 'refresh'}
+                        size={16}
+                        color={iconColor}
+                      />
+                    </View>
+                  )}
+                  <Text
+                    accessibilityLiveRegion="polite"
+                    numberOfLines={1}
+                    style={{
+                      fontFamily: typography.fontFamilies.sans,
+                      fontSize: typography.sizes.caption + 1,
+                      fontWeight: '700',
+                      letterSpacing: 0.1,
+                      color: textColor
+                    }}
+                  >
+                    {pullLabel}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })()}
 
           <FlatList
             ref={flatListRef}
@@ -3108,17 +3374,17 @@ export const FeedScreen: React.FC = () => {
                       }
                     ]}
                     accessibilityRole="button"
-                    accessibilityLabel="Channel mit neuen Fundstücken anreichern"
+                    accessibilityLabel="Kanal aktualisieren"
                   >
                     {isFlourishingChannel ? (
                       <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 6 }} />
                     ) : (
-                      <Text style={{ fontSize: 12, marginRight: 4 }}>⚡</Text>
+                      <Ionicons name="refresh-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
                     )}
                     <Text style={[styles.activeFilterBannerResetText, { color: colors.accent, fontWeight: '700' }]}>
                       {isFlourishingChannel
                         ? (flourishStageText || 'Recherchiere…')
-                        : 'Channel mit neuen Fundstücken anreichern'}
+                        : 'Kanal aktualisieren'}
                     </Text>
                   </TouchableOpacity>
 
@@ -4039,7 +4305,7 @@ export const FeedScreen: React.FC = () => {
             onOpenArticle={(urlOrId) => {
               setShowEvolutionModal(false);
               if (urlOrId.startsWith('http')) {
-                void Linking.openURL(urlOrId).catch(() => {});
+                openExternalInBrowser(urlOrId);
               } else {
                 void openArticle(urlOrId);
               }

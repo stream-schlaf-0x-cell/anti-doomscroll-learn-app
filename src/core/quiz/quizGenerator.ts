@@ -1,5 +1,11 @@
 import { FeedItem, FeedQuizQuestion, FeedQuizQuestionSchema } from '../domain/types';
-import { AiCredentials, callAiModel, loadAiCredentials } from '../ai/atmenAiClient';
+import {
+  AiCredentials,
+  callAiModel,
+  extractJsonFromAiResponse,
+  hasAiConfiguration,
+  loadAiCredentials
+} from '../ai/atmenAiClient';
 import {
   EnrichmentUsageLedger,
   defaultUsageLedger,
@@ -476,7 +482,7 @@ export async function generateQuizWithAi(
     }
   }
 
-  if (!creds?.apiKey?.trim()) {
+  if (!creds || !hasAiConfiguration(creds)) {
     return items.map(generateQuizForArticle);
   }
 
@@ -500,7 +506,8 @@ export async function generateQuizWithAi(
   }
 
   const budgetCeilingEur = getEffectiveBudgetCeilingEur(Boolean(creds.apiKey?.trim()));
-  const canSpend = await ledger.canSpend(0.002, undefined, budgetCeilingEur);
+  const isPersonalByok = Boolean(creds.apiKey?.trim() && creds.persistApiKey === true);
+  const canSpend = isPersonalByok || (await ledger.canSpend(0.002, undefined, budgetCeilingEur));
   if (!canSpend) {
     return items.map(generateQuizForArticle);
   }
@@ -541,18 +548,18 @@ Antworte AUSSCHLIESSLICH als valides JSON-Array von Objekten:
     const response = await callAiModel(prompt, {
       systemInstruction,
       jsonMode: true,
-      timeoutMs: 28_000,
+      timeoutMs: 25_000,
       credentials: creds,
       ledger,
       itemId: `quiz-batch-${Date.now()}`
     });
 
-    const cleanedJson = response.text
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/, '')
-      .trim();
-    const parsed = JSON.parse(cleanedJson);
+    const rawParsed = extractJsonFromAiResponse<unknown>(response.text);
+    const parsed = Array.isArray(rawParsed)
+      ? rawParsed
+      : (rawParsed && typeof rawParsed === 'object' && Array.isArray((rawParsed as { questions?: unknown[] }).questions))
+      ? (rawParsed as { questions: unknown[] }).questions
+      : null;
     if (Array.isArray(parsed) && parsed.length > 0) {
       const validated: FeedQuizQuestion[] = [];
       for (const rawQ of parsed) {

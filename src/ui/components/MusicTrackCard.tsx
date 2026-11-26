@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { MusicTrackItem, MusicRecommendationService } from '../../core/music/musicRecommendationService';
 import { useApp } from '../../core/context/AppContext';
+import { openExternalInBrowser } from '../../core/utils/externalBrowser';
 import { radius, spacing } from '../theme';
 
 interface MusicTrackCardProps {
@@ -43,19 +44,11 @@ export const MusicTrackCard: React.FC<MusicTrackCardProps> = ({ track }) => {
   };
 
   const openAppleMusic = () => {
-    if (typeof window !== 'undefined' && window.open) {
-      window.open(track.appleMusicUrl, '_blank', 'noopener,noreferrer');
-    } else {
-      Linking.openURL(track.appleMusicUrl);
-    }
+    openExternalInBrowser(track.appleMusicUrl);
   };
 
   const openSpotify = () => {
-    if (typeof window !== 'undefined' && window.open) {
-      window.open(track.spotifyUrl, '_blank', 'noopener,noreferrer');
-    } else {
-      Linking.openURL(track.spotifyUrl);
-    }
+    openExternalInBrowser(track.spotifyUrl);
   };
 
   return (

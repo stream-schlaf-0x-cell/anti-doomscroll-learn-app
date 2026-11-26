@@ -26,6 +26,7 @@ import {
   findGeminiModel,
   isProOrReasoningModelId,
   isGeminiCodenameAlias,
+  isLegacyDefaultFlashModelId,
   mapGeminiModelIdToAvailable,
   resolveEffectiveGoogleApiModelId,
   clearResolvedGeminiModelCache
@@ -34,6 +35,8 @@ import {
 export * from './geminiModelRegistry';
 
 export const AI_CREDENTIALS_STORAGE_KEY = '@atem:ai_credentials:v1';
+export const SELECTED_MODEL_ID_STORAGE_KEY = '@atem:selected_model_id:v1';
+export const HYDROGEN_DEFAULT_MIGRATED_KEY = '@atem:hydrogen_default_migrated:v1';
 
 export type AiProvider = 'gemini' | 'openrouter';
 
@@ -205,10 +208,18 @@ export async function loadAiCredentials(storage: AtemStorage = appStorage): Prom
     ? await readFallbackProviderKey(provider)
     : '';
   const resolvedKey = persistedKey || sessionApiKeys.get(storage) || directKey || '';
+  const rawModel = typeof parsed.model === 'string' && parsed.model
+    ? parsed.model
+    : (provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL);
+  const migratedFlag = await storage.getItem(HYDROGEN_DEFAULT_MIGRATED_KEY);
+  const shouldMigrateLegacy = migratedFlag !== '1' && isLegacyDefaultFlashModelId(rawModel);
+  const resolvedModel = shouldMigrateLegacy
+    ? (provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL)
+    : rawModel;
   const credentials: AiCredentials = {
     provider,
     apiKey: resolvedKey,
-    model: typeof parsed.model === 'string' && parsed.model ? parsed.model : (provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL),
+    model: resolvedModel,
     // Preserve invalid legacy configuration so calls fail closed until the user corrects it.
     proxyUrl: typeof parsed.proxyUrl === 'string' ? parsed.proxyUrl : undefined,
     persistApiKey: parsed.persistApiKey === true
@@ -217,6 +228,15 @@ export async function loadAiCredentials(storage: AtemStorage = appStorage): Prom
     // Migrate legacy plaintext keys without making them unusable during this session.
     sessionApiKeys.set(storage, persistedKey);
     await storage.setItem(AI_CREDENTIALS_STORAGE_KEY, JSON.stringify({ ...credentials, apiKey: '' }));
+  } else if (shouldMigrateLegacy) {
+    await storage.setItem(
+      AI_CREDENTIALS_STORAGE_KEY,
+      JSON.stringify({ ...credentials, apiKey: credentials.persistApiKey ? credentials.apiKey : '' })
+    );
+  }
+  if (shouldMigrateLegacy) {
+    await storage.setItem(SELECTED_MODEL_ID_STORAGE_KEY, resolvedModel);
+    await storage.setItem(HYDROGEN_DEFAULT_MIGRATED_KEY, '1');
   }
   return credentials;
 }
@@ -244,6 +264,11 @@ export function notifyAiCredentialsChange(creds: AiCredentials): void {
 export async function saveAiCredentials(credentials: AiCredentials, storage: AtemStorage = appStorage): Promise<void> {
   const normalized = normalizeCredentials(credentials);
   await storage.setItem(AI_CREDENTIALS_STORAGE_KEY, JSON.stringify({ ...normalized, apiKey: normalized.persistApiKey ? normalized.apiKey : '' }));
+  await storage.setItem(
+    SELECTED_MODEL_ID_STORAGE_KEY,
+    normalized.model || (normalized.provider === 'openrouter' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL)
+  );
+  await storage.setItem(HYDROGEN_DEFAULT_MIGRATED_KEY, '1');
   if (normalized.apiKey) sessionApiKeys.set(storage, normalized.apiKey);
   else sessionApiKeys.delete(storage);
   notifyAiCredentialsChange(normalized);
@@ -271,10 +296,40 @@ export async function getPreferredProvider(storage: AtemStorage = appStorage): P
 }
 
 export async function getSelectedModelId(storage: AtemStorage = appStorage): Promise<string> {
-  const direct = await storage.getItem('@atem:selected_model_id:v1');
-  if (direct && direct.trim()) return direct.trim();
+  const direct = await storage.getItem(SELECTED_MODEL_ID_STORAGE_KEY);
+  if (direct && direct.trim()) {
+    const trimmed = direct.trim();
+    const migratedFlag = await storage.getItem(HYDROGEN_DEFAULT_MIGRATED_KEY);
+    if (migratedFlag !== '1' && isLegacyDefaultFlashModelId(trimmed)) {
+      const upgraded = trimmed === 'google/gemini-3.8-flash' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL;
+      // Ensure stored credentials (if any) are also migrated before setting the one-time flag
+      await loadAiCredentials(storage).catch(() => undefined);
+      await storage.setItem(SELECTED_MODEL_ID_STORAGE_KEY, upgraded);
+      await storage.setItem(HYDROGEN_DEFAULT_MIGRATED_KEY, '1');
+      return upgraded;
+    }
+    return trimmed;
+  }
   const creds = await loadAiCredentials(storage);
   return creds.model || DEFAULT_GEMINI_MODEL;
+}
+
+export async function setSelectedModelId(modelId: string, storage: AtemStorage = appStorage): Promise<void> {
+  const trimmed = (modelId || '').trim() || DEFAULT_GEMINI_MODEL;
+  await storage.setItem(SELECTED_MODEL_ID_STORAGE_KEY, trimmed);
+  await storage.setItem(HYDROGEN_DEFAULT_MIGRATED_KEY, '1');
+  try {
+    const raw = await storage.getItem(AI_CREDENTIALS_STORAGE_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const updated = { ...(parsed as Record<string, unknown>), model: trimmed };
+        await storage.setItem(AI_CREDENTIALS_STORAGE_KEY, JSON.stringify(updated));
+      }
+    }
+  } catch {
+    // Non-fatal if credentials blob is absent or malformed
+  }
 }
 
 export const atmenAiClient = {
@@ -284,6 +339,7 @@ export const atmenAiClient = {
   getOpenRouterApiKey,
   getPreferredProvider,
   getSelectedModelId,
+  setSelectedModelId,
   setApiKey: async (key: string, provider: 'gemini' | 'openrouter' = 'gemini', storage: AtemStorage = appStorage) => {
     const creds = await loadAiCredentials(storage);
     const trimmed = key.trim();
@@ -384,6 +440,94 @@ const groundingMetadataByParsedResult = new WeakMap<
   { groundingChunks: AiGroundingChunk[]; webSearchQueries: string[] }
 >();
 
+function tryParseFirstBalancedJson(text: string): { ok: true; value: unknown } | { ok: false } {
+  for (let start = 0; start < text.length; start++) {
+    const ch = text[start];
+    if (ch !== '{' && ch !== '[') continue;
+    const open = ch;
+    const close = ch === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      if (inString) {
+        if (c === '\\') {
+          escapeNext = true;
+        } else if (c === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (c === '"') {
+        inString = true;
+        continue;
+      }
+      if (c === open) {
+        depth++;
+      } else if (c === close) {
+        depth--;
+        if (depth === 0) {
+          const candidate = text.slice(start, i + 1);
+          try {
+            return { ok: true, value: JSON.parse(candidate) };
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+  }
+  return { ok: false };
+}
+
+/**
+ * Shared hardened JSON extractor for all AI modules:
+ * strips BOM, markdown ```json ... ``` code fences, and leading/trailing prose,
+ * falling back to string-aware balanced {...} / [...] extraction.
+ */
+export function extractJsonFromAiResponse<T = unknown>(rawText: string): T {
+  if (typeof rawText !== 'string') {
+    throw new SyntaxError('KI-Antwort enthielt kein gültiges JSON (ungültiger Text).');
+  }
+  const withoutBom = rawText.replace(/^\uFEFF/, '').trim();
+  if (!withoutBom) {
+    throw new SyntaxError('KI-Antwort enthielt kein gültiges JSON (leere Antwort).');
+  }
+
+  let cleaned = withoutBom;
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch && fenceMatch[1]) {
+    cleaned = fenceMatch[1].replace(/^\uFEFF/, '').trim();
+  } else {
+    cleaned = cleaned
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+  }
+
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch {
+    const balancedFromCleaned = tryParseFirstBalancedJson(cleaned);
+    if (balancedFromCleaned.ok) {
+      return balancedFromCleaned.value as T;
+    }
+    if (cleaned !== withoutBom) {
+      const balancedFromRaw = tryParseFirstBalancedJson(withoutBom);
+      if (balancedFromRaw.ok) {
+        return balancedFromRaw.value as T;
+      }
+    }
+    throw new SyntaxError('KI-Antwort konnte nicht als gültiges JSON geparst werden.');
+  }
+}
+
 export interface AiConnectionTestResult {
   ok: boolean;
   message: string;
@@ -431,7 +575,7 @@ export async function testAiConnection(
 
     return {
       ok: true,
-      message: `✓ Verbunden mit ${providerName}: ${selectedLabel} (via ${resolvedModel} · ${secondsStr})`,
+      message: `✓ Verbunden mit ${providerName}: ${selectedLabel} — Verbunden · Modell: ${resolvedModel} (via ${resolvedModel} · ${secondsStr})`,
       latencyMs,
       selectedModel,
       resolvedModel
@@ -564,7 +708,7 @@ export async function callAiModel(prompt: string, options: AiCallOptions = {}): 
 
         const tierFallbacks = isProTier
           ? ['gemini-2.5-pro', 'gemini-2.5-flash']
-          : ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+          : ['gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 
         const geminiCandidateModels = Array.from(new Set([
           primaryCandidate,

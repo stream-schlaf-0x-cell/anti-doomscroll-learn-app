@@ -19,8 +19,12 @@ import {
   HORIZON_BAR_HIDE_SCROLL_Y,
   HORIZON_BAR_TOP_LOCK_Y,
   HORIZON_BAR_UP_DELTA,
+  PULL_REFRESH_DAMPING,
+  PULL_REFRESH_DEADZONE,
+  PULL_REFRESH_HOLD_MS,
   PULL_REFRESH_MAX,
   PULL_REFRESH_THRESHOLD,
+  PULL_REFRESH_TOP_SETTLE_MS,
   evaluateHorizonBarVisibility,
   evaluatePullToRefreshGesture,
   shouldUnlockFallbackTopLock
@@ -285,8 +289,12 @@ test('Atmen v15 — Live Deploy, Cold-Boot Freshness, PWA Viewport & Scroll/Pull
     assert.equal(HORIZON_BAR_TOP_LOCK_Y, 48);
     assert.equal(HORIZON_BAR_DOWN_DELTA, 10);
     assert.equal(HORIZON_BAR_UP_DELTA, 7);
-    assert.equal(PULL_REFRESH_THRESHOLD, 64);
-    assert.equal(PULL_REFRESH_MAX, 108);
+    assert.equal(PULL_REFRESH_DEADZONE, 24);
+    assert.equal(PULL_REFRESH_DAMPING, 0.32);
+    assert.equal(PULL_REFRESH_THRESHOLD, 104);
+    assert.equal(PULL_REFRESH_MAX, 148);
+    assert.equal(PULL_REFRESH_HOLD_MS, 350);
+    assert.equal(PULL_REFRESH_TOP_SETTLE_MS, 450);
 
     // Stays visible near top (<= 48px) even when scrolling down
     const nearTop = evaluateHorizonBarVisibility({
@@ -379,29 +387,49 @@ test('Atmen v15 — Live Deploy, Cold-Boot Freshness, PWA Viewport & Scroll/Pull
     });
     assert.equal(focusedDown.visible, true);
 
-    // Pull-to-Refresh phases: idle -> pulling -> ready -> clamped max -> refreshing
+    // Pull-to-Refresh phases: idle -> pulling -> holding -> ready -> clamped max -> refreshing
     const ptrIdleZero = evaluatePullToRefreshGesture({ pullDeltaY: 0, isRefreshing: false });
     assert.equal(ptrIdleZero.phase, 'idle');
     assert.equal(ptrIdleZero.pullDistance, 0);
     assert.equal(ptrIdleZero.readyToRelease, false);
 
-    const ptrIdleTiny = evaluatePullToRefreshGesture({ pullDeltaY: 16, isRefreshing: false });
-    assert.equal(ptrIdleTiny.phase, 'idle');
-    assert.equal(ptrIdleTiny.readyToRelease, false);
+    const ptrIdleDeadzone = evaluatePullToRefreshGesture({ pullDeltaY: 24, isRefreshing: false });
+    assert.equal(ptrIdleDeadzone.phase, 'idle');
+    assert.equal(ptrIdleDeadzone.pullDistance, 0);
+    assert.equal(ptrIdleDeadzone.readyToRelease, false);
 
-    const ptrPulling = evaluatePullToRefreshGesture({ pullDeltaY: 80, isRefreshing: false });
+    const ptrPulling = evaluatePullToRefreshGesture({ pullDeltaY: 160, isRefreshing: false });
     assert.equal(ptrPulling.phase, 'pulling');
     assert.equal(ptrPulling.readyToRelease, false);
-    assert.ok(ptrPulling.pullDistance >= 10 && ptrPulling.pullDistance < PULL_REFRESH_THRESHOLD);
+    assert.ok(ptrPulling.pullDistance > 0 && ptrPulling.pullDistance < PULL_REFRESH_THRESHOLD);
     assert.ok(ptrPulling.progress > 0 && ptrPulling.progress < 1);
 
-    const ptrReady = evaluatePullToRefreshGesture({ pullDeltaY: 140, isRefreshing: false });
-    assert.equal(ptrReady.phase, 'ready');
-    assert.equal(ptrReady.readyToRelease, true);
-    assert.equal(ptrReady.progress, 1);
-    assert.ok(ptrReady.pullDistance >= PULL_REFRESH_THRESHOLD && ptrReady.pullDistance <= PULL_REFRESH_MAX);
+    const ptrHolding = evaluatePullToRefreshGesture({
+      pullDeltaY: 360,
+      isRefreshing: false,
+      holdElapsedMs: 120
+    });
+    assert.equal(ptrHolding.phase, 'holding');
+    assert.equal(ptrHolding.readyToRelease, false);
+    assert.equal(ptrHolding.progress, 1);
+    assert.ok(ptrHolding.pullDistance >= PULL_REFRESH_THRESHOLD && ptrHolding.pullDistance <= PULL_REFRESH_MAX);
 
-    const ptrClamped = evaluatePullToRefreshGesture({ pullDeltaY: 400, isRefreshing: false });
+    const ptrReadyAfterHold = evaluatePullToRefreshGesture({
+      pullDeltaY: 360,
+      isRefreshing: false,
+      holdElapsedMs: PULL_REFRESH_HOLD_MS
+    });
+    assert.equal(ptrReadyAfterHold.phase, 'ready');
+    assert.equal(ptrReadyAfterHold.readyToRelease, true);
+    assert.equal(ptrReadyAfterHold.progress, 1);
+
+    const ptrReadyStateless = evaluatePullToRefreshGesture({ pullDeltaY: 360, isRefreshing: false });
+    assert.equal(ptrReadyStateless.phase, 'ready');
+    assert.equal(ptrReadyStateless.readyToRelease, true);
+    assert.equal(ptrReadyStateless.progress, 1);
+    assert.ok(ptrReadyStateless.pullDistance >= PULL_REFRESH_THRESHOLD && ptrReadyStateless.pullDistance <= PULL_REFRESH_MAX);
+
+    const ptrClamped = evaluatePullToRefreshGesture({ pullDeltaY: 800, isRefreshing: false });
     assert.equal(ptrClamped.pullDistance, PULL_REFRESH_MAX);
     assert.equal(ptrClamped.phase, 'ready');
 
@@ -439,16 +467,22 @@ test('Atmen v15 — Live Deploy, Cold-Boot Freshness, PWA Viewport & Scroll/Pull
       'Must NOT unlock when fewer than 10 real items exist in candidatePool'
     );
 
-    // Verify FeedScreen & PullToRefreshIndicator integration wiring
+    // Verify FeedScreen & Pull-to-Refresh integration wiring
     const feedScreenTsx = fs.readFileSync(path.join(ROOT_DIR, 'src/features/feed/FeedScreen.tsx'), 'utf8');
     const ptrComponentTsx = fs.readFileSync(path.join(ROOT_DIR, 'src/ui/components/PullToRefreshIndicator.tsx'), 'utf8');
     assert.ok(
       feedScreenTsx.includes('evaluateHorizonBarVisibility') &&
         feedScreenTsx.includes('evaluatePullToRefreshGesture') &&
         feedScreenTsx.includes('shouldUnlockFallbackTopLock') &&
-        feedScreenTsx.includes('<PullToRefreshIndicator') &&
+        feedScreenTsx.includes('PULL_REFRESH_TOP_SETTLE_MS') &&
+        feedScreenTsx.includes('PULL_REFRESH_HOLD_MS') &&
+        feedScreenTsx.includes('Weiter ziehen zum Aktualisieren…') &&
+        feedScreenTsx.includes('Kurz halten…') &&
+        feedScreenTsx.includes('Loslassen zum Aktualisieren') &&
+        feedScreenTsx.includes('Kanal wird aktualisiert…') &&
+        feedScreenTsx.includes('rankingProfile') &&
         feedScreenTsx.includes('{ forceRefresh: true }'),
-      'FeedScreen.tsx must wire scrollUxController, PullToRefreshIndicator, and forceRefresh pull reload'
+      'FeedScreen.tsx must wire scrollUxController, PTR hold gate & labels, rankingProfile, and forceRefresh pull reload'
     );
     assert.ok(
       ptrComponentTsx.includes('accessibilityRole="button"') &&

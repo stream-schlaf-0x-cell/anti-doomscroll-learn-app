@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, StyleSheet, TextStyle, Linking, Platform } from 'react-native';
+import { View, Text, StyleSheet, TextStyle } from 'react-native';
 import { ThemeColors } from '../theme';
+import { openExternalInBrowser } from '../../core/utils/externalBrowser';
 import {
   InlineToken,
   parseInlineFormatting,
@@ -23,15 +24,7 @@ interface MarkdownContentProps {
 }
 
 function openExternalUrl(url: string) {
-  try {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.open) {
-      window.open(url, '_blank', 'noopener,noreferrer');
-    } else {
-      void Linking.openURL(url).catch(() => {});
-    }
-  } catch {
-    // non-fatal
-  }
+  openExternalInBrowser(url);
 }
 
 /**

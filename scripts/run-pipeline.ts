@@ -19,7 +19,7 @@ import {
   sanitizeCuratedFeedItem
 } from '../src/core/enrichment/batchEnricher';
 import { enrichStubItemWithFulltext, harvestWebPageContent } from '../src/core/ingestion/webContentExtractor';
-import { enforceCuratedStreamDiversity, isWithin14DayRelevanceWindow } from '../src/core/domain/ranking';
+import { enforceCuratedStreamDiversity, isSaxonyRegionalItem, isWithin14DayRelevanceWindow } from '../src/core/domain/ranking';
 import { defaultUsageLedger } from '../src/core/enrichment/ledger';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from '../src/core/ai/atmenAiClient';
 
@@ -30,12 +30,12 @@ const SOURCE_HEALTH_PATH = path.resolve(__dirname, '../src/core/data/source-heal
 const PUBLIC_SNAPSHOT_PATH = path.resolve(__dirname, '../public/feed-snapshot.json');
 const PUBLIC_RESERVOIR_PATH = path.resolve(__dirname, '../public/feed-reservoir.json');
 
-const STARTUP_SNAPSHOT_CAP = 120; // Rich, diverse startup edition (100-130 items, < 850 KB compacted)
-const DEEP_RESERVOIR_CAP = 650;   // Rolling 14-day deep endless reservoir lazy-loaded as user scrolls (< 4.5 MB compacted)
+export const STARTUP_SNAPSHOT_CAP = 136; // Rich, diverse startup edition across all 13 spaces (< 1 MB compacted)
+export const DEEP_RESERVOIR_CAP = 650;   // Rolling 14-day deep endless reservoir lazy-loaded as user scrolls (< 4.5 MB compacted)
 const SNAPSHOT_MAX_BODY_CHARS = 6000;
 const RESERVOIR_MAX_BODY_CHARS = 7000;
 
-const PRIORITY_SPACES = [
+export const PRIORITY_SPACES = [
   'c/didaktik_labor',
   'c/books',
   'c/kontemplation',
@@ -44,29 +44,35 @@ const PRIORITY_SPACES = [
   'c/dialektik',
   'c/serendipity',
   'c/health_longevity',
-  'c/chancen'
-];
+  'c/chancen',
+  'c/youtube',
+  'c/memes',
+  'c/gesellschaft_politik'
+] as const;
 
-function selectBalancedStartupItems(pool: FeedItem[], nowMs: number, cap = STARTUP_SNAPSHOT_CAP): FeedItem[] {
+export function selectBalancedStartupItems(pool: FeedItem[], nowMs: number, cap = STARTUP_SNAPSHOT_CAP): FeedItem[] {
   const gallerySourcePool = pool.filter(i => i.space === 'c/kunst_galerie');
-  const galleryKeep = gallerySourcePool.slice(0, 22);
+  const galleryKeep = gallerySourcePool.slice(0, Math.min(22, Math.max(1, Math.floor(cap * 0.18))));
   const editorialCandidates = pool.filter(
     i => i.space !== 'c/kunst_galerie' && isWithin14DayRelevanceWindow(i, nowMs)
   );
 
-  // Reserve floor slots for specialist knowledge spaces so Didaktik, Books, Contemplation & Synth always flourish
+  const sortByFreshness = (a: FeedItem, b: FeedItem) => {
+    const relA = a.publicationDateReliable !== false ? 1 : 0;
+    const relB = b.publicationDateReliable !== false ? 1 : 0;
+    if (relA !== relB) return relB - relA;
+    return (new Date(b.publishedAt).getTime() || 0) - (new Date(a.publishedAt).getTime() || 0);
+  };
+
+  // Reserve floor slots for all 12 editorial knowledge spaces so every built-in channel flourishes
   const floorSelected: FeedItem[] = [];
   const floorIds = new Set<string>();
   for (const sp of PRIORITY_SPACES) {
+    const quota = sp === 'c/gesellschaft_politik' ? 6 : 8;
     const matching = editorialCandidates
       .filter(i => i.space === sp)
-      .sort((a, b) => {
-        const relA = a.publicationDateReliable !== false ? 1 : 0;
-        const relB = b.publicationDateReliable !== false ? 1 : 0;
-        if (relA !== relB) return relB - relA;
-        return (new Date(b.publishedAt).getTime() || 0) - (new Date(a.publishedAt).getTime() || 0);
-      })
-      .slice(0, 8);
+      .sort(sortByFreshness)
+      .slice(0, quota);
     for (const m of matching) {
       if (!floorIds.has(m.id)) {
         floorIds.add(m.id);
@@ -75,14 +81,23 @@ function selectBalancedStartupItems(pool: FeedItem[], nowMs: number, cap = START
     }
   }
 
+  // Guarantee >= 6 Dresden / Leipzig / Saxony regional items
+  const existingSaxonyCount = floorSelected.filter(i => isSaxonyRegionalItem(i)).length;
+  if (existingSaxonyCount < 6) {
+    const needed = 6 - existingSaxonyCount;
+    const saxonyExtras = editorialCandidates
+      .filter(i => !floorIds.has(i.id) && isSaxonyRegionalItem(i))
+      .sort(sortByFreshness)
+      .slice(0, needed);
+    for (const sx of saxonyExtras) {
+      floorIds.add(sx.id);
+      floorSelected.push(sx);
+    }
+  }
+
   const remainingFreshFirst = editorialCandidates
     .filter(i => !floorIds.has(i.id))
-    .sort((a, b) => {
-      const relA = a.publicationDateReliable !== false ? 1 : 0;
-      const relB = b.publicationDateReliable !== false ? 1 : 0;
-      if (relA !== relB) return relB - relA;
-      return (new Date(b.publishedAt).getTime() || 0) - (new Date(a.publishedAt).getTime() || 0);
-    });
+    .sort(sortByFreshness);
 
   const targetEditorialCount = Math.max(0, cap - galleryKeep.length);
   const editorialDiversified = enforceCuratedStreamDiversity([
@@ -108,6 +123,20 @@ function selectBalancedStartupItems(pool: FeedItem[], nowMs: number, cap = START
     finalItems.push(galleryKeep[gIdx++]);
   }
   return finalItems.slice(0, cap);
+}
+
+export function selectCappedReservoirItems(pool: FeedItem[], cap = DEEP_RESERVOIR_CAP): FeedItem[] {
+  const reservoirGallery = pool.filter(i => i.space === 'c/kunst_galerie').slice(0, 60);
+  const editorialAll = pool.filter(i => i.space !== 'c/kunst_galerie');
+  const isProtected = (i: FeedItem) =>
+    i.space === 'c/youtube' || i.space === 'c/memes' || isSaxonyRegionalItem(i);
+  const protectedEditorial = interleaveByPublisherAndSpace(editorialAll.filter(isProtected));
+  const otherEditorial = interleaveByPublisherAndSpace(editorialAll.filter(i => !isProtected(i)));
+  const maxEditorial = Math.max(0, cap - reservoirGallery.length);
+  return [
+    ...[...protectedEditorial, ...otherEditorial].slice(0, maxEditorial),
+    ...reservoirGallery
+  ].slice(0, cap);
 }
 
 function normalizeTitleKey(title: string): string {
@@ -367,14 +396,7 @@ async function runIngestionPipeline() {
     });
   }
 
-  const reservoirGallery = mergedReservoirPool.filter(i => i.space === 'c/kunst_galerie').slice(0, 60);
-  const reservoirEditorial = interleaveByPublisherAndSpace(
-    mergedReservoirPool.filter(i => i.space !== 'c/kunst_galerie')
-  );
-  const cappedReservoirItems = [
-    ...reservoirEditorial.slice(0, Math.max(0, DEEP_RESERVOIR_CAP - reservoirGallery.length)),
-    ...reservoirGallery
-  ].slice(0, DEEP_RESERVOIR_CAP);
+  const cappedReservoirItems = selectCappedReservoirItems(mergedReservoirPool, DEEP_RESERVOIR_CAP);
   const compactReservoirItems = cappedReservoirItems.map(item =>
     compactItemForSnapshot(item, { maxBodyChars: RESERVOIR_MAX_BODY_CHARS })
   );
@@ -455,14 +477,7 @@ function compactExistingPublicSnapshots(): void {
       const freshPool = parsedRes.items.filter(
         it => it.space === 'c/kunst_galerie' || isWithin14DayRelevanceWindow(it, refMs)
       );
-      const resGallery = freshPool.filter(it => it.space === 'c/kunst_galerie').slice(0, 60);
-      const resEditorial = interleaveByPublisherAndSpace(
-        freshPool.filter(it => it.space !== 'c/kunst_galerie')
-      );
-      const selectedRes = [
-        ...resEditorial.slice(0, Math.max(0, DEEP_RESERVOIR_CAP - resGallery.length)),
-        ...resGallery
-      ].slice(0, DEEP_RESERVOIR_CAP);
+      const selectedRes = selectCappedReservoirItems(freshPool, DEEP_RESERVOIR_CAP);
       const compactResItems = selectedRes.map(item =>
         compactItemForSnapshot(item, { maxBodyChars: RESERVOIR_MAX_BODY_CHARS })
       );
@@ -539,16 +554,24 @@ function compactExistingPublicSnapshots(): void {
   }
 }
 
-if (process.argv.includes('--compact-existing')) {
-  try {
-    compactExistingPublicSnapshots();
-  } catch (err) {
-    console.error('Fatal offline compaction error:', err);
-    process.exit(1);
+const isMainModule =
+  typeof process !== 'undefined' &&
+  Array.isArray(process.argv) &&
+  Boolean(process.argv[1]) &&
+  process.argv[1].replace(/\\/g, '/').endsWith('scripts/run-pipeline.ts');
+
+if (isMainModule) {
+  if (process.argv.includes('--compact-existing')) {
+    try {
+      compactExistingPublicSnapshots();
+    } catch (err) {
+      console.error('Fatal offline compaction error:', err);
+      process.exit(1);
+    }
+  } else {
+    runIngestionPipeline().catch(err => {
+      console.error('Fatal pipeline error:', err);
+      process.exit(1);
+    });
   }
-} else {
-  runIngestionPipeline().catch(err => {
-    console.error('Fatal pipeline error:', err);
-    process.exit(1);
-  });
 }

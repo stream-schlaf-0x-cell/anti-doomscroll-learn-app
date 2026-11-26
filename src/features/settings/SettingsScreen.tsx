@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -36,14 +36,15 @@ import {
 import { defaultUsageLedger, getEffectiveBudgetCeilingEur } from '../../core/enrichment/ledger';
 import { EnrichmentLedgerSummary } from '../../core/enrichment/types';
 import { BackupService } from '../../core/data/backupService';
+import { ExternalBrowserPreference } from '../../core/utils/externalBrowser';
 
 type SettingsSubTab = 'ai_sync' | 'appearance' | 'focus' | 'data';
 
-const SUB_TABS: { id: SettingsSubTab; label: string }[] = [
-  { id: 'ai_sync', label: '🔑 KI & Sync' },
-  { id: 'appearance', label: '🎨 Ansicht' },
-  { id: 'focus', label: '🧭 Fokus' },
-  { id: 'data', label: '📦 Daten' }
+const SUB_TABS: { id: SettingsSubTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { id: 'ai_sync', label: 'KI & Sync', icon: 'key-outline' },
+  { id: 'appearance', label: 'Ansicht', icon: 'color-palette-outline' },
+  { id: 'focus', label: 'Fokus', icon: 'compass-outline' },
+  { id: 'data', label: 'Daten', icon: 'archive-outline' }
 ];
 
 export const SettingsScreen: React.FC = () => {
@@ -60,6 +61,7 @@ export const SettingsScreen: React.FC = () => {
     updateDurationPreference,
     setFontSize,
     setThemePreference,
+    setExternalBrowserPreference,
     toggleFeatureModule,
     repeatOnboarding,
     clearAllLocalData,
@@ -90,53 +92,68 @@ export const SettingsScreen: React.FC = () => {
   const [syncNoticeType, setSyncNoticeType] = useState<'success' | 'error'>('success');
   const [syncMode, setSyncMode] = useState<'primary' | 'secondary'>('primary');
 
-  const interactionList = Object.values(interactions || {});
-  const upvoteCount = interactionList.filter(i => (i.voteScore || 0) > 0).length;
-  const downvoteCount = interactionList.filter(i => (i.voteScore || 0) < 0).length;
-  const readCount = interactionList.filter(i => (i.progressPercent && i.progressPercent >= 20) || (i.furthestPositionPercent && i.furthestPositionPercent >= 20)).length;
-  const notesCount = interactionList.reduce((acc, i) => acc + (i.userNotes?.length || 0), 0);
-  const savedCount = (savedArticles || []).length;
-  const customChannelsCount = (spaces || []).filter(s => s.isCustom).length;
+  const {
+    upvoteCount,
+    downvoteCount,
+    readCount,
+    notesCount,
+    savedCount,
+    customChannelsCount
+  } = useMemo(() => {
+    const interactionList = Object.values(interactions || {});
+    return {
+      upvoteCount: interactionList.filter(i => (i.voteScore || 0) > 0).length,
+      downvoteCount: interactionList.filter(i => (i.voteScore || 0) < 0).length,
+      readCount: interactionList.filter(i => (i.progressPercent && i.progressPercent >= 20) || (i.furthestPositionPercent && i.furthestPositionPercent >= 20)).length,
+      notesCount: interactionList.reduce((acc, i) => acc + (i.userNotes?.length || 0), 0),
+      savedCount: (savedArticles || []).length,
+      customChannelsCount: (spaces || []).filter(s => s.isCustom).length
+    };
+  }, [interactions, savedArticles, spaces]);
 
   const currentMix = profile?.feedMixRatio || { focusRatio: 0.60, socraticRatio: 0.20, serendipityRatio: 0.20 };
   const focusPct = Math.round(currentMix.focusRatio * 100);
   const socraticPct = Math.round(currentMix.socraticRatio * 100);
   const serendipityPct = Math.round(currentMix.serendipityRatio * 100);
 
-  const feedbackMem = profile?.feedbackMemory || {};
-  const boostedItems: { category: 'topic' | 'author' | 'keyword' | 'domain' | 'space'; key: string; label: string; count: number }[] = [];
-  Object.entries(feedbackMem.boostedTopics || {}).forEach(([k, v]) => {
-    boostedItems.push({ category: 'topic', key: k, label: `Thema: ${TOPIC_METADATA[k as TopicTag]?.label || k}`, count: v });
-  });
-  Object.entries(feedbackMem.boostedAuthors || {}).forEach(([k, v]) => {
-    boostedItems.push({ category: 'author', key: k, label: `Autor: ${k}`, count: v });
-  });
-  Object.entries(feedbackMem.boostedDomains || {}).forEach(([k, v]) => {
-    boostedItems.push({ category: 'domain', key: k, label: `Quelle: ${k}`, count: v });
-  });
-  Object.entries(feedbackMem.boostedSpaces || {}).forEach(([k, v]) => {
-    boostedItems.push({ category: 'space', key: k, label: `Kanal: ${k}`, count: v });
-  });
-  Object.entries(feedbackMem.boostedKeywords || {}).forEach(([k, v]) => {
-    boostedItems.push({ category: 'keyword', key: k, label: `#${k}`, count: v });
-  });
+  const { boostedItems, penalizedItems } = useMemo(() => {
+    const feedbackMem = profile?.feedbackMemory || {};
+    const boosted: { category: 'topic' | 'author' | 'keyword' | 'domain' | 'space'; key: string; label: string; count: number }[] = [];
+    Object.entries(feedbackMem.boostedTopics || {}).forEach(([k, v]) => {
+      boosted.push({ category: 'topic', key: k, label: `Thema: ${TOPIC_METADATA[k as TopicTag]?.label || k}`, count: v });
+    });
+    Object.entries(feedbackMem.boostedAuthors || {}).forEach(([k, v]) => {
+      boosted.push({ category: 'author', key: k, label: `Autor: ${k}`, count: v });
+    });
+    Object.entries(feedbackMem.boostedDomains || {}).forEach(([k, v]) => {
+      boosted.push({ category: 'domain', key: k, label: `Quelle: ${k}`, count: v });
+    });
+    Object.entries(feedbackMem.boostedSpaces || {}).forEach(([k, v]) => {
+      boosted.push({ category: 'space', key: k, label: `Kanal: ${k}`, count: v });
+    });
+    Object.entries(feedbackMem.boostedKeywords || {}).forEach(([k, v]) => {
+      boosted.push({ category: 'keyword', key: k, label: `#${k}`, count: v });
+    });
 
-  const penalizedItems: { category: 'topic' | 'author' | 'keyword' | 'domain' | 'space'; key: string; label: string; count: number }[] = [];
-  Object.entries(feedbackMem.penalizedTopics || {}).forEach(([k, v]) => {
-    penalizedItems.push({ category: 'topic', key: k, label: `Thema: ${TOPIC_METADATA[k as TopicTag]?.label || k}`, count: v });
-  });
-  Object.entries(feedbackMem.penalizedAuthors || {}).forEach(([k, v]) => {
-    penalizedItems.push({ category: 'author', key: k, label: `Autor: ${k}`, count: v });
-  });
-  Object.entries(feedbackMem.penalizedDomains || {}).forEach(([k, v]) => {
-    penalizedItems.push({ category: 'domain', key: k, label: `Quelle: ${k}`, count: v });
-  });
-  Object.entries(feedbackMem.penalizedSpaces || {}).forEach(([k, v]) => {
-    penalizedItems.push({ category: 'space', key: k, label: `Kanal: ${k}`, count: v });
-  });
-  Object.entries(feedbackMem.penalizedKeywords || {}).forEach(([k, v]) => {
-    penalizedItems.push({ category: 'keyword', key: k, label: `#${k}`, count: v });
-  });
+    const penalized: { category: 'topic' | 'author' | 'keyword' | 'domain' | 'space'; key: string; label: string; count: number }[] = [];
+    Object.entries(feedbackMem.penalizedTopics || {}).forEach(([k, v]) => {
+      penalized.push({ category: 'topic', key: k, label: `Thema: ${TOPIC_METADATA[k as TopicTag]?.label || k}`, count: v });
+    });
+    Object.entries(feedbackMem.penalizedAuthors || {}).forEach(([k, v]) => {
+      penalized.push({ category: 'author', key: k, label: `Autor: ${k}`, count: v });
+    });
+    Object.entries(feedbackMem.penalizedDomains || {}).forEach(([k, v]) => {
+      penalized.push({ category: 'domain', key: k, label: `Quelle: ${k}`, count: v });
+    });
+    Object.entries(feedbackMem.penalizedSpaces || {}).forEach(([k, v]) => {
+      penalized.push({ category: 'space', key: k, label: `Kanal: ${k}`, count: v });
+    });
+    Object.entries(feedbackMem.penalizedKeywords || {}).forEach(([k, v]) => {
+      penalized.push({ category: 'keyword', key: k, label: `#${k}`, count: v });
+    });
+
+    return { boostedItems: boosted, penalizedItems: penalized };
+  }, [profile?.feedbackMemory]);
 
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
   const [showNewsHub, setShowNewsHub] = useState<boolean>(false);
@@ -287,8 +304,22 @@ export const SettingsScreen: React.FC = () => {
     if (cloudSyncConfig.encryptionPassphrase) {
       setPassphraseInput(cloudSyncConfig.encryptionPassphrase);
     }
-    void getPairingBundle().then(setPairingBundle).catch(() => {});
-  }, [cloudSyncConfig, getPairingBundle]);
+  }, [cloudSyncConfig]);
+
+  useEffect(() => {
+    if (activeSubTab !== 'ai_sync' || syncMode !== 'primary') {
+      return;
+    }
+    let active = true;
+    void getPairingBundle()
+      .then(bundle => {
+        if (active) setPairingBundle(bundle);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [activeSubTab, syncMode, cloudSyncConfig.gistId, cloudSyncConfig.enabled, getPairingBundle]);
 
   const handleActivateLiveSync = async () => {
     if (!githubTokenInput.trim()) {
@@ -301,7 +332,7 @@ export const SettingsScreen: React.FC = () => {
     try {
       const res = await activateCloudSync(githubTokenInput.trim(), passphraseInput.trim());
       if (res.success) {
-        setSyncNotice('✅ Live-Sync erfolgreich verbunden & Remote-Schlüssel synchronisiert!');
+        setSyncNotice('Live-Sync erfolgreich verbunden & Remote-Schlüssel synchronisiert.');
         setSyncNoticeType('success');
         const bundle = await getPairingBundle();
         setPairingBundle(bundle);
@@ -330,7 +361,7 @@ export const SettingsScreen: React.FC = () => {
     try {
       const ok = await applyPairingCode(pairingCodeInput.trim());
       if (ok) {
-        setSyncNotice('✅ Gerät erfolgreich gekoppelt und synchronisiert!');
+        setSyncNotice('Gerät erfolgreich gekoppelt und synchronisiert.');
         setSyncNoticeType('success');
         setPairingCodeInput('');
       } else {
@@ -361,7 +392,7 @@ export const SettingsScreen: React.FC = () => {
       setSyncNotice(null);
       const ok = await applyPairingCode(code.trim());
       if (ok) {
-        setSyncNotice('✅ Gerät erfolgreich gekoppelt und synchronisiert!');
+        setSyncNotice('Gerät erfolgreich gekoppelt und synchronisiert.');
         setSyncNoticeType('success');
         setPairingCodeInput('');
       } else {
@@ -380,7 +411,7 @@ export const SettingsScreen: React.FC = () => {
     if (!pairingBundle?.pairingCode) return;
     const ok = await copyToClipboard(pairingBundle.pairingCode);
     if (ok) {
-      setSyncNotice('📋 Koppel-Code in die Zwischenablage kopiert!');
+      setSyncNotice('Koppel-Code in die Zwischenablage kopiert.');
       setSyncNoticeType('success');
       setTimeout(() => setSyncNotice(null), 4000);
     }
@@ -559,6 +590,8 @@ export const SettingsScreen: React.FC = () => {
                 style={[
                   styles.subTabButton,
                   {
+                    flexDirection: 'row',
+                    alignItems: 'center',
                     backgroundColor: isActive ? colors.accentSubtle : colors.surfaceSecondary,
                     borderColor: isActive ? colors.accent : colors.borderSubtle
                   }
@@ -567,6 +600,12 @@ export const SettingsScreen: React.FC = () => {
                 accessibilityState={{ selected: isActive }}
                 accessibilityLabel={tab.label}
               >
+                <Ionicons
+                  name={tab.icon}
+                  size={14}
+                  color={isActive ? colors.accent : colors.textSecondary}
+                  style={{ marginRight: 5 }}
+                />
                 <Text
                   style={[
                     styles.subTabText,
@@ -606,12 +645,20 @@ export const SettingsScreen: React.FC = () => {
             <View style={[
               styles.syncStatusBadge,
               {
+                flexDirection: 'row',
+                alignItems: 'center',
                 backgroundColor: hasAiConfiguration(aiCreds) ? 'rgba(16, 185, 129, 0.16)' : 'rgba(245, 158, 11, 0.16)',
                 borderColor: hasAiConfiguration(aiCreds) ? '#10B981' : '#F59E0B'
               }
             ]}>
+              <Ionicons
+                name={hasAiConfiguration(aiCreds) ? 'checkmark-circle' : 'alert-circle'}
+                size={12}
+                color={hasAiConfiguration(aiCreds) ? '#10B981' : '#F59E0B'}
+                style={{ marginRight: 4 }}
+              />
               <Text style={{ fontSize: 11, fontWeight: '700', color: hasAiConfiguration(aiCreds) ? '#10B981' : '#F59E0B' }}>
-                {hasAiConfiguration(aiCreds) ? '✅ API-Key aktiv' : '⚠️ Kein Key hinterlegt'}
+                {hasAiConfiguration(aiCreds) ? 'API-Key aktiv' : 'Kein Key hinterlegt'}
               </Text>
             </View>
           </View>
@@ -945,18 +992,26 @@ export const SettingsScreen: React.FC = () => {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Ionicons name="cloud-done" size={20} color="#10B981" />
               <Text style={[styles.sectionTitle, { color: colors.textPrimary, marginBottom: 0 }]}>
-                ⚡ Live-Sync & Geräte koppeln (Eine Instanz)
+                Live-Sync & Geräte koppeln (Eine Instanz)
               </Text>
             </View>
             <View style={[
               styles.syncStatusBadge,
               {
+                flexDirection: 'row',
+                alignItems: 'center',
                 backgroundColor: cloudSyncConfig.enabled ? 'rgba(16, 185, 129, 0.16)' : colors.surfaceSecondary,
                 borderColor: cloudSyncConfig.enabled ? '#10B981' : colors.borderSubtle
               }
             ]}>
+              <Ionicons
+                name={isSyncing ? 'sync' : cloudSyncConfig.enabled ? 'checkmark-circle' : 'ellipse-outline'}
+                size={12}
+                color={cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary}
+                style={{ marginRight: 4 }}
+              />
               <Text style={{ fontSize: 11, fontWeight: '700', color: cloudSyncConfig.enabled ? '#10B981' : colors.textSecondary }}>
-                {isSyncing ? '🔄 Synchronisiere…' : cloudSyncConfig.enabled ? '🟢 Live-Sync aktiv' : '⚪ Nicht gekoppelt'}
+                {isSyncing ? 'Synchronisiere…' : cloudSyncConfig.enabled ? 'Live-Sync aktiv' : 'Nicht gekoppelt'}
               </Text>
             </View>
           </View>
@@ -1004,9 +1059,12 @@ export const SettingsScreen: React.FC = () => {
             {cloudSyncConfig.enabled && (
               <View style={[styles.syncTelemetryRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
-                    ☁️ Gist-ID: {cloudSyncConfig.gistId}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <Ionicons name="cloud-outline" size={13} color={colors.accent} />
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textPrimary }}>
+                      Gist-ID: {cloudSyncConfig.gistId}
+                    </Text>
+                  </View>
                   <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
                     Zuletzt synchronisiert: {cloudSyncConfig.lastSyncAt ? new Date(cloudSyncConfig.lastSyncAt).toLocaleTimeString() : 'noch nicht'} · {readCount} Artikel, {customChannelsCount} Channels synchron
                   </Text>
@@ -1032,11 +1090,13 @@ export const SettingsScreen: React.FC = () => {
                 onPress={() => setSyncMode('primary')}
                 style={[
                   styles.syncModeTab,
+                  { flexDirection: 'row', gap: 5 },
                   syncMode === 'primary' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                 ]}
               >
+                <Ionicons name="desktop-outline" size={13} color={syncMode === 'primary' ? colors.accent : colors.textSecondary} />
                 <Text style={[styles.syncModeTabText, { color: syncMode === 'primary' ? colors.accent : colors.textSecondary }]}>
-                  🖥️ Primärgerät (Mac / 1-Klick Setup)
+                  Primärgerät (Mac / 1-Klick Setup)
                 </Text>
               </TouchableOpacity>
 
@@ -1044,11 +1104,13 @@ export const SettingsScreen: React.FC = () => {
                 onPress={() => setSyncMode('secondary')}
                 style={[
                   styles.syncModeTab,
+                  { flexDirection: 'row', gap: 5 },
                   syncMode === 'secondary' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
                 ]}
               >
+                <Ionicons name="phone-portrait-outline" size={13} color={syncMode === 'secondary' ? colors.accent : colors.textSecondary} />
                 <Text style={[styles.syncModeTabText, { color: syncMode === 'secondary' ? colors.accent : colors.textSecondary }]}>
-                  📲 iPad & iPhone koppeln
+                  iPad & iPhone koppeln
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1096,16 +1158,19 @@ export const SettingsScreen: React.FC = () => {
                     <Ionicons name="sync" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
                   )}
                   <Text style={styles.primaryActionBtnText}>
-                    {isActivatingSync ? 'Verbinde Gist…' : cloudSyncConfig.enabled ? 'Live-Sync neu verbinden' : '🔄 Live-Sync aktivieren'}
+                    {isActivatingSync ? 'Verbinde Gist…' : cloudSyncConfig.enabled ? 'Live-Sync neu verbinden' : 'Live-Sync aktivieren'}
                   </Text>
                 </TouchableOpacity>
 
                 {/* Instant Pairing Code & QR for secondary devices */}
                 {pairingBundle && (
                   <View style={[styles.pairingCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle, marginTop: 16 }]}>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 }}>
-                      📲 Zweitgerät (iPad / iPhone) koppeln:
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <Ionicons name="phone-portrait-outline" size={14} color={colors.accent} />
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>
+                        Zweitgerät (iPad / iPhone) koppeln:
+                      </Text>
+                    </View>
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 10 }}>
                       Scanne diesen QR-Code mit der iPhone-Kamera oder kopiere den Koppel-Code, um das iPad in 1 Sekunde synchron zu verbinden.
                     </Text>
@@ -1148,7 +1213,7 @@ export const SettingsScreen: React.FC = () => {
                     >
                       <Ionicons name="copy-outline" size={14} color={colors.accent} style={{ marginRight: 5 }} />
                       <Text style={{ fontSize: 12, fontWeight: '700', color: colors.accent }}>
-                        📋 Koppel-Code kopieren
+                        Koppel-Code kopieren
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -1169,7 +1234,7 @@ export const SettingsScreen: React.FC = () => {
                 >
                   <Ionicons name="clipboard-outline" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
                   <Text style={styles.primaryActionBtnText}>
-                    📲 Koppel-Code aus Zwischenablage einfügen & verbinden
+                    Koppel-Code aus Zwischenablage einfügen & verbinden
                   </Text>
                 </TouchableOpacity>
 
@@ -1287,6 +1352,54 @@ export const SettingsScreen: React.FC = () => {
                     </Text>
                   </TouchableOpacity>
                 ))}
+              </View>
+            </View>
+
+            {/* Externe Links (iPhone & iPad) */}
+            <View style={[styles.settingItemRow, { borderTopWidth: 0.5, borderTopColor: colors.borderSubtle, flexDirection: 'column', alignItems: 'flex-start', gap: 8 }]}>
+              <View>
+                <Text style={[styles.settingItemLabel, { color: colors.textPrimary }]}>
+                  Externe Links (iPhone & iPad)
+                </Text>
+                <Text style={{ fontSize: typography.sizes.micro, color: colors.textMuted, marginTop: 2 }}>
+                  Öffnet Originalartikel aus der Home-Screen-App direkt im gewünschten Browser.
+                </Text>
+              </View>
+              <View style={[styles.subToggleRow, { flexWrap: 'wrap' }]}>
+                {(
+                  [
+                    { id: 'safari', label: 'Safari (direkt)' },
+                    { id: 'firefox', label: 'Firefox' },
+                    { id: 'chrome', label: 'Chrome' },
+                    { id: 'in_app', label: 'Vorschau' }
+                  ] as readonly { id: ExternalBrowserPreference; label: string }[]
+                ).map(opt => {
+                  const currentPref = profile.readingPreferences.externalBrowser ?? 'safari';
+                  const isSelected = currentPref === opt.id;
+                  return (
+                    <TouchableOpacity
+                      key={opt.id}
+                      onPress={() => void setExternalBrowserPreference(opt.id)}
+                      style={[
+                        styles.smallPill,
+                        {
+                          backgroundColor: isSelected ? colors.accent : colors.surfaceSecondary
+                        }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Externe Links mit ${opt.label} öffnen`}
+                    >
+                      <Text
+                        style={[
+                          styles.smallPillText,
+                          { color: isSelected ? '#FFFFFF' : colors.textPrimary }
+                        ]}
+                      >
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </View>
           </View>
@@ -1562,27 +1675,45 @@ export const SettingsScreen: React.FC = () => {
             <View style={styles.mirrorStatsGrid}>
               <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
                 <Text style={[styles.mirrorStatNumber, { color: colors.accent }]}>{readCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>📖 Gelesen</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                  <Ionicons name="book-outline" size={12} color={colors.textSecondary} />
+                  <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary, marginTop: 0 }]}>Gelesen</Text>
+                </View>
               </View>
               <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
                 <Text style={[styles.mirrorStatNumber, { color: '#10B981' }]}>{upvoteCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>▲ Upvotes</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                  <Ionicons name="arrow-up-outline" size={12} color={colors.textSecondary} />
+                  <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary, marginTop: 0 }]}>Upvotes</Text>
+                </View>
               </View>
               <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
                 <Text style={[styles.mirrorStatNumber, { color: '#EF4444' }]}>{downvoteCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>▼ Downvotes</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                  <Ionicons name="arrow-down-outline" size={12} color={colors.textSecondary} />
+                  <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary, marginTop: 0 }]}>Downvotes</Text>
+                </View>
               </View>
               <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
                 <Text style={[styles.mirrorStatNumber, { color: '#38BDF8' }]}>{savedCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>★ Gespeichert</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                  <Ionicons name="bookmark-outline" size={12} color={colors.textSecondary} />
+                  <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary, marginTop: 0 }]}>Gespeichert</Text>
+                </View>
               </View>
               <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
                 <Text style={[styles.mirrorStatNumber, { color: '#F59E0B' }]}>{notesCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>✍️ Notizen</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                  <Ionicons name="create-outline" size={12} color={colors.textSecondary} />
+                  <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary, marginTop: 0 }]}>Notizen</Text>
+                </View>
               </View>
               <View style={[styles.mirrorStatCard, { backgroundColor: colors.surfaceSecondary }]}>
                 <Text style={[styles.mirrorStatNumber, { color: '#8B5CF6' }]}>{customChannelsCount}</Text>
-                <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary }]}>🪐 Spaces</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                  <Ionicons name="planet-outline" size={12} color={colors.textSecondary} />
+                  <Text style={[styles.mirrorStatLabel, { color: colors.textSecondary, marginTop: 0 }]}>Spaces</Text>
+                </View>
               </View>
             </View>
 
@@ -1620,7 +1751,7 @@ export const SettingsScreen: React.FC = () => {
                     focusPct === 60 && socraticPct === 20 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
                   ]}
                 >
-                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>⚖️ Ausgewogen (60/20/20)</Text>
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>Ausgewogen (60/20/20)</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1631,7 +1762,7 @@ export const SettingsScreen: React.FC = () => {
                     focusPct === 80 && socraticPct === 10 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
                   ]}
                 >
-                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>🎯 Tiefer Fokus (80/10/10)</Text>
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>Tiefer Fokus (80/10/10)</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1642,7 +1773,7 @@ export const SettingsScreen: React.FC = () => {
                     focusPct === 40 && socraticPct === 40 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
                   ]}
                 >
-                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>⚡ Sokratische Reibung (40/40/20)</Text>
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>Sokratische Reibung (40/40/20)</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1653,7 +1784,7 @@ export const SettingsScreen: React.FC = () => {
                     focusPct === 40 && socraticPct === 20 && serendipityPct === 40 && { borderColor: colors.accent, backgroundColor: colors.accentSubtle }
                   ]}
                 >
-                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>🧭 Entdecker (40/20/40)</Text>
+                  <Text style={[styles.presetPillText, { color: colors.textPrimary }]}>Entdecker (40/20/40)</Text>
                 </TouchableOpacity>
               </View>
             </View>

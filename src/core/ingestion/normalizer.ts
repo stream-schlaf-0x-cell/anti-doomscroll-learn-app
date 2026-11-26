@@ -497,9 +497,14 @@ export function normalizeFeedEntry(
   }
 
   const rawSafeImageUrl = sanitizeImageUrl(entry.imageUrl);
-  const authenticImageUrl = rawSafeImageUrl && !isLikelyBannerOrLogoUrl(rawSafeImageUrl, source.name)
-    ? rawSafeImageUrl
-    : undefined;
+  const isYoutubeThumbnailUrl = Boolean(
+    rawSafeImageUrl &&
+      /(?:^|\/\/)(?:i\d*\.ytimg\.com|img\.youtube\.com|yt3\.ggpht\.com)\//i.test(rawSafeImageUrl)
+  );
+  const authenticImageUrl =
+    rawSafeImageUrl && (isYoutubeThumbnailUrl || !isLikelyBannerOrLogoUrl(rawSafeImageUrl, source.name))
+      ? rawSafeImageUrl
+      : undefined;
 
   const memeMeta =
     format === 'meme' && entry.imageAltText
@@ -511,24 +516,29 @@ export function normalizeFeedEntry(
       : undefined;
 
   const isTimelessFormat = format === 'meme' || format === 'art_showcase' || source.primaryTopic === 'memes_satire' || source.primaryTopic === 'art_aesthetics';
+  const isYoutubeSpecialist =
+    format === 'youtube_gem' || source.primaryTopic === 'youtube_gems' || source.id.startsWith('yt-');
   const combinedForRouting = `${subtitle} ${feedText}`;
   const hasExplicitPolitics = isDomesticPartyPolitics(cleanTitle, combinedForRouting);
-  // Preserve dedicated specialist source topics (Didaktik, Klangsynthese, Bücher, Kontemplation)
-  // so articles from Deutsches Schulportal, Bob Blume, DLF Büchermarkt, LRB, or CDM are not hijacked into generic spaces
+  // Preserve dedicated specialist source topics (Didaktik, Klangsynthese, Bücher, Kontemplation, YouTube)
+  // so articles from Deutsches Schulportal, Bob Blume, DLF Büchermarkt, LRB, CDM, or YouTube channels are not hijacked into generic spaces
   const isDedicatedSpecialistSource =
+    isYoutubeSpecialist ||
     source.primaryTopic === 'german_didactics' ||
     source.primaryTopic === 'sound_synthesis' ||
     (!hasExplicitPolitics && (source.primaryTopic === 'book_mastery' || source.primaryTopic === 'contemplation_mind'));
 
-  const resolvedPrimaryTopic: TopicTag =
-    isTimelessFormat || isDedicatedSpecialistSource
-      ? source.primaryTopic
-      : classifyTopicDeterministically(cleanTitle, combinedForRouting, source.primaryTopic);
+  const resolvedPrimaryTopic: TopicTag = isYoutubeSpecialist
+    ? 'youtube_gems'
+    : isTimelessFormat || isDedicatedSpecialistSource
+    ? source.primaryTopic
+    : classifyTopicDeterministically(cleanTitle, combinedForRouting, source.primaryTopic);
   const resolvedTopics = Array.from(new Set<TopicTag>([resolvedPrimaryTopic, ...source.topics]));
-  const explicitSpace =
-    !isTimelessFormat && isDomesticPartyPolitics(cleanTitle, `${subtitle} ${feedText}`)
-      ? 'c/gesellschaft_politik'
-      : TOPIC_SPACE_MAP[resolvedPrimaryTopic]?.space || TOPIC_SPACE_MAP[source.primaryTopic]?.space || 'c/serendipity';
+  const explicitSpace = isYoutubeSpecialist
+    ? 'c/youtube'
+    : !isTimelessFormat && hasExplicitPolitics
+    ? 'c/gesellschaft_politik'
+    : TOPIC_SPACE_MAP[resolvedPrimaryTopic]?.space || TOPIC_SPACE_MAP[source.primaryTopic]?.space || 'c/serendipity';
 
   const publicationDateReliable = entry.publicationDateReliable !== undefined
     ? (isTimelessFormat ? false : entry.publicationDateReliable)

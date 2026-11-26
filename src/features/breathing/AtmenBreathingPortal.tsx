@@ -6,11 +6,11 @@ import {
   Platform,
   TouchableOpacity,
   Modal,
-  Animated,
-  Linking
+  Animated
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
+import { openExternalInBrowser } from '../../core/utils/externalBrowser';
 import { typography, radius, spacing } from '../../ui/theme';
 
 export interface AtmenBreathingPortalProps {
@@ -103,7 +103,7 @@ export const AtmenBreathingPortal: React.FC<AtmenBreathingPortalProps> = ({
         </Animated.View>
 
         <TouchableOpacity
-          onPress={() => Linking.openURL(ATEM_APP_URL)}
+          onPress={() => openExternalInBrowser(ATEM_APP_URL)}
           style={[styles.nativeLinkBtn, { backgroundColor: colors.accent }]}
           accessibilityRole="button"
           accessibilityLabel="Atem-App im Browser öffnen"

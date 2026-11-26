@@ -5,7 +5,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Linking,
+  ActivityIndicator,
   NativeSyntheticEvent,
   NativeScrollEvent,
   Image,
@@ -56,6 +56,8 @@ import {
   isPlausibleNonMetadataQuiz
 } from '../../core/quiz/quizGenerator';
 import { AtmenSymbol } from '../../ui/components/AtmenSymbol';
+import { openExternalInBrowser } from '../../core/utils/externalBrowser';
+import { loadAiCredentials, hasAiConfiguration } from '../../core/ai/atmenAiClient';
 
 export const ReaderScreen: React.FC = () => {
   const {
@@ -112,6 +114,8 @@ export const ReaderScreen: React.FC = () => {
   const [loadingRabbitHole, setLoadingRabbitHole] = useState<boolean>(false);
   const [aiEnrichedOverride, setAiEnrichedOverride] = useState<FeedItem | null>(null);
   const [aiQuizOverride, setAiQuizOverride] = useState<FeedQuizQuestion | null>(null);
+  const [aiStatusState, setAiStatusState] = useState<'idle' | 'loading' | 'ready' | 'no_key'>('idle');
+  const [aiModelLabel, setAiModelLabel] = useState<string | null>(null);
   const [socraticSalon, setSocraticSalon] = useState<SocraticSalonPerspectives | null>(
     selectedArticle?.socraticSalon || null
   );
@@ -139,6 +143,8 @@ export const ReaderScreen: React.FC = () => {
   useEffect(() => {
     setAiEnrichedOverride(null);
     setAiQuizOverride(null);
+    setAiStatusState('idle');
+    setAiModelLabel(null);
     if (!selectedArticle) return;
 
     const alreadyAiEnriched =
@@ -151,29 +157,52 @@ export const ReaderScreen: React.FC = () => {
       Boolean(selectedArticle.aiAssisted || selectedArticle.enrichmentTier === 'ai');
 
     let isMounted = true;
-    if (!alreadyAiEnriched) {
-      enrichArticleOnDemandWithAi(selectedArticle)
-        .then((enriched) => {
-          if (isMounted && (enriched.enrichmentTier === 'ai' || enriched.aiAssisted)) {
-            setAiEnrichedOverride(enriched);
-          }
-        })
-        .catch(() => {
-          // Non-fatal fallback
-        });
-    }
 
-    if (!alreadyAiQuiz) {
-      generateSingleArticleQuizWithAi(selectedArticle)
-        .then((quiz) => {
-          if (isMounted && quiz) {
-            setAiQuizOverride(quiz);
-          }
-        })
-        .catch(() => {
-          // Non-fatal fallback
-        });
-    }
+    void (async () => {
+      try {
+        const creds = await loadAiCredentials().catch(() => undefined);
+        if (!isMounted) return;
+        const configured = creds ? hasAiConfiguration(creds) : false;
+        const modelName = creds?.model?.trim() || null;
+
+        if (alreadyAiEnriched) {
+          setAiModelLabel(modelName);
+          setAiStatusState('ready');
+        } else if (!configured) {
+          setAiStatusState('no_key');
+        } else {
+          setAiModelLabel(modelName);
+          setAiStatusState('loading');
+          enrichArticleOnDemandWithAi(selectedArticle, creds)
+            .then((enriched) => {
+              if (!isMounted) return;
+              if (enriched.enrichmentTier === 'ai' || enriched.aiAssisted) {
+                setAiEnrichedOverride(enriched);
+                setAiStatusState('ready');
+              } else {
+                setAiStatusState('idle');
+              }
+            })
+            .catch(() => {
+              if (isMounted) setAiStatusState('idle');
+            });
+        }
+
+        if (!alreadyAiQuiz && configured) {
+          generateSingleArticleQuizWithAi(selectedArticle, creds)
+            .then((quiz) => {
+              if (isMounted && quiz) {
+                setAiQuizOverride(quiz);
+              }
+            })
+            .catch(() => {
+              // Non-fatal fallback
+            });
+        }
+      } catch {
+        if (isMounted) setAiStatusState('idle');
+      }
+    })();
 
     return () => {
       isMounted = false;
@@ -448,15 +477,7 @@ export const ReaderScreen: React.FC = () => {
   };
 
   const handleOpenSource = (url: string) => {
-    try {
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.open) {
-        window.open(url, '_blank', 'noopener,noreferrer');
-      } else {
-        void Linking.openURL(url).catch(() => {});
-      }
-    } catch (e) {
-      console.warn('Error opening external link:', e);
-    }
+    openExternalInBrowser(url);
   };
 
   const handleSaveToRaindrop = async () => {
@@ -1167,13 +1188,41 @@ export const ReaderScreen: React.FC = () => {
                   style={[styles.primaryDirectSourceBtn, { backgroundColor: colors.accent, marginVertical: 14 }]}
                   activeOpacity={0.85}
                   accessibilityRole="link"
-                  accessibilityLabel="Originalartikel in Safari / Firefox öffnen"
+                  accessibilityLabel="Originalartikel im Browser öffnen"
                 >
-                  <Ionicons name="globe-outline" size={17} color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Ionicons name="open-outline" size={17} color="#FFFFFF" style={{ marginRight: 8 }} />
                   <Text style={styles.primaryDirectSourceBtnText}>
-                    Originalartikel in Safari / Firefox öffnen ↗
+                    Originalartikel im Browser öffnen
                   </Text>
                 </TouchableOpacity>
+              )}
+
+              {/* Calm on-demand AI synthesis status indicator */}
+              {(aiStatusState === 'loading' || isAiSynthesized || aiStatusState === 'no_key') && (
+                <View style={[styles.aiStatusRow, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }]}>
+                  {aiStatusState === 'loading' ? (
+                    <>
+                      <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 8 }} />
+                      <Text style={[styles.aiStatusText, { color: colors.textSecondary }]}>
+                        KI-Synthese wird erstellt…{aiModelLabel ? ` · ${aiModelLabel}` : ''}
+                      </Text>
+                    </>
+                  ) : isAiSynthesized ? (
+                    <>
+                      <Ionicons name="sparkles-outline" size={13} color={colors.accent} style={{ marginRight: 6 }} />
+                      <Text style={[styles.aiStatusText, { color: colors.textSecondary }]}>
+                        KI-Synthese{aiModelLabel ? ` · ${aiModelLabel}` : ''}
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="information-circle-outline" size={13} color={colors.textMuted} style={{ marginRight: 6 }} />
+                      <Text style={[styles.aiStatusText, { color: colors.textMuted }]}>
+                        Lokale Textextraktion · KI-Schlüssel optional unter Steuerung
+                      </Text>
+                    </>
+                  )}
+                </View>
               )}
 
               {/* Museum-Grade Artwork Showcase OR Authentic Article Image */}
@@ -1860,7 +1909,7 @@ export const ReaderScreen: React.FC = () => {
                         accessibilityLabel={`Originalquelle bei ${ref.publisher} im Browser öffnen`}
                       >
                         <Ionicons name="open-outline" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                        <Text style={styles.sourceOpenActionBtnText}>Originalquelle in Safari / Firefox öffnen ↗</Text>
+                        <Text style={styles.sourceOpenActionBtnText}>Originalquelle im Browser öffnen</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -3240,6 +3289,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     letterSpacing: 0.1
+  },
+  aiStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 0.5,
+    marginBottom: spacing.sm
+  },
+  aiStatusText: {
+    fontSize: 11.5,
+    fontWeight: '500'
   },
   abstractIconBadge: {
     width: 24,

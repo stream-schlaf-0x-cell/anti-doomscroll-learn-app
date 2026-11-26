@@ -107,10 +107,61 @@ export function isEditorialQualityHackerNewsStory(title: string, domain = ''): b
   if (/\b(?:terminal borders?|dotfiles|tmux\b|neovim plugin|crate\s+v?\d|segfault)\b/i.test(cleanTitle)) {
     return false;
   }
+  if (
+    /\b(?:car\s+subscriptions?|post-purchase\s+fees?|storms?\s+(?:meta|facebook|x|twitter|tiktok|google)['’]?s\s+offices?|storms?\s+[\w.'’-]+\s+offices?|restoring\s+.+\s+as\s+ceo)\b/i.test(
+      cleanTitle
+    )
+  ) {
+    return false;
+  }
   if (isIncomprehensibleWetLabPaper(cleanTitle, domain)) {
     return false;
   }
   return true;
+}
+
+function classifyHnEditorialTheme(title: string, domain: string): {
+  label: string;
+  angle: string;
+} {
+  const hay = `${title} ${domain}`.toLowerCase();
+  if (/\b(ai|llm|gpt|claude|gemini|transformer|neural|reasoning|inference|alignment|interpretability|machine learning)\b/.test(hay)) {
+    return {
+      label: 'KI-Systeme & Modellarchitektur',
+      angle: 'Architekturannahmen, Skalierungsgrenzen und empirische Zuverlässigkeit'
+    };
+  }
+  if (/\b(rust|linux|kernel|compiler|database|distributed|consensus|security|crypto|protocol|typography|browser|cpu|gpu|memory|hardware|software|code)\b/.test(hay)) {
+    return {
+      label: 'Systemarchitektur & Software-Praxis',
+      angle: 'technische Abwägungen, Fehlerbilder und konkrete Implementierungsentscheidungen'
+    };
+  }
+  if (/\b(science|physics|quantum|math|biology|climate|space|energy|research|study|neuro|genetics|cern|hadron)\b/.test(hay)) {
+    return {
+      label: 'Forschung & Naturwissenschaft',
+      angle: 'Methodik, Messdaten und Einordnung in den aktuellen Forschungsstand'
+    };
+  }
+  if (/\b(econom|history|city|urban|design|book|philosophy|policy|law|education|teaching|culture)\b/.test(hay)) {
+    return {
+      label: 'Gesellschaft, Kultur & Ideengeschichte',
+      angle: 'historische Zusammenhänge, institutionelle Anreize und gesellschaftliche Folgewirkungen'
+    };
+  }
+  return {
+    label: 'Wissens- & Technikdebatte',
+    angle: 'zentrale Mechanismen, Praxiserfahrungen und offene Streitpunkte'
+  };
+}
+
+function hashStringDeterministic(input: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h);
 }
 
 export function buildSubstantiveHackerNewsCopy(params: {
@@ -140,18 +191,36 @@ export function buildSubstantiveHackerNewsCopy(params: {
     };
   }
 
-  const engagementContext =
-    params.commentsCount >= 80
-      ? `In der Fachcommunity löst diese Veröffentlichung (${params.domain}) eine breite Debatte mit ${params.commentsCount} Diskussionsbeiträgen aus.`
-      : `Beitrag aus der internationalen Wissens- und Technikdebatte bei ${params.domain} mit ${params.commentsCount} Diskussionsbeiträgen.`;
+  const theme = classifyHnEditorialTheme(cleanTitle, params.domain);
+  const variant = hashStringDeterministic(`${cleanTitle}|${params.domain}|${params.points}`);
 
-  const feedText = `Aktuelle Analyse bei ${params.domain} zu „${cleanTitle}“. ${engagementContext} Im Originalartikel werden Hintergründe, Einordnung und weiterführende Perspektiven im Zusammenhang entfaltet.`;
-  const articleBody = `${cleanTitle}\n\nQuelle: ${params.domain}\n${engagementContext}\n\nLesekontext: Dieser Beitrag verbindet Einordnung mit kontroversen Sichtweisen aus der Originalpublikation (${params.targetUrl}) sowie vertiefenden Argumenten der Fachdiskussion (${params.hnUrl}).`;
+  const leadOptions = [
+    `Auf ${params.domain} untersucht „${cleanTitle}“ zentrale Fragen aus dem Themenfeld ${theme.label}.`,
+    `Unter der Überschrift „${cleanTitle}“ dokumentiert ${params.domain} aktuelle Beobachtungen aus ${theme.label}.`,
+    `Der Bericht bei ${params.domain} widmet sich „${cleanTitle}“ und rückt dabei ${theme.angle} in den Mittelpunkt.`,
+    `In „${cleanTitle}“ geht ${params.domain} den Hintergründen nach und beleuchtet ${theme.angle}.`
+  ];
+  const leadSentence = leadOptions[variant % leadOptions.length];
+
+  const discussionOptions = [
+    `In der zugehörigen Hacker-News-Runde tragen ${params.commentsCount} Kommentare und ${params.points} Empfehlungen Praxisberichte und Gegenargumente zusammen.`,
+    `Die internationale Fachdebatte auf Hacker News (${params.points} Punkte, ${params.commentsCount} Beiträge) prüft vor allem ${theme.angle}.`,
+    `Mit ${params.points} Empfehlungen und ${params.commentsCount} Diskussionsbeiträgen spiegelt die Resonanz bei Hacker News reges Interesse an dieser Fragestellung wider.`
+  ];
+  const discussionSentence = discussionOptions[(variant >> 2) % discussionOptions.length];
+
+  const excerptLead = cleanExcerpt.length >= 30 ? `${cleanExcerpt} ` : '';
+  let feedText = `${excerptLead}${leadSentence} ${discussionSentence}`.replace(/\s+/g, ' ').trim();
+  if (feedText.length < 160) {
+    feedText = `${feedText} Im Fokus stehen ${theme.angle} anhand der Primärquelle bei ${params.domain}.`.trim();
+  }
+
+  const articleBody = `${cleanTitle}\n\n${feedText}\n\nThemenfeld: ${theme.label}\nPrimärquelle: ${params.domain} (${params.targetUrl})\nFachdiskussion: ${params.points} Empfehlungen und ${params.commentsCount} Kommentare auf Hacker News (${params.hnUrl}).`;
 
   return {
     feedText,
     articleBody,
-    keyInsight: `${params.domain}: Weiterführende Analyse und Fachdebatte zu „${cleanTitle.slice(0, 120)}“.`
+    keyInsight: `${params.domain} (${theme.label}): ${cleanTitle.slice(0, 120)}`
   };
 }
 
@@ -514,19 +583,22 @@ export class ContinuousLiveNewsService {
   /**
    * 2. Native CORS-Open Connector: Hacker News Algolia Live Stream
    */
-  public static async fetchHackerNewsLiveJson(limit = 25): Promise<FeedItem[]> {
+  public static async fetchHackerNewsLiveJson(limit = 8): Promise<FeedItem[]> {
     try {
+      const fetchLimit = Math.min(30, Math.max(limit * 2, 16));
       const response = await this.fetchWithTimeout(
-        `https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=${limit}`,
+        `https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=${fetchLimit}`,
         3500
       );
       if (!response.ok) return [];
       const data = await response.json();
       const hits = Array.isArray(data?.hits) ? data.hits : [];
       const items: FeedItem[] = [];
+      const topicCounts = new Map<TopicTag, number>();
       const nowIso = new Date().toISOString();
 
       for (const hit of hits) {
+        if (items.length >= limit) break;
         if (!hit.title || !hit.objectID) continue;
         const hnUrl = `https://news.ycombinator.com/item?id=${hit.objectID}`;
         const targetUrl = hit.url || hnUrl;
@@ -545,6 +617,10 @@ export class ContinuousLiveNewsService {
 
         if (!isEditorialQualityHackerNewsStory(hit.title, domain)) continue;
 
+        const primaryTopic = classifyTopicDeterministically(hit.title, domain, 'science_society');
+        const currentTopicCount = topicCounts.get(primaryTopic) || 0;
+        if (currentTopicCount >= 2) continue;
+
         const copy = buildSubstantiveHackerNewsCopy({
           title: hit.title,
           domain,
@@ -554,7 +630,7 @@ export class ContinuousLiveNewsService {
           commentsCount,
           storyText: typeof hit.story_text === 'string' ? hit.story_text : undefined
         });
-        const primaryTopic = classifyTopicDeterministically(hit.title, domain, 'ai_apple');
+        topicCounts.set(primaryTopic, currentTopicCount + 1);
         const subtitle = '';
         const feedText = copy.feedText;
         const articleBody = copy.articleBody;
@@ -600,7 +676,7 @@ export class ContinuousLiveNewsService {
           contentHash: `hn-live-${hit.objectID}`,
           canonicalUrl: targetUrl,
           hasAuthenticImage: false,
-          space: TOPIC_SPACE_MAP[primaryTopic]?.space || 'c/acceleration',
+          space: TOPIC_SPACE_MAP[primaryTopic]?.space || 'c/serendipity',
           flair: '💬 HN-Community',
           keyInsight: copy.keyInsight,
           upvotesCount: 0,
@@ -788,14 +864,14 @@ export class ContinuousLiveNewsService {
             return count;
           })
           .catch(() => 0),
-        this.fetchSaxonyRegionalNews(8)
+        this.fetchSaxonyRegionalNews(10)
           .then(items => {
             const count = this.integrateProviderItems(items, 'tagesschau');
             this.lastRefreshNewCount += count;
             return count;
           })
           .catch(() => 0),
-        this.fetchHackerNewsLiveJson(25)
+        this.fetchHackerNewsLiveJson(8)
           .then(items => {
             const count = this.integrateProviderItems(items, 'hackernews');
             this.lastRefreshNewCount += count;

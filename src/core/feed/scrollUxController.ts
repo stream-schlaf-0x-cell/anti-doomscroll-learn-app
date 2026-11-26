@@ -64,16 +64,23 @@ export function evaluateHorizonBarVisibility(
   return { visible: currentlyVisible, clampedY };
 }
 
-export const PULL_REFRESH_THRESHOLD = 64;
-export const PULL_REFRESH_MAX = 108;
+export const PULL_REFRESH_DEADZONE = 24;
+export const PULL_REFRESH_DAMPING = 0.32;
+export const PULL_REFRESH_THRESHOLD = 104;
+export const PULL_REFRESH_MAX = 148;
+export const PULL_REFRESH_HOLD_MS = 350;
+export const PULL_REFRESH_TOP_SETTLE_MS = 450;
 
-export type PullToRefreshPhase = 'idle' | 'pulling' | 'ready' | 'refreshing';
+export type PullToRefreshPhase = 'idle' | 'pulling' | 'holding' | 'ready' | 'refreshing';
 
 export interface PullToRefreshParams {
   pullDeltaY: number;
   isRefreshing: boolean;
+  holdElapsedMs?: number;
   threshold?: number;
   maxPull?: number;
+  deadzone?: number;
+  holdMs?: number;
 }
 
 export interface PullToRefreshState {
@@ -85,7 +92,7 @@ export interface PullToRefreshState {
 
 /**
  * Computes damped pull-to-refresh distance, normalized progress [0..1], release readiness,
- * and discrete visual phase ('idle' | 'pulling' | 'ready' | 'refreshing').
+ * and discrete visual phase ('idle' | 'pulling' | 'holding' | 'ready' | 'refreshing').
  */
 export function evaluatePullToRefreshGesture(
   params: PullToRefreshParams
@@ -93,8 +100,11 @@ export function evaluatePullToRefreshGesture(
   const {
     pullDeltaY,
     isRefreshing,
+    holdElapsedMs,
     threshold = PULL_REFRESH_THRESHOLD,
-    maxPull = PULL_REFRESH_MAX
+    maxPull = PULL_REFRESH_MAX,
+    deadzone = PULL_REFRESH_DEADZONE,
+    holdMs = PULL_REFRESH_HOLD_MS
   } = params;
 
   if (isRefreshing) {
@@ -106,18 +116,40 @@ export function evaluatePullToRefreshGesture(
     };
   }
 
-  const safeDelta = Number.isFinite(pullDeltaY) ? pullDeltaY : 0;
-  const pullDistance = safeDelta > 4 ? Math.min(maxPull, safeDelta * 0.48) : 0;
+  if (!Number.isFinite(pullDeltaY) || pullDeltaY <= deadzone) {
+    return {
+      pullDistance: 0,
+      progress: 0,
+      readyToRelease: false,
+      phase: 'idle'
+    };
+  }
+
+  const pullDistance = Math.min(maxPull, (pullDeltaY - deadzone) * PULL_REFRESH_DAMPING);
   const progress = threshold > 0 ? Math.min(1, pullDistance / threshold) : 0;
-  const readyToRelease = pullDistance >= threshold;
-  const phase: PullToRefreshPhase =
-    pullDistance < 10 ? 'idle' : readyToRelease ? 'ready' : 'pulling';
+
+  if (pullDistance >= threshold) {
+    if (typeof holdElapsedMs === 'number' && holdElapsedMs < holdMs) {
+      return {
+        pullDistance,
+        progress,
+        readyToRelease: false,
+        phase: 'holding'
+      };
+    }
+    return {
+      pullDistance,
+      progress,
+      readyToRelease: true,
+      phase: 'ready'
+    };
+  }
 
   return {
     pullDistance,
     progress,
-    readyToRelease,
-    phase
+    readyToRelease: false,
+    phase: 'pulling'
   };
 }
 

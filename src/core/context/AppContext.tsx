@@ -8,7 +8,8 @@ import {
   FeedItem,
   DayEditionType,
   EditionPreferences,
-  TOPIC_SPACE_MAP
+  TOPIC_SPACE_MAP,
+  applyOptimisticReadingPreference
 } from '../domain/types';
 import {
   Subchannel,
@@ -55,6 +56,9 @@ import { hivemindLearningService } from '../learning/hivemindLearningService';
 import { BackgroundCoordinator, countFreshUnseenItems } from './backgroundCoordinator';
 import { useReadingProgressController } from './useReadingProgressController';
 import { useCloudSyncController, MergedCloudSnapshotUpdate } from './useCloudSyncController';
+import { ExternalBrowserPreference, setCachedExternalBrowserPref } from '../utils/externalBrowser';
+
+export { applyOptimisticReadingPreference };
 
 export function extractSalientKeywords(titleOrItem: string | Pick<FeedItem, 'title' | 'subtitle' | 'keyInsight' | 'feedText'>): string[] {
   return extractConceptKeywords(titleOrItem);
@@ -315,6 +319,7 @@ interface AppContextValue {
   setFontSize: (size: 'sm' | 'md' | 'lg' | 'xl') => Promise<void>;
   setThemePreference: (theme: 'system' | 'light' | 'dark') => Promise<void>;
   setPalettePreference: (palette: ThemePalette) => Promise<void>;
+  setExternalBrowserPreference: (pref: ExternalBrowserPreference) => Promise<void>;
   toggleFeatureModule: (moduleId: FeatureModuleId) => Promise<void>;
   completeOnboarding: (
     interests: Record<TopicTag, number>,
@@ -521,6 +526,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (snapshot.profile) {
       latestProfileRef.current = snapshot.profile;
       setProfile(snapshot.profile);
+      setCachedExternalBrowserPref(snapshot.profile.readingPreferences?.externalBrowser ?? 'safari');
     }
     if (snapshot.interactions) {
       latestInteractionsRef.current = snapshot.interactions;
@@ -659,6 +665,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const colors = useMemo(() => {
     return getThemeColors(isDark ? 'dark' : 'light', palette);
   }, [isDark, palette]);
+
+  // Keep external browser preference cache synchronized with active profile
+  useEffect(() => {
+    setCachedExternalBrowserPref(profile.readingPreferences?.externalBrowser ?? 'safari');
+  }, [profile.readingPreferences?.externalBrowser]);
 
   // Sync web document background and iOS theme-color meta tag
   useEffect(() => {
@@ -995,6 +1006,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setInteractions(loadedInteractions);
       latestProfileRef.current = loadedProfile;
       latestInteractionsRef.current = loadedInteractions;
+      setCachedExternalBrowserPref(loadedProfile.readingPreferences?.externalBrowser ?? 'safari');
 
       let loadedSavedArticles: FeedItem[] = [];
       try {
@@ -1384,9 +1396,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSelectedFilter('all');
     setSearchQuery('');
     const autoEdition = determineCurrentEditionType(new Date(), latestProfileRef.current);
-    setSelectedEditionTypeState(autoEdition);
-    selectedEditionTypeRef.current = autoEdition;
-    void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, autoEdition);
+    const needsEditionSwitch = autoEdition !== selectedEditionTypeRef.current;
+    const needsRecompute = needsEditionSwitch || latestDailyEditionRef.current.length === 0;
+    if (needsEditionSwitch) {
+      setSelectedEditionTypeState(autoEdition);
+      selectedEditionTypeRef.current = autoEdition;
+    }
+    if (needsRecompute) {
+      void scheduleFeedRecompute(latestProfileRef.current, latestInteractionsRef.current, autoEdition);
+    }
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       try {
@@ -1959,44 +1977,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [scheduleFeedRecompute]);
 
-  const setFontSize = useCallback(async (fontSize: 'sm' | 'md' | 'lg' | 'xl') => {
+  const updateReadingPrefOptimistic = useCallback(async (
+    patch: Partial<UserProfile['readingPreferences']>,
+    errorLabel: string
+  ) => {
+    const prevProfile = latestProfileRef.current;
+    const optimistic = applyOptimisticReadingPreference(prevProfile, patch);
+    latestProfileRef.current = optimistic;
+    setProfile(optimistic);
+    if (patch.externalBrowser !== undefined) {
+      setCachedExternalBrowserPref(patch.externalBrowser);
+    }
     try {
-      const committed = await userProfileRepository.updateProfile(curr => ({
-        ...curr,
-        readingPreferences: { ...curr.readingPreferences, fontSize }
-      }));
+      const committed = await userProfileRepository.updateProfile(curr =>
+        applyOptimisticReadingPreference(curr, patch)
+      );
       latestProfileRef.current = committed;
       setProfile(committed);
+      if (patch.externalBrowser !== undefined) {
+        setCachedExternalBrowserPref(committed.readingPreferences?.externalBrowser ?? 'safari');
+      }
     } catch {
-      setErrorMessage('Schriftgröße konnte nicht gespeichert werden.');
+      latestProfileRef.current = prevProfile;
+      setProfile(prevProfile);
+      if (patch.externalBrowser !== undefined) {
+        setCachedExternalBrowserPref(prevProfile.readingPreferences?.externalBrowser ?? 'safari');
+      }
+      setErrorMessage(errorLabel);
     }
   }, []);
+
+  const setFontSize = useCallback(async (fontSize: 'sm' | 'md' | 'lg' | 'xl') => {
+    await updateReadingPrefOptimistic({ fontSize }, 'Schriftgröße konnte nicht gespeichert werden.');
+  }, [updateReadingPrefOptimistic]);
 
   const setThemePreference = useCallback(async (theme: 'system' | 'light' | 'dark') => {
-    try {
-      const committed = await userProfileRepository.updateProfile(curr => ({
-        ...curr,
-        readingPreferences: { ...curr.readingPreferences, theme }
-      }));
-      latestProfileRef.current = committed;
-      setProfile(committed);
-    } catch {
-      setErrorMessage('Erscheinungsbild konnte nicht gespeichert werden.');
-    }
-  }, []);
+    await updateReadingPrefOptimistic({ theme }, 'Erscheinungsbild konnte nicht gespeichert werden.');
+  }, [updateReadingPrefOptimistic]);
 
   const setPalettePreference = useCallback(async (newPalette: ThemePalette) => {
-    try {
-      const committed = await userProfileRepository.updateProfile(curr => ({
-        ...curr,
-        readingPreferences: { ...curr.readingPreferences, palette: newPalette }
-      }));
-      latestProfileRef.current = committed;
-      setProfile(committed);
-    } catch {
-      setErrorMessage('Farbpalette konnte nicht gespeichert werden.');
-    }
-  }, []);
+    await updateReadingPrefOptimistic({ palette: newPalette }, 'Farbpalette konnte nicht gespeichert werden.');
+  }, [updateReadingPrefOptimistic]);
+
+  const setExternalBrowserPreference = useCallback(async (externalBrowser: ExternalBrowserPreference) => {
+    await updateReadingPrefOptimistic({ externalBrowser }, 'Browser-Präferenz konnte nicht gespeichert werden.');
+  }, [updateReadingPrefOptimistic]);
 
   const toggleFeatureModule = useCallback(async (moduleId: FeatureModuleId) => {
     try {
@@ -2163,6 +2188,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setFontSize,
       setThemePreference,
       setPalettePreference,
+      setExternalBrowserPreference,
       toggleFeatureModule,
       completeOnboarding,
       repeatOnboarding,
@@ -2265,6 +2291,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setFontSize,
       setThemePreference,
       setPalettePreference,
+      setExternalBrowserPreference,
       toggleFeatureModule,
       completeOnboarding,
       repeatOnboarding,

@@ -844,7 +844,8 @@ export const UserProfileSchema = z.object({
     theme: z.enum(['system', 'light', 'dark']).default('dark'),
     palette: ThemePaletteSchema.default('tidalglass'),
     fontSize: z.enum(['sm', 'md', 'lg', 'xl']).default('md'),
-    languageMix: LanguageMixSchema.default('bilingual')
+    languageMix: LanguageMixSchema.default('bilingual'),
+    externalBrowser: z.enum(['safari', 'firefox', 'chrome', 'in_app']).default('safari').optional()
   }),
   editionPreferences: z.object({
     timezone: z.string().default('Europe/Berlin'),
@@ -875,6 +876,22 @@ export const UserProfileSchema = z.object({
 });
 export type UserProfile = z.infer<typeof UserProfileSchema>;
 export type EditionPreferences = UserProfile['editionPreferences'];
+
+/**
+ * Pure helper for 0ms optimistic updates to `UserProfile.readingPreferences`.
+ */
+export function applyOptimisticReadingPreference(
+  profile: UserProfile,
+  patch: Partial<UserProfile['readingPreferences']>
+): UserProfile {
+  return {
+    ...profile,
+    readingPreferences: {
+      ...profile.readingPreferences,
+      ...patch
+    }
+  };
+}
 
 export const SparringReplySchema = z.object({
   id: z.string(),

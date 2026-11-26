@@ -573,6 +573,48 @@ function extractCreditAndCleanSummary(summaryText: string): { cleanSummary: stri
 }
 
 /**
+ * Cleans `<media:description>` text (e.g. YouTube video descriptions),
+ * stripping sponsor/affiliate/merch/promo boilerplate while keeping prose & chapters.
+ */
+function cleanMediaDescription(raw: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  const decoded = decodeXmlEntities(raw)
+    .replace(ZERO_WIDTH_REGEX, '')
+    .replace(/\r\n?/g, '\n')
+    .trim();
+  if (!decoded) return '';
+
+  const promoLineRegex =
+    /\b(sponsored by|sponsor:|use code|discount|promo code|merch|teespring|spreadshirt|patreon\.com|ko-fi\.com|buy me a coffee|affiliate|rabattcode|werbung|anzeige|subscribe to|follow me on|follow us on|join our discord|music by)\b/i;
+  const lines = decoded.split('\n');
+  const kept: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) {
+      if (kept.length > 0 && kept[kept.length - 1] !== '') {
+        kept.push('');
+      }
+      continue;
+    }
+    if (/^[-_=*]{4,}$/.test(line)) {
+      const remaining = lines.slice(i + 1, i + 5).join(' ');
+      if (promoLineRegex.test(remaining) || /channel about|if you're reading the bottom/i.test(remaining)) {
+        break;
+      }
+      continue;
+    }
+    if (promoLineRegex.test(line)) continue;
+    if (/^https?:\/\/\S+$/i.test(line)) continue;
+    kept.push(line);
+  }
+
+  const joined = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (joined.length <= 1500) return joined;
+  return `${joined.slice(0, 1497).replace(/\s+\S*$/, '').trim()}…`;
+}
+
+/**
  * Pure TypeScript parser for RSS 2.0, RSS 1.0 (RDF), and Atom feeds.
  * Does not depend on native C++ bindings or browser DOM.
  */
@@ -605,11 +647,16 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
       link = decodeXmlEntities(link.trim());
       const cleanId = decodeXmlEntities(id.trim());
 
-      const summaryRaw = getTagContent(block, 'summary') || getTagContent(block, 'content');
+      const mediaDescClean = cleanMediaDescription(getTagContent(block, 'media:description'));
+      const summaryRaw = getTagContent(block, 'summary') || getTagContent(block, 'content') || mediaDescClean;
       const { cleanSummary: summary, imageCredit } = extractCreditAndCleanSummary(stripHtml(stripNewsletterAdBlocks(summaryRaw)));
       const fullContentRaw = getTagContent(block, 'content');
-      const fullContent = fullContentRaw ? stripHtml(stripNewsletterAdBlocks(fullContentRaw)) : undefined;
-      const fullContentMarkdown = fullContentRaw ? htmlToEditorialMarkdown(fullContentRaw) : undefined;
+      const fullContent = fullContentRaw
+        ? stripHtml(stripNewsletterAdBlocks(fullContentRaw))
+        : (mediaDescClean || undefined);
+      const fullContentMarkdown = fullContentRaw
+        ? htmlToEditorialMarkdown(fullContentRaw)
+        : (mediaDescClean || undefined);
 
       const author =
         getTagContent(block, 'name') ||
@@ -657,12 +704,17 @@ export function parseFeedXml(xmlContent: string, sourceId: string): RawFeedEntry
       const titleRaw = getTagContent(block, 'title');
       const title = stripHtml(titleRaw);
 
-      const descRaw = getTagContent(block, 'description');
+      const mediaDescClean = cleanMediaDescription(getTagContent(block, 'media:description'));
+      const descRaw = getTagContent(block, 'description') || mediaDescClean;
       const { cleanSummary: summary, imageCredit } = extractCreditAndCleanSummary(stripHtml(stripNewsletterAdBlocks(descRaw)));
 
       const contentEncodedRaw = getTagContent(block, 'content:encoded');
-      const fullContent = contentEncodedRaw ? stripHtml(stripNewsletterAdBlocks(contentEncodedRaw)) : undefined;
-      const fullContentMarkdown = contentEncodedRaw ? htmlToEditorialMarkdown(contentEncodedRaw) : undefined;
+      const fullContent = contentEncodedRaw
+        ? stripHtml(stripNewsletterAdBlocks(contentEncodedRaw))
+        : (mediaDescClean || undefined);
+      const fullContentMarkdown = contentEncodedRaw
+        ? htmlToEditorialMarkdown(contentEncodedRaw)
+        : (mediaDescClean || undefined);
 
       const author =
         getTagContent(block, 'dc:creator') ||

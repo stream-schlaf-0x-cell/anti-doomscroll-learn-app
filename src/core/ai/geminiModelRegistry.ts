@@ -528,6 +528,12 @@ export const DISCONTINUED_GEMINI_MODEL_IDS = DISCONTINUED_MODEL_IDS;
 
 export const OFFICIAL_GEMINI_MODELS = GEMINI_MODEL_CATALOG;
 export const DEFAULT_GEMINI_TEXT_MODEL = 'gemini-4-hydrogen';
+export const LEGACY_DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+
+export function isLegacyDefaultFlashModelId(modelId?: string): boolean {
+  const clean = (modelId || '').trim();
+  return clean === 'gemini-3.8-flash' || clean === 'google/gemini-3.8-flash';
+}
 
 export function findGeminiModel(
   modelId: string,

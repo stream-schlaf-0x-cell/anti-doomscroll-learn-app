@@ -1,5 +1,12 @@
 import { FeedItem } from '../domain/types';
-import { AiCredentials, callAiModel, hasAiConfiguration, loadAiCredentials } from '../ai/atmenAiClient';
+import {
+  AiCredentials,
+  callAiModel,
+  DEFAULT_GEMINI_MODEL,
+  extractJsonFromAiResponse,
+  hasAiConfiguration,
+  loadAiCredentials
+} from '../ai/atmenAiClient';
 import { appStorage, AtemStorage } from '../data/storage';
 
 export interface NewsEvolutionCitation {
@@ -288,11 +295,22 @@ Antworte STRIKT als valides JSON in dieser Struktur:
     const res = await callAiModel(prompt, {
       credentials,
       jsonMode: true,
-      maxTokens: 380,
+      maxTokens: 950,
       itemId: `evolution-${id}`
     });
 
-    const parsed = JSON.parse(res.text);
+    let parsed: Record<string, unknown>;
+    try {
+      const extracted = extractJsonFromAiResponse<unknown>(res.text);
+      if (!extracted || typeof extracted !== 'object' || Array.isArray(extracted)) {
+        throw new SyntaxError('KI-Briefing lieferte kein gültiges JSON-Objekt.');
+      }
+      parsed = extracted as Record<string, unknown>;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Fehler beim Auslesen des News-Evolution-Briefings: ${msg}`);
+    }
+
     const citations: NewsEvolutionCitation[] = focusItems.slice(0, 3).map(item => ({
       publisher: item.sourceReferences[0]?.publisher || item.sourceBroadcasterName || 'Primärquelle',
       title: item.title,
@@ -300,38 +318,53 @@ Antworte STRIKT als valides JSON in dieser Struktur:
       publishedAt: item.publishedAt
     }));
 
+    const point1Text = typeof parsed.point1 === 'string' && parsed.point1.trim()
+      ? parsed.point1.trim()
+      : 'Neue Entwicklung erfasst.';
+    const point2Text = typeof parsed.point2 === 'string' && parsed.point2.trim()
+      ? parsed.point2.trim()
+      : 'Bedeutsame Einordnung liegt vor.';
+    const point3Text = typeof parsed.point3 === 'string' && parsed.point3.trim()
+      ? parsed.point3.trim()
+      : 'Quellenbelege stützen die Meldung.';
+    const headlineText = typeof parsed.headline === 'string' && parsed.headline.trim()
+      ? parsed.headline.trim()
+      : `Veränderungen im Ticker (${newCount} Meldungen)`;
+
     const points: [NewsEvolutionPoint, NewsEvolutionPoint, NewsEvolutionPoint] = [
       {
         index: 1,
         category: 'development',
         label: '1. Neue Entwicklung & Perspektive',
-        text: parsed.point1 || 'Neue Entwicklung erfasst.',
+        text: point1Text,
         citations: citations.slice(0, 1)
       },
       {
         index: 2,
         category: 'significance',
         label: '2. Bedeutung & Relevanz',
-        text: parsed.point2 || 'Bedeutsame Einordnung liegt vor.',
+        text: point2Text,
         citations: citations.slice(1, 2)
       },
       {
         index: 3,
         category: 'sources_and_questions',
         label: '3. Quellenbelege & Offene Fragen',
-        text: parsed.point3 || 'Quellenbelege stützen die Meldung.',
+        text: point3Text,
         citations,
-        openQuestions: Array.isArray(parsed.openQuestions) ? parsed.openQuestions : []
+        openQuestions: Array.isArray(parsed.openQuestions)
+          ? parsed.openQuestions.map(String).filter(Boolean)
+          : []
       }
     ];
 
     return {
       id,
       generatedAtIso: new Date().toISOString(),
-      headline: parsed.headline || `Veränderungen im Ticker (${newCount} Meldungen)`,
+      headline: headlineText,
       points,
       isAiGenerated: true,
-      modelUsed: res.modelUsed || credentials.model,
+      modelUsed: res.modelUsed || credentials.model || DEFAULT_GEMINI_MODEL,
       isDeterministicFallback: false,
       cached: false,
       analyzedArticlesCount: allItems.length,

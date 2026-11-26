@@ -18,6 +18,10 @@ import {
   AiCredentials,
   DEFAULT_AI_CREDENTIALS,
   DEFAULT_GEMINI_MODEL,
+  DEFAULT_OPENROUTER_MODEL,
+  HYDROGEN_DEFAULT_MIGRATED_KEY,
+  SELECTED_MODEL_ID_STORAGE_KEY,
+  isLegacyDefaultFlashModelId,
   loadAiCredentials,
   saveAiCredentials,
   getGeminiApiKey,
@@ -25,6 +29,37 @@ import {
   getPreferredProvider,
   getSelectedModelId
 } from '../ai/atmenAiClient';
+
+function isHydrogenModelId(modelId?: string): boolean {
+  const clean = (modelId || '').trim();
+  return clean === 'gemini-4-hydrogen' || clean === 'google/gemini-4-hydrogen';
+}
+
+function upgradeLegacyModelId(modelId: string): string {
+  return modelId.trim() === 'google/gemini-3.8-flash' ? DEFAULT_OPENROUTER_MODEL : DEFAULT_GEMINI_MODEL;
+}
+
+function resolveSyncedModelId(
+  localModel: string | undefined,
+  remoteModel: string | undefined,
+  preferRemote: boolean,
+  allowLegacyRemote = true
+): string | undefined {
+  const localTrimmed = localModel?.trim();
+  const remoteTrimmed = remoteModel?.trim();
+
+  // Never downgrade local gemini-4-hydrogen / google/gemini-4-hydrogen back to legacy 3.8-flash
+  if (isHydrogenModelId(localTrimmed) && isLegacyDefaultFlashModelId(remoteTrimmed)) {
+    return localTrimmed;
+  }
+  if (!allowLegacyRemote && remoteTrimmed && isLegacyDefaultFlashModelId(remoteTrimmed)) {
+    return upgradeLegacyModelId(remoteTrimmed);
+  }
+  if (isHydrogenModelId(remoteTrimmed) && isLegacyDefaultFlashModelId(localTrimmed)) {
+    return remoteTrimmed;
+  }
+  return preferRemote ? (remoteTrimmed || localTrimmed) : (localTrimmed || remoteTrimmed);
+}
 
 export type Space = Subchannel;
 
@@ -341,9 +376,11 @@ export function mergeSyncSnapshots(
       preferredProvider: isRemoteNewer
         ? (remoteCreds?.preferredProvider || localCreds?.preferredProvider)
         : (localCreds?.preferredProvider || remoteCreds?.preferredProvider),
-      selectedGeminiModelId: isRemoteNewer
-        ? (remoteCreds?.selectedGeminiModelId || localCreds?.selectedGeminiModelId)
-        : (localCreds?.selectedGeminiModelId || remoteCreds?.selectedGeminiModelId)
+      selectedGeminiModelId: resolveSyncedModelId(
+        localCreds?.selectedGeminiModelId,
+        remoteCreds?.selectedGeminiModelId,
+        isRemoteNewer
+      )
     };
   }
 
@@ -993,12 +1030,23 @@ export class CloudSyncService {
       const openRouterKey = incomingOpenRouter || (current.provider === 'openrouter' ? current.apiKey : '');
       const activeKey = preferred === 'openrouter' ? (openRouterKey || geminiKey) : (geminiKey || openRouterKey);
 
+      const migratedFlag = await this.storage.getItem(HYDROGEN_DEFAULT_MIGRATED_KEY).catch(() => null);
+      const localSelectedModel = await getSelectedModelId(this.storage).catch(() => current.model || DEFAULT_GEMINI_MODEL);
+      const localEffectiveModel = localSelectedModel || current.model;
+      const allowLegacyRemote = migratedFlag === '1' && !isHydrogenModelId(localEffectiveModel);
+      const resolvedModel = resolveSyncedModelId(
+        localEffectiveModel,
+        snapshot.aiCredentials.selectedGeminiModelId,
+        true,
+        allowLegacyRemote
+      ) || current.model || DEFAULT_GEMINI_MODEL;
+
       const updatedCreds: AiCredentials = {
         ...current,
         provider: preferred,
         apiKey: activeKey,
         persistApiKey: true,
-        model: snapshot.aiCredentials.selectedGeminiModelId || current.model
+        model: resolvedModel
       };
 
       writes.push(saveAiCredentials(updatedCreds, this.storage));
@@ -1009,8 +1057,8 @@ export class CloudSyncService {
         writes.push(this.storage.setItem('@atem:openrouter_api_key:v1', incomingOpenRouter));
       }
       writes.push(this.storage.setItem('@atem:preferred_ai_provider:v1', preferred));
-      if (snapshot.aiCredentials.selectedGeminiModelId) {
-        writes.push(this.storage.setItem('@atem:selected_model_id:v1', snapshot.aiCredentials.selectedGeminiModelId));
+      if (resolvedModel) {
+        writes.push(this.storage.setItem(SELECTED_MODEL_ID_STORAGE_KEY, resolvedModel));
       }
     }
 
@@ -1211,12 +1259,23 @@ export class CloudSyncService {
         ? (payload.ok || payload.gk || '')
         : (payload.gk || payload.ok || '');
 
+      const migratedFlag = await this.storage.getItem(HYDROGEN_DEFAULT_MIGRATED_KEY).catch(() => null);
+      const localSelectedModel = await getSelectedModelId(this.storage).catch(() => current.model || DEFAULT_GEMINI_MODEL);
+      const localEffectiveModel = localSelectedModel || current.model;
+      const allowLegacyRemote = migratedFlag === '1' && !isHydrogenModelId(localEffectiveModel);
+      const resolvedPairingModel = resolveSyncedModelId(
+        localEffectiveModel,
+        payload.m,
+        true,
+        allowLegacyRemote
+      ) || current.model || DEFAULT_GEMINI_MODEL;
+
       await saveAiCredentials({
         ...current,
         provider: preferred,
         apiKey: effectiveKey,
         persistApiKey: true,
-        model: payload.m || current.model
+        model: resolvedPairingModel
       }, this.storage);
 
       if (payload.gk) {
