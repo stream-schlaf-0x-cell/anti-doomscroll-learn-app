@@ -155,6 +155,9 @@ export function isBalancingSource(item: FeedItem): boolean {
   );
 }
 
+const SAXONY_REGIONAL_REGEX =
+  /sachsen|dresden|leipzig|mdr|neustadt-gefl[üu]ster|neustadt-ticker\.de|leipziger zeitung|l-iz\.de|\bl-iz\b|kreuzer leipzig|kreuzer-leipzig\.de|leipziger volkszeitung|lvz\.de|\blvz\b|chemnitz|lausitz|erzgebirge|regions=14/i;
+
 /**
  * Detects Dresden, Leipzig & Saxony regional news and local editorial outlets.
  */
@@ -171,28 +174,16 @@ export function isSaxonyRegionalItem(
     | 'sourceReferences'
   >
 ): boolean {
-  const publisher = item.sourceReferences?.[0]?.publisher || '';
-  const text = `${item.title || ''} ${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''} ${publisher} ${item.sourceBroadcasterName || ''} ${item.sourceDomain || ''} ${item.canonicalUrl || ''}`.toLowerCase();
-  return (
-    text.includes('sachsen') ||
-    text.includes('dresden') ||
-    text.includes('leipzig') ||
-    text.includes('mdr') ||
-    text.includes('neustadt-geflüster') ||
-    text.includes('neustadt-gefluester') ||
-    text.includes('neustadt-ticker.de') ||
-    text.includes('leipziger zeitung') ||
-    text.includes('l-iz.de') ||
-    /\bl-iz\b/i.test(text) ||
-    text.includes('kreuzer leipzig') ||
-    text.includes('kreuzer-leipzig.de') ||
-    text.includes('leipziger volkszeitung') ||
-    text.includes('lvz.de') ||
-    /\blvz\b/i.test(text) ||
-    text.includes('chemnitz') ||
-    text.includes('lausitz') ||
-    text.includes('erzgebirge') ||
-    text.includes('regions=14')
+  const publisher = item.sourceReferences?.[0]?.publisher;
+  return Boolean(
+    (item.sourceDomain && SAXONY_REGIONAL_REGEX.test(item.sourceDomain)) ||
+    (item.sourceBroadcasterName && SAXONY_REGIONAL_REGEX.test(item.sourceBroadcasterName)) ||
+    (publisher && SAXONY_REGIONAL_REGEX.test(publisher)) ||
+    (item.canonicalUrl && SAXONY_REGIONAL_REGEX.test(item.canonicalUrl)) ||
+    (item.title && SAXONY_REGIONAL_REGEX.test(item.title)) ||
+    (item.subtitle && SAXONY_REGIONAL_REGEX.test(item.subtitle)) ||
+    (item.feedText && SAXONY_REGIONAL_REGEX.test(item.feedText)) ||
+    (item.body && SAXONY_REGIONAL_REGEX.test(item.body))
   );
 }
 
@@ -1680,10 +1671,22 @@ function hasVerifiedFeedImage(item: FeedItem): boolean {
  * Strict current news & recent dispatches ONLY — excludes Hivemind cards, art showcases,
  * evergreen vaults, old academic DOAJ/Crossref/OpenAlex papers, foreign titles, and wet-lab protocols.
  */
-function isEligibleForTodayNews(item: ScoredFeedItem, nowMs: number, maxAgeMs: number): boolean {
+function isEligibleForTodayNews(
+  item: ScoredFeedItem,
+  nowMs: number,
+  maxAgeMs: number,
+  precomputedPubTime?: number
+): boolean {
+  if (item.publicationDateReliable === false) return false;
   if (isHivemindLearningCard(item)) return false;
   if (isArtShowcaseItem(item) || item.isEvergreenGem || isNonArtVaultItem(item) || item.isStaticFallback) return false;
-  if (item.publicationDateReliable === false) return false;
+
+  // Fast timestamp gate BEFORE expensive language/regex checks so stale items exit in O(1)
+  const pubTime = precomputedPubTime !== undefined ? precomputedPubTime : Date.parse(item.publishedAt);
+  if (isNaN(pubTime) || pubTime <= 0) return false;
+  const futureToleranceMs = 24 * 3600 * 1000;
+  const ageMs = nowMs - pubTime;
+  if (ageMs < -futureToleranceMs || ageMs > maxAgeMs) return false;
 
   if (
     item.sourceTrustLevel === 'peer_reviewed' ||
@@ -1704,11 +1707,6 @@ function isEligibleForTodayNews(item: ScoredFeedItem, nowMs: number, maxAgeMs: n
     return false;
   }
 
-  const pubTime = new Date(item.publishedAt).getTime();
-  if (isNaN(pubTime) || pubTime <= 0) return false;
-  const futureToleranceMs = 24 * 3600 * 1000;
-  const ageMs = nowMs - pubTime;
-  if (ageMs < -futureToleranceMs || ageMs > maxAgeMs) return false;
   return true;
 }
 
@@ -1722,42 +1720,78 @@ function isEligibleForTodayNews(item: ScoredFeedItem, nowMs: number, maxAgeMs: n
 export function interleaveTodayNewsStream<T extends FeedItem>(items: T[]): T[] {
   if (items.length <= 2) return items;
 
-  const rawNonArd = items.filter(x => !isArdSource(x));
-  const rawArd = items.filter(x => isArdSource(x));
+  const rawNonArd: T[] = [];
+  const rawArd: T[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (isArdSource(it)) {
+      rawArd.push(it);
+    } else {
+      rawNonArd.push(it);
+    }
+  }
 
   if (rawNonArd.length === 0) {
     return rawArd.slice(0, 8);
   }
 
-  // Round-robin domain interleave for all non-ARD sources (never back-to-back identical domain)
-  const nonArdPool = [...rawNonArd];
+  // Round-robin domain interleave for all non-ARD sources (never back-to-back identical domain).
+  // Precompute domain keys ONCE and inspect only each domain queue's head (O(N * D) instead of O(N^2)).
+  const domainQueues = new Map<string, { items: { item: T; origIdx: number }[]; head: number; count: number }>();
+  for (let i = 0; i < rawNonArd.length; i++) {
+    const item = rawNonArd[i];
+    const dom = getDomainDiversityKey(item);
+    let q = domainQueues.get(dom);
+    if (!q) {
+      q = { items: [], head: 0, count: 0 };
+      domainQueues.set(dom, q);
+    }
+    q.items.push({ item, origIdx: i });
+  }
+
+  const distinctNonArdDomains = domainQueues.size;
+  const activeDomains = Array.from(domainQueues.keys());
   const wovenNonArd: T[] = [];
-  const domainCounts = new Map<string, number>();
-  const distinctNonArdDomains = new Set(nonArdPool.map(getDomainDiversityKey)).size;
+  const wovenDomains: string[] = [];
+  const windowSize = Math.min(3, Math.max(1, distinctNonArdDomains - 1));
 
-  while (nonArdPool.length > 0) {
-    const recentWindow = wovenNonArd
-      .slice(-Math.min(3, Math.max(1, distinctNonArdDomains - 1)))
-      .map(getDomainDiversityKey);
+  while (activeDomains.length > 0) {
     const maxPerDomainNow = wovenNonArd.length < 12 ? 2 : 3;
+    const recentStart = Math.max(0, wovenDomains.length - windowSize);
 
-    let bestIdx = -1;
+    let bestActivePos = 0;
     let bestScore = -Infinity;
-    for (let i = 0; i < nonArdPool.length; i++) {
-      const dom = getDomainDiversityKey(nonArdPool[i]);
-      const count = domainCounts.get(dom) || 0;
-      let score = -i * 0.35 - count * 30;
-      if (recentWindow.includes(dom)) score -= 140;
-      if (distinctNonArdDomains >= 4 && count >= maxPerDomainNow) score -= 240;
+    for (let dIdx = 0; dIdx < activeDomains.length; dIdx++) {
+      const dom = activeDomains[dIdx];
+      const q = domainQueues.get(dom)!;
+      const headEntry = q.items[q.head];
+      let score = -headEntry.origIdx * 0.35 - q.count * 30;
+
+      let inRecent = false;
+      for (let r = recentStart; r < wovenDomains.length; r++) {
+        if (wovenDomains[r] === dom) {
+          inRecent = true;
+          break;
+        }
+      }
+      if (inRecent) score -= 140;
+      if (distinctNonArdDomains >= 4 && q.count >= maxPerDomainNow) score -= 240;
+
       if (score > bestScore) {
         bestScore = score;
-        bestIdx = i;
+        bestActivePos = dIdx;
       }
     }
-    const [picked] = nonArdPool.splice(Math.max(0, bestIdx), 1);
-    const dom = getDomainDiversityKey(picked);
-    domainCounts.set(dom, (domainCounts.get(dom) || 0) + 1);
+
+    const chosenDom = activeDomains[bestActivePos];
+    const chosenQueue = domainQueues.get(chosenDom)!;
+    const picked = chosenQueue.items[chosenQueue.head++].item;
+    chosenQueue.count++;
+    if (chosenQueue.head >= chosenQueue.items.length) {
+      activeDomains.splice(bestActivePos, 1);
+    }
     wovenNonArd.push(picked);
+    wovenDomains.push(chosenDom);
   }
 
   // Cap ARD/Tagesschau strictly based on available non-ARD items so ARD never forms clusters or tails
@@ -1810,51 +1844,87 @@ export function interleaveTodayNewsStream<T extends FeedItem>(items: T[]): T[] {
  * Preserves pin priority order as closely as possible without violating clustering guards.
  */
 function enforcePinAndStreamAntiClustering<T extends FeedItem>(pins: T[], body: T[]): T[] {
-  const remaining = [...pins, ...body];
-  if (remaining.length <= 1) return remaining;
+  const totalLen = pins.length + body.length;
+  if (totalLen <= 1) return totalLen === 0 ? [] : [...pins, ...body];
 
-  const result: T[] = [];
-  while (remaining.length > 0) {
-    const last1 = result.length > 0 ? result[result.length - 1] : null;
-    const last2 = result.length > 1 ? result[result.length - 2] : null;
-    const last1Space = last1 ? getEffectiveSpaceHandle(last1) : null;
-    const last2Space = last2 ? getEffectiveSpaceHandle(last2) : null;
+  const items: T[] = new Array(totalLen);
+  const spaces: string[] = new Array(totalLen);
+  const isAggs = new Uint8Array(totalLen);
+  const used = new Uint8Array(totalLen);
+
+  let idx = 0;
+  for (let i = 0; i < pins.length; i++, idx++) {
+    items[idx] = pins[i];
+    spaces[idx] = getEffectiveSpaceHandle(pins[i]);
+    isAggs[idx] = isAggregatorItem(pins[i]) ? 1 : 0;
+  }
+  for (let i = 0; i < body.length; i++, idx++) {
+    items[idx] = body[i];
+    spaces[idx] = getEffectiveSpaceHandle(body[i]);
+    isAggs[idx] = isAggregatorItem(body[i]) ? 1 : 0;
+  }
+
+  const result: T[] = new Array(totalLen);
+  let last1Space: string | null = null;
+  let last2Space: string | null = null;
+  let lastWasAgg = false;
+  let firstUnused = 0;
+
+  for (let out = 0; out < totalLen; out++) {
+    while (firstUnused < totalLen && used[firstUnused] === 1) {
+      firstUnused++;
+    }
     const twoConsecutiveSameSpace = Boolean(last1Space && last2Space && last1Space === last2Space);
-    const lastWasAggregator = Boolean(last1 && isAggregatorItem(last1));
 
     let chosenIdx = -1;
-    // Pass 1: satisfy both anti-clustering constraints
-    for (let i = 0; i < remaining.length; i++) {
-      const cand = remaining[i];
-      const violatesSpace = twoConsecutiveSameSpace && getEffectiveSpaceHandle(cand) === last1Space;
-      const violatesAgg = lastWasAggregator && isAggregatorItem(cand);
-      if (!violatesSpace && !violatesAgg) {
-        chosenIdx = i;
-        break;
-      }
-    }
-    // Pass 2: if all remaining violate at least one constraint, avoid back-to-back aggregators first
-    if (chosenIdx === -1) {
-      for (let i = 0; i < remaining.length; i++) {
-        if (!(lastWasAggregator && isAggregatorItem(remaining[i]))) {
+    // Fast path: check head candidate first (most items already satisfy both guards)
+    if (
+      firstUnused < totalLen &&
+      !(twoConsecutiveSameSpace && spaces[firstUnused] === last1Space) &&
+      !(lastWasAgg && isAggs[firstUnused] === 1)
+    ) {
+      chosenIdx = firstUnused;
+    } else {
+      // Pass 1: satisfy both anti-clustering constraints
+      for (let i = firstUnused; i < totalLen; i++) {
+        if (used[i] === 1) continue;
+        const violatesSpace = twoConsecutiveSameSpace && spaces[i] === last1Space;
+        const violatesAgg = lastWasAgg && isAggs[i] === 1;
+        if (!violatesSpace && !violatesAgg) {
           chosenIdx = i;
           break;
         }
       }
-    }
-    // Pass 3: avoid > 2 consecutive same space
-    if (chosenIdx === -1) {
-      for (let i = 0; i < remaining.length; i++) {
-        if (!(twoConsecutiveSameSpace && getEffectiveSpaceHandle(remaining[i]) === last1Space)) {
-          chosenIdx = i;
-          break;
+      // Pass 2: if all remaining violate at least one constraint, avoid back-to-back aggregators first
+      if (chosenIdx === -1 && lastWasAgg) {
+        for (let i = firstUnused; i < totalLen; i++) {
+          if (used[i] === 1) continue;
+          if (isAggs[i] === 0) {
+            chosenIdx = i;
+            break;
+          }
         }
       }
+      // Pass 3: avoid > 2 consecutive same space
+      if (chosenIdx === -1 && twoConsecutiveSameSpace) {
+        for (let i = firstUnused; i < totalLen; i++) {
+          if (used[i] === 1) continue;
+          if (spaces[i] !== last1Space) {
+            chosenIdx = i;
+            break;
+          }
+        }
+      }
+      if (chosenIdx === -1) chosenIdx = firstUnused;
     }
-    if (chosenIdx === -1) chosenIdx = 0;
 
-    result.push(remaining.splice(chosenIdx, 1)[0]);
+    used[chosenIdx] = 1;
+    result[out] = items[chosenIdx];
+    last2Space = last1Space;
+    last1Space = spaces[chosenIdx];
+    lastWasAgg = isAggs[chosenIdx] === 1;
   }
+
   return result;
 }
 
@@ -1911,116 +1981,186 @@ export function sortFeedForDisplay(
 
   // 2a. "⚡ Heute" (True Today News Contract: diverse current news <= 18h / <= 36h, NEVER Hivemind or old papers, capped ARD)
   if (mode === 'today') {
-    const now = new Date();
+    const nowDate = new Date(nowMs);
+    const nowDay = nowDate.getDate();
     const eighteenHoursMs = 18 * 3600 * 1000;
     const thirtySixHoursMs = 36 * 3600 * 1000;
+    const fortyEightHoursMs = 48 * 3600 * 1000;
+    const futureToleranceMs = 24 * 3600 * 1000;
 
     const todayTopPins = effectiveTopPins.filter(item =>
       isEligibleForTodayNews(item, nowMs, thirtySixHoursMs)
     );
-    const strictlyToday = remaining.filter(item => {
-      if (!isEligibleForTodayNews(item, nowMs, eighteenHoursMs)) return false;
-      if (isFormattingToGesternOrOlder(item.publishedAt, now)) return false;
-      return true;
-    });
 
-    let todayCandidates = [...strictlyToday];
+    // Fast-path pre-filter: isolate <= 48h dated candidates in a single cheap timestamp pass
+    // before running language/regex eligibility, scoring, or clustering over 650+ items.
+    const fresh48hEntries: { item: ScoredFeedItem; pubTime: number }[] = [];
+    for (let i = 0; i < remaining.length; i++) {
+      const item = remaining[i];
+      if (item.publicationDateReliable === false) continue;
+      const pubTime = Date.parse(item.publishedAt);
+      if (isNaN(pubTime) || pubTime <= 0) continue;
+      const ageMs = nowMs - pubTime;
+      if (ageMs >= -futureToleranceMs && ageMs <= fortyEightHoursMs) {
+        fresh48hEntries.push({ item, pubTime });
+      }
+    }
+
+    const strictlyTodayEntries: { item: ScoredFeedItem; pubTime: number }[] = [];
+    for (let i = 0; i < fresh48hEntries.length; i++) {
+      const entry = fresh48hEntries[i];
+      if (!isEligibleForTodayNews(entry.item, nowMs, eighteenHoursMs, entry.pubTime)) continue;
+      const diffMs = nowMs - entry.pubTime;
+      if (diffMs >= 0) {
+        const diffHours = Math.floor(diffMs / 3600_000);
+        if (diffHours >= 18) continue;
+        if (diffHours >= 16 && new Date(entry.pubTime).getDate() !== nowDay) continue;
+      }
+      strictlyTodayEntries.push(entry);
+    }
+
+    let todayCandidateEntries = [...strictlyTodayEntries];
 
     // Anti-monoculture safeguard: when ARD Tagesschau heavily dominates the strict < 18h slice
     // (e.g. >= 4 ARD items while < 8 non-ARD items exist under 18h), blend in recent non-ARD
     // dispatches up to 36h so "⚡ Heute" preserves multi-source diversity.
-    const ardInStrict = strictlyToday.filter(isArdSource);
-    const nonArdInStrict = strictlyToday.filter(x => !isArdSource(x));
-    if (ardInStrict.length >= 4 && nonArdInStrict.length < 8) {
-      const strictIds = new Set(todayCandidates.map(x => x.id));
-      const nonArd36h = remaining.filter(
-        item =>
-          !strictIds.has(item.id) &&
-          !isArdSource(item) &&
-          isEligibleForTodayNews(item, nowMs, thirtySixHoursMs)
-      );
-      if (nonArd36h.length > 0) {
-        todayCandidates = [...todayCandidates, ...nonArd36h];
+    let ardStrictCount = 0;
+    let nonArdStrictCount = 0;
+    for (let i = 0; i < strictlyTodayEntries.length; i++) {
+      if (isArdSource(strictlyTodayEntries[i].item)) ardStrictCount++;
+      else nonArdStrictCount++;
+    }
+    if (ardStrictCount >= 4 && nonArdStrictCount < 8) {
+      const strictIds = new Set(todayCandidateEntries.map(x => x.item.id));
+      for (let i = 0; i < fresh48hEntries.length; i++) {
+        const entry = fresh48hEntries[i];
+        if (
+          !strictIds.has(entry.item.id) &&
+          !isArdSource(entry.item) &&
+          isEligibleForTodayNews(entry.item, nowMs, thirtySixHoursMs, entry.pubTime)
+        ) {
+          todayCandidateEntries.push(entry);
+        }
       }
     }
 
     // Progressive freshness fallback ONLY when 0 items are strictly < 18h (e.g. before live RSS resolves or offline)
-    if (todayCandidates.length === 0 && todayTopPins.length === 0) {
-      const fortyEightHoursMs = 48 * 3600 * 1000;
-      const recent48h = remaining.filter(item =>
-        isEligibleForTodayNews(item, nowMs, fortyEightHoursMs) &&
-        (item.type === 'briefing' || item.contentOrigin === 'live_ingested' || item.format !== 'long_invitation')
+    if (todayCandidateEntries.length === 0 && todayTopPins.length === 0) {
+      const recent48h = fresh48hEntries.filter(entry =>
+        isEligibleForTodayNews(entry.item, nowMs, fortyEightHoursMs, entry.pubTime) &&
+        (entry.item.type === 'briefing' || entry.item.contentOrigin === 'live_ingested' || entry.item.format !== 'long_invitation')
       );
       if (recent48h.length > 0) {
-        todayCandidates = recent48h;
+        todayCandidateEntries = recent48h;
       } else {
         const sevenDaysMs = 7 * 24 * 3600 * 1000;
-        const recentWeekNews = remaining.filter(item =>
-          isEligibleForTodayNews(item, nowMs, sevenDaysMs) &&
-          (
-            item.type === 'briefing' ||
-            item.type === 'quick_insight' ||
-            item.contentOrigin === 'live_ingested' ||
-            item.format === 'sourced_update' ||
-            item.format === 'concise_insight'
-          )
-        );
-        todayCandidates = recentWeekNews.slice(0, 20);
+        const recentWeekEntries: { item: ScoredFeedItem; pubTime: number }[] = [];
+        for (let i = 0; i < remaining.length && recentWeekEntries.length < 20; i++) {
+          const item = remaining[i];
+          if (item.publicationDateReliable === false) continue;
+          const pubTime = Date.parse(item.publishedAt);
+          if (
+            isEligibleForTodayNews(item, nowMs, sevenDaysMs, pubTime) &&
+            (
+              item.type === 'briefing' ||
+              item.type === 'quick_insight' ||
+              item.contentOrigin === 'live_ingested' ||
+              item.format === 'sourced_update' ||
+              item.format === 'concise_insight'
+            )
+          ) {
+            recentWeekEntries.push({ item, pubTime: isNaN(pubTime) ? nowMs : pubTime });
+          }
+        }
+        todayCandidateEntries = recentWeekEntries;
       }
     }
 
-    // Balanced priority: recency + editorial visuals + local Saxony relevance (never letting ARD bury non-ARD sources)
-    const todayPriorityScore = (item: ScoredFeedItem): number => {
-      const pubTime = new Date(item.publishedAt).getTime() || nowMs;
+    // Precompute priority score ONCE per candidate before sorting (avoids O(N log N) regex/string scans)
+    const scoredCandidates = todayCandidateEntries.map(({ item, pubTime }) => {
       const ageHours = Math.max(0, (nowMs - pubTime) / 3600_000);
       let pts = Math.max(0, 36 - ageHours) * 1.4;
       if (hasVerifiedFeedImage(item)) pts += 10;
       if (matchesSaxonyRegion(item)) pts += 8;
-      if (item.sourceTrustLevel === 'community_curated' || item.sourceTrustLevel === 'deep_essay' || item.sourceTrustLevel === 'verified_creator') {
+      if (
+        item.sourceTrustLevel === 'community_curated' ||
+        item.sourceTrustLevel === 'deep_essay' ||
+        item.sourceTrustLevel === 'verified_creator'
+      ) {
         pts += 5;
       }
       pts += Math.min(8, (item.curationScore ?? 7.5) * 0.7);
-      return pts;
-    };
-
-    const sorted = [...todayCandidates].sort((a, b) => {
-      const diff = todayPriorityScore(b) - todayPriorityScore(a);
-      if (Math.abs(diff) > 0.01) return diff;
-      const timeA = new Date(a.publishedAt).getTime();
-      const timeB = new Date(b.publishedAt).getTime();
-      if (timeB !== timeA) return timeB - timeA;
-      return b.id.localeCompare(a.id);
+      return { item, pts, pubTime };
     });
 
+    scoredCandidates.sort((a, b) => {
+      const diff = b.pts - a.pts;
+      if (Math.abs(diff) > 0.01) return diff;
+      if (b.pubTime !== a.pubTime) return b.pubTime - a.pubTime;
+      return b.item.id.localeCompare(a.item.id);
+    });
+
+    const sorted = scoredCandidates.map(entry => entry.item);
     return enforcePinAndStreamAntiClustering(todayTopPins, interleaveTodayNewsStream(sorted));
   }
 
-  // 2b. Legacy 'new' sort mode (preserves full pool ordering for backward-compatible unit tests)
+  // 2b. Legacy 'new' sort mode (fast-path pre-filters 48h/7d fresh pool before clustering when >= 8 fresh items exist;
+  // preserves full pool ordering on smaller or historical pools for backward-compatible unit tests)
   if (mode === 'new') {
-    const datedOnly = remaining.filter(item => item.publicationDateReliable !== false);
-    const pool = datedOnly.length >= 4 ? datedOnly : remaining;
-    const sorted = [...pool].sort((a, b) => {
-      const isReliableA = a.publicationDateReliable !== false;
-      const isReliableB = b.publicationDateReliable !== false;
-      if (isReliableA !== isReliableB) {
-        return isReliableA ? -1 : 1;
-      }
-      const saxonyA = matchesSaxonyRegion(a) ? 1 : 0;
-      const saxonyB = matchesSaxonyRegion(b) ? 1 : 0;
-      if (saxonyA !== saxonyB) return saxonyB - saxonyA;
+    const fortyEightHoursMs = 48 * 3600 * 1000;
+    const sevenDaysMs = 7 * 24 * 3600 * 1000;
+    const futureToleranceMs = 24 * 3600 * 1000;
 
-      const timeA = new Date(a.publishedAt).getTime();
-      const timeB = new Date(b.publishedAt).getTime();
-      const validA = !isNaN(timeA) && timeA > 0;
-      const validB = !isNaN(timeB) && timeB > 0;
-      if (validA && validB && timeB !== timeA) return timeB - timeA;
-      if (validA && !validB) return -1;
-      if (!validA && validB) return 1;
-      const seenA = a.firstSeenAt ? new Date(a.firstSeenAt).getTime() : 0;
-      const seenB = b.firstSeenAt ? new Date(b.firstSeenAt).getTime() : 0;
-      if (seenB !== seenA) return seenB - seenA;
-      return b.id.localeCompare(a.id);
+    const fresh48h: ScoredFeedItem[] = [];
+    const fresh7d: ScoredFeedItem[] = [];
+    const datedOnly: ScoredFeedItem[] = [];
+
+    for (let i = 0; i < remaining.length; i++) {
+      const item = remaining[i];
+      if (item.publicationDateReliable === false) continue;
+      datedOnly.push(item);
+      const pubTime = new Date(item.publishedAt).getTime();
+      if (isNaN(pubTime) || pubTime <= 0) continue;
+      const ageMs = nowMs - pubTime;
+      if (ageMs >= -futureToleranceMs && ageMs <= fortyEightHoursMs) {
+        fresh48h.push(item);
+      }
+      if (ageMs >= -futureToleranceMs && ageMs <= sevenDaysMs) {
+        fresh7d.push(item);
+      }
+    }
+
+    const pool =
+      fresh48h.length >= 8
+        ? fresh48h
+        : fresh7d.length >= 8
+        ? fresh7d
+        : datedOnly.length >= 4
+        ? datedOnly
+        : remaining;
+
+    const annotated = pool.map(item => {
+      const isReliable = item.publicationDateReliable !== false;
+      const saxony = matchesSaxonyRegion(item) ? 1 : 0;
+      const time = new Date(item.publishedAt).getTime();
+      const validTime = !isNaN(time) && time > 0;
+      const seen = item.firstSeenAt ? new Date(item.firstSeenAt).getTime() : 0;
+      return { item, isReliable, saxony, time, validTime, seen };
     });
+
+    annotated.sort((a, b) => {
+      if (a.isReliable !== b.isReliable) {
+        return a.isReliable ? -1 : 1;
+      }
+      if (a.saxony !== b.saxony) return b.saxony - a.saxony;
+      if (a.validTime && b.validTime && b.time !== a.time) return b.time - a.time;
+      if (a.validTime && !b.validTime) return -1;
+      if (!a.validTime && b.validTime) return 1;
+      if (b.seen !== a.seen) return b.seen - a.seen;
+      return b.item.id.localeCompare(a.item.id);
+    });
+
+    const sorted = annotated.map(entry => entry.item);
     return enforcePinAndStreamAntiClustering(effectiveTopPins, enforceArdsSpacing(sorted, 7));
   }
 
@@ -2717,6 +2857,8 @@ export interface FeedCardMemoComparableProps {
   isHero?: boolean;
   isFocused?: boolean;
   isExpanded?: boolean;
+  cardWidth?: number;
+  viewportWidth?: number;
   hivemindTrackProgressPercent?: number;
   hivemindProgressPercent?: number;
   isHivemindStepCompleted?: boolean;
@@ -2741,6 +2883,8 @@ export function areFeedCardPropsEqual<T extends FeedCardMemoComparableProps>(pre
   if (Boolean(prev.isDark) !== Boolean(next.isDark)) return false;
   if ((prev.palette ?? 'tidalglass') !== (next.palette ?? 'tidalglass')) return false;
   if (Boolean(prev.enableSoundGrounding ?? true) !== Boolean(next.enableSoundGrounding ?? true)) return false;
+  if (prev.cardWidth !== next.cardWidth) return false;
+  if (prev.viewportWidth !== next.viewportWidth) return false;
   if (
     (prev.hivemindTrackProgressPercent ?? prev.hivemindProgressPercent) !==
     (next.hivemindTrackProgressPercent ?? next.hivemindProgressPercent)

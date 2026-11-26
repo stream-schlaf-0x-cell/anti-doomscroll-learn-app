@@ -20,7 +20,7 @@ import { DEFAULT_STARTER_INTERESTS } from '../../core/data/fixtures';
 import { typography, radius, spacing, PALETTE_METADATA, ThemePalette } from '../../ui/theme';
 import { RaindropService } from '../../core/raindrop/raindropService';
 import { HowItWorksModal } from '../../ui/components/HowItWorksModal';
-import { VERIFIED_FEED_SOURCES } from '../../core/ingestion/sources';
+import { TOTAL_VERIFIED_SOURCES_COUNT } from '../../core/ingestion/sources';
 import { defaultSpaceRepository, Subchannel } from '../../core/spaces/spaceRepository';
 import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
 
@@ -262,7 +262,7 @@ export const OnboardingScreen: React.FC = () => {
             atmen
           </Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Dein persönlicher Reddit-Ersatz für Wissenschaft, KI, Philosophie, Kultur und echte Entdeckungen – aus {VERIFIED_FEED_SOURCES.length} verifizierten Quellen.
+            Dein persönlicher Reddit-Ersatz für Wissenschaft, KI, Philosophie, Kultur und echte Entdeckungen – aus {TOTAL_VERIFIED_SOURCES_COUNT} verifizierten Quellen.
           </Text>
         </View>
 
@@ -355,7 +355,7 @@ export const OnboardingScreen: React.FC = () => {
                       <View style={styles.topicCardTop}>
                         <View style={styles.topicHandleRow}>
                           <Ionicons
-                            name={meta.icon as any}
+                            name={meta.icon as keyof typeof Ionicons.glyphMap}
                             size={16}
                             color={isHigh ? colors.accent : colors.textMuted}
                           />
@@ -577,7 +577,7 @@ export const OnboardingScreen: React.FC = () => {
                   return (
                     <TouchableOpacity
                       key={item.id}
-                      onPress={() => setLanguageMix(item.id as any)}
+                      onPress={() => setLanguageMix(item.id as 'bilingual' | 'de_focus' | 'en_focus')}
                       style={[
                         styles.durationPill,
                         {

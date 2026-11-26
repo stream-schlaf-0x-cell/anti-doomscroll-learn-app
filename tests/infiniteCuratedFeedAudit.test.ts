@@ -86,8 +86,8 @@ describe('Phase 5: Always-Curated Infinite Bloomscroll & Full Feed Audit Suite',
       'Expected handleScroll in FeedScreen.tsx to trigger curateNextStreamBatch("scroll") automatically'
     );
     assert.ok(
-      source.includes('prev + 15'),
-      'Expected handleScroll in FeedScreen.tsx to smoothly increment visibleInfiniteCount by 15'
+      source.includes('prev + 6'),
+      'Expected handleScroll in FeedScreen.tsx to smoothly increment visibleInfiniteCount by 6'
     );
   });
 

@@ -190,40 +190,52 @@ export function upgradeImageResolutionUrl(url?: string, targetWidth = 1080): str
 
   try {
     let upgraded = trimmed;
+    const isCardThumbnail = targetWidth <= 800;
 
-    // 1. Wikimedia / Wikipedia: upgrade /thumb/.../200px-... to standard /800px-... step width
+    // 1. Wikimedia / Wikipedia: upgrade /thumb/.../200px-... to /640px- (cards) or /800px- (reader/lightbox)
     if (
       (upgraded.includes('upload.wikimedia.org') || upgraded.includes('wikipedia.org')) &&
       upgraded.includes('/thumb/')
     ) {
       upgraded = upgraded.replace(/\/(\d+)px-/g, (_match, pxStr) => {
         const px = parseInt(pxStr, 10);
+        if (isCardThumbnail) {
+          return px < 640 ? '/640px-' : `/${px}px-`;
+        }
         return px < 800 || px === 960 ? '/800px-' : `/${px}px-`;
       });
     }
 
-    // 2. Apple / iTunes artwork: upgrade 100x100 to 1200x1200bb
+    // 2. Apple / iTunes artwork: upgrade to 600x600bb (cards) or 1200x1200bb (reader/lightbox)
     if (upgraded.includes('mzstatic.com')) {
+      const itunesTarget = isCardThumbnail ? '600x600bb' : '1200x1200bb';
       upgraded = upgraded
-        .replace(/\/\d+x\d+bb\.jpg/i, '/1200x1200bb.jpg')
-        .replace(/\/\d+x\d+bb\.png/i, '/1200x1200bb.png');
+        .replace(/\/\d+x\d+bb\.jpg/i, `/${itunesTarget}.jpg`)
+        .replace(/\/\d+x\d+bb\.png/i, `/${itunesTarget}.png`);
     }
 
-    // 3. YouTube thumbnails: prefer maxresdefault.jpg over hqdefault/mqdefault/default
+    // 3. YouTube thumbnails: keep/upgrade to hqdefault.jpg for card thumbnails, maxresdefault.jpg for >800px
     if (upgraded.includes('i.ytimg.com') || upgraded.includes('img.youtube.com')) {
       if (upgraded.endsWith('default.jpg') && !upgraded.endsWith('maxresdefault.jpg')) {
-        upgraded = upgraded
-          .replace(/\/default\.jpg$/i, '/maxresdefault.jpg')
-          .replace(/\/hqdefault\.jpg$/i, '/maxresdefault.jpg')
-          .replace(/\/mqdefault\.jpg$/i, '/maxresdefault.jpg');
+        if (isCardThumbnail) {
+          upgraded = upgraded
+            .replace(/\/default\.jpg$/i, '/hqdefault.jpg')
+            .replace(/\/mqdefault\.jpg$/i, '/hqdefault.jpg');
+        } else {
+          upgraded = upgraded
+            .replace(/\/default\.jpg$/i, '/maxresdefault.jpg')
+            .replace(/\/hqdefault\.jpg$/i, '/maxresdefault.jpg')
+            .replace(/\/mqdefault\.jpg$/i, '/maxresdefault.jpg');
+        }
       }
     }
 
-    // 4. Deutschlandfunk & Deutschlandradio: upgrade square/small crops to 1920x1080 master
+    // 4. Deutschlandfunk & Deutschlandradio: upgrade tiny/square crops to 1280x720 (cards) or 1920x1080 (reader)
     if (upgraded.includes('bilder.deutschlandfunk.de')) {
+      const dlfTarget = isCardThumbnail ? '1280x720' : '1920x1080';
       upgraded = upgraded
-        .replace(/-(1920x1920|768x768|512x512|640x640|320x180|480x270)\.jpg$/i, '-1920x1080.jpg')
-        .replace(/-(1920x1920|768x768|512x512|640x640|320x180|480x270)\.png$/i, '-1920x1080.png');
+        .replace(/-(1920x1920|768x768|512x512|640x640|320x180|480x270)\.jpg$/i, `-${dlfTarget}.jpg`)
+        .replace(/-(1920x1920|768x768|512x512|640x640|320x180|480x270)\.png$/i, `-${dlfTarget}.png`);
     }
 
     // 5. ARD Tagesschau: upgrade 1x1 / klein / mittelgross to grossgalerie16x9
@@ -237,12 +249,17 @@ export function upgradeImageResolutionUrl(url?: string, targetWidth = 1080): str
         .replace(/\/mittelgross16x9\//g, '/grossgalerie16x9/');
     }
 
-    // 6. ZDF & ZDFheute: upgrade downsampled thumbnails to 1920x1080
+    // 6. ZDF & ZDFheute: upgrade downsampled thumbnails to 1280x720 (cards) or 1920x1080 (reader)
     if (/zdf(?:heute)?\.de/.test(upgraded)) {
-      upgraded = upgraded.replace(/-(768x768|1280x1280|512x512|384x216|640x360)\.jpg$/i, '-1920x1080.jpg');
+      const zdfTarget = isCardThumbnail ? '1280x720' : '1920x1080';
+      upgraded = upgraded.replace(/-(768x768|1280x1280|512x512|384x216|640x360)\.jpg$/i, `-${zdfTarget}.jpg`);
       // zdfheute asset URLs use a tilde size suffix: .../bild-100~384x216?cb=...
       upgraded = upgraded.replace(/~(\d{2,4})x(\d{2,4})(?=$|[?#])/, (match, wStr) => {
-        return parseInt(wStr, 10) < 1280 ? '~1280x720' : match;
+        const w = parseInt(wStr, 10);
+        if (isCardThumbnail) {
+          return w < 800 ? '~1280x720' : match;
+        }
+        return w < 1280 ? '~1280x720' : match;
       });
     }
 

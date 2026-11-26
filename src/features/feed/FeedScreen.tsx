@@ -32,7 +32,6 @@ import {
   resolveItemSpaceHandle
 } from '../../core/spaces/spaceRepository';
 import type { MasterTab } from '../../ui/components/UltraMasterModal';
-import { OnTheFlyStreamService } from '../../core/synthesis/onTheFlyStreamService';
 import { isFeatureEnabled } from '../../core/modules/featureRegistry';
 import { ContinuousLiveNewsService, NewsHubFilterCategory } from '../../core/data/continuousLiveNewsService';
 import {
@@ -42,12 +41,12 @@ import {
   sanitizeCuratedFeedItem
 } from '../../core/enrichment/batchEnricher';
 import { seenImpressionsService, SeenImpressionRecord } from '../../core/data/seenImpressionsService';
-import { OpenWebHarvester } from '../../core/ingestion/openWebHarvester';
 import { loadAiCredentials, hasAiConfiguration } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
 import { openExternalInBrowser } from '../../core/utils/externalBrowser';
-import { SubchannelFlourishService, detectChannelArchetype } from '../../core/ingestion/subchannelFlourishService';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
+import { FeedHorizonBar } from '../../ui/components/FeedHorizonBar';
+import { FeedChannelBanner } from '../../ui/components/FeedChannelBanner';
 import { FeedOperationResult, defaultFeedOperationManager } from '../../core/feed/FeedOperationManager';
 import {
   holdFeedPresentation,
@@ -127,6 +126,97 @@ function formatCuratedAge(isoString: string): string {
   }
 }
 
+function inferTopicFromSpaceLocal(spaceHandle: string): TopicTag {
+  const clean = spaceHandle.toLowerCase().replace(/^c\//, '');
+  for (const [topic, meta] of Object.entries(TOPIC_SPACE_MAP)) {
+    if (
+      meta.space.toLowerCase() === spaceHandle.toLowerCase() ||
+      meta.space.toLowerCase().replace(/^c\//, '') === clean
+    ) {
+      return topic as TopicTag;
+    }
+  }
+  if (clean.includes('singularity') || clean.includes('ai') || clean.includes('ki') || clean.includes('acceleration') || clean.includes('tech')) {
+    return 'ai_apple';
+  }
+  if (clean.includes('philosoph') || clean.includes('ethik') || clean.includes('erkenntnis') || clean.includes('dialektik')) {
+    return 'philosophy_ethics';
+  }
+  if (clean.includes('sound') || clean.includes('synth') || clean.includes('musik') || clean.includes('klang')) {
+    return 'sound_synthesis';
+  }
+  if (clean.includes('didaktik') || clean.includes('schule') || clean.includes('unterricht') || clean.includes('lehr')) {
+    return 'german_didactics';
+  }
+  if (clean.includes('gesund') || clean.includes('bio') || clean.includes('schlaf') || clean.includes('fokus') || clean.includes('health')) {
+    return 'health_biohacking';
+  }
+  if (clean.includes('meme') || clean.includes('satire') || clean.includes('humor') || clean.includes('comic')) {
+    return 'memes_satire';
+  }
+  if (clean.includes('buch') || clean.includes('buecher') || clean.includes('books') || clean.includes('lesen')) {
+    return 'book_mastery';
+  }
+  if (clean.includes('youtube') || clean.includes('video') || clean.includes('essay')) {
+    return 'youtube_gems';
+  }
+  if (clean.includes('geist') || clean.includes('meditat') || clean.includes('achtsam') || clean.includes('kontemplation') || clean.includes('atmen')) {
+    return 'contemplation_mind';
+  }
+  if (clean.includes('kunst') || clean.includes('art') || clean.includes('galerie') || clean.includes('design')) {
+    return 'art_aesthetics';
+  }
+  if (clean.includes('chancen') || clean.includes('grant') || clean.includes('hebel')) {
+    return 'opportunities_growth';
+  }
+  return 'science_society';
+}
+
+function isVisualGalleryChannelLocal(
+  input:
+    | string
+    | {
+        handle?: string;
+        title?: string;
+        description?: string;
+        primaryTopic?: string;
+      }
+): boolean {
+  const rawHandle = typeof input === 'string' ? input : input.handle || '';
+  const spaceHandle = normalizeSpaceHandle(rawHandle || 'channel');
+  const title = typeof input === 'object' ? input.title || '' : '';
+  const description = typeof input === 'object' ? input.description || '' : '';
+  const primaryTopic = typeof input === 'object' ? input.primaryTopic || '' : '';
+
+  if (primaryTopic === 'contemplation_mind') return false;
+  if (primaryTopic === 'art_aesthetics' || primaryTopic === 'memes_satire') return true;
+  if (
+    primaryTopic === 'ai_apple' ||
+    primaryTopic === 'sound_synthesis' ||
+    primaryTopic === 'german_didactics' ||
+    primaryTopic === 'health_biohacking' ||
+    primaryTopic === 'philosophy_ethics' ||
+    primaryTopic === 'book_mastery' ||
+    primaryTopic === 'opportunities_growth'
+  ) {
+    return false;
+  }
+
+  const slug = spaceHandle.replace(/^c\//, '').replace(/[_-]+/g, ' ').toLowerCase();
+  const hay = `${slug} ${title.toLowerCase()} ${description.toLowerCase()}`.trim();
+
+  if (/\b(buddhismus|buddhis|kontemplation|kontemplat|meditation|achtsamkeit|mindfulness|stille|zen|vipassana|qi gong|dao|tao)\b/i.test(hay)) {
+    return false;
+  }
+  if (/\b(acceleration|ai|ki|llm|machine learning|frontier ai|apple|synth|synth_alchemie|modular|eurorack|ableton|klang|klangforschung|audio|coding|programming|rust|typescript|linux|software|hardware|halbleiter|gpu)\b/i.test(hay)) {
+    return false;
+  }
+  if (/\b(visible learning|visivle learning|visible_learning|visivle_learning|hattie|didaktik|didaktik_labor|education|bildung|bildungsarchitektur|pedagogy|pädagogik|paedagogik|schule|unterricht|lehrer|psychology|psychologie|lernpsychologie|cognitive|kognitiv|health|longevity|health_longevity|biohacking|schlaf|neurobiologie|medizin|medicine|physik|biologie|chemie|mathematik)\b/i.test(hay)) {
+    return false;
+  }
+  return /\b(art|kunst|kunst_galerie|galerie|gallery|photography|fotografie|foto|architecture|architektur|brutalismus|design|aesthetics|ästhetik|aesthetik|comics|memes|museum|painting|malerei|visual|bauhaus|skulptur)\b/i.test(hay);
+}
+
 type FeedFlatListRow =
   | {
       kind: 'card';
@@ -184,9 +274,14 @@ export const FeedScreen: React.FC = () => {
   } = useApp();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 960;
+  const feedCardWidth = isDesktop ? Math.min(width - 340, 740) : Math.min(width - 24, 740);
   const soundGroundingEnabled = isFeatureEnabled(profile, 'sound_grounding');
 
   const [sortMode, setSortMode] = useState<FeedSortMode>('for_you');
+  const [uiSortMode, setUiSortMode] = useState<FeedSortMode>(sortMode);
+  React.useEffect(() => {
+    setUiSortMode(sortMode);
+  }, [sortMode]);
   const [seenIds, setSeenIds] = useState<Set<string>>(() => seenImpressionsService.getSeenIdsSync());
   const [seenRecordMap, setSeenRecordMap] = useState<Map<string, SeenImpressionRecord>>(() => seenImpressionsService.getSeenRecordMapSync());
 
@@ -321,23 +416,39 @@ export const FeedScreen: React.FC = () => {
   const [revealedNewItems, setRevealedNewItems] = useState<FeedItem[]>([]);
 
   const handleSortChange = useCallback((mode: FeedSortMode) => {
+    // Immediate synchronous pill feedback (< 16 ms) before deferred heavy sort/list transition
+    setUiSortMode(mode);
     sessionStartedAt.current = Date.now();
-    syncSeenStateFromService();
     defaultFeedOperationManager.clearAutomaticPins();
-    setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
     lockedTopItemIdsRef.current = null;
     hasCommittedInitialViewportRef.current = false;
     newArrivalsQueueRef.current = [];
     frozenRenderedFreshRef.current = [];
     revealScrollGraceUntilRef.current = Date.now() + 800;
-    setPendingStreamArrivals([]);
-    setPendingNewItemIds([]);
-    setVisibleInfiniteCount(15);
-    setSortMode(mode);
-    setActiveCardIndex(0);
     setHorizonBarVisibility(true);
     lastClampedScrollYRef.current = 0;
     scrollToFeedTop(true);
+
+    React.startTransition(() => {
+      setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
+      setPendingStreamArrivals([]);
+      setPendingNewItemIds([]);
+      setVisibleInfiniteCount(12);
+      setSortMode(mode);
+      setActiveCardIndex(0);
+    });
+
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        React.startTransition(() => {
+          syncSeenStateFromService();
+        });
+      });
+    } else {
+      React.startTransition(() => {
+        syncSeenStateFromService();
+      });
+    }
   }, [scrollToFeedTop, setHorizonBarVisibility, syncSeenStateFromService]);
 
   // Wake-on-Focus & New-Day Signal Handler: refreshes seen filter and unlocks yesterday's frozen viewport
@@ -583,7 +694,7 @@ export const FeedScreen: React.FC = () => {
     );
     if (entry) return entry[0] as TopicTag;
     if (selectedFilter in profile.explicitInterests) return selectedFilter as TopicTag;
-    return OnTheFlyStreamService.inferTopicFromSpace(selectedFilter);
+    return inferTopicFromSpaceLocal(selectedFilter);
   }, [selectedFilter, subchannels, profile.explicitInterests]);
 
   const loadLiveNews = useCallback(async (forceRefresh = false) => {
@@ -634,7 +745,7 @@ export const FeedScreen: React.FC = () => {
       : filterLower.startsWith('c/')
       ? canonicalSpaceHandle(selectedFilter)
       : null;
-    const archetype = detectChannelArchetype(
+    const isVisualGallery = isVisualGalleryChannelLocal(
       currentSpace
         ? {
             handle: currentSpace.handle,
@@ -644,7 +755,7 @@ export const FeedScreen: React.FC = () => {
           }
         : selectedFilter
     );
-    return { targetHandle, archetype };
+    return { targetHandle, isVisualGallery };
   }, [selectedFilter, subchannels]);
 
   const matchesSelectedSpace = useCallback((item: FeedItem): boolean => {
@@ -659,10 +770,10 @@ export const FeedScreen: React.FC = () => {
       }
       return true;
     }
-    const { targetHandle, archetype } = selectedSpaceContext;
+    const { targetHandle, isVisualGallery } = selectedSpaceContext;
 
     // Visual-first archetype (e.g. c/kunst_galerie, c/architektur): strictly require an image
-    if (archetype === 'visual_gallery' && !(item.imageUrl && item.imageUrl.trim().length > 0)) {
+    if (isVisualGallery && !(item.imageUrl && item.imageUrl.trim().length > 0)) {
       return false;
     }
 
@@ -783,6 +894,7 @@ export const FeedScreen: React.FC = () => {
       setFlourishStageText('Suche neue Studien, Diskurse & Perspektiven…');
     }
     try {
+      const { SubchannelFlourishService } = await import('../../core/ingestion/subchannelFlourishService');
       const existingIds = new Set(
         (feedRepository.getAllItems ? feedRepository.getAllItems() : []).map(i => i.id)
       );
@@ -968,6 +1080,7 @@ export const FeedScreen: React.FC = () => {
     setIsGeneratingPocket(true);
 
     try {
+      const { OnTheFlyStreamService } = await import('../../core/synthesis/onTheFlyStreamService');
       const creds = await loadAiCredentials().catch(() => undefined);
       await OnTheFlyStreamService.generateStreamForPocket({
         space: targetSpace,
@@ -1554,6 +1667,7 @@ export const FeedScreen: React.FC = () => {
           ? selectedFilter.replace(/^c\//i, '').replace(/[_-]+/g, ' ').trim()
           : undefined);
 
+      const { OpenWebHarvester } = await import('../../core/ingestion/openWebHarvester');
       const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
         existingIds,
         existingTitles,
@@ -1678,18 +1792,47 @@ export const FeedScreen: React.FC = () => {
     if (reason === 'scroll' && nowMs - lastAutoReplenishAtRef.current < 4500) return;
     isReplenishingRef.current = true;
     lastAutoReplenishAtRef.current = nowMs;
-    setIsReplenishingStream(true);
     try {
       let addedMatchingCount = 0;
+      let reservoirInsertedCount = 0;
 
       // Stage 1: Hydrate rolling 900-item Deep Endless Reservoir if not yet loaded
       if (!reservoirHydratedInFeedRef.current && feedRepository.hydrateFromReservoir) {
         reservoirHydratedInFeedRef.current = true;
         const resHyd = await feedRepository.hydrateFromReservoir().catch(() => null);
         if (resHyd?.success && resHyd.insertedCount > 0) {
+          reservoirInsertedCount = resHyd.insertedCount;
           addedMatchingCount += resHyd.insertedCount;
         }
       }
+
+      const repoAfterStage1 = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
+      const seenIdsNow = await seenImpressionsService.getSeenIds().catch(() => seenImpressionsService.getSeenIdsSync());
+
+      // Critical scroll-hitch guard: never trigger live network fetches, enrichment, or harvesting
+      // while 15+ unseen local items remain ready for the active space.
+      if (reason === 'scroll') {
+        let localUnseenCount = 0;
+        for (const item of repoAfterStage1) {
+          if (dismissedSet.has(item.id)) continue;
+          if (seenIdsNow.has(item.id)) continue;
+          if (refreshRotatedIdsRef.current.has(item.id)) continue;
+          if (isDeprecatedShowcaseStarterItem(item)) continue;
+          if (sortMode === 'today' && isHivemindLearningCard(item)) continue;
+          if (!matchesSelectedSpace(item)) continue;
+          localUnseenCount += 1;
+          if (localUnseenCount >= 15) break;
+        }
+
+        if (localUnseenCount >= 15) {
+          if (reservoirInsertedCount > 0) {
+            await recomputeFeed();
+          }
+          return;
+        }
+      }
+
+      setIsReplenishingStream(true);
 
       // Stage 2: Force-refresh live news & rotating CORS-safe RSS streams
       const freshLive = await ContinuousLiveNewsService.getLiveStream({
@@ -1701,7 +1844,7 @@ export const FeedScreen: React.FC = () => {
       }
       const repoSnapshot = feedRepository.getAllItems ? feedRepository.getAllItems() : [];
       const existingIds = new Set(repoSnapshot.map(i => i.id));
-      const unseenIds = await seenImpressionsService.getSeenIds().catch(() => seenImpressionsService.getSeenIdsSync());
+      const unseenIds = seenIdsNow;
 
       const unseenLiveCandidates = freshLive
         .filter(i => !existingIds.has(i.id) && !unseenIds.has(i.id))
@@ -1736,6 +1879,7 @@ export const FeedScreen: React.FC = () => {
             ? selectedFilter.replace(/^c\//i, '').replace(/[_-]+/g, ' ').trim()
             : undefined);
 
+        const { OpenWebHarvester } = await import('../../core/ingestion/openWebHarvester');
         const multiLane = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
           existingIds: allIds,
           existingTitles: allTitles,
@@ -1766,11 +1910,13 @@ export const FeedScreen: React.FC = () => {
       isReplenishingRef.current = false;
       setIsReplenishingStream(false);
     }
-  }, [recomputeFeed, refreshLiveFeed, matchesSelectedSpace, sortMode, activeTopic, selectedFilter]);
+  }, [recomputeFeed, refreshLiveFeed, matchesSelectedSpace, sortMode, activeTopic, selectedFilter, dismissedSet]);
 
   // Automatic harvest on today switch disabled to prevent background reorders (Task 2: manual refresh only)
 
   const chronikFlushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chronikFlushDirtyRef = React.useRef<boolean>(false);
+  const lastScrollBatchAtRef = React.useRef<number>(0);
   React.useEffect(() => {
     return () => {
       if (chronikFlushTimerRef.current) {
@@ -1826,15 +1972,25 @@ export const FeedScreen: React.FC = () => {
     }
   }, [activeFeedOption, currentFeedItems, recordCardAppearances, scheduleCloudSyncPush]);
 
+  const flushVisibleCardsToChronikRef = React.useRef(flushVisibleCardsToChronik);
+  flushVisibleCardsToChronikRef.current = flushVisibleCardsToChronik;
+
   const scheduleChronikFlush = useCallback(() => {
-    if (chronikFlushTimerRef.current) {
-      clearTimeout(chronikFlushTimerRef.current);
+    if (chronikFlushTimerRef.current !== null) {
+      chronikFlushDirtyRef.current = true;
+      return;
     }
-    chronikFlushTimerRef.current = setTimeout(() => {
+    chronikFlushDirtyRef.current = false;
+    const runThrottledFlush = () => {
       chronikFlushTimerRef.current = null;
-      flushVisibleCardsToChronik();
-    }, 250);
-  }, [flushVisibleCardsToChronik]);
+      flushVisibleCardsToChronikRef.current();
+      if (chronikFlushDirtyRef.current) {
+        chronikFlushDirtyRef.current = false;
+        chronikFlushTimerRef.current = setTimeout(runThrottledFlush, 400);
+      }
+    };
+    chronikFlushTimerRef.current = setTimeout(runThrottledFlush, 400);
+  }, []);
 
   const handleCardLayout = useCallback((itemId: string, y: number, height: number) => {
     cardLayoutsRef.current[itemId] = { y, height };
@@ -1940,17 +2096,25 @@ export const FeedScreen: React.FC = () => {
     const scrollBottom = layoutMeasurement.height + contentOffset.y;
     const reachedThreshold = contentSize.height > 0 && (
       scrollBottom >= contentSize.height * 0.65 ||
-      scrollBottom >= contentSize.height - 1350
+      scrollBottom >= contentSize.height - 1600
     );
 
     if (reachedThreshold) {
-      setVisibleInfiniteCount(prev => {
-        const next = Math.min(prev + 15, Math.max(prev + 15, totalInfiniteAvailable));
-        if (next >= totalInfiniteAvailable - 25) {
-          void curateNextStreamBatch('scroll');
-        }
-        return next;
-      });
+      const nowMs = Date.now();
+      if (nowMs - lastScrollBatchAtRef.current >= 180) {
+        lastScrollBatchAtRef.current = nowMs;
+        setVisibleInfiniteCount(prev => {
+          if (prev >= totalInfiniteAvailable) {
+            void curateNextStreamBatch('scroll');
+            return prev;
+          }
+          const next = Math.min(prev + 6, Math.max(prev + 6, totalInfiniteAvailable));
+          if (next >= totalInfiniteAvailable - 15) {
+            void curateNextStreamBatch('scroll');
+          }
+          return next;
+        });
+      }
     }
   }, [setHorizonBarVisibility, scheduleChronikFlush, totalInfiniteAvailable, curateNextStreamBatch, recomputeFeed]);
 
@@ -2258,7 +2422,7 @@ export const FeedScreen: React.FC = () => {
       ? subchannels.find(s => s.handle.toLowerCase() === activeSpaceHandle.toLowerCase())
       : undefined;
     const activeTopicTitle = activeChannel?.title || activeChannel?.flair || (isChannelCurating ? activeSpaceHandle.replace(/^c\//, '').replace(/_/g, ' ') : undefined);
-    const activePrimaryTopic = activeChannel?.primaryTopic || (isChannelCurating ? OnTheFlyStreamService.inferTopicFromSpace(activeSpaceHandle) : undefined);
+    const activePrimaryTopic = activeChannel?.primaryTopic || (isChannelCurating ? inferTopicFromSpaceLocal(activeSpaceHandle) : undefined);
 
     setCurationStage(
       isChannelCurating
@@ -2276,6 +2440,7 @@ export const FeedScreen: React.FC = () => {
       );
       const seenIds = await seenImpressionsService.getSeenIds();
 
+      const { OpenWebHarvester } = await import('../../core/ingestion/openWebHarvester');
       const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
         existingIds,
         seenIds,
@@ -2610,6 +2775,42 @@ export const FeedScreen: React.FC = () => {
     }));
   }, []);
 
+  const kurzCheckHandlersRef = React.useRef<Map<string, () => void>>(new Map());
+  const getKurzCheckToggleHandler = useCallback((id: string): (() => void) => {
+    let handler = kurzCheckHandlersRef.current.get(id);
+    if (!handler) {
+      handler = () => handleToggleKurzCheck(id);
+      kurzCheckHandlersRef.current.set(id, handler);
+    }
+    return handler;
+  }, [handleToggleKurzCheck]);
+
+  const handleOpenReportModal = useCallback(() => {
+    setShowReportModal(true);
+  }, []);
+
+  const handleHorizonRefresh = useCallback(() => {
+    void onRefresh();
+  }, [onRefresh]);
+
+  const handleFlourishBannerPress = useCallback(() => {
+    void handleFlourishActiveChannel(false);
+  }, [handleFlourishActiveChannel]);
+
+  const handleEditChannelFromBanner = useCallback((space: Subchannel) => {
+    setEditingChannel({
+      originalHandle: space.handle,
+      handle: space.handle,
+      title: space.title || space.handle,
+      description: space.description || '',
+      accentColor: space.accentColor || '#3B82F6'
+    });
+  }, []);
+
+  const handleResetFilterFromBanner = useCallback(() => {
+    handleFilterChange('all');
+  }, [handleFilterChange]);
+
   const flatListData = useMemo<FeedFlatListRow[]>(() => {
     if (activeFeedOption === 'live_news') {
       if (liveNewsLoading && liveNewsItems.length === 0) return [];
@@ -2766,8 +2967,10 @@ export const FeedScreen: React.FC = () => {
               isHero={row.isHero}
               isFocused={row.isFocused}
               isExpanded={Boolean(expandedCardIds[row.item.id])}
-              onToggleKurzCheck={() => handleToggleKurzCheck(row.item.id)}
+              onToggleKurzCheck={getKurzCheckToggleHandler(row.item.id)}
               onInvestigateTopic={handleInvestigateTopic}
+              cardWidth={feedCardWidth}
+              viewportWidth={width}
             />
           </View>
         );
@@ -2783,13 +2986,15 @@ export const FeedScreen: React.FC = () => {
           isHero={row.isHero}
           isFocused={row.isFocused}
           isExpanded={Boolean(expandedCardIds[row.item.id])}
-          onToggleKurzCheck={() => handleToggleKurzCheck(row.item.id)}
+          onToggleKurzCheck={getKurzCheckToggleHandler(row.item.id)}
           onInvestigateTopic={handleInvestigateTopic}
           onDismissItem={row.allowDismiss ? handleDismissCard : undefined}
           onOpenHivemindTrack={row.enableHivemindActions ? handleStartFocusTrack : undefined}
           onCompleteHivemindStep={row.enableHivemindActions ? handleCompleteHivemindStep : undefined}
           hivemindTrackProgressPercent={row.trackProgressPercent}
           isHivemindStepCompleted={row.isTrackStepCompleted}
+          cardWidth={feedCardWidth}
+          viewportWidth={width}
         />
       );
 
@@ -2816,12 +3021,14 @@ export const FeedScreen: React.FC = () => {
       palette,
       soundGroundingEnabled,
       expandedCardIds,
-      handleToggleKurzCheck,
+      getKurzCheckToggleHandler,
       handleInvestigateTopic,
       handleDismissCard,
       handleStartFocusTrack,
       handleCompleteHivemindStep,
-      handleCardLayout
+      handleCardLayout,
+      feedCardWidth,
+      width
     ]
   );
 
@@ -2919,193 +3126,25 @@ export const FeedScreen: React.FC = () => {
         >
           {/* Sticky Auto-Hide / Instant Scroll-Up-Reveal Horizon Switcher (Endless Stream only) */}
           {isEndlessStreamMode && (
-            <Animated.View
-              pointerEvents={horizonBarVisible ? 'auto' : 'none'}
-              style={[
-                styles.stickyHorizonBarOuter,
-                {
-                  backgroundColor: colors.background,
-                  borderBottomColor: isScrolledDown ? colors.borderSubtle : 'transparent',
-                  paddingHorizontal: isDesktop ? 0 : spacing.pageHorizontal,
-                  opacity: horizonBarAnim,
-                  transform: [
-                    {
-                      translateY: horizonBarAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [-(stickyHorizonBarHeight + 12), 0]
-                      })
-                    }
-                  ]
-                },
-                isScrolledDown && styles.stickyHorizonBarElevated
-              ]}
-              {...(Platform.OS === 'web'
-                ? ({
-                    onFocus: handleHorizonBarFocus,
-                    onBlur: handleHorizonBarBlur
-                  } as any)
-                : {})}
-            >
-              <View style={[styles.stickyHorizonBarInner, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.horizonScrollRow}
-                  style={styles.horizonScrollView}
-                >
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('for_you')}
-                    style={[
-                      styles.sortTab,
-                      !isDesktop && styles.sortTabTouchTarget,
-                      (sortMode === 'for_you' || sortMode === 'hot') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: sortMode === 'for_you' || sortMode === 'hot' }}
-                  >
-                    <Text style={styles.sortEmoji}>🔥</Text>
-                    <Text style={[styles.sortTabText, { color: (sortMode === 'for_you' || sortMode === 'hot') ? colors.accent : colors.textSecondary }]}>
-                      Für dich
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('today')}
-                    style={[
-                      styles.sortTab,
-                      !isDesktop && styles.sortTabTouchTarget,
-                      (sortMode === 'today' || sortMode === 'new') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: sortMode === 'today' || sortMode === 'new' }}
-                  >
-                    <Text style={styles.sortEmoji}>⚡</Text>
-                    <Text style={[styles.sortTabText, { color: (sortMode === 'today' || sortMode === 'new') ? colors.accent : colors.textSecondary }]}>
-                      Heute
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('discourse')}
-                    style={[
-                      styles.sortTab,
-                      !isDesktop && styles.sortTabTouchTarget,
-                      sortMode === 'discourse' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: sortMode === 'discourse' }}
-                  >
-                    <Text style={styles.sortEmoji}>🧭</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'discourse' ? colors.accent : colors.textSecondary }]}>
-                      Diskurs
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('top')}
-                    style={[
-                      styles.sortTab,
-                      !isDesktop && styles.sortTabTouchTarget,
-                      sortMode === 'top' && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: sortMode === 'top' }}
-                  >
-                    <Text style={styles.sortEmoji}>🏆</Text>
-                    <Text style={[styles.sortTabText, { color: sortMode === 'top' ? colors.accent : colors.textSecondary }]}>
-                      Top
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => handleSortChange('timeless')}
-                    style={[
-                      styles.sortTab,
-                      !isDesktop && styles.sortTabTouchTarget,
-                      (sortMode === 'timeless' || sortMode === 'gems') && { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
-                    ]}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: sortMode === 'timeless' || sortMode === 'gems' }}
-                  >
-                    <Text style={styles.sortEmoji}>💎</Text>
-                    <Text style={[styles.sortTabText, { color: (sortMode === 'timeless' || sortMode === 'gems') ? colors.accent : colors.textSecondary }]}>
-                      Zeitlos
-                    </Text>
-                  </TouchableOpacity>
-
-                  <View style={[styles.horizonBarDivider, { backgroundColor: colors.borderSubtle }]} />
-
-                  <TouchableOpacity
-                    onPress={handleRunManualResearchPipeline}
-                    disabled={isRunningManualPipeline}
-                    style={[
-                      styles.sortTab,
-                      !isDesktop && styles.sortTabTouchTarget,
-                      {
-                        backgroundColor: isRunningManualPipeline ? colors.accentSubtle : colors.surfaceSecondary,
-                        borderColor: isRunningManualPipeline ? colors.accent : colors.borderSubtle
-                      }
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Recherche jetzt starten"
-                  >
-                    {isRunningManualPipeline ? (
-                      <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 4 }} />
-                    ) : (
-                      <Ionicons name="sparkles-outline" size={13} color={colors.accent} />
-                    )}
-                    <Text style={[styles.sortTabText, { color: isRunningManualPipeline ? colors.accent : colors.textPrimary, fontSize: 11.5 }]} numberOfLines={1}>
-                      {isRunningManualPipeline
-                        ? `Pipeline: ${manualPipelineStageLabel || 'Läuft…'}`
-                        : 'Recherche jetzt starten'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {lastOperationResult && (
-                    <TouchableOpacity
-                      onPress={() => setShowReportModal(true)}
-                      style={[
-                        styles.sortTab,
-                        !isDesktop && styles.sortTabTouchTarget,
-                        {
-                          backgroundColor: colors.accentSubtle,
-                          borderColor: colors.accent
-                        }
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Recherchereport öffnen"
-                    >
-                      <Text style={[styles.sortTabText, { color: colors.accent, fontSize: 11.5 }]} numberOfLines={1}>
-                        📋 Bericht ({lastOperationResult.insertedCount} neu)
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </ScrollView>
-
-                {/* Compact 1-Tap Reload Button (WCAG 2.5.1 clickable equivalent for pull-to-refresh) */}
-                <TouchableOpacity
-                  onPress={() => void onRefresh()}
-                  disabled={refreshing}
-                  style={[
-                    styles.compactReloadBtn,
-                    !isDesktop && styles.compactReloadBtnTouch,
-                    {
-                      backgroundColor: refreshing ? colors.accentSubtle : colors.surfaceSecondary,
-                      borderColor: refreshing ? colors.accent : colors.borderSubtle
-                    }
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Feed mit frischen Inhalten neu laden"
-                  accessibilityState={{ busy: refreshing }}
-                >
-                  {refreshing ? (
-                    <ActivityIndicator size="small" color={colors.accent} />
-                  ) : (
-                    <Text style={styles.compactReloadEmoji}>🔄</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </Animated.View>
+            <FeedHorizonBar
+              activeSortMode={uiSortMode}
+              onSortChange={handleSortChange}
+              isDesktop={isDesktop}
+              isScrolledDown={isScrolledDown}
+              horizonBarVisible={horizonBarVisible}
+              horizonBarAnim={horizonBarAnim}
+              stickyHorizonBarHeight={stickyHorizonBarHeight}
+              onFocus={handleHorizonBarFocus}
+              onBlur={handleHorizonBarBlur}
+              isRunningManualPipeline={isRunningManualPipeline}
+              manualPipelineStageLabel={manualPipelineStageLabel}
+              onRunManualResearchPipeline={handleRunManualResearchPipeline}
+              lastOperationResult={lastOperationResult}
+              onOpenReport={handleOpenReportModal}
+              refreshing={refreshing}
+              onRefresh={handleHorizonRefresh}
+              colors={colors}
+            />
           )}
 
           {/* 1-Tap "🚫 Weniger davon" Toast with Undo */}
@@ -3304,11 +3343,11 @@ export const FeedScreen: React.FC = () => {
             ]}
             showsVerticalScrollIndicator={false}
             onScroll={handleScroll}
-            scrollEventThrottle={16}
+            scrollEventThrottle={Platform.OS === 'web' ? 32 : 16}
             keyboardShouldPersistTaps="handled"
-            initialNumToRender={10}
-            maxToRenderPerBatch={8}
-            windowSize={9}
+            initialNumToRender={8}
+            maxToRenderPerBatch={6}
+            windowSize={7}
             removeClippedSubviews={Platform.OS !== 'web'}
             maintainVisibleContentPosition={Platform.OS === 'web' ? undefined : { minIndexForVisible: 0 }}
             refreshControl={
@@ -3322,111 +3361,17 @@ export const FeedScreen: React.FC = () => {
               <>
             {/* Global Active Space / Channel Header (Clean Subchannel Header + Single Flourish Button) */}
             {selectedFilter !== 'all' && (
-              <View
-                style={[
-                  styles.activeFilterBanner,
-                  { backgroundColor: colors.surface, borderColor: colors.borderSubtle, flexWrap: 'wrap', gap: 10 }
-                ]}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 200 }}>
-                  <View
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 8,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: (activeSpace?.accentColor || colors.accent) + '20'
-                    }}
-                  >
-                    <Ionicons
-                      name={(activeSpace?.icon as any) || 'planet-outline'}
-                      size={14}
-                      color={activeSpace?.accentColor || colors.accent}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.activeFilterBannerTitle, { color: colors.textPrimary }]}>
-                      <Text style={{ color: activeSpace?.accentColor || colors.accent, fontWeight: '700' }}>
-                        {activeSpace?.handle || selectedFilter}
-                      </Text>
-                      {' · '}
-                      {activeSpaceName}
-                    </Text>
-                    {activeSpace?.description ? (
-                      <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 2 }} numberOfLines={1}>
-                        {activeSpace.description}
-                      </Text>
-                    ) : null}
-                  </View>
-                </View>
-
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <TouchableOpacity
-                    onPress={() => void handleFlourishActiveChannel(false)}
-                    disabled={isFlourishingChannel}
-                    style={[
-                      styles.activeFilterBannerReset,
-                      {
-                        backgroundColor: colors.accentSubtle,
-                        borderColor: colors.accent,
-                        opacity: isFlourishingChannel ? 0.65 : 1
-                      }
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Kanal aktualisieren"
-                  >
-                    {isFlourishingChannel ? (
-                      <ActivityIndicator size="small" color={colors.accent} style={{ marginRight: 6 }} />
-                    ) : (
-                      <Ionicons name="refresh-outline" size={13} color={colors.accent} style={{ marginRight: 5 }} />
-                    )}
-                    <Text style={[styles.activeFilterBannerResetText, { color: colors.accent, fontWeight: '700' }]}>
-                      {isFlourishingChannel
-                        ? (flourishStageText || 'Recherchiere…')
-                        : 'Kanal aktualisieren'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {activeSpace?.isCustom && (
-                    <TouchableOpacity
-                      onPress={() => setEditingChannel({
-                        originalHandle: activeSpace.handle,
-                        handle: activeSpace.handle,
-                        title: activeSpace.title || activeSpace.handle,
-                        description: activeSpace.description || '',
-                        accentColor: activeSpace.accentColor || '#3B82F6'
-                      })}
-                      style={[
-                        styles.activeFilterBannerReset,
-                        { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Kanal bearbeiten"
-                    >
-                      <Ionicons name="pencil-outline" size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
-                      <Text style={[styles.activeFilterBannerResetText, { color: colors.textSecondary }]}>
-                        Bearbeiten
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-
-                  <TouchableOpacity
-                    onPress={() => handleFilterChange('all')}
-                    style={[
-                      styles.activeFilterBannerReset,
-                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Filter aufheben"
-                  >
-                    <Ionicons name="close-circle-outline" size={13} color={colors.textSecondary} style={{ marginRight: 4 }} />
-                    <Text style={[styles.activeFilterBannerResetText, { color: colors.textSecondary }]}>
-                      Alle Spaces
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+              <FeedChannelBanner
+                selectedFilter={selectedFilter}
+                activeSpace={activeSpace}
+                activeSpaceName={activeSpaceName}
+                isFlourishingChannel={isFlourishingChannel}
+                flourishStageText={flourishStageText}
+                onFlourishChannel={handleFlourishBannerPress}
+                onEditChannel={handleEditChannelFromBanner}
+                onResetFilter={handleResetFilterFromBanner}
+                colors={colors}
+              />
             )}
 
             {/* MODE: ENDLESS DISCOVERY STREAM (UNIFIED CONTINUOUS STREAM) */}
@@ -4770,103 +4715,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 420
   },
-  stickyHorizonBarOuter: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 25,
-    paddingTop: 6,
-    paddingBottom: 4,
-    borderBottomWidth: 0.5
-  },
-  stickyHorizonBarElevated: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 4
-  },
-  stickyHorizonBarInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 4,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    gap: 6
-  },
-  horizonScrollView: {
-    flex: 1,
-    minWidth: 0
-  },
-  sortBar: {
-    padding: 8,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginBottom: spacing.md,
-    gap: 8
-  },
-  horizonScrollRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingRight: 4
-  },
-  sortTab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 36,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    gap: 5
-  },
-  sortTabTouchTarget: {
-    minHeight: 44,
-    paddingHorizontal: 12,
-    paddingVertical: 8
-  },
-  horizonBarDivider: {
-    width: 1,
-    height: 20,
-    marginHorizontal: 2
-  },
-  compactReloadBtn: {
-    minWidth: 36,
-    minHeight: 36,
-    paddingHorizontal: 9,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0
-  },
-  compactReloadBtnTouch: {
-    minWidth: 44,
-    minHeight: 44,
-    paddingHorizontal: 10
-  },
-  compactReloadEmoji: {
-    fontSize: 14
-  },
-  sortEmoji: {
-    fontSize: 13
-  },
-  sortTabText: {
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  sortRightInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    width: '100%'
-  },
-  sortInfoText: {
-    fontSize: 11,
-    fontWeight: '500'
-  },
   feedModeSwitcherWrapper: {
     borderRadius: radius.md,
     borderWidth: 1,
@@ -5231,32 +5079,6 @@ const styles = StyleSheet.create({
   },
   tuningBtnText: {
     fontSize: 11
-  },
-  activeFilterBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginBottom: spacing.sm
-  },
-  activeFilterBannerTitle: {
-    fontSize: 13,
-    fontWeight: '600'
-  },
-  activeFilterBannerReset: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-    borderWidth: 1
-  },
-  activeFilterBannerResetText: {
-    fontSize: 11,
-    fontWeight: '600'
   },
   emptyActionBtn: {
     flexDirection: 'row',

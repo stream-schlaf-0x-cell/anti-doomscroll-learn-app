@@ -11,7 +11,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useApp } from '../../core/context/AppContext';
 import { spacing, radius } from '../theme';
-import { VERIFIED_FEED_SOURCES } from '../../core/ingestion/sources';
+import { TOTAL_VERIFIED_SOURCES_COUNT } from '../../core/ingestion/sources';
 
 interface HowItWorksModalProps {
   visible: boolean;
@@ -25,7 +25,7 @@ export const HowItWorksModal: React.FC<HowItWorksModalProps> = ({ visible, onClo
     {
       icon: 'compass-outline' as const,
       title: '1. Was ist atmen? (Bloomscrolling statt Doomscrolling)',
-      body: `atmen ist dein ruhiger, lebendiger Reddit-Ersatz für echte Erkenntnis. Statt Aufregungs-Algorithmen und Werbe-Timelines liest du aus ${VERIFIED_FEED_SOURCES.length} geprüften deutsch- und englischsprachigen Quellen: Forschung, KI & Systeme, Philosophie, Literatur, Klangkunst, Museen, Webcomics und echte Fach-Communities.`
+      body: `atmen ist dein ruhiger, lebendiger Reddit-Ersatz für echte Erkenntnis. Statt Aufregungs-Algorithmen und Werbe-Timelines liest du aus ${TOTAL_VERIFIED_SOURCES_COUNT} geprüften deutsch- und englischsprachigen Quellen: Forschung, KI & Systeme, Philosophie, Literatur, Klangkunst, Museen, Webcomics und echte Fach-Communities.`
     },
     {
       icon: 'layers-outline' as const,
@@ -72,7 +72,7 @@ export const HowItWorksModal: React.FC<HowItWorksModalProps> = ({ visible, onClo
           ]}
           onStartShouldSetResponder={() => true}
           // @ts-ignore - web click propagation guard
-          onClick={(e: any) => {
+          onClick={(e: { stopPropagation?: () => void }) => {
             if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
           }}
         >

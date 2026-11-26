@@ -81,7 +81,7 @@ function truncateTextAtCleanBoundary(text: string, maxChars: number): string {
   return `${slice.trimEnd()}…`;
 }
 
-const OPTIONAL_EMPTY_STRING_KEYS: readonly string[] = [
+const OPTIONAL_EMPTY_STRING_KEYS_SET = new Set<string>([
   'updatedAt',
   'editorialNote',
   'flair',
@@ -99,22 +99,22 @@ const OPTIONAL_EMPTY_STRING_KEYS: readonly string[] = [
   'historicalYearOrEra',
   'recommendedBecauseOfTitle',
   'contentHash'
-];
+]);
 
-const OPTIONAL_FALSE_BOOLEAN_KEYS: readonly string[] = [
+const OPTIONAL_FALSE_BOOLEAN_KEYS_SET = new Set<string>([
   'hasAuthenticImage',
   'isEvergreenGem',
   'isNewlyCurated',
   'isNewlyArrived',
   'isStoryDossier',
   'isStaticFallback'
-];
+]);
 
 /**
  * Compacts a FeedItem for serialized snapshot/reservoir JSON without losing ReaderScreen content:
  * - Stores the richest fulltext ONCE in `body` and omits redundant `articleBody` (restored on hydrate)
  * - Omits `relatedCrossReferences` (computed lazily in < 1ms by LocalFeedRepository.getItemById)
- * - Strips empty optional fields and schema-default boilerplate safely
+ * - Strips empty optional fields and schema-default boilerplate safely in a single allocation-light pass
  */
 export function compactItemForSnapshot(
   item: FeedItem,
@@ -130,54 +130,46 @@ export function compactItemForSnapshot(
     richestBody = truncateTextAtCleanBoundary(richestBody, options.maxBodyChars);
   }
 
-  const out: Record<string, unknown> = { ...item, body: richestBody };
-  delete out.articleBody;
-  delete out.relatedCrossReferences;
+  const source = item as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
 
-  // Strip null/undefined keys
-  for (const key of Object.keys(out)) {
-    if (out[key] === undefined || out[key] === null) {
-      delete out[key];
+  for (const key in source) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+    if (key === 'articleBody' || key === 'relatedCrossReferences') continue;
+    if (key === 'body') {
+      out.body = richestBody;
+      continue;
     }
+
+    const val = source[key];
+    if (val === undefined || val === null) continue;
+
+    // Skip schema-defaulted empty/zero boilerplate (restored cleanly on hydrate)
+    if (key === 'comments' && Array.isArray(val) && val.length === 0) continue;
+    if (key === 'awardsCount' && val && typeof val === 'object') {
+      const ac = val as { gold?: number; brain?: number; spark?: number };
+      if (ac.gold === 0 && ac.brain === 0 && ac.spark === 0) continue;
+    }
+    if (key === 'upvotesCount' && val === 0) continue;
+    if (key === 'isTeachingRelated' && val === false) continue;
+    if (key === 'isChallengingPerspective' && val === false) continue;
+    if (key === 'isDailyEdition' && val === true) continue;
+
+    // Deduplicate identical optional metadata strings
+    if (key === 'didacticSeed' && val && val === source.didacticTransfer) continue;
+    if (key === 'firstSeenAt' && val && val === source.generatedAt) continue;
+
+    if (val === '' && OPTIONAL_EMPTY_STRING_KEYS_SET.has(key)) continue;
+    if (val === false && OPTIONAL_FALSE_BOOLEAN_KEYS_SET.has(key)) continue;
+    if ((key === 'targetEditions' || key === 'corroboratingSources') && Array.isArray(val) && val.length === 0) {
+      continue;
+    }
+
+    out[key] = val;
   }
 
-  // Strip schema-defaulted empty/zero boilerplate (restored cleanly on hydrate)
-  if (Array.isArray(out.comments) && out.comments.length === 0) {
-    delete out.comments;
-  }
-  if (
-    out.awardsCount &&
-    typeof out.awardsCount === 'object' &&
-    (out.awardsCount as { gold?: number; brain?: number; spark?: number }).gold === 0 &&
-    (out.awardsCount as { gold?: number; brain?: number; spark?: number }).brain === 0 &&
-    (out.awardsCount as { gold?: number; brain?: number; spark?: number }).spark === 0
-  ) {
-    delete out.awardsCount;
-  }
-  if (out.upvotesCount === 0) delete out.upvotesCount;
-  if (out.isTeachingRelated === false) delete out.isTeachingRelated;
-  if (out.isChallengingPerspective === false) delete out.isChallengingPerspective;
-  if (out.isDailyEdition === true) delete out.isDailyEdition;
-
-  // Deduplicate identical optional metadata strings
-  if (out.didacticSeed && out.didacticSeed === out.didacticTransfer) {
-    delete out.didacticSeed;
-  }
-  if (out.firstSeenAt && out.firstSeenAt === out.generatedAt) {
-    delete out.firstSeenAt;
-  }
-
-  for (const key of OPTIONAL_EMPTY_STRING_KEYS) {
-    if (out[key] === '') delete out[key];
-  }
-  for (const key of OPTIONAL_FALSE_BOOLEAN_KEYS) {
-    if (out[key] === false) delete out[key];
-  }
-  if (Array.isArray(out.targetEditions) && out.targetEditions.length === 0) {
-    delete out.targetEditions;
-  }
-  if (Array.isArray(out.corroboratingSources) && out.corroboratingSources.length === 0) {
-    delete out.corroboratingSources;
+  if (!Object.prototype.hasOwnProperty.call(out, 'body')) {
+    out.body = richestBody;
   }
 
   return out as unknown as FeedItem;
@@ -192,7 +184,9 @@ export function compactSourceHealthForSnapshot(
   sourceHealth: Record<string, SourceHealthInfo>
 ): Record<string, SourceHealthInfo> {
   const compact: Record<string, SourceHealthInfo> = {};
-  for (const [id, info] of Object.entries(sourceHealth)) {
+  for (const id in sourceHealth) {
+    if (!Object.prototype.hasOwnProperty.call(sourceHealth, id)) continue;
+    const info = sourceHealth[id];
     if (!info || info.sourceId !== id) continue;
     if (
       !info.fetchSuccess &&
@@ -495,31 +489,49 @@ function fastValidateSnapshotItem(raw: unknown): FeedItem | 'reject' | 'fallback
   return hydrated;
 }
 
+interface PublisherBucket {
+  items: FeedItem[];
+  cursor: number;
+}
+
+function buildPublisherBuckets(items: FeedItem[]): PublisherBucket[] {
+  const bucketMap = new Map<string, PublisherBucket>();
+  const orderedBuckets: PublisherBucket[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    // Treat curated knowledge vault items as distinct high-signal entries so museum collections are preserved
+    const publisher = item.id.startsWith('vault-')
+      ? item.id
+      : (item.sourceDomain || item.sourceReferences[0]?.publisher || item.id);
+    let bucket = bucketMap.get(publisher);
+    if (!bucket) {
+      bucket = { items: [item], cursor: 0 };
+      bucketMap.set(publisher, bucket);
+      orderedBuckets.push(bucket);
+    } else {
+      bucket.items.push(item);
+    }
+  }
+  return orderedBuckets;
+}
+
 /** Keeps complete reader bodies, taking one item per publisher before subsequent passes. */
 export function selectStartupItems(
   items: FeedItem[],
   byteBudget = STARTUP_SNAPSHOT_MAX_BYTES,
   maxItems = STARTUP_SNAPSHOT_MAX_ITEMS
 ): FeedItem[] {
-  const buckets = new Map<string, FeedItem[]>();
-  for (const item of items) {
-    // Treat curated knowledge vault items as distinct high-signal entries so museum collections are preserved
-    const publisher = item.id.startsWith('vault-')
-      ? item.id
-      : (item.sourceDomain || item.sourceReferences[0]?.publisher || item.id);
-    const queue = buckets.get(publisher) || [];
-    queue.push(item);
-    buckets.set(publisher, queue);
-  }
+  const buckets = buildPublisherBuckets(items);
   const result: FeedItem[] = [];
   let bytes = 2;
   const seen = new Set<string>();
   let pending = true;
   while (pending && result.length < maxItems) {
     pending = false;
-    for (const queue of buckets.values()) {
-      const item = queue.shift();
-      if (!item) continue;
+    for (let b = 0; b < buckets.length; b++) {
+      const bucket = buckets[b];
+      if (bucket.cursor >= bucket.items.length) continue;
+      const item = bucket.items[bucket.cursor++];
       pending = true;
       const key = item.canonicalUrl || item.id;
       if (seen.has(key)) continue;
@@ -537,35 +549,35 @@ export function selectStartupItems(
 /** Fast client-side selector skipping per-item JSON.stringify when payload already fits memory budget. */
 function selectItemsSkipByteBudget(items: FeedItem[], maxItems: number): FeedItem[] {
   if (items.length <= maxItems) {
-    const result: FeedItem[] = [];
     const seen = new Set<string>();
+    let deduped: FeedItem[] | null = null;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const key = item.canonicalUrl || item.id;
-      if (seen.has(key)) continue;
+      if (seen.has(key)) {
+        if (deduped === null) {
+          deduped = items.slice(0, i);
+        }
+        continue;
+      }
       seen.add(key);
-      result.push(item);
+      if (deduped !== null) {
+        deduped.push(item);
+      }
     }
-    return result;
+    return deduped ?? items;
   }
 
-  const buckets = new Map<string, FeedItem[]>();
-  for (const item of items) {
-    const publisher = item.id.startsWith('vault-')
-      ? item.id
-      : (item.sourceDomain || item.sourceReferences[0]?.publisher || item.id);
-    const queue = buckets.get(publisher) || [];
-    queue.push(item);
-    buckets.set(publisher, queue);
-  }
+  const buckets = buildPublisherBuckets(items);
   const result: FeedItem[] = [];
   const seen = new Set<string>();
   let pending = true;
   while (pending && result.length < maxItems) {
     pending = false;
-    for (const queue of buckets.values()) {
-      const item = queue.shift();
-      if (!item) continue;
+    for (let b = 0; b < buckets.length; b++) {
+      const bucket = buckets[b];
+      if (bucket.cursor >= bucket.items.length) continue;
+      const item = bucket.items[bucket.cursor++];
       pending = true;
       const key = item.canonicalUrl || item.id;
       if (seen.has(key)) continue;
@@ -575,6 +587,14 @@ function selectItemsSkipByteBudget(items: FeedItem[], maxItems: number): FeedIte
     }
   }
   return result;
+}
+
+function hasOwnEntries(val: unknown): boolean {
+  if (!val || typeof val !== 'object' || Array.isArray(val)) return false;
+  for (const key in val as Record<string, unknown>) {
+    if (Object.prototype.hasOwnProperty.call(val, key)) return true;
+  }
+  return false;
 }
 
 export function parseSnapshotPayload(
@@ -600,14 +620,21 @@ export function parseSnapshotPayload(
     if (parsed.success) validItems.push(hydrateArticleBody(parsed.data));
   }
   if (!validItems.length) return null;
-  const sourceHealth = parseSourceHealth(object.sourceHealth);
+  const sourceHealth = hasOwnEntries(object.sourceHealth) ? parseSourceHealth(object.sourceHealth) : {};
+  let sourceHealthCount = 0;
+  let activeDeliveringSources = 0;
+  for (const key in sourceHealth) {
+    if (!Object.prototype.hasOwnProperty.call(sourceHealth, key)) continue;
+    sourceHealthCount++;
+    if (isDeliveringHealth(sourceHealth[key])) activeDeliveringSources++;
+  }
   const generatedAt = typeof object.generatedAt === 'string' && Number.isFinite(Date.parse(object.generatedAt))
     ? object.generatedAt : undefined;
   const payload: SnapshotPayload = {
     generatedAt,
     totalCandidateSources: typeof object.totalCandidateSources === 'number' && Number.isInteger(object.totalCandidateSources) && object.totalCandidateSources >= 0
-      ? object.totalCandidateSources : Object.keys(sourceHealth).length,
-    activeDeliveringSources: Object.values(sourceHealth).filter(isDeliveringHealth).length,
+      ? object.totalCandidateSources : sourceHealthCount,
+    activeDeliveringSources,
     totalAvailableItems: typeof object.totalAvailableItems === 'number' && Number.isInteger(object.totalAvailableItems) && object.totalAvailableItems >= validItems.length
       ? object.totalAvailableItems : validItems.length,
     items: [],

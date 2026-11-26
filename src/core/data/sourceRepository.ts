@@ -1,4 +1,9 @@
-import { VERIFIED_FEED_SOURCES } from '../ingestion/sources';
+import {
+  CORE_FEED_SOURCES,
+  TOTAL_VERIFIED_SOURCES_COUNT,
+  getLoadedReserveFeedSources,
+  loadFullVerifiedFeedSources
+} from '../ingestion/sources';
 import { RawFeedSource, ReliabilityTier, SourceDomain } from '../ingestion/types';
 import { TopicTag } from '../domain/types';
 import { AtemStorage, appStorage } from './storage';
@@ -23,7 +28,7 @@ export type SourceCategory =
 // Dynamic, non-static load of CI source health telemetry in Node.js test / CLI environments.
 // Uses eval('require') so Metro / Expo Web bundler DOES NOT bundle 216 KB of JSON into the client JS.
 let bundledSourceHealth: Record<string, SourceHealthInfo> = {};
-if (typeof process !== 'undefined' && process.versions?.node && !(process as any).browser) {
+if (typeof process !== 'undefined' && process.versions?.node && !(process as { browser?: boolean }).browser) {
   try {
     const fsMod = eval('require')('fs');
     const pathMod = eval('require')('path');
@@ -282,6 +287,76 @@ function categorizeVerifiedSource(source: RawFeedSource): { category: SourceCate
 
 const SOURCES_STATE_KEY = '@atem:sources_state';
 
+interface StaticSourceMeta {
+  category: SourceCategory;
+  trustBadge: string;
+  sourceKind: SourceKind;
+  lowerUrl: string;
+  host: string | null;
+}
+
+const staticMetaCache = new WeakMap<RawFeedSource, StaticSourceMeta>();
+
+function extractNormalizedHost(url: string): string | null {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function getStaticSourceMeta(source: RawFeedSource): StaticSourceMeta {
+  let cached = staticMetaCache.get(source);
+  if (!cached) {
+    const { category, trustBadge } = categorizeVerifiedSource(source);
+    cached = {
+      category,
+      trustBadge,
+      sourceKind: getSourceKind(source),
+      lowerUrl: source.url.toLowerCase(),
+      host: extractNormalizedHost(source.url)
+    };
+    staticMetaCache.set(source, cached);
+  }
+  return cached;
+}
+
+let cachedLoadedReserveRef: RawFeedSource[] | null = null;
+let cachedLoadedCatalog: RawFeedSource[] | null = null;
+
+function getLoadedCatalogSources(): RawFeedSource[] {
+  const reserve = getLoadedReserveFeedSources();
+  if (reserve.length === 0) return CORE_FEED_SOURCES;
+  if (cachedLoadedCatalog && cachedLoadedReserveRef === reserve) {
+    return cachedLoadedCatalog;
+  }
+  cachedLoadedReserveRef = reserve;
+  cachedLoadedCatalog = [...CORE_FEED_SOURCES, ...reserve];
+  return cachedLoadedCatalog;
+}
+
+interface CatalogIndexes {
+  catalog: RawFeedSource[];
+  byId: Map<string, RawFeedSource>;
+  lowerUrlMap: Map<string, RawFeedSource>;
+}
+
+let cachedCatalogIndexes: CatalogIndexes | null = null;
+
+function getCatalogIndexes(catalog: RawFeedSource[]): CatalogIndexes {
+  if (cachedCatalogIndexes && cachedCatalogIndexes.catalog === catalog) {
+    return cachedCatalogIndexes;
+  }
+  const byId = new Map<string, RawFeedSource>();
+  const lowerUrlMap = new Map<string, RawFeedSource>();
+  for (const source of catalog) {
+    byId.set(source.id, source);
+    lowerUrlMap.set(getStaticSourceMeta(source).lowerUrl, source);
+  }
+  cachedCatalogIndexes = { catalog, byId, lowerUrlMap };
+  return cachedCatalogIndexes;
+}
+
 interface SourcesStatePayload {
   disabledIds: string[];
   enabledIds?: string[];
@@ -328,38 +403,66 @@ export class SourceRepository {
    * Synchronous summary of candidate source health across the catalog.
    */
   getHealthOverview() {
+    const loadedCatalog = getLoadedCatalogSources();
+    const reserveLoaded = getLoadedReserveFeedSources().length > 0;
     let deliveringCount = 0;
     let failingCount = 0;
     let unknownCount = 0;
     let referenceCount = 0;
     let totalItems = 0;
-    for (const source of VERIFIED_FEED_SOURCES) {
+    let activeDefaultSourcesCount = 0;
+
+    for (const source of loadedCatalog) {
+      if (source.defaultEnabled !== false) activeDefaultSourcesCount++;
       const health = this.observedHealth[source.id];
-      if (getSourceKind(source) === 'reference') referenceCount++;
+      if (getStaticSourceMeta(source).sourceKind === 'reference') referenceCount++;
       else if (!health) unknownCount++;
       else if (isDeliveringHealth(health)) {
         deliveringCount++;
         totalItems += health.itemCount;
       } else failingCount++;
     }
-    const activeDefaultSourcesCount = VERIFIED_FEED_SOURCES.filter(source => source.defaultEnabled !== false).length;
+
+    if (!reserveLoaded) {
+      const loadedIds = getCatalogIndexes(loadedCatalog).byId;
+      let observedReserveCount = 0;
+      for (const [id, health] of Object.entries(this.observedHealth)) {
+        if (loadedIds.has(id) || id.startsWith('custom-') || id.startsWith('opml-')) continue;
+        observedReserveCount++;
+        if (isDeliveringHealth(health)) {
+          deliveringCount++;
+          totalItems += health.itemCount;
+        } else {
+          failingCount++;
+        }
+      }
+      const remainingReserve = Math.max(0, TOTAL_VERIFIED_SOURCES_COUNT - loadedCatalog.length - observedReserveCount);
+      unknownCount += remainingReserve;
+    }
+
+    const totalSources = reserveLoaded
+      ? loadedCatalog.length
+      : Math.max(loadedCatalog.length, TOTAL_VERIFIED_SOURCES_COUNT);
+
     return {
-      totalSources: VERIFIED_FEED_SOURCES.length,
+      totalSources,
       deliveringCount, failingCount, unknownCount, referenceCount, totalItems,
       deliveringSources: deliveringCount, failingSources: failingCount,
       totalItemsHarvested: totalItems, activeDefaultSourcesCount,
-      reserveSourcesCount: VERIFIED_FEED_SOURCES.length - activeDefaultSourcesCount
+      reserveSourcesCount: Math.max(0, totalSources - activeDefaultSourcesCount)
     };
   }
 
   /** Returns catalog candidates and custom feeds with measured or explicitly unknown health. */
   async getAllSources(): Promise<FeedSourceItem[]> {
-    const state = await this.loadState();
+    const [state, catalog] = await Promise.all([
+      this.loadState(),
+      loadFullVerifiedFeedSources()
+    ]);
     const disabledSet = new Set(state.disabledIds);
     const enabledSet = new Set(state.enabledIds || []);
-    const catalogItems: FeedSourceItem[] = VERIFIED_FEED_SOURCES.map(source => {
-      const { category, trustBadge } = categorizeVerifiedSource(source);
-      const sourceKind = getSourceKind(source);
+    const catalogItems: FeedSourceItem[] = catalog.map(source => {
+      const { category, trustBadge, sourceKind } = getStaticSourceMeta(source);
       const health = this.observedHealth[source.id];
       const isDelivering = sourceKind === 'feed' && isDeliveringHealth(health);
       const healthStatus: SourceHealthStatus = sourceKind === 'reference' ? 'reference'
@@ -381,12 +484,13 @@ export class SourceRepository {
     });
     const customItems: FeedSourceItem[] = state.customSources.map(source => {
       const health = this.observedHealth[source.id];
+      const delivering = isDeliveringHealth(health);
       return {
         ...source, enabled: !disabledSet.has(source.id), sourceKind: 'feed', health,
-        fetchSuccess: health?.fetchSuccess, isDelivering: isDeliveringHealth(health),
+        fetchSuccess: health?.fetchSuccess, isDelivering: delivering,
         itemCount: health?.itemCount ?? 0,
         lastSuccessAt: health?.lastSuccessAt, lastError: health?.lastError,
-        healthStatus: !health ? 'unknown' : isDeliveringHealth(health) ? 'delivering' : 'failing',
+        healthStatus: !health ? 'unknown' : delivering ? 'delivering' : 'failing',
         lastSynced: !health ? 'Abruf noch nicht geprüft' : health.lastSuccessAt || health.lastError
       };
     });
@@ -405,32 +509,41 @@ export class SourceRepository {
    * Returns lowercase domain hostnames of currently disabled sources.
    */
   async getDisabledDomains(): Promise<string[]> {
-    const all = await this.getAllSources();
+    const state = await this.loadState();
+    if (state.disabledIds.length === 0) return [];
+
+    const catalog = await loadFullVerifiedFeedSources();
+    const disabledSet = new Set(state.disabledIds);
+    const enabledSet = new Set(state.enabledIds || []);
     const enabledDomains = new Set<string>();
-    for (const s of all) {
-      if (s.enabled && s.url) {
-        try {
-          const host = new URL(s.url).hostname.replace(/^www\./, '').toLowerCase();
-          enabledDomains.add(host);
-        } catch {
-          // Ignore invalid URL
-        }
+    const disabledHosts: string[] = [];
+
+    for (const source of catalog) {
+      const isEnabled = source.defaultEnabled !== false ? !disabledSet.has(source.id) : enabledSet.has(source.id);
+      const host = getStaticSourceMeta(source).host;
+      if (!host) continue;
+      if (isEnabled) {
+        enabledDomains.add(host);
+      } else if (disabledSet.has(source.id)) {
+        disabledHosts.push(host);
       }
     }
 
-    const state = await this.loadState();
-    const disabledSet = new Set(state.disabledIds);
+    for (const source of state.customSources) {
+      if (!source.url) continue;
+      const host = extractNormalizedHost(source.url);
+      if (!host) continue;
+      if (!disabledSet.has(source.id)) {
+        enabledDomains.add(host);
+      } else {
+        disabledHosts.push(host);
+      }
+    }
+
     const domains = new Set<string>();
-    for (const s of all) {
-      if (!s.enabled && disabledSet.has(s.id) && s.url) {
-        try {
-          const host = new URL(s.url).hostname.replace(/^www\./, '').toLowerCase();
-          if (!enabledDomains.has(host)) {
-            domains.add(host);
-          }
-        } catch {
-          // Ignore invalid URL
-        }
+    for (const host of disabledHosts) {
+      if (!enabledDomains.has(host)) {
+        domains.add(host);
       }
     }
     return Array.from(domains);
@@ -440,10 +553,27 @@ export class SourceRepository {
    * Returns lowercase names of currently disabled sources.
    */
   async getDisabledNames(): Promise<string[]> {
-    const all = await this.getAllSources();
     const state = await this.loadState();
+    if (state.disabledIds.length === 0) return [];
+
+    const catalog = await loadFullVerifiedFeedSources();
     const disabledSet = new Set(state.disabledIds);
-    return all.filter(s => !s.enabled && disabledSet.has(s.id)).map(s => s.name.toLowerCase());
+    const enabledSet = new Set(state.enabledIds || []);
+    const names: string[] = [];
+
+    for (const source of catalog) {
+      if (!disabledSet.has(source.id)) continue;
+      const isEnabled = source.defaultEnabled !== false ? false : enabledSet.has(source.id);
+      if (!isEnabled) {
+        names.push(source.name.toLowerCase());
+      }
+    }
+    for (const source of state.customSources) {
+      if (disabledSet.has(source.id)) {
+        names.push(source.name.toLowerCase());
+      }
+    }
+    return names;
   }
 
   /**
@@ -471,45 +601,28 @@ export class SourceRepository {
    * Toggles a source on or off.
    */
   async toggleSource(sourceId: string, forceStatus?: boolean): Promise<boolean> {
-    const state = await this.loadState();
+    const [state, catalog] = await Promise.all([
+      this.loadState(),
+      loadFullVerifiedFeedSources()
+    ]);
     const disabledSet = new Set(state.disabledIds);
     const enabledSet = new Set(state.enabledIds || []);
-    const verified = VERIFIED_FEED_SOURCES.find(s => s.id === sourceId);
+    const verified = getCatalogIndexes(catalog).byId.get(sourceId);
     const isDefaultActive = verified ? verified.defaultEnabled !== false : true;
 
-    let isNowEnabled: boolean;
+    const currentlyEnabled = isDefaultActive ? !disabledSet.has(sourceId) : enabledSet.has(sourceId);
+    const isNowEnabled = typeof forceStatus === 'boolean' ? forceStatus : !currentlyEnabled;
 
-    if (typeof forceStatus === 'boolean') {
-      isNowEnabled = forceStatus;
-      if (isDefaultActive) {
-        if (isNowEnabled) {
-          disabledSet.delete(sourceId);
-        } else {
-          disabledSet.add(sourceId);
-        }
+    if (isDefaultActive) {
+      if (isNowEnabled) {
+        disabledSet.delete(sourceId);
       } else {
-        if (isNowEnabled) {
-          enabledSet.add(sourceId);
-        } else {
-          enabledSet.delete(sourceId);
-        }
+        disabledSet.add(sourceId);
       }
+    } else if (isNowEnabled) {
+      enabledSet.add(sourceId);
     } else {
-      const currentlyEnabled = isDefaultActive ? !disabledSet.has(sourceId) : enabledSet.has(sourceId);
-      isNowEnabled = !currentlyEnabled;
-      if (isDefaultActive) {
-        if (isNowEnabled) {
-          disabledSet.delete(sourceId);
-        } else {
-          disabledSet.add(sourceId);
-        }
-      } else {
-        if (isNowEnabled) {
-          enabledSet.add(sourceId);
-        } else {
-          enabledSet.delete(sourceId);
-        }
-      }
+      enabledSet.delete(sourceId);
     }
 
     state.disabledIds = Array.from(disabledSet);
@@ -522,26 +635,32 @@ export class SourceRepository {
    * Toggles all sources belonging to a specific category at once.
    */
   async toggleCategory(category: SourceCategory, enable: boolean): Promise<void> {
-    const state = await this.loadState();
+    const [state, catalog] = await Promise.all([
+      this.loadState(),
+      loadFullVerifiedFeedSources()
+    ]);
     const disabledSet = new Set(state.disabledIds);
     const enabledSet = new Set(state.enabledIds || []);
-    const all = await this.getAllSources();
-    const categorySources = all.filter(s => s.category === category);
 
-    for (const s of categorySources) {
-      const isDefaultActive = s.defaultEnabled !== false;
+    const applyToggle = (id: string, isDefaultActive: boolean) => {
       if (enable) {
-        if (isDefaultActive) {
-          disabledSet.delete(s.id);
-        } else {
-          enabledSet.add(s.id);
-        }
+        if (isDefaultActive) disabledSet.delete(id);
+        else enabledSet.add(id);
+      } else if (isDefaultActive) {
+        disabledSet.add(id);
       } else {
-        if (isDefaultActive) {
-          disabledSet.add(s.id);
-        } else {
-          enabledSet.delete(s.id);
-        }
+        enabledSet.delete(id);
+      }
+    };
+
+    for (const source of catalog) {
+      if (getStaticSourceMeta(source).category === category) {
+        applyToggle(source.id, source.defaultEnabled !== false);
+      }
+    }
+    for (const source of state.customSources) {
+      if (source.category === category) {
+        applyToggle(source.id, source.defaultEnabled !== false);
       }
     }
 
@@ -559,13 +678,17 @@ export class SourceRepository {
     primaryTopic?: TopicTag;
     category?: SourceCategory;
   }): Promise<FeedSourceItem> {
-    const state = await this.loadState();
+    const [state, catalog] = await Promise.all([
+      this.loadState(),
+      loadFullVerifiedFeedSources()
+    ]);
     const topic = params.primaryTopic || 'science_society';
     const category = params.category || 'custom';
     const cleanUrl = params.url.trim();
+    const lowerCleanUrl = cleanUrl.toLowerCase();
 
-    const existing = state.customSources.find(s => s.url.toLowerCase() === cleanUrl.toLowerCase())
-      || VERIFIED_FEED_SOURCES.find(s => s.url.toLowerCase() === cleanUrl.toLowerCase());
+    const existing = state.customSources.find(s => s.url.toLowerCase() === lowerCleanUrl)
+      || getCatalogIndexes(catalog).lowerUrlMap.get(lowerCleanUrl);
 
     if (existing) {
       throw new Error(`Der Feed "${cleanUrl}" ist bereits in deinen Quellen vorhanden.`);
@@ -608,11 +731,14 @@ export class SourceRepository {
    * Imports feeds from an OPML XML string.
    */
   async importOPML(opmlXml: string): Promise<{ added: FeedSourceItem[]; skippedCount: number }> {
-    const state = await this.loadState();
-    const existingUrls = new Set([
-      ...VERIFIED_FEED_SOURCES.map(s => s.url.toLowerCase()),
-      ...state.customSources.map(s => s.url.toLowerCase())
+    const [state, catalog] = await Promise.all([
+      this.loadState(),
+      loadFullVerifiedFeedSources()
     ]);
+    const existingUrls = new Set<string>(getCatalogIndexes(catalog).lowerUrlMap.keys());
+    for (const custom of state.customSources) {
+      existingUrls.add(custom.url.toLowerCase());
+    }
 
     const added: FeedSourceItem[] = [];
     let skippedCount = 0;
@@ -705,28 +831,38 @@ ${bodyOutlines}  </body>
    * - 'all': Enables all verified sources
    */
   async applyPreset(preset: 'all' | 'oerr_only' | 'science_culture'): Promise<void> {
-    const state = await this.loadState();
-    const all = await this.getAllSources();
+    const [state, catalog] = await Promise.all([
+      this.loadState(),
+      loadFullVerifiedFeedSources()
+    ]);
 
-    if (preset === 'all') {
-      state.disabledIds = [];
-      state.enabledIds = all.filter(s => s.defaultEnabled === false).map(s => s.id);
-    } else if (preset === 'oerr_only') {
-      state.disabledIds = all
-        .filter(s => s.category !== 'oerr' && s.defaultEnabled !== false)
-        .map(s => s.id);
-      state.enabledIds = all
-        .filter(s => s.category === 'oerr' && s.defaultEnabled === false)
-        .map(s => s.id);
-    } else if (preset === 'science_culture') {
-      state.disabledIds = all
-        .filter(s => s.category !== 'science' && s.category !== 'culture' && s.defaultEnabled !== false)
-        .map(s => s.id);
-      state.enabledIds = all
-        .filter(s => (s.category === 'science' || s.category === 'culture') && s.defaultEnabled === false)
-        .map(s => s.id);
+    const disabledIds: string[] = [];
+    const enabledIds: string[] = [];
+
+    const matchesPreset = (category: SourceCategory): boolean => {
+      if (preset === 'all') return true;
+      if (preset === 'oerr_only') return category === 'oerr';
+      return category === 'science' || category === 'culture';
+    };
+
+    const classifyEntry = (id: string, category: SourceCategory, isDefaultActive: boolean) => {
+      const shouldEnable = matchesPreset(category);
+      if (shouldEnable && !isDefaultActive) {
+        enabledIds.push(id);
+      } else if (!shouldEnable && isDefaultActive) {
+        disabledIds.push(id);
+      }
+    };
+
+    for (const source of catalog) {
+      classifyEntry(source.id, getStaticSourceMeta(source).category, source.defaultEnabled !== false);
+    }
+    for (const source of state.customSources) {
+      classifyEntry(source.id, source.category, source.defaultEnabled !== false);
     }
 
+    state.disabledIds = disabledIds;
+    state.enabledIds = enabledIds;
     await this.saveState(state);
   }
 

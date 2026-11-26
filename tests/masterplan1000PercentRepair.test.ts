@@ -579,7 +579,12 @@ describe('Masterplan 1000%-Reparatur: Alle 6 Säulen', () => {
     assert.equal(feedCardSrc.includes('Frisch aus der Redaktion'), false, 'FeedCard darf kein doppeltes Frisch-aus-der-Redaktion-Badge enthalten');
 
     const feedScreenSrc = fs.readFileSync(path.resolve(__dirname, '../src/features/feed/FeedScreen.tsx'), 'utf8');
-    assert.ok(feedScreenSrc.includes('📋 Bericht ('), 'FeedScreen muss einen dauerhaften Bericht-Button neben Recherche jetzt starten rendern');
+    const horizonBarSrc = fs.readFileSync(path.resolve(__dirname, '../src/ui/components/FeedHorizonBar.tsx'), 'utf8');
+    assert.ok(feedScreenSrc.includes('<FeedHorizonBar'), 'FeedScreen muss FeedHorizonBar rendern');
+    assert.ok(
+      horizonBarSrc.includes('Bericht (') && horizonBarSrc.includes('document-text-outline'),
+      'FeedHorizonBar muss einen dauerhaften Bericht-Button mit document-text-outline Ionicon neben Recherche jetzt starten rendern'
+    );
 
     const bannerSrc = fs.readFileSync(path.resolve(__dirname, '../src/ui/components/FeedOperationBanner.tsx'), 'utf8');
     assert.ok(bannerSrc.includes('18000'), 'FeedOperationBanner Toast-Timeout muss auf 18000 ms erhöht sein');

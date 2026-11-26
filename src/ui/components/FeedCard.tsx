@@ -1,13 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
+  ViewStyle,
   Text,
   StyleSheet,
   TouchableOpacity,
   Image,
   Modal,
   ScrollView,
-  useWindowDimensions,
   Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -99,7 +99,9 @@ export interface FeedCardProps {
   isHero?: boolean;
   isFocused?: boolean;
   isExpanded?: boolean;
-  onToggleKurzCheck?: () => void;
+  cardWidth?: number;
+  viewportWidth?: number;
+  onToggleKurzCheck?(itemId?: string): void;
   onInvestigateTopic?: (topic: TopicTag) => void;
   onDismissItem?: (item: ScoredFeedItem) => void;
   onOpenHivemindTrack?: (trackId: string) => void;
@@ -109,6 +111,15 @@ export interface FeedCardProps {
   isHivemindStepCompleted?: boolean;
   isCompletedHivemindStep?: boolean;
 }
+
+const WEB_CARD_CONTAINMENT_STYLE: ViewStyle | undefined =
+  Platform.OS === 'web'
+    ? ({
+        contentVisibility: 'auto',
+        containIntrinsicSize: '1px 380px',
+        contain: 'layout style paint'
+      } as unknown as ViewStyle)
+    : undefined;
 
 export function formatHonestTimeLabel(item: ScoredFeedItem): string {
   if (item.publicationDateReliable === false || item.format === 'art_showcase' || item.format === 'meme' || item.space === 'c/memes') {
@@ -159,6 +170,8 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   enableSoundGrounding = true,
   isHero = false,
   isFocused = false,
+  cardWidth,
+  viewportWidth,
   onInvestigateTopic,
   onDismissItem,
   onOpenHivemindTrack,
@@ -170,7 +183,11 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
 }) => {
   const resolvedTrackProgress = hivemindTrackProgressPercent ?? hivemindProgressPercent;
   const resolvedStepCompleted = isHivemindStepCompleted ?? isCompletedHivemindStep;
-  const { width } = useWindowDimensions();
+  const effectiveViewportWidth = viewportWidth ?? 1024;
+  const cardInnerWidth = Math.max(
+    220,
+    (cardWidth ?? Math.min(effectiveViewportWidth - 36, 740)) - (isHero ? spacing.xl * 2 : spacing.lg * 2)
+  );
   const colors = useMemo(() => getThemeColors(isDark ? 'dark' : 'light', palette), [isDark, palette]);
   const {
     toggleSaveItem,
@@ -186,7 +203,6 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const [naturalAspectRatio, setNaturalAspectRatio] = useState<number | null>(null);
   const [naturalDims, setNaturalDims] = useState<{ width: number; height: number } | null>(null);
-  const [cardInnerWidth, setCardInnerWidth] = useState<number>(() => Math.min(width - 36, 740));
   const [showSimulatedReplies, setShowSimulatedReplies] = useState(false);
   const [markedHivemindDone, setMarkedHivemindDone] = useState<boolean>(Boolean(resolvedStepCompleted));
   const [dynamicTrackProgress, setDynamicTrackProgress] = useState<number | undefined>(resolvedTrackProgress);
@@ -310,7 +326,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   const rawItemUri = item.imageUrl || '';
   const upgradedItemUri = useMemo(() => {
     if (!rawItemUri) return undefined;
-    return isMemeCard ? optimizeImageUrl(rawItemUri) : upgradeImageResolutionUrl(rawItemUri, 1080);
+    return isMemeCard ? optimizeImageUrl(rawItemUri, 800) : upgradeImageResolutionUrl(rawItemUri, 800);
   }, [rawItemUri, isMemeCard]);
 
   const showAuthenticImage =
@@ -323,10 +339,21 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     Boolean(upgradedItemUri);
 
   const activeVisualUri = isArtCard
-    ? (usedFallbackUrl ? rawArtUri : (optimizeImageUrl(rawArtUri, 1200) || rawArtUri))
+    ? (usedFallbackUrl ? rawArtUri : (optimizeImageUrl(rawArtUri, 800) || rawArtUri))
     : showAuthenticImage
     ? (usedFallbackUrl ? rawItemUri : (upgradedItemUri || rawItemUri))
     : '';
+
+  const lightboxVisualUri = useMemo(() => {
+    if (!showImageLightbox || !activeVisualUri) return activeVisualUri;
+    if (usedFallbackUrl) return isArtCard ? rawArtUri : rawItemUri;
+    if (isArtCard) {
+      return optimizeImageUrl(rawArtUri, 1600) || activeVisualUri;
+    }
+    return isMemeCard
+      ? (optimizeImageUrl(rawItemUri, 1200) || activeVisualUri)
+      : (upgradeImageResolutionUrl(rawItemUri, 1200) || activeVisualUri);
+  }, [showImageLightbox, activeVisualUri, usedFallbackUrl, isArtCard, isMemeCard, rawArtUri, rawItemUri]);
 
   const hasValidImage = Boolean(activeVisualUri) && !imageError && !imageRejected;
 
@@ -364,9 +391,9 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
         category: editorialAssessment.category,
         isArt: isArtCard,
         isMeme: isMemeCard,
-        viewportWidth: width
+        viewportWidth: effectiveViewportWidth
       }),
-    [naturalDims, editorialAssessment.category, isArtCard, isMemeCard, width]
+    [naturalDims, editorialAssessment.category, isArtCard, isMemeCard, effectiveViewportWidth]
   );
 
   const imageFrameHeight = Math.round(
@@ -473,21 +500,14 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
 
   return (
     <View
-      onLayout={(e) => {
-        const w = e.nativeEvent.layout.width;
-        if (w > 0) {
-          const horizontalPad = isHero ? spacing.xl * 2 : spacing.lg * 2;
-          const nextInner = Math.max(200, w - horizontalPad);
-          setCardInnerWidth(prev => (Math.abs(prev - nextInner) > 1 ? nextInner : prev));
-        }
-      }}
       style={[
         styles.card,
         {
           backgroundColor: isHero ? colors.cardHighlight : colors.surface,
           borderColor: isFocused ? colors.accent : colors.borderSubtle
         },
-        isHero && styles.heroCard
+        isHero && styles.heroCard,
+        WEB_CARD_CONTAINMENT_STYLE
       ]}
     >
       {/* 1. SINGLE-LINE REDDIT HEADER: [c/space] (flexShrink: 0) • Publisher • Time */}
@@ -669,8 +689,9 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
               React.createElement('img', {
                 src: activeVisualUri,
                 alt: item.title,
-                loading: 'lazy',
+                loading: isHero ? 'eager' : 'lazy',
                 decoding: 'async',
+                fetchPriority: isHero ? 'high' : 'low',
                 onLoad: (e: React.SyntheticEvent<HTMLImageElement>) => {
                   const img = e.currentTarget;
                   handleLoadedImageDimensions(img.naturalWidth, img.naturalHeight);
@@ -732,8 +753,9 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
             React.createElement('img', {
               src: activeVisualUri,
               alt: item.title,
-              loading: 'lazy',
+              loading: isHero ? 'eager' : 'lazy',
               decoding: 'async',
+              fetchPriority: isHero ? 'high' : 'low',
               onLoad: (e: React.SyntheticEvent<HTMLImageElement>) => {
                 const img = e.currentTarget;
                 handleLoadedImageDimensions(img.naturalWidth, img.naturalHeight);
@@ -1182,7 +1204,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
                 accessibilityLabel="Vollbild durch Antippen schließen"
               >
                 <Image
-                  source={{ uri: activeVisualUri }}
+                  source={{ uri: lightboxVisualUri }}
                   style={[
                     styles.lightboxImage,
                     naturalAspectRatio ? { aspectRatio: naturalAspectRatio } : { height: 540 }

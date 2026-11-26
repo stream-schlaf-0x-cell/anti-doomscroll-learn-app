@@ -32,8 +32,8 @@ const PUBLIC_RESERVOIR_PATH = path.resolve(__dirname, '../public/feed-reservoir.
 
 export const STARTUP_SNAPSHOT_CAP = 136; // Rich, diverse startup edition across all 13 spaces (< 1 MB compacted)
 export const DEEP_RESERVOIR_CAP = 650;   // Rolling 14-day deep endless reservoir lazy-loaded as user scrolls (< 4.5 MB compacted)
-const SNAPSHOT_MAX_BODY_CHARS = 6000;
-const RESERVOIR_MAX_BODY_CHARS = 7000;
+export const SNAPSHOT_MAX_BODY_CHARS = 4200;
+export const RESERVOIR_MAX_BODY_CHARS = 3200;
 
 export const PRIORITY_SPACES = [
   'c/didaktik_labor',

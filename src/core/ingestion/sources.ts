@@ -1,8 +1,7 @@
 import { RawFeedSource } from "./types";
-import { GLOBAL_CORPUS_RESERVE_SOURCES } from "./globalCorpusSources";
 
 /**
- * 380 Active, Verified DE & EN Sources across all 12 Knowledge Domains.
+ * 387 Active, Verified DE & EN Core Sources across all 12 Knowledge Domains.
  */
 const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
   {
@@ -5164,12 +5163,112 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
   }
 ];
 
+const isNodeRuntime =
+  typeof process !== "undefined" &&
+  Boolean(process.versions?.node) &&
+  !(process as { browser?: boolean }).browser;
+
+function loadNodeReserveSourcesSync(): RawFeedSource[] {
+  if (!isNodeRuntime) return [];
+  try {
+    const dynamicRequire = eval("require") as (id: string) => {
+      GLOBAL_CORPUS_RESERVE_SOURCES?: RawFeedSource[];
+    };
+    const mod = dynamicRequire("./globalCorpusSources");
+    return Array.isArray(mod?.GLOBAL_CORPUS_RESERVE_SOURCES)
+      ? mod.GLOBAL_CORPUS_RESERVE_SOURCES
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+const NODE_RESERVE_SOURCES: RawFeedSource[] = loadNodeReserveSourcesSync();
+
+let cachedReserveSources: RawFeedSource[] | null =
+  NODE_RESERVE_SOURCES.length > 0 ? NODE_RESERVE_SOURCES : null;
+let reserveSourcesPromise: Promise<RawFeedSource[]> | null = null;
+
 /**
- * Total Deduplicated Global Sources Catalog (655 sources).
- * - 380 Active Core Sources (defaultEnabled: true)
- * - 275 Reserve & Research Sources (defaultEnabled: false, on-demand in News Hub)
+ * 387 Active Core Sources (always available synchronously without pulling the
+ * 153 KB global reserve catalog into the client web boot bundle).
  */
-export const VERIFIED_FEED_SOURCES: RawFeedSource[] = [
-  ...ACTIVE_CORE_SOURCES,
-  ...GLOBAL_CORPUS_RESERVE_SOURCES
-];
+export const CORE_FEED_SOURCES: RawFeedSource[] = ACTIVE_CORE_SOURCES;
+
+/**
+ * Count of reserve & research corpus sources in `globalCorpusSources.ts`.
+ */
+export const RESERVE_FEED_SOURCES_COUNT =
+  NODE_RESERVE_SOURCES.length > 0 ? NODE_RESERVE_SOURCES.length : 266;
+
+/**
+ * Total deduplicated catalog count across core + reserve sources (653).
+ */
+export const TOTAL_VERIFIED_SOURCES_COUNT =
+  ACTIVE_CORE_SOURCES.length + RESERVE_FEED_SOURCES_COUNT;
+
+/**
+ * Total Deduplicated Global Sources Catalog (653 sources in Node/CLI/tests).
+ * - In Node.js (pipeline & tests): synchronously includes all 387 core + 266 reserve sources.
+ * - In Web/Mobile client boot bundles: contains the 387 core sources so `globalCorpusSources.ts`
+ *   stays out of the initial JS bundle and loads on demand via `loadReserveFeedSources()`.
+ */
+export const VERIFIED_FEED_SOURCES: RawFeedSource[] =
+  NODE_RESERVE_SOURCES.length > 0
+    ? [...ACTIVE_CORE_SOURCES, ...NODE_RESERVE_SOURCES]
+    : ACTIVE_CORE_SOURCES;
+
+let cachedFullCatalog: RawFeedSource[] | null =
+  NODE_RESERVE_SOURCES.length > 0 ? VERIFIED_FEED_SOURCES : null;
+
+/**
+ * Returns reserve corpus sources already loaded in memory (synchronous on Node,
+ * or populated after `loadReserveFeedSources()` resolves on Web).
+ */
+export function getLoadedReserveFeedSources(): RawFeedSource[] {
+  return cachedReserveSources ?? [];
+}
+
+/**
+ * Lazily loads the 153 KB `globalCorpusSources.ts` reserve catalog on demand.
+ * Uses standard dynamic `import()` so Metro splits it into a separate async web chunk.
+ */
+export async function loadReserveFeedSources(): Promise<RawFeedSource[]> {
+  if (cachedReserveSources) {
+    return cachedReserveSources;
+  }
+  if (!reserveSourcesPromise) {
+    reserveSourcesPromise = import("./globalCorpusSources")
+      .then((mod) => {
+        const sources = Array.isArray(mod.GLOBAL_CORPUS_RESERVE_SOURCES)
+          ? mod.GLOBAL_CORPUS_RESERVE_SOURCES
+          : [];
+        if (sources.length > 0) {
+          cachedReserveSources = sources;
+        } else {
+          reserveSourcesPromise = null;
+        }
+        return sources;
+      })
+      .catch(() => {
+        reserveSourcesPromise = null;
+        return [];
+      });
+  }
+  return reserveSourcesPromise;
+}
+
+/**
+ * Returns the complete verified source catalog (core + lazily loaded reserve sources).
+ */
+export async function loadFullVerifiedFeedSources(): Promise<RawFeedSource[]> {
+  if (cachedFullCatalog) {
+    return cachedFullCatalog;
+  }
+  const reserve = await loadReserveFeedSources();
+  if (reserve.length > 0) {
+    cachedFullCatalog = [...ACTIVE_CORE_SOURCES, ...reserve];
+    return cachedFullCatalog;
+  }
+  return ACTIVE_CORE_SOURCES;
+}

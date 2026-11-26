@@ -11,7 +11,7 @@ import {
 } from '../enrichment/batchEnricher';
 import { upgradeImageResolutionUrl, isRejectedLowResOrLogoUrl } from '../utils/imageQuality';
 import { appStorage, AtemStorage } from '../data/storage';
-import { VERIFIED_FEED_SOURCES } from './sources';
+import { CORE_FEED_SOURCES } from './sources';
 import type { RawFeedSource } from './types';
 import { fetchSingleFeed } from './feedFetcher';
 import { normalizeFeedEntry } from './normalizer';
@@ -44,7 +44,11 @@ export async function loadReserveCorpusSources(): Promise<RawFeedSource[]> {
         const sources = Array.isArray(mod.GLOBAL_CORPUS_RESERVE_SOURCES)
           ? mod.GLOBAL_CORPUS_RESERVE_SOURCES
           : [];
-        cachedReserveCorpusSources = sources;
+        if (sources.length > 0) {
+          cachedReserveCorpusSources = sources;
+        } else {
+          reserveCorpusSourcesPromise = null;
+        }
         return sources;
       })
       .catch(() => {
@@ -1573,20 +1577,32 @@ export class OpenWebHarvester {
       );
     };
 
-    // Combine verified sources and lazily loaded global corpus reserve sources, excluding Tagesschau (handled separately with cap)
-    const reserveSources = await loadReserveCorpusSources();
-    const allSources = [...VERIFIED_FEED_SOURCES, ...reserveSources].filter(
-      s =>
-        s.url &&
-        !s.url.toLowerCase().includes('tagesschau.de') &&
-        !s.url.includes('github.com') &&
-        !s.url.endsWith('.html') &&
-        !s.url.endsWith('/')
-    );
-    const scopedSources = isBrowserEnv
-      ? allSources.filter(s => isBrowserCorsFriendly(s.url))
-      : allSources;
-    const effectiveSources = scopedSources.length > 0 ? scopedSources : allSources;
+    const isEligibleRssSource = (s: RawFeedSource): boolean => {
+      if (!s.url) return false;
+      const lower = s.url.toLowerCase();
+      return (
+        !lower.includes('tagesschau.de') &&
+        !lower.includes('github.com') &&
+        !lower.endsWith('.html') &&
+        !lower.endsWith('/')
+      );
+    };
+
+    // On browser web, check CORS-friendly core sources first so we don't fetch the 153 KB reserve
+    // chunk unnecessarily. On Node/native, combine core + lazily loaded reserve sources without duplicates.
+    let effectiveSources: RawFeedSource[];
+    if (isBrowserEnv) {
+      const browserCoreSources = CORE_FEED_SOURCES.filter(
+        s => isEligibleRssSource(s) && isBrowserCorsFriendly(s.url)
+      );
+      effectiveSources =
+        browserCoreSources.length > 0
+          ? browserCoreSources
+          : CORE_FEED_SOURCES.filter(isEligibleRssSource);
+    } else {
+      const reserveSources = await loadReserveCorpusSources();
+      effectiveSources = [...CORE_FEED_SOURCES, ...reserveSources].filter(isEligibleRssSource);
+    }
 
     // Filter out sources polled in the last run
     let availableSources = effectiveSources.filter(s => !lastPolledIds.has(s.id));
@@ -1596,25 +1612,33 @@ export class OpenWebHarvester {
       availableSources = effectiveSources;
     }
 
-    // Pick diverse batch across categories
-    const categories: ((s: typeof allSources[0]) => boolean)[] = [
-      s => /science|forschung|nature|arxiv|phys|wissen|pnas/i.test(`${s.name} ${s.url} ${(s.topics || []).join(' ')}`),
-      s => /phil|ethic|aeon|denken|sokrat|vernunft/i.test(`${s.name} ${s.url} ${(s.topics || []).join(' ')}`),
-      s => /didakt|unterricht|schul|paedagog|bildung|lern/i.test(`${s.name} ${s.url} ${(s.topics || []).join(' ')}`),
-      s => /tech|apple|heise|golem|hacker|programm|lobste/i.test(`${s.name} ${s.url} ${(s.topics || []).join(' ')}`),
-      s => /zeit|spiegel|taz|tagesschau|guardian|politico|faz|dw/i.test(`${s.name} ${s.url} ${(s.topics || []).join(' ')}`),
-      s => /kultur|kunst|buddh|achtsam|mind|psycho|music/i.test(`${s.name} ${s.url} ${(s.topics || []).join(' ')}`)
+    // Pick diverse batch across categories in a single pass over availableSources
+    const categoryMatchers: RegExp[] = [
+      /science|forschung|nature|arxiv|phys|wissen|pnas/i,
+      /phil|ethic|aeon|denken|sokrat|vernunft/i,
+      /didakt|unterricht|schul|paedagog|bildung|lern/i,
+      /tech|apple|heise|golem|hacker|programm|lobste/i,
+      /zeit|spiegel|taz|tagesschau|guardian|politico|faz|dw/i,
+      /kultur|kunst|buddh|achtsam|mind|psycho|music/i
     ];
-
-    const chosenSources: typeof allSources = [];
+    const categoryBuckets: RawFeedSource[][] = categoryMatchers.map(() => []);
     const usedSourceIds = new Set<string>();
 
-    // Round-robin pick from each category
-    for (const catPred of categories) {
-      const matching = availableSources.filter(s => catPred(s) && !usedSourceIds.has(s.id));
-      for (const src of matching.slice(0, 3)) {
+    for (const src of availableSources) {
+      const haystack = `${src.name} ${src.url} ${(src.topics || []).join(' ')}`;
+      for (let catIdx = 0; catIdx < categoryMatchers.length; catIdx++) {
+        if (categoryBuckets[catIdx].length < 3 && categoryMatchers[catIdx].test(haystack)) {
+          categoryBuckets[catIdx].push(src);
+          usedSourceIds.add(src.id);
+          break;
+        }
+      }
+    }
+
+    const chosenSources: RawFeedSource[] = [];
+    for (const bucket of categoryBuckets) {
+      for (const src of bucket) {
         chosenSources.push(src);
-        usedSourceIds.add(src.id);
       }
     }
 
@@ -1629,7 +1653,10 @@ export class OpenWebHarvester {
 
     // Update rotation storage key
     try {
-      const updatedPolled = Array.from(new Set([...lastPolledIds, ...chosenSources.map(s => s.id)])).slice(-300);
+      for (const src of chosenSources) {
+        lastPolledIds.add(src.id);
+      }
+      const updatedPolled = Array.from(lastPolledIds).slice(-300);
       await activeStorage.setItem(ROTATION_STORAGE_KEY, JSON.stringify(updatedPolled));
     } catch {
       // Storage fallback
@@ -2455,10 +2482,10 @@ export class OpenWebHarvester {
             satisfiesDefaultCuratedStandard(it) &&
             !IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX.test(`${it.title || ''} ${it.subtitle || ''} ${it.feedText || ''}`)
           );
-      } catch (err: any) {
+      } catch (err: unknown) {
         usedFallback = true;
         errorClass = errorClass || 'network_error';
-        errorMessage = errorMessage || err?.message || 'Fehler bei der KI-Redaktion.';
+        errorMessage = errorMessage || (err instanceof Error ? err.message : undefined) || 'Fehler bei der KI-Redaktion.';
         curatedFrontBatch = aiPolishBatch.filter(satisfiesDefaultCuratedStandard);
       }
     } else if (!hasAiKey) {

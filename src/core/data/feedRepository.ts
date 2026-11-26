@@ -26,6 +26,55 @@ import { isDeprecatedShowcaseStarterItem } from '../learning/hivemindLearningSer
 import { seenImpressionsService } from './seenImpressionsService';
 
 const SNAPSHOT_CACHE_REUSE_TTL_MS = 15 * 60 * 1000;
+const RESERVOIR_HYDRATION_CHUNK_SIZE = 40;
+
+type IdleCallbackWindow = Window & {
+  requestIdleCallback?: (cb: () => void, options?: { timeout?: number }) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
+/**
+ * Yields control back to the browser main thread between heavy hydration chunks
+ * so scrolling and input stay responsive, while resolving synchronously in Node tests.
+ */
+function yieldToMainThread(): Promise<void> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.resolve();
+  }
+  const win = window as IdleCallbackWindow;
+  if (typeof win.requestIdleCallback === 'function') {
+    const ric = win.requestIdleCallback.bind(win);
+    return new Promise<void>(resolve => {
+      ric(() => resolve(), { timeout: 45 });
+    });
+  }
+  return new Promise<void>(resolve => {
+    setTimeout(resolve, 0);
+  });
+}
+
+/**
+ * Checks whether an item from pre-validated `feed-snapshot.json` / `feed-reservoir.json`
+ * (already normalized and sanitized by `scripts/run-pipeline.ts`) can safely bypass
+ * the heavy regex `sanitizeCuratedFeedItem` sweep on client hydration.
+ */
+function canUsePreCuratedSnapshotFastPath(item: FeedItem): boolean {
+  const space = typeof item.space === 'string' ? item.space.trim() : '';
+  if (!space.startsWith('c/')) return false;
+  const title = typeof item.title === 'string' ? item.title.trim() : '';
+  if (!title) return false;
+  if (/^From the archive:\s*/i.test(title) || /\s*[–-]\s*podcast$/i.test(title)) return false;
+  const feedText = typeof item.feedText === 'string' ? item.feedText.trim() : '';
+  const body = typeof item.body === 'string' ? item.body.trim() : '';
+  if (!feedText || !body) return false;
+  if (
+    (feedText.includes('<') && /<[a-z][\s\S]*>/i.test(feedText)) ||
+    (body.includes('<') && /<[a-z][\s\S]*>/i.test(body))
+  ) {
+    return false;
+  }
+  return true;
+}
 
 /**
  * Identifies bundled static fallback entries (`vault-*`, `init-*`, or `isStaticFallback === true`).
@@ -281,7 +330,15 @@ export interface IFeedRepository {
   getItemById(id: string): Promise<FeedItem | null>;
   searchItems(query: string, profile: UserProfile, interactions?: Record<string, ReadingInteraction>): Promise<ScoredFeedItem[]>;
   setItems?(items: FeedItem[]): void;
-  addItems?(items: FeedItem[], options?: { operationType?: FeedOperationType; pinInserted?: boolean; telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry }): void;
+  addItems?(
+    items: FeedItem[],
+    options?: {
+      operationType?: FeedOperationType;
+      pinInserted?: boolean;
+      preCurated?: boolean;
+      telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry;
+    }
+  ): void;
   getAllItems?(): FeedItem[];
   ensureInitialized?(): Promise<void>;
   hydrateFromBootDeck?(): Promise<{ loadedCount: number; generatedAt?: string }>;
@@ -834,18 +891,24 @@ export class LocalFeedRepository implements IFeedRepository {
     this.scheduleIndexBuild();
   }
 
+  private prepareFeedItem(raw: FeedItem, allowPreCuratedFastPath: boolean): FeedItem {
+    const fastEligible = allowPreCuratedFastPath && canUsePreCuratedSnapshotFastPath(raw);
+    const enriched = enrichSocialFeedItem(raw, { lazyCrossReferences: true });
+    return fastEligible ? enriched : sanitizeCuratedFeedItem(enriched);
+  }
+
   addItems(
     newItems: FeedItem[],
     options?: {
       operationType?: FeedOperationType;
       pinInserted?: boolean;
+      preCurated?: boolean;
       telemetry?: import('../feed/FeedOperationManager').FeedOperationTelemetry;
     }
   ): void {
     const cleanInput = newItems.filter(i => !isRejectedCachedItem(i));
-    const enrichedNew = cleanInput.map(i =>
-      sanitizeCuratedFeedItem(enrichSocialFeedItem(i, { lazyCrossReferences: true }))
-    );
+    const usePreCuratedFastPath = options?.preCurated === true;
+    const enrichedNew = cleanInput.map(i => this.prepareFeedItem(i, usePreCuratedFastPath));
     const mergeResult = FeedMergeService.merge(this.items, enrichedNew, {
       operationType: options?.operationType ?? 'background_sync',
       pinInserted: options?.pinInserted ?? false,
@@ -1065,7 +1128,11 @@ export class LocalFeedRepository implements IFeedRepository {
 
           if (cachedPayload && urlMatchesCache && cachedPayload.items.length > 0) {
             const beforeIds = new Set(this.items.map(i => i.id));
-            this.addItems(cachedPayload.items, { operationType: 'background_sync', pinInserted: false });
+            this.addItems(cachedPayload.items, {
+              operationType: 'background_sync',
+              pinInserted: false,
+              preCurated: true
+            });
             const cachedInsertedCount = this.items.filter(i => !beforeIds.has(i.id)).length;
             const cachedSnapshotDate = cachedPayload.generatedAt
               ? new Date(cachedPayload.generatedAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
@@ -1116,7 +1183,11 @@ export class LocalFeedRepository implements IFeedRepository {
       const res = await defaultSnapshotLoader.loadSnapshot(effectiveUrl);
       if (res.success && res.items.length > 0) {
         const beforeIds = new Set(this.items.map(i => i.id));
-        this.addItems(res.items, { operationType: 'background_sync', pinInserted: false });
+        this.addItems(res.items, {
+          operationType: 'background_sync',
+          pinInserted: false,
+          preCurated: true
+        });
         const insertedCount = this.items.filter(i => !beforeIds.has(i.id)).length;
 
         try {
@@ -1183,36 +1254,57 @@ export class LocalFeedRepository implements IFeedRepository {
       const normTitle = (t: string) => (t || '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
       const normUrl = (u?: string) => (u || '').trim().toLowerCase().replace(/\/+$/, '');
 
-      const existingIds = new Set(this.items.map(i => i.id));
-      const existingUrls = new Set(this.items.map(i => normUrl(i.canonicalUrl)).filter(Boolean));
-      const existingTitles = new Set(this.items.map(i => normTitle(i.title)).filter(t => t.length >= 8));
-
-      const appended: FeedItem[] = [];
-      for (const raw of res.items) {
-        if (seenSet.has(raw.id)) continue;
-        if (existingIds.has(raw.id)) continue;
-        if (isRejectedCachedItem(raw)) continue;
-        const uKey = normUrl(raw.canonicalUrl);
-        if (uKey && existingUrls.has(uKey)) continue;
-        const tKey = normTitle(raw.title);
-        if (tKey.length >= 8 && existingTitles.has(tKey)) continue;
-
-        const clean = sanitizeCuratedFeedItem(enrichSocialFeedItem(raw, { lazyCrossReferences: true }));
-        existingIds.add(clean.id);
+      const existingIds = new Set<string>();
+      const existingUrls = new Set<string>();
+      const existingTitles = new Set<string>();
+      for (let i = 0; i < this.items.length; i++) {
+        const existing = this.items[i];
+        existingIds.add(existing.id);
+        const uKey = normUrl(existing.canonicalUrl);
         if (uKey) existingUrls.add(uKey);
+        const tKey = normTitle(existing.title);
         if (tKey.length >= 8) existingTitles.add(tKey);
-        appended.push(clean);
       }
 
+      const appended: FeedItem[] = [];
+      for (let start = 0; start < res.items.length; start += RESERVOIR_HYDRATION_CHUNK_SIZE) {
+        const end = Math.min(start + RESERVOIR_HYDRATION_CHUNK_SIZE, res.items.length);
+        for (let i = start; i < end; i++) {
+          const raw = res.items[i];
+          if (seenSet.has(raw.id)) continue;
+          if (existingIds.has(raw.id)) continue;
+          if (isRejectedCachedItem(raw)) continue;
+          const uKey = normUrl(raw.canonicalUrl);
+          if (uKey && existingUrls.has(uKey)) continue;
+          const tKey = normTitle(raw.title);
+          if (tKey.length >= 8 && existingTitles.has(tKey)) continue;
+
+          const clean = this.prepareFeedItem(raw, true);
+          existingIds.add(clean.id);
+          if (uKey) existingUrls.add(uKey);
+          if (tKey.length >= 8) existingTitles.add(tKey);
+          appended.push(clean);
+        }
+        if (end < res.items.length) {
+          await yieldToMainThread();
+        }
+      }
+
+      let insertedCount = 0;
       if (appended.length > 0) {
-        this.items = this.purgeDemoFixturesIfSufficient([...this.items, ...appended]);
-        this.scheduleIndexBuild();
+        const currentIds = new Set(this.items.map(i => i.id));
+        const uniqueAppended = appended.filter(item => !currentIds.has(item.id));
+        insertedCount = uniqueAppended.length;
+        if (insertedCount > 0) {
+          this.items = this.purgeDemoFixturesIfSufficient([...this.items, ...uniqueAppended]);
+          this.scheduleIndexBuild();
+        }
       }
 
       return {
         success: true,
         itemCount: res.itemCount,
-        insertedCount: appended.length,
+        insertedCount,
         generatedAt: res.generatedAt
       };
     } catch {
