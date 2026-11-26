@@ -173,64 +173,102 @@ describe('Channels, YouTube, Memes & Saxony Regional V18', () => {
         );
       }
 
-      if (url.includes('/r/videoessay/')) {
-        return new Response(
-          JSON.stringify({
-            data: {
-              children: [
+      if (url.includes('hn.algolia.com')) {
+        if (url.includes('query=youtube.com/watch') && !url.includes('80')) {
+          return new Response(
+            JSON.stringify({
+              hits: [
                 {
-                  data: {
-                    id: 've1',
-                    title: 'How Architecture Shapes Public Silence and Civic Attention',
-                    url_overridden_by_dest: 'https://www.youtube.com/watch?v=aircAruvnKk',
-                    author: 'essay_curator',
-                    score: 410,
-                    num_comments: 54,
-                    permalink: '/r/videoessay/comments/ve1/architecture/',
-                    created_utc: Math.floor(Date.now() / 1000) - 3600
-                  }
+                  objectID: 've1',
+                  title: 'How Architecture Shapes Public Silence and Civic Attention',
+                  url: 'https://www.youtube.com/watch?v=aircAruvnKk',
+                  points: 410,
+                  num_comments: 54,
+                  created_at: new Date(Date.now() - 3600_000).toISOString()
                 },
                 {
-                  data: {
-                    id: 've_invalid',
-                    title: 'Non-YouTube discussion post that must be ignored',
-                    url_overridden_by_dest: 'https://vimeo.com/99999999',
-                    author: 'other_user',
-                    score: 90,
-                    num_comments: 12,
-                    permalink: '/r/videoessay/comments/ve_invalid/vimeo/',
-                    created_utc: Math.floor(Date.now() / 1000) - 3600
-                  }
+                  objectID: 've_invalid',
+                  title: 'Non-YouTube discussion post that must be ignored',
+                  url: 'https://vimeo.com/99999999',
+                  points: 90,
+                  num_comments: 12,
+                  created_at: new Date(Date.now() - 3600_000).toISOString()
                 }
               ]
-            }
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(JSON.stringify({ hits: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.includes('api.rss2json.com')) {
+        if (url.includes('UCYO_jab_esuFRV4b17AJtAw')) {
+          return new Response(
+            JSON.stringify({
+              status: 'ok',
+              feed: { title: '3Blue1Brown', author: '3Blue1Brown' },
+              items: [
+                {
+                  title: 'Visualizing Essence of Linear Algebra Through Geometric Intuition',
+                  link: 'https://youtu.be/WUvTyaaNkzM',
+                  pubDate: new Date(Date.now() - 7200_000).toISOString(),
+                  author: '3Blue1Brown',
+                  description:
+                    'Visualizing linear transformations, basis vectors, and determinants through geometric intuition.'
+                }
+              ]
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(JSON.stringify({ status: 'ok', items: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (url.includes('lemmy.world/api/v3/post/list')) {
+        return new Response(
+          JSON.stringify({
+            posts: [
+              {
+                post: {
+                  id: 4201,
+                  name: 'The Forgotten Architecture of European Concert Halls',
+                  url: 'https://youtu.be/lemmyDoc001',
+                  body: 'Long-form documentary examining acoustic design and spatial geometry.',
+                  published: new Date(Date.now() - 10800_000).toISOString(),
+                  removed: false,
+                  deleted: false,
+                  nsfw: false
+                },
+                counts: { score: 85, comments: 14 },
+                creator: { name: 'doc_curator' }
+              }
+            ]
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         );
       }
 
-      if (url.includes('/r/3blue1brown/')) {
-        return new Response(
-          JSON.stringify({
-            data: {
-              children: [
-                {
-                  data: {
-                    id: '3b1b1',
-                    title: 'Visualizing Essence of Linear Algebra Through Geometric Intuition',
-                    url: 'https://youtu.be/WUvTyaaNkzM',
-                    author: 'grant_fan',
-                    score: 820,
-                    num_comments: 92,
-                    permalink: '/r/3blue1brown/comments/3b1b1/linalg/',
-                    created_utc: Math.floor(Date.now() / 1000) - 7200
-                  }
-                }
-              ]
-            }
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
+      if (url.includes('noembed.com/embed')) {
+        if (url.includes('aircAruvnKk')) {
+          return new Response(
+            JSON.stringify({
+              author_name: 'Grant Sanderson (3Blue1Brown)',
+              title: 'How Architecture Shapes Public Silence and Civic Attention'
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(JSON.stringify({ author_name: 'Acoustic Archive' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
 
       if (url.includes('/r/PhilosophyMemes/')) {
@@ -284,6 +322,7 @@ describe('Channels, YouTube, Memes & Saxony Regional V18', () => {
     try {
       const ytRes = await SubchannelFlourishService.flourishChannel('c/youtube', {
         force: true,
+        pageCursor: 0,
         existingItems: []
       });
       assert.equal(
@@ -291,15 +330,18 @@ describe('Channels, YouTube, Memes & Saxony Regional V18', () => {
         false,
         'c/youtube must NEVER append generic effortpostBlueprints anchors'
       );
-      const ytReal = ytRes.items.filter(i => i.id.startsWith('flourish-yt-'));
-      assert.equal(ytReal.length, 2, 'Expected exactly 2 real YouTube video items from mocked feeds');
+      const ytReal = ytRes.items.filter(i => i.id.startsWith('live-yt-discover-'));
+      assert.equal(ytReal.length, 3, 'Expected exactly 3 real YouTube video items from HN, rss2json & Lemmy mocked feeds');
       for (const ytItem of ytReal) {
         assert.equal(ytItem.format, 'youtube_gem');
         assert.equal(ytItem.space, 'c/youtube');
         assert.equal(ytItem.primaryTopic, 'youtube_gems');
+        assert.ok(ytItem.canonicalUrl?.startsWith('https://www.youtube.com/watch?v='));
         assert.ok(ytItem.imageUrl?.startsWith('https://i.ytimg.com/vi/') && ytItem.imageUrl?.endsWith('/hqdefault.jpg'));
         assert.equal(satisfiesDefaultCuratedStandard(ytItem), true);
       }
+      const hnEnriched = ytReal.find(i => i.id === 'live-yt-discover-aircAruvnKk');
+      assert.equal(hnEnriched?.youtubeMeta?.channelTitle, 'Grant Sanderson (3Blue1Brown)');
       assert.equal(ytRes.items.some(i => i.canonicalUrl?.includes('vimeo.com')), false);
 
       const memesRes = await SubchannelFlourishService.flourishChannel('c/memes', {

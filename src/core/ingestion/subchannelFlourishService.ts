@@ -6,7 +6,9 @@ import {
   sanitizeCuratedFeedItem,
   satisfiesDefaultCuratedStandard,
   detectLanguage,
-  upgradeImageResolutionUrl
+  upgradeImageResolutionUrl,
+  isSupportedFeedLanguage,
+  isCelebrityFluff
 } from '../enrichment/batchEnricher';
 import { AiCredentials, callAiModel, hasAiConfiguration, loadAiCredentials } from '../ai/atmenAiClient';
 import { feedRepository } from '../data/feedRepository';
@@ -233,8 +235,187 @@ const STOPWORDS = new Set([
  * 3. Wikipedia Deep Concept & Current Context Lane
  * 4. LLM Synthesis & Translation Lane
  */
+interface CuratedYoutubeChannelSeed {
+  channelId: string;
+  name: string;
+  language: 'de' | 'en';
+}
+
+/**
+ * Verified YouTube channel RSS IDs sourced from `src/core/ingestion/sources.ts`.
+ */
+const CURATED_YOUTUBE_CHANNELS: readonly CuratedYoutubeChannelSeed[] = [
+  { channelId: 'UCYO_jab_esuFRV4b17AJtAw', name: '3Blue1Brown', language: 'en' },
+  { channelId: 'UCLLibJTCy3sXjHLVaDimnpQ', name: 'ARTEde', language: 'de' },
+  { channelId: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium', language: 'en' },
+  { channelId: 'UCwRH985XgMYXQ6NxXDo8npw', name: 'Kurzgesagt – Dinge Erklärt', language: 'de' },
+  { channelId: 'UCoxcjq-8xIDTYp3uz647V5A', name: 'Numberphile', language: 'en' },
+  { channelId: 'UC5E9-r42JlymhLPnDv2wHuA', name: 'Terra X Lesch & Co', language: 'de' },
+  { channelId: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile', language: 'en' },
+  { channelId: 'UCSju5G2aFaWMqn-_0YBtq5A', name: 'Stand-up Maths', language: 'en' },
+  { channelId: 'UCyHDQ5C6z1NDmJ4g6SerW8g', name: 'MAITHINK X', language: 'de' },
+  { channelId: 'UCJkMlOu7faDgqh4PfzbpLdg', name: 'Nerdwriter1', language: 'en' },
+  { channelId: 'UCKGMHVipEvuZudhHD05FOYA', name: 'Simplicissimus', language: 'de' },
+  { channelId: 'UC7_gcs09iThXybpVgjHZ_7g', name: 'PBS Space Time', language: 'en' },
+  { channelId: 'UCiRiQGCHGjDLT9FQXFW0I3A', name: 'Academy of Ideas', language: 'en' },
+  { channelId: 'UCy0tKL1T7wFoYcxCe0xjN6Q', name: 'Technology Connections', language: 'en' },
+  { channelId: 'UCZHpIFMfoJJ_1QxNGLJTzyA', name: 'MrWissen2go', language: 'de' },
+  { channelId: 'UC1yNl2E66ZzKApQdRuTQ4tw', name: 'Sabine Hossenfelder', language: 'en' },
+  { channelId: 'UCbfYPyITQ-7l4upoX8nvctg', name: 'Two Minute Papers', language: 'en' },
+  { channelId: 'UCeovElJP0n0i8ADaPsRSd8g', name: 'Hainbach', language: 'en' },
+  { channelId: 'UC9RM-iSvTu1uPJb8X5yp3EQ', name: 'Wendover Productions', language: 'en' },
+  { channelId: 'UCdp4_l1vPmpN-gDbUwhaRUQ', name: 'Branch Education', language: 'en' },
+  { channelId: 'UConVfxXodg78Tzh5nNu85Ew', name: 'Welch Labs', language: 'en' },
+  { channelId: 'UCK8XIGR5kRidIw2fWqwyHRA', name: 'Reducible', language: 'en' },
+  { channelId: 'UCUHW94eEFW7hkUMVaZz4eDg', name: 'MinutePhysics', language: 'en' },
+  { channelId: 'UCshObcm-nLhbu8MY50EZ5Ng', name: 'Benn Jordan', language: 'en' },
+  { channelId: 'UCgNg3vwj3xt7QOrcIDaHdFg', name: 'PolyMatter', language: 'en' },
+  { channelId: 'UCR1IuLEqb6UEA_zQ81kwXfg', name: 'Real Engineering', language: 'en' },
+  { channelId: 'UCMOqf8ab-42UUQIdVoKwjlQ', name: 'Practical Engineering', language: 'en' }
+];
+
+interface HnAlgoliaHit {
+  objectID?: string;
+  title?: string;
+  url?: string;
+  author?: string;
+  points?: number;
+  num_comments?: number;
+  created_at?: string;
+  story_text?: string;
+}
+
+interface HnAlgoliaResponse {
+  hits?: HnAlgoliaHit[];
+}
+
+interface Rss2JsonEntry {
+  title?: string;
+  pubDate?: string;
+  link?: string;
+  guid?: string;
+  author?: string;
+  description?: string;
+}
+
+interface Rss2JsonResponse {
+  status?: string;
+  feed?: {
+    title?: string;
+    author?: string;
+  };
+  items?: Rss2JsonEntry[];
+}
+
+interface LemmyPostEntry {
+  post?: {
+    id?: number;
+    name?: string;
+    url?: string;
+    body?: string;
+    published?: string;
+    removed?: boolean;
+    deleted?: boolean;
+    nsfw?: boolean;
+  };
+  counts?: {
+    score?: number;
+    comments?: number;
+    published?: string;
+  };
+  creator?: {
+    name?: string;
+  };
+}
+
+interface LemmyPostListResponse {
+  posts?: LemmyPostEntry[];
+}
+
+interface NoembedResponse {
+  title?: string;
+  author_name?: string;
+  error?: string;
+}
+
+interface YoutubeDiscoveryCandidate {
+  videoId: string;
+  sourceLane: 'hn' | 'rss' | 'lemmy';
+  title: string;
+  channelTitle: string;
+  publishedAt: string;
+  publicationDateReliable: boolean;
+  points: number;
+  commentsCount: number;
+  discussionUrl: string;
+  platformLabel: string;
+  rawDescription: string;
+  sourceTrustLevel: FeedItem['sourceTrustLevel'];
+  needsNoembedEnrichment: boolean;
+}
+
+function cleanHtmlAndUrls(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#x200B;|&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseFlexibleIsoDate(rawDate: string | undefined, fallbackIso: string): { iso: string; reliable: boolean } {
+  if (!rawDate || !rawDate.trim()) {
+    return { iso: fallbackIso, reliable: false };
+  }
+  const trimmed = rawDate.trim();
+  const normalized = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(trimmed)
+    ? `${trimmed.replace(' ', 'T')}Z`
+    : trimmed;
+  const parsed = Date.parse(normalized);
+  if (!Number.isFinite(parsed)) {
+    return { iso: fallbackIso, reliable: false };
+  }
+  return { iso: new Date(parsed).toISOString(), reliable: true };
+}
+
+function cleanYoutubeDiscoveryTitle(rawTitle: string): string {
+  return rawTitle
+    .replace(/\s*\[(?:video|youtube)\]\s*$/i, '')
+    .replace(/\s*\((?:video|youtube(?:\.com)?)\)\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function fetchJsonWithTimeout<T>(url: string, timeoutMs: number): Promise<T | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' }
+    });
+    if (!res.ok) return null;
+    const rawText = await res.text();
+    const trimmed = rawText.trim();
+    if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) {
+      return null;
+    }
+    return JSON.parse(trimmed) as T;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export class SubchannelFlourishService {
   private static activeFlourishLocks = new Map<string, Promise<SubchannelFlourishResult>>();
+  private static youtubeSearchPageCursor = 0;
 
   /**
    * Dynamically constructs a multi-lane query profile for any built-in or user-created subchannel.
@@ -670,147 +851,347 @@ export class SubchannelFlourishService {
   }
 
   /**
-   * Dedicated YouTube Lane: Pulls real YouTube video-essays from CORS-open Reddit video-essay feeds
-   * (`r/videoessay`, `r/mealtimevideos`, `r/curiousvideos`, `r/3blue1brown`, `r/kurzgesagt`),
-   * strictly validating `youtube.com/watch?v=` or `youtu.be/` URLs and constructing YouTube thumbnails.
+   * Dedicated YouTube Lane: Pulls real YouTube video-essays, documentaries, and lectures
+   * from 3 CORS-open browser APIs (HN Algolia YouTube, Curated YouTube RSS via api.rss2json.com,
+   * and Lemmy Documentaries), deduplicates before enrichment, enriches creator metadata via
+   * noembed.com, and constructs high-substance German FeedItems.
    */
   public static async fetchYoutubeVideoEssayLane(
     profile: SubchannelQueryProfile,
-    today: string
+    today: string,
+    options?: {
+      pageCursor?: number;
+      targetCount?: number;
+      force?: boolean;
+      existingIds?: Set<string>;
+      existingUrls?: Set<string>;
+    }
   ): Promise<FeedItem[]> {
-    const subs = ['videoessay', 'mealtimevideos', 'curiousvideos', '3blue1brown', 'kurzgesagt'];
-    const items: FeedItem[] = [];
-    const seenVideoIds = new Set<string>();
-    const now = new Date().toISOString();
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const page =
+      typeof options?.pageCursor === 'number' && Number.isFinite(options.pageCursor) && options.pageCursor >= 0
+        ? Math.floor(options.pageCursor)
+        : SubchannelFlourishService.youtubeSearchPageCursor++;
 
-    const results = await Promise.allSettled(
-      subs.map(async sub => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3200);
-        try {
-          const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/top.json?t=week&limit=10`;
-          const res = await fetch(url, {
-            signal: controller.signal,
-            headers: { Accept: 'application/json' }
-          });
-          if (!res.ok) return { sub, children: [] as any[] };
-          const json = await res.json();
-          const children = Array.isArray(json?.data?.children) ? json.data.children : [];
-          return { sub, children };
-        } finally {
-          clearTimeout(timeout);
-        }
-      })
+    const preExistingIds = options?.existingIds ?? new Set<string>();
+    const preExistingUrls = new Set<string>();
+    if (options?.existingUrls) {
+      for (const rawEntry of options.existingUrls) {
+        if (!rawEntry) continue;
+        preExistingUrls.add(rawEntry);
+        preExistingUrls.add(rawEntry.trim().toLowerCase());
+        const norm = normalizeDedupeUrl(rawEntry);
+        if (norm) preExistingUrls.add(norm);
+      }
+    }
+
+    const hnUrls = [
+      `https://hn.algolia.com/api/v1/search_by_date?query=youtube.com/watch&restrictSearchableAttributes=url&tags=story&numericFilters=points>15&hitsPerPage=20&page=${page}`,
+      `https://hn.algolia.com/api/v1/search_by_date?query=youtu.be&restrictSearchableAttributes=url&tags=story&numericFilters=points>15&hitsPerPage=15&page=${page}`,
+      `https://hn.algolia.com/api/v1/search?query=youtube.com/watch&restrictSearchableAttributes=url&tags=story&numericFilters=points>80&hitsPerPage=15&page=${page}`
+    ];
+
+    const channelStart = (page * 3) % CURATED_YOUTUBE_CHANNELS.length;
+    const selectedChannels = [0, 1, 2].map(
+      offset => CURATED_YOUTUBE_CHANNELS[(channelStart + offset) % CURATED_YOUTUBE_CHANNELS.length]
     );
 
-    for (const res of results) {
-      if (res.status !== 'fulfilled') continue;
-      const { sub, children } = res.value;
-      for (let i = 0; i < children.length; i++) {
-        const post = children[i]?.data;
-        if (!post || post.over_18 || post.stickied) continue;
-        const targetUrl = String(post.url_overridden_by_dest || post.url || '').trim();
-        const videoId = extractYoutubeVideoId(targetUrl);
-        if (!videoId || seenVideoIds.has(videoId)) continue;
+    const lemmyPage = (page % 5) + 1;
+    const lemmyUrl = `https://lemmy.world/api/v3/post/list?community_name=documentaries&sort=Hot&limit=15&page=${lemmyPage}`;
 
-        const title = String(post.title || '').trim();
-        if (title.length < 14) continue;
+    const [hnResList, rssResList, lemmyRes] = await Promise.all([
+      Promise.allSettled(hnUrls.map(url => fetchJsonWithTimeout<HnAlgoliaResponse>(url, 4000))),
+      Promise.allSettled(
+        selectedChannels.map(async channel => {
+          const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channel.channelId}`;
+          const apiUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feedUrl)}`;
+          const data = await fetchJsonWithTimeout<Rss2JsonResponse>(apiUrl, 3500);
+          return { channel, data };
+        })
+      ),
+      fetchJsonWithTimeout<LemmyPostListResponse>(lemmyUrl, 3500)
+    ]);
 
-        seenVideoIds.add(videoId);
-        const selftext = String(post.selftext || '')
-          .replace(/&#x200B;/g, '')
-          .replace(/https?:\/\/\S+/g, '')
-          .replace(/\s+/g, ' ')
-          .trim();
-        const score = typeof post.score === 'number' ? post.score : 0;
-        const numComments = typeof post.num_comments === 'number' ? post.num_comments : 0;
-        const channelTitle = String(post.media?.oembed?.author_name || post.author || `r/${sub}`).trim();
-        const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
-        const imageUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-        const pubDate = post.created_utc ? new Date(post.created_utc * 1000).toISOString() : now;
+    const seenBatchVideoIds = new Set<string>();
+    const candidates: YoutubeDiscoveryCandidate[] = [];
 
-        const hasSubstantiveSelftext =
-          selftext.length >= 160 &&
-          selftext.split(/\s+/).filter(Boolean).length >= 20 &&
-          !/^(?:watch the video|hier das video)/i.test(selftext);
+    const isAlreadyKnown = (videoId: string): boolean => {
+      if (seenBatchVideoIds.has(videoId)) return true;
+      const liveId = `live-yt-discover-${videoId}`;
+      const legacyId = `flourish-yt-${videoId}`;
+      if (preExistingIds.has(liveId) || preExistingIds.has(legacyId)) return true;
+      const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      const shortUrl = `https://youtu.be/${videoId}`;
+      return (
+        preExistingUrls.has(`yt:${videoId}`) ||
+        preExistingUrls.has(watchUrl) ||
+        preExistingUrls.has(watchUrl.toLowerCase()) ||
+        preExistingUrls.has(shortUrl) ||
+        preExistingUrls.has(shortUrl.toLowerCase())
+      );
+    };
 
-        const substantiveBody = hasSubstantiveSelftext
-          ? selftext.slice(0, 1400)
-          : `Dieses Video-Essay „${title}“ (empfohlen in r/${sub} mit ${score} Punkten und ${numComments} Kommentaren) entfaltet Hintergründe, visuelle Erklärungen und zentrale Denkanstöße direkt im Bewegtbild. Über den Direktlink auf YouTube lässt sich die Argumentation von ${channelTitle} in voller Länge vertiefen.`;
+    const tryPushCandidate = (candidate: YoutubeDiscoveryCandidate): void => {
+      if (isAlreadyKnown(candidate.videoId)) return;
+      if (candidate.title.length < 12 || isCelebrityFluff(candidate.title)) return;
+      if (!isSupportedFeedLanguage(candidate.title, candidate.rawDescription)) return;
+      seenBatchVideoIds.add(candidate.videoId);
+      candidates.push(candidate);
+    };
 
-        const feedExcerpt = hasSubstantiveSelftext
-          ? selftext.slice(0, 360)
-          : substantiveBody;
+    // Lane B first: curated knowledge YouTube channels via rss2json
+    for (const entry of rssResList) {
+      if (entry.status !== 'fulfilled') continue;
+      const { channel, data } = entry.value;
+      if (!data || data.status !== 'ok' || !Array.isArray(data.items)) continue;
+      const resolvedChannelName = String(data.feed?.title || data.feed?.author || channel.name).trim() || channel.name;
+      for (const rssItem of data.items.slice(0, 6)) {
+        const link = String(rssItem?.link || '').trim();
+        let videoId = extractYoutubeVideoId(link);
+        if (!videoId && typeof rssItem?.guid === 'string') {
+          const guidMatch = rssItem.guid.match(/yt:video:([a-zA-Z0-9_-]{11})/);
+          if (guidMatch?.[1]) videoId = guidMatch[1];
+        }
+        if (!videoId) continue;
 
-        items.push({
-          id: `flourish-yt-${videoId}`,
-          type: 'deep_dive',
-          format: 'youtube_gem',
+        const title = cleanYoutubeDiscoveryTitle(String(rssItem?.title || ''));
+        const rawDescription = cleanHtmlAndUrls(String(rssItem?.description || '')).slice(0, 900);
+        const { iso, reliable } = parseFlexibleIsoDate(rssItem?.pubDate, nowIso);
+        const author = String(rssItem?.author || resolvedChannelName).trim() || resolvedChannelName;
+
+        tryPushCandidate({
+          videoId,
+          sourceLane: 'rss',
           title,
-          subtitle: `YouTube Video-Essay • ${channelTitle} (r/${sub})`,
-          feedText: feedExcerpt,
-          body: substantiveBody,
-          articleBody: `### Video-Essay: ${title}\n\n- **Kanal / Kuration:** ${channelTitle} (r/${sub})\n- **Community-Resonanz:** ${score} Punkte · ${numComments} Kommentare\n- **Video-Quelle:** [${watchUrl}](${watchUrl})\n\n${substantiveBody}`,
-          imageUrl,
-          hasAuthenticImage: true,
-          topics: ['youtube_gems', 'science_society'],
-          primaryTopic: 'youtube_gems',
-          sourceReferences: [
-            {
-              publisher: channelTitle || 'YouTube',
-              originalUrl: watchUrl,
-              title,
-              publicationTimestamp: pubDate,
-              retrievalTimestamp: now,
-              author: channelTitle,
-              isVerified: true
-            }
-          ],
-          publishedAt: pubDate,
-          publicationDateReliable: Boolean(post.created_utc),
-          generatedAt: now,
-          estimatedReadingMinutes: 4,
-          relevanceExplanation: `Kuratiertes Video-Essay für ${profile.displayTitle} (c/youtube).`,
-          contentStatus: 'editorial_briefing',
-          isDailyEdition: false,
-          editionDate: today,
-          isDemonstration: false,
-          aiAssisted: false,
-          factReviewStatus: 'community_discussion',
-          provenanceSummary: `🎬 Video-Essay auf YouTube (via r/${sub})`,
-          wordCount: Math.max(25, substantiveBody.split(/\s+/).length),
-          evidenceTier: 'publisher_excerpt',
-          contentOrigin: 'live_ingested',
-          contentHash: `yt-${videoId}`,
-          canonicalUrl: watchUrl,
-          space: 'c/youtube',
-          flair: 'Video-Essay',
-          keyInsight: `${channelTitle}: Video-Essay zu „${title}“ (${watchUrl}).`,
-          youtubeMeta: {
-            videoId,
-            channelTitle,
-            duration: 'Video-Essay',
-            keyTakeaways: [
-              `Empfohlen aus r/${sub} (${score} Punkte, ${numComments} Kommentare)`,
-              `Direktlink: ${watchUrl}`
-            ]
-          },
-          externalCommunityScore: {
-            platform: `r/${sub}`,
-            points: score,
-            commentsCount: numComments,
-            discussionUrl: post.permalink ? `https://www.reddit.com${post.permalink}` : watchUrl
-          },
-          upvotesCount: 0,
-          awardsCount: { gold: 0, brain: 0, spark: 0 },
+          channelTitle: author,
+          publishedAt: iso,
+          publicationDateReliable: reliable,
+          points: 95,
+          commentsCount: 0,
+          discussionUrl: `https://www.youtube.com/watch?v=${videoId}`,
+          platformLabel: `YouTube RSS (${author})`,
+          rawDescription,
           sourceTrustLevel: 'verified_creator',
-          sourceDomain: 'youtube.com',
-          sourceBroadcasterName: channelTitle,
-          isTeachingRelated: false,
-          isChallengingPerspective: false,
-          comments: []
+          needsNoembedEnrichment: false
         });
       }
+    }
+
+    // Lane A: HN Algolia YouTube stories
+    for (const settled of hnResList) {
+      if (settled.status !== 'fulfilled' || !settled.value) continue;
+      const hits = Array.isArray(settled.value.hits) ? settled.value.hits : [];
+      for (const hit of hits) {
+        const videoId = extractYoutubeVideoId(String(hit?.url || ''));
+        if (!videoId) continue;
+        const title = cleanYoutubeDiscoveryTitle(String(hit?.title || ''));
+        const points = typeof hit?.points === 'number' && Number.isFinite(hit.points) ? hit.points : 0;
+        const commentsCount =
+          typeof hit?.num_comments === 'number' && Number.isFinite(hit.num_comments) ? hit.num_comments : 0;
+        const { iso, reliable } = parseFlexibleIsoDate(hit?.created_at, nowIso);
+        const rawDescription = cleanHtmlAndUrls(String(hit?.story_text || '')).slice(0, 800);
+        const hnDiscussionUrl = hit?.objectID
+          ? `https://news.ycombinator.com/item?id=${hit.objectID}`
+          : `https://www.youtube.com/watch?v=${videoId}`;
+
+        tryPushCandidate({
+          videoId,
+          sourceLane: 'hn',
+          title,
+          channelTitle: 'YouTube',
+          publishedAt: iso,
+          publicationDateReliable: reliable,
+          points,
+          commentsCount,
+          discussionUrl: hnDiscussionUrl,
+          platformLabel: 'Hacker News',
+          rawDescription,
+          sourceTrustLevel: 'verified_creator',
+          needsNoembedEnrichment: true
+        });
+      }
+    }
+
+    // Lane C: Lemmy Documentaries
+    const lemmyPosts = Array.isArray(lemmyRes?.posts) ? lemmyRes.posts : [];
+    for (const entry of lemmyPosts) {
+      const post = entry?.post;
+      if (!post || post.removed || post.deleted || post.nsfw) continue;
+      const videoId = extractYoutubeVideoId(String(post.url || ''));
+      if (!videoId) continue;
+
+      const title = cleanYoutubeDiscoveryTitle(String(post.name || ''));
+      const score = typeof entry?.counts?.score === 'number' ? entry.counts.score : 0;
+      const commentsCount = typeof entry?.counts?.comments === 'number' ? entry.counts.comments : 0;
+      const { iso, reliable } = parseFlexibleIsoDate(post.published || entry?.counts?.published, nowIso);
+      const rawDescription = cleanHtmlAndUrls(String(post.body || '')).slice(0, 800);
+      const discussionUrl = post.id
+        ? `https://lemmy.world/post/${post.id}`
+        : `https://www.youtube.com/watch?v=${videoId}`;
+
+      tryPushCandidate({
+        videoId,
+        sourceLane: 'lemmy',
+        title,
+        channelTitle: entry?.creator?.name ? `${entry.creator.name} (YouTube)` : 'YouTube Dokumentationen',
+        publishedAt: iso,
+        publicationDateReliable: reliable,
+        points: Math.max(0, score),
+        commentsCount: Math.max(0, commentsCount),
+        discussionUrl,
+        platformLabel: 'Lemmy c/documentaries',
+        rawDescription,
+        sourceTrustLevel: 'verified_creator',
+        needsNoembedEnrichment: true
+      });
+    }
+
+    // Enrich up to 18 unseen HN/Lemmy candidates in parallel with noembed.com (2200ms timeout, non-fatal)
+    const enrichmentTargets = candidates.filter(c => c.needsNoembedEnrichment).slice(0, 18);
+    if (enrichmentTargets.length > 0) {
+      await Promise.allSettled(
+        enrichmentTargets.map(async candidate => {
+          const watchUrl = `https://www.youtube.com/watch?v=${candidate.videoId}`;
+          const embedUrl = `https://noembed.com/embed?url=${encodeURIComponent(watchUrl)}`;
+          const meta = await fetchJsonWithTimeout<NoembedResponse>(embedUrl, 2200);
+          if (!meta || meta.error) return;
+          if (typeof meta.author_name === 'string' && meta.author_name.trim().length > 0) {
+            candidate.channelTitle = meta.author_name.trim();
+          }
+          if (typeof meta.title === 'string') {
+            const cleanEmbedTitle = cleanYoutubeDiscoveryTitle(meta.title);
+            if (
+              cleanEmbedTitle.length >= 12 &&
+              isSupportedFeedLanguage(cleanEmbedTitle, candidate.rawDescription) &&
+              (candidate.title.length < 18 || /^(?:show hn|ask hn|watch|video)\b/i.test(candidate.title))
+            ) {
+              candidate.title = cleanEmbedTitle;
+            }
+          }
+        })
+      );
+    }
+
+    const pinnedTimestamp = options?.force ? nowMs : undefined;
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const items: FeedItem[] = [];
+
+    for (const candidate of candidates) {
+      const watchUrl = `https://www.youtube.com/watch?v=${candidate.videoId}`;
+      const imageUrl = `https://i.ytimg.com/vi/${candidate.videoId}/hqdefault.jpg`;
+      const creatorLabel = candidate.channelTitle || 'YouTube';
+      const pubMs = Date.parse(candidate.publishedAt);
+      const isOlderThan30Days = Number.isFinite(pubMs) && nowMs - pubMs > thirtyDaysMs;
+      const isEvergreenGem = isOlderThan30Days || candidate.points >= 80;
+
+      const contextOrigin =
+        candidate.sourceLane === 'rss'
+          ? `aus dem kuratierten Wissenskanal ${creatorLabel}`
+          : `mit starker Resonanz über ${candidate.platformLabel} (${candidate.points} Punkte, ${candidate.commentsCount} Kommentare)`;
+
+      const baseGermanSummary = `Das Video-Essay „${candidate.title}“ von ${creatorLabel} (${contextOrigin}) verbindet anschauliche Erklärung mit konzeptioneller Tiefe. Statt schneller Ablenkung steht das gründliche Nachvollziehen komplexer Zusammenhänge im Mittelpunkt – abrufbar direkt über den kuratierten Video-Link.`;
+
+      const cleanDesc = candidate.rawDescription;
+      const substantiveBody =
+        cleanDesc.length >= 150
+          ? `${baseGermanSummary}\n\nAus der Videobeschreibung (${creatorLabel}): ${cleanDesc.slice(0, 750)}`
+          : `${baseGermanSummary} Im Fokus stehen tragfähige Argumente, visuelle Modelle und weiterführende Perspektiven für ${profile.displayTitle}, die sich ideal für ruhiges, konzentriertes Sehen eignen.`;
+
+      const feedExcerpt = baseGermanSummary;
+      const keyInsight = `${creatorLabel} entfaltet in „${candidate.title}“ zentrale Denkanstöße und Erklärungsmodelle – kuratiert für konzentriertes Verstehen statt flüchtiger Clips und direkt auf YouTube abrufbar.`;
+
+      const articleBody = [
+        `### Video-Essay: ${candidate.title}`,
+        '',
+        `- **Kanal / Urheber:** ${creatorLabel}`,
+        `- **Einordnung:** ${candidate.sourceLane === 'rss' ? `Kuratiertes YouTube-Abo (${creatorLabel})` : `${candidate.platformLabel} (${candidate.points} Punkte · ${candidate.commentsCount} Kommentare)`}`,
+        `- **YouTube-Direktlink:** [${watchUrl}](${watchUrl})`,
+        '',
+        substantiveBody
+      ].join('\n');
+
+      const provenanceSummary =
+        candidate.sourceLane === 'rss'
+          ? `🎬 Kuratierter YouTube-Kanal (${creatorLabel})`
+          : `🎬 Video-Essay auf YouTube (${candidate.platformLabel})`;
+
+      items.push({
+        id: `live-yt-discover-${candidate.videoId}`,
+        type: 'deep_dive',
+        format: 'youtube_gem',
+        title: candidate.title,
+        subtitle: `YouTube Video-Essay • ${creatorLabel} (${candidate.platformLabel})`,
+        feedText: feedExcerpt,
+        body: substantiveBody,
+        articleBody,
+        imageUrl,
+        hasAuthenticImage: true,
+        topics: ['youtube_gems', 'science_society'],
+        primaryTopic: 'youtube_gems',
+        sourceReferences: [
+          {
+            publisher: creatorLabel,
+            originalUrl: watchUrl,
+            title: candidate.title,
+            publicationTimestamp: candidate.publishedAt,
+            retrievalTimestamp: nowIso,
+            author: creatorLabel,
+            isVerified: true
+          }
+        ],
+        publishedAt: candidate.publishedAt,
+        publicationDateReliable: candidate.publicationDateReliable,
+        generatedAt: nowIso,
+        estimatedReadingMinutes: 4,
+        relevanceExplanation: `Kuratiertes Video-Essay von ${creatorLabel} für ${profile.displayTitle} (c/youtube).`,
+        contentStatus: 'editorial_briefing',
+        isDailyEdition: false,
+        editionDate: today,
+        isDemonstration: false,
+        aiAssisted: false,
+        factReviewStatus: 'community_discussion',
+        provenanceSummary,
+        wordCount: Math.max(25, substantiveBody.split(/\s+/).filter(Boolean).length),
+        evidenceTier: 'publisher_excerpt',
+        contentOrigin: 'live_ingested',
+        contentHash: `yt-${candidate.videoId}`,
+        canonicalUrl: watchUrl,
+        space: 'c/youtube',
+        flair: candidate.sourceLane === 'rss' ? 'Kuratierter Kanal' : 'Video-Essay',
+        keyInsight,
+        pinnedManualRunAt: pinnedTimestamp,
+        isEvergreenGem,
+        youtubeMeta: {
+          videoId: candidate.videoId,
+          channelTitle: creatorLabel,
+          duration: candidate.sourceLane === 'rss' ? 'Kuratiertes Video-Essay' : 'Video-Essay',
+          keyTakeaways: [
+            candidate.sourceLane === 'rss'
+              ? `Direkt aus dem kuratierten RSS-Feed von ${creatorLabel}`
+              : `Empfohlen via ${candidate.platformLabel} (${candidate.points} Punkte, ${candidate.commentsCount} Kommentare)`,
+            `Direktlink: ${watchUrl}`
+          ]
+        },
+        ...(candidate.sourceLane !== 'rss'
+          ? {
+              externalCommunityScore: {
+                platform: candidate.platformLabel,
+                points: Math.max(0, Math.round(candidate.points)),
+                commentsCount: Math.max(0, Math.round(candidate.commentsCount)),
+                discussionUrl: candidate.discussionUrl
+              }
+            }
+          : {}),
+        upvotesCount: 0,
+        awardsCount: { gold: 0, brain: 0, spark: 0 },
+        sourceTrustLevel: candidate.sourceTrustLevel,
+        sourceDomain: 'youtube.com',
+        sourceBroadcasterName: creatorLabel,
+        isTeachingRelated: false,
+        isChallengingPerspective: false,
+        comments: []
+      });
     }
 
     return items;
@@ -960,8 +1341,8 @@ export class SubchannelFlourishService {
   ): Promise<FeedItem[]> {
     const loadOpts = forceRefresh ? { forceRefresh: true } : undefined;
     const [reservoirRes, snapshotRes] = await Promise.allSettled([
-      defaultSnapshotLoader.loadReservoir(undefined, 2500, loadOpts),
-      defaultSnapshotLoader.loadSnapshot(undefined, 2500, loadOpts)
+      defaultSnapshotLoader.loadReservoir(undefined, 6000, loadOpts),
+      defaultSnapshotLoader.loadSnapshot(undefined, 6000, loadOpts)
     ]);
 
     const combined: FeedItem[] = [];
@@ -1387,6 +1768,7 @@ export class SubchannelFlourishService {
     options?: {
       minUnseenCount?: number;
       targetCount?: number;
+      pageCursor?: number;
       force?: boolean;
       existingItems?: FeedItem[];
       existingIds?: Set<string>;
@@ -1467,11 +1849,17 @@ export class SubchannelFlourishService {
 
         if (!options?.skipNetworkInTests) {
           if (isYoutubeChannel) {
-            const [snapshotYt, redditYt] = await Promise.all([
+            const [snapshotYt, liveYt] = await Promise.all([
               this.fetchUnseenFromSnapshots('c/youtube', 'youtube_gems', preExistingIds, preExistingUrls, false, force),
-              this.fetchYoutubeVideoEssayLane(queryProfile, today)
+              this.fetchYoutubeVideoEssayLane(queryProfile, today, {
+                pageCursor: options?.pageCursor,
+                targetCount: options?.targetCount,
+                force,
+                existingIds: preExistingIds,
+                existingUrls: preExistingUrls
+              })
             ]);
-            specialistItems = [...redditYt, ...snapshotYt];
+            specialistItems = [...liveYt, ...snapshotYt];
           } else if (isMemesChannel) {
             const [snapshotMemes, redditMemes] = await Promise.all([
               this.fetchUnseenFromSnapshots('c/memes', 'memes_satire', preExistingIds, preExistingUrls, true, force),
@@ -1580,8 +1968,12 @@ export class SubchannelFlourishService {
         const existingIds = new Set(preExistingIds);
         const existingUrls = new Set(preExistingUrls);
         const deduplicated: FeedItem[] = [];
+        const youtubeBatchCap = isYoutubeChannel ? Math.max(options?.targetCount ?? 20, 20) : Infinity;
+        const manualPinTimestamp = force && isYoutubeChannel ? Date.now() : undefined;
 
         for (const candidate of lane4Result.items) {
+          if (deduplicated.length >= youtubeBatchCap) break;
+
           const sanitized = sanitizeCuratedFeedItem({
             ...candidate,
             space: spaceHandle,
@@ -1590,6 +1982,15 @@ export class SubchannelFlourishService {
               ? candidate.topics
               : [queryProfile.primaryTopic, ...(candidate.topics || [])].slice(0, 3)
           });
+
+          if (isYoutubeChannel) {
+            sanitized.space = 'c/youtube';
+            sanitized.primaryTopic = 'youtube_gems';
+            sanitized.format = 'youtube_gem';
+            if (manualPinTimestamp !== undefined) {
+              sanitized.pinnedManualRunAt = manualPinTimestamp;
+            }
+          }
 
           // Preserve explicit hqdefault.jpg thumbnails on YouTube gems
           if (
@@ -1622,7 +2023,11 @@ export class SubchannelFlourishService {
         }
 
         if (deduplicated.length > 0) {
-          feedRepository.addItems(deduplicated);
+          if (force && isYoutubeChannel) {
+            feedRepository.addItems(deduplicated, { operationType: 'manual_refresh', pinInserted: true });
+          } else {
+            feedRepository.addItems(deduplicated);
+          }
         }
         options?.onProgress?.(100, `${deduplicated.length} Fundstücke veröffentlicht`);
 

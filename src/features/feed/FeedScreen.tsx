@@ -908,11 +908,39 @@ export const FeedScreen: React.FC = () => {
       });
       const addedCount = res.addedItems.length;
       if (addedCount > 0) {
-        feedRepository.addItems(res.addedItems);
+        for (const item of res.addedItems) {
+          refreshRotatedIdsRef.current.delete(item.id);
+          surfacedArrivalIdsRef.current.add(item.id);
+        }
+        feedRepository.addItems(res.addedItems, { operationType: 'manual_refresh', pinInserted: true });
+        revealScrollGraceUntilRef.current = Date.now() + 1400;
+        lockedTopItemIdsRef.current = null;
+        hasCommittedInitialViewportRef.current = false;
+        frozenRenderedFreshRef.current = [];
+        newArrivalsQueueRef.current = [];
+        setPendingStreamArrivals([]);
+        setPendingNewItemIds([]);
+        arrivalsBannerStateRef.current = INITIAL_ARRIVALS_BANNER_STATE;
+        setArrivalsBannerState(INITIAL_ARRIVALS_BANNER_STATE);
+        isScrolledDownRef.current = false;
+        setIsScrolledDown(false);
+        setRevealedNewItems(res.addedItems);
+        setPinnedIds(defaultFeedOperationManager.getPinnedItemIds());
         await recomputeFeed();
+        scrollToFeedTop(true);
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+          try {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } catch {
+            window.scrollTo(0, 0);
+          }
+        }
         if (!silent) {
+          const isYoutubeChannel = selectedFilter.toLowerCase() === 'c/youtube';
           showTransientToast(
-            `${addedCount} neue Fundstücke für ${selectedFilter} kuratiert (${res.mode === 'ai' ? 'KI-Synthese' : 'Primärquellen'})`,
+            isYoutubeChannel
+              ? `${addedCount} neue YouTube-Videos für c/youtube geladen`
+              : `${addedCount} neue Fundstücke für ${selectedFilter} kuratiert (${res.mode === 'ai' ? 'KI-Synthese' : 'Primärquellen'})`,
             3500
           );
         }
@@ -926,7 +954,7 @@ export const FeedScreen: React.FC = () => {
       setIsFlourishingChannel(false);
       setFlourishStageText('');
     }
-  }, [selectedFilter, isFlourishingChannel, subchannels, recomputeFeed, showTransientToast]);
+  }, [selectedFilter, isFlourishingChannel, subchannels, recomputeFeed, showTransientToast, scrollToFeedTop]);
 
   const onRefresh = useCallback(async () => {
     if (refreshingRef.current) return;
@@ -1645,7 +1673,11 @@ export const FeedScreen: React.FC = () => {
   const [manualPipelineStageLabel, setManualPipelineStageLabel] = useState<string>('');
 
   const handleRunManualResearchPipeline = useCallback(async () => {
-    if (isRunningManualPipeline) return;
+    if (isRunningManualPipeline || isFlourishingChannel) return;
+    if (selectedFilter !== 'all') {
+      await handleFlourishActiveChannel(false);
+      return;
+    }
     setIsRunningManualPipeline(true);
     setManualPipelineStageLabel('Multi-Lane Internet-Recherche…');
     const startedAt = Date.now();
@@ -1662,11 +1694,7 @@ export const FeedScreen: React.FC = () => {
       const seenIds = await seenImpressionsService.getSeenIds();
       const creds = await loadAiCredentials().catch(() => undefined);
 
-      const topicHint =
-        activeTopic ||
-        (selectedFilter !== 'all'
-          ? selectedFilter.replace(/^c\//i, '').replace(/[_-]+/g, ' ').trim()
-          : undefined);
+      const topicHint = activeTopic || undefined;
 
       const { OpenWebHarvester } = await import('../../core/ingestion/openWebHarvester');
       const discoveryResult = await OpenWebHarvester.harvestMultiLaneInternetDiscovery({
@@ -1774,7 +1802,7 @@ export const FeedScreen: React.FC = () => {
       setIsRunningManualPipeline(false);
       setManualPipelineStageLabel('');
     }
-  }, [isRunningManualPipeline, recomputeFeed, activeTopic, selectedFilter, sortMode, scrollToFeedTop]);
+  }, [isRunningManualPipeline, isFlourishingChannel, handleFlourishActiveChannel, recomputeFeed, activeTopic, selectedFilter, sortMode, scrollToFeedTop]);
 
   // Viewport-Accurate Chronik Tracking: only records cards that have genuinely entered the visible viewport
   const cardLayoutsRef = React.useRef<Record<string, { y: number; height: number }>>({});
@@ -3159,8 +3187,8 @@ export const FeedScreen: React.FC = () => {
               stickyHorizonBarHeight={stickyHorizonBarHeight}
               onFocus={handleHorizonBarFocus}
               onBlur={handleHorizonBarBlur}
-              isRunningManualPipeline={isRunningManualPipeline}
-              manualPipelineStageLabel={manualPipelineStageLabel}
+              isRunningManualPipeline={isRunningManualPipeline || isFlourishingChannel}
+              manualPipelineStageLabel={manualPipelineStageLabel || flourishStageText}
               onRunManualResearchPipeline={handleRunManualResearchPipeline}
               lastOperationResult={lastOperationResult}
               onOpenReport={handleOpenReportModal}
@@ -4126,12 +4154,22 @@ export const FeedScreen: React.FC = () => {
                           <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
                             <TouchableOpacity
                               onPress={handleRunManualResearchPipeline}
-                              disabled={isRunningManualPipeline}
-                              style={[styles.generatePocketButton, { backgroundColor: colors.accent, opacity: isRunningManualPipeline ? 0.65 : 1 }]}
+                              disabled={isRunningManualPipeline || isFlourishingChannel}
+                              style={[styles.generatePocketButton, { backgroundColor: colors.accent, opacity: (isRunningManualPipeline || isFlourishingChannel) ? 0.65 : 1 }]}
                             >
                               <Ionicons name="refresh" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
                               <Text style={styles.generatePocketButtonText}>
-                                {isRunningManualPipeline ? 'Recherchiert…' : '20 neue Beiträge recherchieren'}
+                                {selectedFilter.toLowerCase() === 'c/youtube'
+                                  ? (isFlourishingChannel || isRunningManualPipeline)
+                                    ? 'Suche spannende Videos…'
+                                    : '20 neue Videos recherchieren'
+                                  : selectedFilter !== 'all'
+                                    ? (isFlourishingChannel || isRunningManualPipeline)
+                                      ? 'Recherchiert…'
+                                      : 'Neue Beiträge für diesen Kanal recherchieren'
+                                    : isRunningManualPipeline
+                                      ? 'Recherchiert…'
+                                      : '20 neue Beiträge recherchieren'}
                               </Text>
                             </TouchableOpacity>
                             <TouchableOpacity

@@ -880,8 +880,16 @@ export function getEffectiveSpaceHandle(
 }
 
 export function isAggregatorItem(
-  item: Pick<FeedItem, 'id' | 'sourceReferences' | 'sourceBroadcasterName' | 'externalCommunityScore'>
+  item: Pick<FeedItem, 'id' | 'sourceReferences' | 'sourceBroadcasterName' | 'externalCommunityScore'> &
+    Partial<Pick<FeedItem, 'format' | 'space' | 'primaryTopic'>>
 ): boolean {
+  if (
+    item.format === 'youtube_gem' ||
+    item.space === 'c/youtube' ||
+    item.primaryTopic === 'youtube_gems'
+  ) {
+    return false;
+  }
   const pub = `${item.sourceBroadcasterName || ''} ${item.sourceReferences?.[0]?.publisher || ''}`.toLowerCase();
   const platform = (item.externalCommunityScore?.platform || '').toLowerCase();
   return (
@@ -1080,12 +1088,17 @@ export function isWithin14DayRelevanceWindow(
     | 'primaryTopic'
     | 'space'
     | 'isEvergreenGem'
+    | 'pinnedManualRunAt'
     | 'wordCount'
     | 'sourceReferences'
     | 'sourceBroadcasterName'
   > & { score?: number },
   nowMs = Date.now()
 ): boolean {
+  if (typeof item.pinnedManualRunAt === 'number' && (nowMs - item.pinnedManualRunAt) <= 30 * 60 * 1000) {
+    return true;
+  }
+
   const isVisualTimeless =
     item.format === 'art_showcase' ||
     item.format === 'meme' ||
@@ -1099,6 +1112,9 @@ export function isWithin14DayRelevanceWindow(
     item.format === 'youtube_gem' ||
     item.space === 'c/youtube' ||
     item.primaryTopic === 'youtube_gems';
+  if (isYoutubeGem && item.isEvergreenGem === true) {
+    return true;
+  }
 
   // Undated non-visual entries fall back to firstSeenAt / publishedAt so undated RSS essays still age out after 14 days
   const refDateStr =
