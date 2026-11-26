@@ -4,8 +4,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   SubchannelFlourishService,
-  extractYoutubeVideoId
+  extractYoutubeVideoId,
+  cleanYoutubeDescription
 } from '../src/core/ingestion/subchannelFlourishService';
+import {
+  getActiveInlineVideoKey,
+  setActiveInlineVideoKey,
+  subscribeActiveInlineVideo,
+  extractInlineYoutubeVideoId,
+  buildYouTubeNoCookieEmbedUrl
+} from '../src/core/utils/inlineVideoBus';
 import {
   isWithin14DayRelevanceWindow,
   scoreFeedItem,
@@ -19,7 +27,11 @@ import { DEFAULT_USER_PROFILE } from '../src/core/data/fixtures';
 import { REAL_KNOWLEDGE_VAULT } from '../src/core/data/realKnowledgeVault';
 import { defaultFeedOperationManager } from '../src/core/feed/FeedOperationManager';
 import { defaultSnapshotLoader } from '../src/core/feed/SnapshotLoader';
-import { satisfiesDefaultCuratedStandard } from '../src/core/enrichment/batchEnricher';
+import {
+  satisfiesDefaultCuratedStandard,
+  getCardRenderableText,
+  stripSyntheticFillerSentences
+} from '../src/core/enrichment/batchEnricher';
 import { FeedItem, FeedItemSchema } from '../src/core/domain/types';
 
 function makeFeedItem(id: string, overrides: Partial<FeedItem> = {}): FeedItem {
@@ -443,7 +455,22 @@ describe('Atmen v21: CORS-Safe Live YouTube Discovery & Channel-Aware Research',
         assert.equal(item.primaryTopic, 'youtube_gems');
         assert.ok(item.imageUrl?.endsWith('/hqdefault.jpg'));
         assert.equal(satisfiesDefaultCuratedStandard(item), true);
+        assert.equal(
+          item.feedText.includes('verbindet anschauliche Erklärung mit konzeptioneller Tiefe'),
+          false,
+          'YouTube card must never contain generic German boilerplate in feedText'
+        );
+        assert.equal(item.keyInsight, undefined, 'YouTube card must not emit fabricated boilerplate keyInsight');
       }
+
+      // HN items without authentic description stay clean (no filler text), RSS items keep real description
+      assert.equal(hnWatchItem.feedText, '');
+      assert.equal(getCardRenderableText(hnWatchItem), '');
+      const rssItemA = laneItems.find(i => i.youtubeMeta?.videoId === rssVid0A)!;
+      assert.ok(
+        rssItemA.feedText.includes('Fourier transforms'),
+        `RSS YouTube item should keep authentic video description, got "${rssItemA.feedText}"`
+      );
 
       // Now test 2-click cursor pagination via flourishChannel('c/youtube', { force: true, existingItems })
       // Reset cursor to 0 for deterministic 2-click pagination check
@@ -810,5 +837,94 @@ describe('Atmen v21: CORS-Safe Live YouTube Discovery & Channel-Aware Research',
     assert.ok(source.includes('disabled={isRunningManualPipeline || isFlourishingChannel}'));
     assert.ok(source.includes('20 neue Videos recherchieren'));
     assert.ok(source.includes('Suche spannende Videos…'));
+  });
+
+  it('Case 5 (v22): cleanYoutubeDescription strips sponsor/URL/timestamp clutter & legacy cached v21 YouTube boilerplate self-heals to empty', () => {
+    const messyDesc = [
+      '00:00 Intro',
+      '04:12 Main Idea',
+      'Support us on Patreon: https://patreon.com/example',
+      'This video is sponsored by Brilliant.org - use my link below!',
+      'An exploration of how ancient Greek astronomers measured the distance to the Moon using eclipses and simple geometry.',
+      'Subscribe to our channel for weekly essays! #science #astronomy'
+    ].join('\n');
+
+    const cleaned = cleanYoutubeDescription(messyDesc);
+    assert.ok(cleaned.includes('ancient Greek astronomers measured the distance to the Moon'));
+    assert.equal(cleaned.toLowerCase().includes('patreon'), false);
+    assert.equal(cleaned.toLowerCase().includes('brilliant'), false);
+    assert.equal(cleaned.toLowerCase().includes('subscribe'), false);
+    assert.equal(cleaned.includes('00:00'), false);
+
+    assert.equal(cleanYoutubeDescription('https://example.com\nSubscribe now! #video'), '');
+
+    // Legacy v21 cached YouTube item with generic boilerplate in feedText, body & keyInsight
+    const legacyCachedHnYt = makeYoutubeGem('live-yt-discover-legacy001', 'legacy00001', 'Veritasium', {
+      feedText:
+        'Das Video-Essay „Why Light Slows Down in Glass“ von Veritasium (mit starker Resonanz über Hacker News (116 Punkte, 266 Kommentare)) verbindet anschauliche Erklärung mit konzeptioneller Tiefe. Statt schneller Ablenkung steht das gründliche Nachvollziehen komplexer Zusammenhänge im Mittelpunkt – abrufbar direkt über den kuratierten Video-Link.',
+      body:
+        'Das Video-Essay „Why Light Slows Down in Glass“ von Veritasium (mit starker Resonanz über Hacker News (116 Punkte, 266 Kommentare)) verbindet anschauliche Erklärung mit konzeptioneller Tiefe. Statt schneller Ablenkung steht das gründliche Nachvollziehen komplexer Zusammenhänge im Mittelpunkt – abrufbar direkt über den kuratierten Video-Link. Im Fokus stehen tragfähige Argumente, visuelle Modelle und weiterführende Perspektiven für YouTube Video-Essays, die sich ideal für ruhiges, konzentriertes Sehen eignen.',
+      articleBody:
+        '### Video-Essay: Why Light Slows Down in Glass\n\n- **Kanal / Urheber:** Veritasium\n- **YouTube-Direktlink:** [https://www.youtube.com/watch?v=legacy00001](https://www.youtube.com/watch?v=legacy00001)',
+      keyInsight:
+        'Veritasium entfaltet in „Why Light Slows Down in Glass“ zentrale Denkanstöße und Erklärungsmodelle – kuratiert für konzentriertes Verstehen statt flüchtiger Clips und direkt auf YouTube abrufbar.'
+    });
+
+    assert.equal(
+      getCardRenderableText(legacyCachedHnYt),
+      '',
+      'Legacy cached YouTube boilerplate must self-heal to empty string without falling back to articleBody markdown'
+    );
+    assert.equal(stripSyntheticFillerSentences(legacyCachedHnYt.keyInsight || '').trim(), '');
+    assert.equal(satisfiesDefaultCuratedStandard(legacyCachedHnYt), true);
+
+    // Legacy cached RSS item that had real description after "Aus der Videobeschreibung (...):" recovers real prose
+    const legacyCachedRssYt = makeYoutubeGem('live-yt-discover-legacy002', 'legacy00002', '3Blue1Brown', {
+      feedText:
+        'Das Video-Essay „Fourier Transform“ von 3Blue1Brown (aus dem kuratierten Wissenskanal 3Blue1Brown) verbindet anschauliche Erklärung mit konzeptioneller Tiefe. Statt schneller Ablenkung steht das gründliche Nachvollziehen komplexer Zusammenhänge im Mittelpunkt – abrufbar direkt über den kuratierten Video-Link.',
+      body:
+        'Das Video-Essay „Fourier Transform“ von 3Blue1Brown (aus dem kuratierten Wissenskanal 3Blue1Brown) verbindet anschauliche Erklärung mit konzeptioneller Tiefe. Statt schneller Ablenkung steht das gründliche Nachvollziehen komplexer Zusammenhänge im Mittelpunkt – abrufbar direkt über den kuratierten Video-Link.\n\nAus der Videobeschreibung (3Blue1Brown): An animated introduction to the Fourier Transform and winding frequencies around a circle.'
+    });
+    assert.equal(
+      getCardRenderableText(legacyCachedRssYt),
+      'An animated introduction to the Fourier Transform and winding frequencies around a circle.'
+    );
+  });
+
+  it('Case 6 (v22): inlineVideoBus enforces single active player & FeedCard wires click-to-play youtube-nocookie facade', () => {
+    setActiveInlineVideoKey(null);
+    const seenEvents: Array<string | null> = [];
+    const unsubscribe = subscribeActiveInlineVideo(key => seenEvents.push(key));
+    try {
+      assert.equal(getActiveInlineVideoKey(), null);
+      setActiveInlineVideoKey('yt-card-1');
+      assert.equal(getActiveInlineVideoKey(), 'yt-card-1');
+      // Starting a second video automatically replaces the first (max 1 iframe at a time)
+      setActiveInlineVideoKey('yt-card-2');
+      assert.equal(getActiveInlineVideoKey(), 'yt-card-2');
+      setActiveInlineVideoKey(null);
+      assert.equal(getActiveInlineVideoKey(), null);
+      assert.deepEqual(seenEvents, ['yt-card-1', 'yt-card-2', null]);
+    } finally {
+      unsubscribe();
+      setActiveInlineVideoKey(null);
+    }
+
+    assert.equal(extractInlineYoutubeVideoId('https://www.youtube.com/watch?v=aircAruvnKk'), 'aircAruvnKk');
+    assert.equal(extractInlineYoutubeVideoId('https://youtu.be/WUvTyaaNkzM?t=10'), 'WUvTyaaNkzM');
+    assert.equal(extractInlineYoutubeVideoId('https://www.youtube-nocookie.com/embed/aircAruvnKk'), 'aircAruvnKk');
+    assert.equal(
+      buildYouTubeNoCookieEmbedUrl('aircAruvnKk'),
+      'https://www.youtube-nocookie.com/embed/aircAruvnKk?autoplay=1&rel=0&modestbranding=1'
+    );
+
+    const feedCardPath = path.resolve(process.cwd(), 'src/ui/components/FeedCard.tsx');
+    const feedCardSource = fs.readFileSync(feedCardPath, 'utf8');
+    assert.ok(feedCardSource.includes('buildYouTubeNoCookieEmbedUrl'));
+    assert.ok(feedCardSource.includes('subscribeActiveInlineVideo'));
+    assert.ok(feedCardSource.includes('handlePlayYoutubeInline'));
+    assert.ok(feedCardSource.includes('handleCloseInlineVideo'));
+    assert.ok(feedCardSource.includes('Direkt abspielen'));
+    assert.ok(feedCardSource.includes('stripSyntheticFillerSentences(item.keyInsight)'));
   });
 });

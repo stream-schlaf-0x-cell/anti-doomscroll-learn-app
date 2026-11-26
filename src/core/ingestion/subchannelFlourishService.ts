@@ -49,6 +49,68 @@ function normalizeDedupeUrl(rawUrl?: string): string | null {
   return trimmed.toLowerCase().replace(/\/+$/, '');
 }
 
+const YT_PROMO_LINE_REGEX =
+  /^\s*(?:https?:\/\/|www\.|#|\d{1,2}:\d{2}\b|(?:chapters?|kapitel|timestamps?|zeitstempel)\s*:|(?:subscribe|abonnier\w*|follow\s+(?:us|me)|folge\s+uns|support\s+(?:us|this|the\s+channel)|unterstütz\w*|patreon|ko-?fi|merch|shop\b|sponsored\s+by|this\s+video\s+is\s+sponsored|use\s+code\b|promo\s*code|music\s+by|soundtrack|credits?:|impressum|datenschutz|business\s+inquir|instagram|twitter|tiktok|discord|facebook|linkedin)\b)/i;
+
+/**
+ * Extracts only authentic, reader-facing opening prose from a YouTube video description,
+ * removing URLs, sponsor/Patreon/subscribe noise, hashtags, and timestamp lists.
+ * Returns '' if no substantive authentic description remains (never invents filler).
+ */
+export function cleanYoutubeDescription(raw?: string | null, maxChars = 260): string {
+  if (!raw || typeof raw !== 'string') return '';
+  const decoded = raw
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ');
+
+  const keptLines: string[] = [];
+  for (const rawLine of decoded.split(/\r?\n/)) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+    if (YT_PROMO_LINE_REGEX.test(trimmed)) continue;
+
+    // Remove inline URLs and trailing hashtags
+    const cleanedLine = trimmed
+      .replace(/https?:\/\/\S+/gi, '')
+      .replace(/\bwww\.\S+/gi, '')
+      .replace(/(?:^|\s)#[a-zA-Z0-9_äöüÄÖÜß-]+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (cleanedLine.length < 18) continue;
+    if (
+      /\b(?:patreon\.com|brilliant\.org|squarespace|nordvpn|surfshark|nebula\.tv|skillshare|audible\.com|ground\.news|use\s+my\s+link|link\s+in\s+(?:the\s+)?description|check\s+out\s+our\s+sponsor|subscribe\s+to\s+(?:our|the)\s+channel)\b/i.test(
+        cleanedLine
+      )
+    ) {
+      continue;
+    }
+
+    keptLines.push(cleanedLine);
+    if (keptLines.join(' ').length >= maxChars + 80) break;
+  }
+
+  const joined = keptLines.join(' ').replace(/\s+/g, ' ').trim();
+  if (joined.length < 40) return '';
+  if (joined.length <= maxChars) return joined;
+
+  // Prefer trimming cleanly at the end of a complete sentence within maxChars
+  const slice = joined.slice(0, maxChars);
+  const lastSentenceEnd = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('! '), slice.lastIndexOf('? '));
+  if (lastSentenceEnd >= 80) {
+    return slice.slice(0, lastSentenceEnd + 1).trim();
+  }
+  const lastSpace = slice.lastIndexOf(' ');
+  return `${(lastSpace >= 60 ? slice.slice(0, lastSpace) : slice).trim()}…`;
+}
+
 export type ChannelArchetype =
   | 'contemplation'
   | 'discourse_essay'
@@ -1085,43 +1147,41 @@ export class SubchannelFlourishService {
       const isOlderThan30Days = Number.isFinite(pubMs) && nowMs - pubMs > thirtyDaysMs;
       const isEvergreenGem = isOlderThan30Days || candidate.points >= 80;
 
-      const contextOrigin =
-        candidate.sourceLane === 'rss'
-          ? `aus dem kuratierten Wissenskanal ${creatorLabel}`
-          : `mit starker Resonanz über ${candidate.platformLabel} (${candidate.points} Punkte, ${candidate.commentsCount} Kommentare)`;
+      const cleanDesc = cleanYoutubeDescription(candidate.rawDescription);
+      const hasAuthenticDesc = cleanDesc.length >= 40;
+      const feedExcerpt = hasAuthenticDesc ? cleanDesc : '';
+      const substantiveBody = hasAuthenticDesc ? cleanDesc : '';
 
-      const baseGermanSummary = `Das Video-Essay „${candidate.title}“ von ${creatorLabel} (${contextOrigin}) verbindet anschauliche Erklärung mit konzeptioneller Tiefe. Statt schneller Ablenkung steht das gründliche Nachvollziehen komplexer Zusammenhänge im Mittelpunkt – abrufbar direkt über den kuratierten Video-Link.`;
-
-      const cleanDesc = candidate.rawDescription;
-      const substantiveBody =
-        cleanDesc.length >= 150
-          ? `${baseGermanSummary}\n\nAus der Videobeschreibung (${creatorLabel}): ${cleanDesc.slice(0, 750)}`
-          : `${baseGermanSummary} Im Fokus stehen tragfähige Argumente, visuelle Modelle und weiterführende Perspektiven für ${profile.displayTitle}, die sich ideal für ruhiges, konzentriertes Sehen eignen.`;
-
-      const feedExcerpt = baseGermanSummary;
-      const keyInsight = `${creatorLabel} entfaltet in „${candidate.title}“ zentrale Denkanstöße und Erklärungsmodelle – kuratiert für konzentriertes Verstehen statt flüchtiger Clips und direkt auf YouTube abrufbar.`;
-
-      const articleBody = [
-        `### Video-Essay: ${candidate.title}`,
+      const articleBodyLines = [
+        `### ${candidate.title}`,
         '',
         `- **Kanal / Urheber:** ${creatorLabel}`,
-        `- **Einordnung:** ${candidate.sourceLane === 'rss' ? `Kuratiertes YouTube-Abo (${creatorLabel})` : `${candidate.platformLabel} (${candidate.points} Punkte · ${candidate.commentsCount} Kommentare)`}`,
-        `- **YouTube-Direktlink:** [${watchUrl}](${watchUrl})`,
-        '',
-        substantiveBody
-      ].join('\n');
+        `- **Quelle:** ${
+          candidate.sourceLane === 'rss'
+            ? `Kuratiertes YouTube-Abo (${creatorLabel})`
+            : `${candidate.platformLabel} (${candidate.points} Punkte · ${candidate.commentsCount} Kommentare)`
+        }`,
+        `- **YouTube-Direktlink:** [${watchUrl}](${watchUrl})`
+      ];
+      if (candidate.sourceLane !== 'rss' && candidate.discussionUrl) {
+        articleBodyLines.push(`- **Diskussion:** [${candidate.platformLabel}](${candidate.discussionUrl})`);
+      }
+      if (hasAuthenticDesc) {
+        articleBodyLines.push('', cleanDesc);
+      }
+      const articleBody = articleBodyLines.join('\n');
 
       const provenanceSummary =
         candidate.sourceLane === 'rss'
           ? `🎬 Kuratierter YouTube-Kanal (${creatorLabel})`
-          : `🎬 Video-Essay auf YouTube (${candidate.platformLabel})`;
+          : `🎬 YouTube (${candidate.platformLabel})`;
 
       items.push({
         id: `live-yt-discover-${candidate.videoId}`,
         type: 'deep_dive',
         format: 'youtube_gem',
         title: candidate.title,
-        subtitle: `YouTube Video-Essay • ${creatorLabel} (${candidate.platformLabel})`,
+        subtitle: '',
         feedText: feedExcerpt,
         body: substantiveBody,
         articleBody,
@@ -1144,7 +1204,7 @@ export class SubchannelFlourishService {
         publicationDateReliable: candidate.publicationDateReliable,
         generatedAt: nowIso,
         estimatedReadingMinutes: 4,
-        relevanceExplanation: `Kuratiertes Video-Essay von ${creatorLabel} für ${profile.displayTitle} (c/youtube).`,
+        relevanceExplanation: `Kuratiertes Video von ${creatorLabel} für ${profile.displayTitle} (c/youtube).`,
         contentStatus: 'editorial_briefing',
         isDailyEdition: false,
         editionDate: today,
@@ -1152,20 +1212,19 @@ export class SubchannelFlourishService {
         aiAssisted: false,
         factReviewStatus: 'community_discussion',
         provenanceSummary,
-        wordCount: Math.max(25, substantiveBody.split(/\s+/).filter(Boolean).length),
+        wordCount: Math.max(12, substantiveBody.split(/\s+/).filter(Boolean).length),
         evidenceTier: 'publisher_excerpt',
         contentOrigin: 'live_ingested',
         contentHash: `yt-${candidate.videoId}`,
         canonicalUrl: watchUrl,
         space: 'c/youtube',
         flair: candidate.sourceLane === 'rss' ? 'Kuratierter Kanal' : 'Video-Essay',
-        keyInsight,
         pinnedManualRunAt: pinnedTimestamp,
         isEvergreenGem,
         youtubeMeta: {
           videoId: candidate.videoId,
           channelTitle: creatorLabel,
-          duration: candidate.sourceLane === 'rss' ? 'Kuratiertes Video-Essay' : 'Video-Essay',
+          duration: candidate.sourceLane === 'rss' ? 'Kuratiertes Video' : 'YouTube',
           keyTakeaways: [
             candidate.sourceLane === 'rss'
               ? `Direkt aus dem kuratierten RSS-Feed von ${creatorLabel}`

@@ -18,7 +18,14 @@ import {
   TOPIC_SPACE_MAP,
   TopicTag
 } from '../../core/domain/types';
-import { getCardRenderableText } from '../../core/enrichment/batchEnricher';
+import { getCardRenderableText, stripSyntheticFillerSentences } from '../../core/enrichment/batchEnricher';
+import {
+  buildYouTubeNoCookieEmbedUrl,
+  extractInlineYoutubeVideoId,
+  getActiveInlineVideoKey,
+  setActiveInlineVideoKey,
+  subscribeActiveInlineVideo
+} from '../../core/utils/inlineVideoBus';
 import { useAppActions } from '../../core/context/AppContext';
 import { getThemeColors, ThemePalette, typography, radius, spacing } from '../theme';
 import { stripLeadingTitleDuplicate } from '../../core/utils/textUtils';
@@ -267,6 +274,65 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
 
   const originalUrl = item.canonicalUrl || item.sourceReferences[0]?.originalUrl;
 
+  // Detect YouTube video ID for inline Click-to-Play facade (0 iframe cost until clicked)
+  const youtubeVideoId = useMemo(() => {
+    const metaId = item.youtubeMeta?.videoId;
+    if (metaId && /^[a-zA-Z0-9_-]{11}$/.test(metaId.trim())) {
+      return metaId.trim();
+    }
+    const isYtCard =
+      item.format === 'youtube_gem' ||
+      item.space === 'c/youtube' ||
+      item.primaryTopic === 'youtube_gems' ||
+      Boolean(item.youtubeMeta);
+    if (!isYtCard) return null;
+    return extractInlineYoutubeVideoId(originalUrl);
+  }, [item.youtubeMeta, item.format, item.space, item.primaryTopic, originalUrl]);
+
+  const isYoutubeVideoCard = Boolean(youtubeVideoId);
+
+  const [isPlayingInlineVideo, setIsPlayingInlineVideo] = useState<boolean>(
+    () => Boolean(youtubeVideoId) && getActiveInlineVideoKey() === item.id
+  );
+
+  useEffect(() => {
+    if (!youtubeVideoId) {
+      setIsPlayingInlineVideo(false);
+      return;
+    }
+    setIsPlayingInlineVideo(getActiveInlineVideoKey() === item.id);
+    const unsubscribe = subscribeActiveInlineVideo((activeKey) => {
+      setIsPlayingInlineVideo(activeKey === item.id);
+    });
+    return () => {
+      unsubscribe();
+      if (getActiveInlineVideoKey() === item.id) {
+        setActiveInlineVideoKey(null);
+      }
+    };
+  }, [item.id, youtubeVideoId]);
+
+  const handlePlayYoutubeInline = () => {
+    if (!youtubeVideoId) {
+      handleCardPress();
+      return;
+    }
+    if (Platform.OS === 'web') {
+      setActiveInlineVideoKey(item.id);
+    } else if (originalUrl) {
+      openExternalInBrowser(originalUrl);
+    } else {
+      handleCardPress();
+    }
+  };
+
+  const handleCloseInlineVideo = () => {
+    if (getActiveInlineVideoKey() === item.id) {
+      setActiveInlineVideoKey(null);
+    }
+    setIsPlayingInlineVideo(false);
+  };
+
   // Curated listening tip only on evergreen/vault sound cards — never glued onto live news
   // (e.g. a Yamaha VOCALOID product update must not get a Ram Dass meditation track attached).
   const matchedMusicTrack: MusicTrackItem | undefined =
@@ -405,9 +471,11 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     [naturalDims, editorialAssessment.category, isArtCard, isMemeCard, effectiveViewportWidth]
   );
 
-  const imageFrameHeight = Math.round(
-    Math.min(imagePresentation.maxFrameHeight, cardInnerWidth / imagePresentation.frameAspectRatio)
-  );
+  const imageFrameHeight = isYoutubeVideoCard
+    ? Math.round(cardInnerWidth / (16 / 9))
+    : Math.round(
+        Math.min(imagePresentation.maxFrameHeight, cardInnerWidth / imagePresentation.frameAspectRatio)
+      );
 
   // Hide boilerplate feedText when it merely repeats HN metadata or comic alt-text punchline
   const shouldShowBodyText = Boolean(displayFeedText);
@@ -418,6 +486,9 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     const rawSub = item.subtitle.trim();
     const cleanSub = rawSub.replace(/[.…\s]+$/, '').trim().toLowerCase();
     if (cleanSub.length < 15) return true;
+    if (isYoutubeVideoCard && /^youtube\s+video-?essay\b/i.test(rawSub)) {
+      return true;
+    }
     if (
       /\.bh__|{\s*[^}]*:|padding\s*:|background-color\s*:|border\s*:\s*\d+px|in today'?s newsletter/i.test(
         rawSub
@@ -440,7 +511,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     const cleanFeed = displayFeedText.trim().toLowerCase();
     const prefixLen = Math.min(36, cleanSub.length);
     return cleanFeed.startsWith(cleanSub.slice(0, prefixLen));
-  }, [item.subtitle, item.title, displayFeedText, hasValidImage, shouldShowBodyText]);
+  }, [item.subtitle, item.title, displayFeedText, hasValidImage, shouldShowBodyText, isYoutubeVideoCard]);
 
   // Essence + Key Takeaway Highlight: Distinct, complete-sentence keyInsight that adds value
   const distinctKeyInsight = useMemo(() => {
@@ -452,7 +523,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     ) {
       return null;
     }
-    const cleanKey = item.keyInsight.trim();
+    const cleanKey = stripSyntheticFillerSentences(item.keyInsight).trim();
     if (cleanKey.length < 40 || cleanKey.length > 220) return null;
     if (/(\.\.\.|…)$/.test(cleanKey) || !/[.!?»)"]$/.test(cleanKey)) return null;
     if (/^[\u{1F300}-\u{1FAFF}]/u.test(cleanKey)) return null;
@@ -742,75 +813,204 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
         </View>
       )}
 
-      {showAuthenticImage && (
-        <TouchableOpacity
-          activeOpacity={0.92}
-          onPress={() => (isMemeCard ? setShowImageLightbox(true) : handleCardPress())}
+      {isYoutubeVideoCard && isPlayingInlineVideo && Platform.OS === 'web' && youtubeVideoId ? (
+        <View
           style={[
-            isMemeCard ? styles.comicStageContainer : styles.imageContainer,
-            {
-              height: imageFrameHeight,
-              backgroundColor: isMemeCard
-                ? '#FFFFFF'
-                : imagePresentation.useMatteFrame
-                ? colors.surfaceSecondary
-                : colors.surfaceSecondary
-            }
+            styles.youtubeInlinePlayerShell,
+            { borderColor: colors.borderSubtle, backgroundColor: '#000000' }
           ]}
         >
-          {Platform.OS === 'web' ? (
-            React.createElement('img', {
-              src: activeVisualUri,
-              alt: item.title,
-              loading: isHero ? 'eager' : 'lazy',
-              decoding: 'async',
-              fetchPriority: isHero ? 'high' : 'low',
-              onLoad: (e: React.SyntheticEvent<HTMLImageElement>) => {
-                const img = e.currentTarget;
-                handleLoadedImageDimensions(img.naturalWidth, img.naturalHeight);
-              },
-              onError: handleImageError,
+          <View
+            style={[
+              styles.youtubeInlineControlBar,
+              { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.borderSubtle }
+            ]}
+          >
+            <View style={styles.youtubeInlineControlLeft}>
+              <Ionicons name="play-circle" size={14} color="#EF4444" style={{ marginRight: 5 }} />
+              <Text
+                style={[styles.youtubeInlineControlTitle, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {item.youtubeMeta?.channelTitle || publisherName}
+              </Text>
+            </View>
+            <View style={styles.youtubeInlineControlActions}>
+              {originalUrl && (
+                <TouchableOpacity
+                  onPress={handleOpenOriginalSource}
+                  style={styles.youtubeInlineActionBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Video auf YouTube öffnen"
+                >
+                  <Text style={[styles.youtubeInlineActionText, { color: colors.textSecondary }]}>
+                    YouTube ↗
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                onPress={handleCloseInlineVideo}
+                style={[
+                  styles.youtubeInlineCloseBtn,
+                  { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Video-Player schließen"
+              >
+                <Ionicons name="close" size={14} color={colors.textPrimary} />
+                <Text style={[styles.youtubeInlineCloseText, { color: colors.textPrimary }]}>
+                  Schließen
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          <View style={{ width: '100%', height: imageFrameHeight, backgroundColor: '#000000' }}>
+            {React.createElement('iframe', {
+              src: buildYouTubeNoCookieEmbedUrl(youtubeVideoId),
+              title: item.title,
+              frameBorder: '0',
+              allow:
+                'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen',
+              allowFullScreen: true,
+              referrerPolicy: 'strict-origin-when-cross-origin',
               style: {
                 width: '100%',
                 height: '100%',
-                display: 'block',
-                objectFit: imagePresentation.resizeMode,
-                objectPosition: imagePresentation.objectPosition
+                border: 0,
+                display: 'block'
               }
-            })
-          ) : (
-            <Image
-              source={{ uri: activeVisualUri }}
-              style={[
-                styles.cardImage,
-                isMemeCard && styles.comicImage,
-                { objectPosition: imagePresentation.objectPosition } as any
-              ]}
-              resizeMode={imagePresentation.resizeMode}
-              onLoad={(e) => {
-                const dims = extractLoadedImageDimensions(e);
-                if (dims) {
-                  handleLoadedImageDimensions(dims.width, dims.height);
+            })}
+          </View>
+        </View>
+      ) : (
+        showAuthenticImage && (
+          <TouchableOpacity
+            activeOpacity={0.92}
+            onPress={() =>
+              isYoutubeVideoCard
+                ? handlePlayYoutubeInline()
+                : isMemeCard
+                ? setShowImageLightbox(true)
+                : handleCardPress()
+            }
+            accessibilityRole="button"
+            accessibilityLabel={
+              isYoutubeVideoCard
+                ? `Video direkt abspielen: ${item.title}`
+                : item.title
+            }
+            style={[
+              isMemeCard ? styles.comicStageContainer : styles.imageContainer,
+              {
+                height: imageFrameHeight,
+                backgroundColor: isMemeCard
+                  ? '#FFFFFF'
+                  : isYoutubeVideoCard
+                  ? '#0B0F19'
+                  : colors.surfaceSecondary
+              }
+            ]}
+          >
+            {Platform.OS === 'web' ? (
+              React.createElement('img', {
+                src: activeVisualUri,
+                alt: item.title,
+                loading: isHero ? 'eager' : 'lazy',
+                decoding: 'async',
+                fetchPriority: isHero ? 'high' : 'low',
+                onLoad: (e: React.SyntheticEvent<HTMLImageElement>) => {
+                  const img = e.currentTarget;
+                  handleLoadedImageDimensions(img.naturalWidth, img.naturalHeight);
+                },
+                onError: handleImageError,
+                style: {
+                  width: '100%',
+                  height: '100%',
+                  display: 'block',
+                  objectFit: isYoutubeVideoCard ? 'cover' : imagePresentation.resizeMode,
+                  objectPosition: isYoutubeVideoCard ? '50% 50%' : imagePresentation.objectPosition
                 }
-              }}
-              onError={handleImageError}
-            />
-          )}
-          {isMemeCard && (
-            <View style={styles.zoomBadgeOverlay}>
-              <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.zoomBadgeText}>Comic vergrößern</Text>
-            </View>
-          )}
-          {item.imageCredit && (
-            <View style={styles.imageCreditOverlay}>
-              <Text style={styles.imageCreditText} numberOfLines={1}>
-                {item.imageCredit}
-              </Text>
-            </View>
-          )}
-        </TouchableOpacity>
+              })
+            ) : (
+              <Image
+                source={{ uri: activeVisualUri }}
+                style={[
+                  styles.cardImage,
+                  isMemeCard && styles.comicImage,
+                  { objectPosition: isYoutubeVideoCard ? '50% 50%' : imagePresentation.objectPosition } as any
+                ]}
+                resizeMode={isYoutubeVideoCard ? 'cover' : imagePresentation.resizeMode}
+                onLoad={(e) => {
+                  const dims = extractLoadedImageDimensions(e);
+                  if (dims) {
+                    handleLoadedImageDimensions(dims.width, dims.height);
+                  }
+                }}
+                onError={handleImageError}
+              />
+            )}
+            {isYoutubeVideoCard && (
+              <>
+                <View style={styles.youtubePlayScrim} pointerEvents="none">
+                  <View style={styles.youtubePlayCircle}>
+                    <Ionicons name="play" size={26} color="#FFFFFF" style={{ marginLeft: 3 }} />
+                  </View>
+                </View>
+                <View style={styles.youtubePlayPill} pointerEvents="none">
+                  <Ionicons name="play-circle-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+                  <Text style={styles.youtubePlayPillText}>
+                    {Platform.OS === 'web' ? 'Direkt abspielen' : 'Video ansehen'}
+                  </Text>
+                </View>
+              </>
+            )}
+            {isMemeCard && (
+              <View style={styles.zoomBadgeOverlay}>
+                <Ionicons name="expand-outline" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+                <Text style={styles.zoomBadgeText}>Comic vergrößern</Text>
+              </View>
+            )}
+            {item.imageCredit && (
+              <View style={styles.imageCreditOverlay}>
+                <Text style={styles.imageCreditText} numberOfLines={1}>
+                  {item.imageCredit}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        )
       )}
+
+      {/* Subtle single-line community signal for YouTube cards without authentic description prose */}
+      {isYoutubeVideoCard &&
+        !displayFeedText &&
+        item.externalCommunityScore &&
+        (item.externalCommunityScore.points ?? 0) > 0 && (
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => {
+              if (item.externalCommunityScore?.discussionUrl) {
+                openExternalInBrowser(item.externalCommunityScore.discussionUrl);
+              } else {
+                handleCardPress();
+              }
+            }}
+            style={styles.youtubeCommunityMetaRow}
+          >
+            <Ionicons
+              name="chatbubble-ellipses-outline"
+              size={12}
+              color={colors.textMuted}
+              style={{ marginRight: 5 }}
+            />
+            <Text style={[styles.youtubeCommunityMetaText, { color: colors.textMuted }]} numberOfLines={1}>
+              {item.externalCommunityScore.platform} · {item.externalCommunityScore.points} Punkte
+              {(item.externalCommunityScore.commentsCount ?? 0) > 0
+                ? ` · ${item.externalCommunityScore.commentsCount} Kommentare`
+                : ''}
+            </Text>
+          </TouchableOpacity>
+        )}
 
       {/* 4. ADAPTIVE CARD BODY: Clean 3-4 line readable excerpt (AI Summary & Deep Tools open on click in ReaderScreen) */}
       {shouldShowBodyText && Boolean(displayFeedText) && (
@@ -2016,5 +2216,114 @@ const styles = StyleSheet.create({
   hivemindDoneChipText: {
     fontSize: 11.5,
     fontWeight: '800'
+  },
+  youtubeInlinePlayerShell: {
+    width: '100%',
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    borderWidth: 1,
+    marginTop: 6,
+    marginBottom: 8
+  },
+  youtubeInlineControlBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    gap: 8
+  },
+  youtubeInlineControlLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0
+  },
+  youtubeInlineControlTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    flexShrink: 1
+  },
+  youtubeInlineControlActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0
+  },
+  youtubeInlineActionBtn: {
+    paddingHorizontal: 6,
+    paddingVertical: 3
+  },
+  youtubeInlineActionText: {
+    fontSize: 11.5,
+    fontWeight: '600'
+  },
+  youtubeInlineCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  youtubeInlineCloseText: {
+    fontSize: 11.5,
+    fontWeight: '700'
+  },
+  youtubePlayScrim: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.16)'
+  },
+  youtubePlayCircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.88)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6
+  },
+  youtubePlayPill: {
+    position: 'absolute',
+    bottom: 10,
+    left: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+    borderWidth: 1,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: radius.pill
+  },
+  youtubePlayPillText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.15
+  },
+  youtubeCommunityMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+    marginBottom: 6
+  },
+  youtubeCommunityMetaText: {
+    fontSize: 12,
+    fontWeight: '500'
   }
 });

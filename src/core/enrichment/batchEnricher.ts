@@ -463,6 +463,21 @@ export function stripSyntheticFillerSentences(text: string): string {
   s = s.replace(/Die Reflexion vermittelt nicht nur Sachwissen, sondern stärkt die Urteilskraft[^.!?]*[.!?]/gi, '');
   s = s.replace(/widmet sich den ethischen\s+und\s+erkenntnistheoretischen Grundfragen[^.!?]*[.!?]/gi, '');
 
+  // Legacy v21 YouTube boilerplate templates (eradicating repeated filler under videos)
+  s = s.replace(
+    /Das Video-Essay\s+[„"'\u201e\u201c][^“"'\u201d\n]+[“"'\u201d]\s+von\s+[\s\S]*?kuratierten Video-Link\.?/gi,
+    ''
+  );
+  s = s.replace(
+    /Im Fokus stehen tragfähige Argumente,\s*visuelle Modelle\s*und weiterführende Perspektiven[\s\S]*?Sehen eignen\.?/gi,
+    ''
+  );
+  s = s.replace(
+    /[^\n.!?]*entfaltet in\s+[„"'\u201e\u201c][^“"'\u201d\n]+[“"'\u201d]\s+zentrale Denkanstöße und Erklärungsmodelle[\s\S]*?YouTube abrufbar\.?/gi,
+    ''
+  );
+  s = s.replace(/(?:^|\n)\s*Aus der Videobeschreibung\s*\([^)]+\):\s*/gi, '\n');
+
   // English sentences
   s = s.replace(/This (?:comprehensive analysis|article|piece) on\s+.*?\s*(?:systematically|summarizes)[^.!?]*[.!?]/gi, '');
   s = s.replace(/The analysis examines critical perspectives[^.!?]*[.!?]/gi, '');
@@ -667,15 +682,36 @@ export function getCardRenderableText(item: {
   space?: string;
   primaryTopic?: string;
   memeMeta?: any;
+  youtubeMeta?: any;
 } | null | undefined): string {
   if (!item || typeof item !== 'object') return '';
+  const isYoutubeCard =
+    item.format === 'youtube_gem' ||
+    item.space === 'c/youtube' ||
+    item.primaryTopic === 'youtube_gems' ||
+    Boolean(item.youtubeMeta);
+
+  if (isYoutubeCard) {
+    // For YouTube cards: prefer authentic cleaned feedText/body and NEVER fall back to
+    // synthetic metadata stubs or articleBody markdown bullet lists.
+    const candidates = [item.feedText, item.body];
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string' || candidate.trim().length === 0) continue;
+      const cleaned = stripSyntheticFillerSentences(stripPublisherBoilerplate(candidate.trim())).trim();
+      if (cleaned.length > 0) {
+        return cleaned;
+      }
+    }
+    return '';
+  }
+
   const rawCandidate =
     typeof item.feedText === 'string' && item.feedText.trim().length > 0
       ? item.feedText.trim()
       : (typeof item.body === 'string' && item.body.trim().length > 0
           ? item.body.trim()
           : (typeof item.articleBody === 'string' ? item.articleBody.trim() : ''));
-  const displayFeedText = stripPublisherBoilerplate(rawCandidate);
+  const displayFeedText = stripSyntheticFillerSentences(stripPublisherBoilerplate(rawCandidate)).trim();
   if (!displayFeedText) return '';
   const lower = displayFeedText.toLowerCase();
   if (
