@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   ViewStyle,
@@ -47,6 +47,7 @@ import { formatRelativeTime } from '../../core/feed/feedPresentation';
 import { hivemindLearningService } from '../../core/learning/hivemindLearningService';
 import { QuizCheckpointCard } from './QuizCheckpointCard';
 import { openExternalInBrowser } from '../../core/utils/externalBrowser';
+import { RecursiveLearningEngine } from '../../core/recommendations/recursiveLearningEngine';
 
 export { areFeedCardPropsEqual, formatPersonalVoteLabel, stripLeadingTitleDuplicate, formatRelativeTime };
 
@@ -104,6 +105,7 @@ export interface FeedCardProps {
   palette?: ThemePalette;
   enableSoundGrounding?: boolean;
   isHero?: boolean;
+  isEagerImage?: boolean;
   isFocused?: boolean;
   isExpanded?: boolean;
   cardWidth?: number;
@@ -122,20 +124,39 @@ export interface FeedCardProps {
 const WEB_CARD_CONTAINMENT_IMAGE_STYLE: ViewStyle | undefined =
   Platform.OS === 'web'
     ? ({
-        contentVisibility: 'auto',
-        containIntrinsicSize: 'auto 1px 540px',
-        contain: 'layout style paint'
+        contain: 'layout style'
       } as unknown as ViewStyle)
     : undefined;
 
 const WEB_CARD_CONTAINMENT_TEXT_STYLE: ViewStyle | undefined =
   Platform.OS === 'web'
     ? ({
-        contentVisibility: 'auto',
-        containIntrinsicSize: 'auto 1px 280px',
-        contain: 'layout style paint'
+        contain: 'layout style'
       } as unknown as ViewStyle)
     : undefined;
+
+interface TasteFeedbackBannerState {
+  kind: 'up' | 'down';
+  label: string;
+  domain?: string;
+  muted?: boolean;
+}
+
+function resolveSourceDomainToMute(item: ScoredFeedItem, fallbackPublisher: string): string {
+  const direct = (item.sourceDomain || '').toLowerCase().replace(/^www\./, '').trim();
+  if (direct && direct.includes('.')) return direct;
+  const rawUrl = item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '';
+  if (rawUrl) {
+    try {
+      const host = new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, '').trim();
+      if (host) return host;
+    } catch {
+      // Fallback below
+    }
+  }
+  if (direct) return direct;
+  return fallbackPublisher.toLowerCase().replace(/^www\./, '').trim();
+}
 
 export function formatHonestTimeLabel(item: ScoredFeedItem): string {
   if (item.publicationDateReliable === false || item.format === 'art_showcase' || item.format === 'meme' || item.space === 'c/memes') {
@@ -185,6 +206,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   palette = 'tidalglass',
   enableSoundGrounding = true,
   isHero = false,
+  isEagerImage = false,
   isFocused = false,
   cardWidth,
   viewportWidth,
@@ -222,6 +244,43 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   const [showSimulatedReplies, setShowSimulatedReplies] = useState(false);
   const [markedHivemindDone, setMarkedHivemindDone] = useState<boolean>(Boolean(resolvedStepCompleted));
   const [dynamicTrackProgress, setDynamicTrackProgress] = useState<number | undefined>(resolvedTrackProgress);
+  const [tasteFeedbackBanner, setTasteFeedbackBanner] = useState<TasteFeedbackBannerState | null>(null);
+  const tasteFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearTasteFeedbackBanner = useCallback(() => {
+    if (tasteFeedbackTimerRef.current !== null) {
+      clearTimeout(tasteFeedbackTimerRef.current);
+      tasteFeedbackTimerRef.current = null;
+    }
+    setTasteFeedbackBanner(null);
+  }, []);
+
+  const showTasteFeedbackBanner = useCallback(
+    (banner: TasteFeedbackBannerState, durationMs: number) => {
+      if (tasteFeedbackTimerRef.current !== null) {
+        clearTimeout(tasteFeedbackTimerRef.current);
+      }
+      setTasteFeedbackBanner(banner);
+      tasteFeedbackTimerRef.current = setTimeout(() => {
+        tasteFeedbackTimerRef.current = null;
+        setTasteFeedbackBanner(null);
+      }, durationMs);
+    },
+    []
+  );
+
+  useEffect(() => {
+    clearTasteFeedbackBanner();
+  }, [item.id, clearTasteFeedbackBanner]);
+
+  useEffect(() => {
+    return () => {
+      if (tasteFeedbackTimerRef.current !== null) {
+        clearTimeout(tasteFeedbackTimerRef.current);
+        tasteFeedbackTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const hivemindTrackId = item.hivemindMeta?.trackId || item.memeMeta?.trackId;
   const hivemindTrackTitle = item.hivemindMeta?.trackTitle || item.sourceBroadcasterName?.replace(/^Lernpfad:\s*/i, '') || 'Lernpfad';
@@ -445,13 +504,13 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   const handleLoadedImageDimensions = (loadedW: number, loadedH: number) => {
     if (!(loadedW > 0) || !(loadedH > 0)) return;
     const ratio = loadedW / loadedH;
-    if (
-      !isMemeCard &&
-      !isArtCard &&
-      !isTrustedArtImage &&
-      (isLowResolutionEditorialImage(loadedW, loadedH) || ratio > 2.45)
-    ) {
-      setImageRejected(true);
+    if (!isMemeCard && !isArtCard) {
+      if (
+        !isTrustedArtImage &&
+        (isLowResolutionEditorialImage(loadedW, loadedH) || ratio > 2.45)
+      ) {
+        setImageRejected(true);
+      }
       return;
     }
     setNaturalDims({ width: loadedW, height: loadedH });
@@ -471,8 +530,12 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
     [naturalDims, editorialAssessment.category, isArtCard, isMemeCard, effectiveViewportWidth]
   );
 
+  const isStandardEditorialImage = !isMemeCard && !isArtCard && !isYoutubeVideoCard;
+
   const imageFrameHeight = isYoutubeVideoCard
     ? Math.round(cardInnerWidth / (16 / 9))
+    : isStandardEditorialImage
+    ? Math.round(Math.min(340, cardInnerWidth / 1.6))
     : Math.round(
         Math.min(imagePresentation.maxFrameHeight, cardInnerWidth / imagePresentation.frameAspectRatio)
       );
@@ -551,17 +614,57 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
   const handleUpvote = () => {
     if (voteScore === 1) {
       void voteItem(item.id, 'clear');
+      clearTasteFeedbackBanner();
     } else {
       void voteItem(item.id, 'up');
+      showTasteFeedbackBanner(
+        {
+          kind: 'up',
+          label: `✓ Gemerkt · Mehr von ${publisherName} & ${spaceName}`
+        },
+        4000
+      );
     }
   };
 
   const handleDownvote = () => {
     if (voteScore === -1) {
       void voteItem(item.id, 'clear');
+      clearTasteFeedbackBanner();
     } else {
       void voteItem(item.id, 'down');
+      const domainToMute = resolveSourceDomainToMute(item, publisherName);
+      showTasteFeedbackBanner(
+        {
+          kind: 'down',
+          label: 'Weniger davon',
+          domain: domainToMute,
+          muted: false
+        },
+        6000
+      );
     }
+  };
+
+  const handleMuteSource = async () => {
+    const domainToMute = tasteFeedbackBanner?.domain || resolveSourceDomainToMute(item, publisherName);
+    if (domainToMute) {
+      try {
+        await RecursiveLearningEngine.muteSourceDomain(domainToMute);
+      } catch {
+        // Non-fatal: still confirm and dismiss locally
+      }
+    }
+    showTasteFeedbackBanner(
+      {
+        kind: 'down',
+        label: `${publisherName} stummgeschaltet`,
+        domain: domainToMute,
+        muted: true
+      },
+      3500
+    );
+    onDismissItem?.(item);
   };
 
   // Single compact badge only when meaningful (never duplicate "Originalauszug" + "RSS-Originalauszug")
@@ -769,9 +872,9 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
               React.createElement('img', {
                 src: activeVisualUri,
                 alt: item.title,
-                loading: isHero ? 'eager' : 'lazy',
+                loading: isEagerImage || isHero ? 'eager' : 'lazy',
                 decoding: 'async',
-                fetchPriority: isHero ? 'high' : 'low',
+                fetchPriority: isHero ? 'high' : isEagerImage ? 'auto' : 'low',
                 onLoad: (e: React.SyntheticEvent<HTMLImageElement>) => {
                   const img = e.currentTarget;
                   handleLoadedImageDimensions(img.naturalWidth, img.naturalHeight);
@@ -915,9 +1018,9 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
               React.createElement('img', {
                 src: activeVisualUri,
                 alt: item.title,
-                loading: isHero ? 'eager' : 'lazy',
+                loading: isEagerImage || isHero ? 'eager' : 'lazy',
                 decoding: 'async',
-                fetchPriority: isHero ? 'high' : 'low',
+                fetchPriority: isHero ? 'high' : isEagerImage ? 'auto' : 'low',
                 onLoad: (e: React.SyntheticEvent<HTMLImageElement>) => {
                   const img = e.currentTarget;
                   handleLoadedImageDimensions(img.naturalWidth, img.naturalHeight);
@@ -927,7 +1030,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
                   width: '100%',
                   height: '100%',
                   display: 'block',
-                  objectFit: isYoutubeVideoCard ? 'cover' : imagePresentation.resizeMode,
+                  objectFit: isYoutubeVideoCard || isStandardEditorialImage ? 'cover' : imagePresentation.resizeMode,
                   objectPosition: isYoutubeVideoCard ? '50% 50%' : imagePresentation.objectPosition
                 }
               })
@@ -939,7 +1042,7 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
                   isMemeCard && styles.comicImage,
                   { objectPosition: isYoutubeVideoCard ? '50% 50%' : imagePresentation.objectPosition } as any
                 ]}
-                resizeMode={isYoutubeVideoCard ? 'cover' : imagePresentation.resizeMode}
+                resizeMode={isYoutubeVideoCard || isStandardEditorialImage ? 'cover' : imagePresentation.resizeMode}
                 onLoad={(e) => {
                   const dims = extractLoadedImageDimensions(e);
                   if (dims) {
@@ -1213,6 +1316,82 @@ const FeedCardInner: React.FC<FeedCardProps> = ({
       {progress > 0 && !isCompleted && (
         <View style={[styles.progressTrack, { backgroundColor: colors.surfaceSecondary }]}>
           <View style={[styles.progressBar, { width: `${progress}%`, backgroundColor: spaceColor }]} />
+        </View>
+      )}
+
+      {/* 8b. TRANSIENT TASTE FEEDBACK CHIP / 1-CLICK SOURCE MUTE */}
+      {tasteFeedbackBanner && (
+        <View
+          style={[
+            styles.tasteFeedbackBanner,
+            {
+              backgroundColor:
+                tasteFeedbackBanner.kind === 'up'
+                  ? colors.accentSubtle
+                  : colors.surfaceSecondary,
+              borderColor:
+                tasteFeedbackBanner.kind === 'up'
+                  ? colors.accent
+                  : colors.borderSubtle
+            }
+          ]}
+        >
+          <View style={styles.tasteFeedbackLeft}>
+            <Ionicons
+              name={
+                tasteFeedbackBanner.kind === 'up'
+                  ? 'sparkles-outline'
+                  : tasteFeedbackBanner.muted
+                  ? 'volume-mute-outline'
+                  : 'options-outline'
+              }
+              size={13}
+              color={tasteFeedbackBanner.kind === 'up' ? colors.accent : colors.textSecondary}
+              style={{ marginRight: 6, flexShrink: 0 }}
+            />
+            <Text
+              style={[
+                styles.tasteFeedbackText,
+                {
+                  color:
+                    tasteFeedbackBanner.kind === 'up'
+                      ? colors.accent
+                      : colors.textSecondary
+                }
+              ]}
+              numberOfLines={1}
+            >
+              {tasteFeedbackBanner.label}
+            </Text>
+          </View>
+
+          {tasteFeedbackBanner.kind === 'down' && !tasteFeedbackBanner.muted && (
+            <TouchableOpacity
+              onPress={() => void handleMuteSource()}
+              style={[
+                styles.muteSourcePill,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.borderSubtle
+                }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`${publisherName} stummschalten`}
+            >
+              <Ionicons
+                name="volume-mute-outline"
+                size={12}
+                color={colors.textPrimary}
+                style={{ marginRight: 4 }}
+              />
+              <Text
+                style={[styles.muteSourcePillText, { color: colors.textPrimary }]}
+                numberOfLines={1}
+              >
+                {publisherName} stummschalten
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -2325,5 +2504,42 @@ const styles = StyleSheet.create({
   youtubeCommunityMetaText: {
     fontSize: 12,
     fontWeight: '500'
+  },
+  tasteFeedbackBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    marginBottom: 8
+  },
+  tasteFeedbackLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0
+  },
+  tasteFeedbackText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    flexShrink: 1
+  },
+  muteSourcePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    flexShrink: 0,
+    maxWidth: 220
+  },
+  muteSourcePillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    flexShrink: 1
   }
 });

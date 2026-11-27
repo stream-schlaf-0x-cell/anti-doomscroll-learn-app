@@ -181,16 +181,29 @@ function applyPositiveSignalToFeedbackMemory(profile: UserProfile, item: FeedIte
   };
 }
 
+export function normalizeDomainTrustKey(raw: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      return new URL(trimmed).hostname.toLowerCase().replace(/^www\./, '').trim();
+    } catch {
+      // Fallback to string cleanup below
+    }
+  }
+  return trimmed
+    .toLowerCase()
+    .replace(/^www\./, '')
+    .replace(/\/.*$/, '')
+    .trim();
+}
+
 function extractNormalizedDomain(item: FeedItem): string {
-  const direct = (item.sourceDomain || '').toLowerCase().replace(/^www\./, '').trim();
+  const direct = normalizeDomainTrustKey(item.sourceDomain || '');
   if (direct) return direct;
   const rawUrl = item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '';
   if (!rawUrl) return '';
-  try {
-    return new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, '').trim();
-  } catch {
-    return '';
-  }
+  return normalizeDomainTrustKey(rawUrl);
 }
 
 export class RecursiveLearningEngine {
@@ -219,6 +232,21 @@ export class RecursiveLearningEngine {
     const fresh = this.createDefaultState();
     this.cachedState = fresh;
     await appStorage.setItem(this.STORAGE_KEY, JSON.stringify(fresh));
+  }
+
+  /**
+   * Immediately suppresses a noisy source domain/publisher by setting its learned trust multiplier
+   * to 0.1 and persisting the updated engine state via appStorage.
+   */
+  public static async muteSourceDomain(domain: string): Promise<void> {
+    const normalizedDomain = normalizeDomainTrustKey(domain);
+    if (!normalizedDomain) return;
+
+    const state = await this.getEngineState();
+    state.domainTrustScores[normalizedDomain] = 0.1;
+    state.lastTunedAt = new Date().toISOString();
+    this.cachedState = state;
+    await appStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
   }
 
   /**
@@ -349,7 +377,27 @@ export class RecursiveLearningEngine {
     };
 
     // Update domain trust for both normalized domain and publisher if present
-    const trustDelta = delta > 0 ? 0.04 : -0.05;
+    let trustDelta: number;
+    let trustFloor = 0.3;
+    let trustCap = 1.85;
+    if (eventType === 'upvote') {
+      trustDelta = 0.18;
+      trustCap = 1.85;
+    } else if (eventType === 'downvote') {
+      trustDelta = -0.22;
+      trustFloor = 0.3;
+    } else if (eventType === 'feedback_positive') {
+      trustDelta = 0.12;
+      trustCap = 1.85;
+    } else if (eventType === 'feedback_negative') {
+      trustDelta = -0.16;
+      trustFloor = 0.3;
+    } else {
+      trustDelta = delta > 0 ? 0.04 : -0.05;
+      trustFloor = 0.3;
+      trustCap = 1.85;
+    }
+
     const normalizedDomain = extractNormalizedDomain(item);
     const publisher = (item.sourceReferences?.[0]?.publisher || '').trim();
     const trustKeys = new Set<string>();
@@ -359,7 +407,12 @@ export class RecursiveLearningEngine {
     }
     for (const key of trustKeys) {
       const currentTrust = state.domainTrustScores[key] ?? 1.0;
-      const updatedTrust = Math.max(0.5, Math.min(2.0, Math.round((currentTrust + trustDelta) * 1000) / 1000));
+      const effectiveFloor = trustDelta < 0 ? Math.min(currentTrust, trustFloor) : trustFloor;
+      const effectiveCap = trustDelta > 0 ? Math.max(currentTrust, trustCap) : trustCap;
+      const updatedTrust = Math.max(
+        effectiveFloor,
+        Math.min(effectiveCap, Math.round((currentTrust + trustDelta) * 1000) / 1000)
+      );
       state.domainTrustScores[key] = updatedTrust;
     }
 

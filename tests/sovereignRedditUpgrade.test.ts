@@ -100,7 +100,14 @@ test('Work Package 2: SubchannelFlourishService builds multi-lane query profiles
     );
     for (const card of result.items) {
       assert.equal(card.space?.toLowerCase(), channelHandle.toLowerCase());
-      assert.ok((card.feedText || '').length >= 120, 'Expected substantive feedText on flourished card');
+      if (card.format === 'youtube_gem' || card.youtubeMeta?.videoId) {
+        assert.ok(
+          Boolean(card.youtubeMeta?.videoId) && Boolean(card.imageUrl),
+          'Expected valid videoId and thumbnail on youtube_gem card (zero fake filler prose)'
+        );
+      } else {
+        assert.ok((card.feedText || '').length >= 120, 'Expected substantive feedText on flourished card');
+      }
     }
   }
 });

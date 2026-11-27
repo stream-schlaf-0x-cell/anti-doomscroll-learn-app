@@ -32,6 +32,7 @@ import {
   LearningEngineState
 } from '../../core/recommendations/recursiveLearningEngine';
 import { appStorage } from '../../core/data/storage';
+import { feedRepository } from '../../core/data/feedRepository';
 
 export type MasterTab = 'channels' | 'feed_control' | 'new_space' | 'taste';
 type InternalStudioTab = 'new_space' | 'channels' | 'taste';
@@ -132,6 +133,7 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({
   const [isAiGeneratedBadge, setIsAiGeneratedBadge] = useState<boolean>(false);
   const [isGeneratingAiDraft, setIsGeneratingAiDraft] = useState<boolean>(false);
   const [isCreatingChannel, setIsCreatingChannel] = useState<boolean>(false);
+  const [creationStageText, setCreationStageText] = useState<string>('');
 
   // Bereich 3: Mein Geschmack
   const [engineState, setEngineState] = useState<LearningEngineState | null>(null);
@@ -247,6 +249,7 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({
       return;
     }
     setIsCreatingChannel(true);
+    setCreationStageText('Erstelle Raum…');
     try {
       const seedSources = newChannelSources
         .split(',')
@@ -268,14 +271,43 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({
         feedPriority: newChannelPriority
       });
 
+      setCreationStageText('Suche echte Quellen zum Thema…');
+      let loadedCount = 0;
+      try {
+        const { SubchannelFlourishService } = await import('../../core/ingestion/subchannelFlourishService');
+        const res = await SubchannelFlourishService.flourishChannel(created, {
+          force: true,
+          existingItems: feedRepository.getAllItems(),
+          onProgress: (_pct, label) => {
+            if (label && label.trim().length > 0) {
+              setCreationStageText(label);
+            }
+          }
+        });
+        if (res.addedItems.length > 0) {
+          feedRepository.addItems(res.addedItems, {
+            operationType: 'manual_refresh',
+            pinInserted: true
+          });
+          loadedCount = res.addedItems.length;
+        }
+      } catch {
+        // Non-fatal: channel creation always succeeds even offline
+      }
+
       resetCreationForm();
-      showToast(`Raum ${created.handle} aktiviert`);
+      showToast(
+        loadedCount > 0
+          ? `Raum ${created.handle} aktiviert · ${loadedCount} echte Beiträge geladen`
+          : `Raum ${created.handle} aktiviert`
+      );
       await refreshFeed();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Fehler beim Aktivieren des Raums';
       showToast(msg);
     } finally {
       setIsCreatingChannel(false);
+      setCreationStageText('');
     }
   };
 
@@ -808,7 +840,12 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({
                       accessibilityRole="button"
                     >
                       {isCreatingChannel ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
+                        <>
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                          <Text style={styles.primaryBtnText} numberOfLines={1}>
+                            {creationStageText || 'Erstelle Raum…'}
+                          </Text>
+                        </>
                       ) : (
                         <>
                           <Ionicons name="checkmark-circle-outline" size={17} color="#FFFFFF" />
@@ -1030,9 +1067,18 @@ export const UltraMasterModal: React.FC<UltraMasterModalProps> = ({
                             { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }
                           ]}
                         >
-                          <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>
-                            Direkt ohne Vorschlag aktivieren
-                          </Text>
+                          {isCreatingChannel ? (
+                            <>
+                              <ActivityIndicator size="small" color={colors.accent} />
+                              <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]} numberOfLines={1}>
+                                {creationStageText || 'Erstelle Raum…'}
+                              </Text>
+                            </>
+                          ) : (
+                            <Text style={[styles.secondaryBtnText, { color: colors.textPrimary }]}>
+                              Direkt ohne Vorschlag aktivieren
+                            </Text>
+                          )}
                         </TouchableOpacity>
                       )}
                     </View>

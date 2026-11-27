@@ -9,6 +9,7 @@ import {
 } from './types';
 import { SeenImpressionRecord } from '../data/seenImpressionsService';
 import { isSupportedFeedLanguage, IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX } from '../enrichment/batchEnricher';
+import { isBrightWebFlagshipItem } from '../ingestion/brightWebAdapters';
 import { RecursiveLearningEngine } from '../recommendations/recursiveLearningEngine';
 
 export interface ScoreBreakdown {
@@ -457,7 +458,18 @@ export function scoreFeedItem(
   const lowerPublisher = rawPublisher.toLowerCase();
 
   let learnedTrust: number | undefined;
-  if (normDomain && typeof trustMap[normDomain] === 'number') {
+  const trustCandidates: (number | undefined)[] = [
+    normDomain ? trustMap[normDomain] : undefined,
+    urlHost ? trustMap[urlHost] : undefined,
+    lowerPublisher ? trustMap[lowerPublisher] : undefined,
+    rawPublisher ? trustMap[rawPublisher] : undefined
+  ];
+  const explicitMuteTrust = trustCandidates.find(
+    (val): val is number => typeof val === 'number' && val <= 0.15
+  );
+  if (typeof explicitMuteTrust === 'number') {
+    learnedTrust = explicitMuteTrust;
+  } else if (normDomain && typeof trustMap[normDomain] === 'number') {
     learnedTrust = trustMap[normDomain];
   } else if (urlHost && typeof trustMap[urlHost] === 'number') {
     learnedTrust = trustMap[urlHost];
@@ -475,8 +487,9 @@ export function scoreFeedItem(
   }
 
   let trustDelta = 0;
+  const isMutedByTrust = typeof learnedTrust === 'number' && learnedTrust <= 0.15;
   if (typeof learnedTrust === 'number' && learnedTrust !== 1.0) {
-    trustDelta = Math.max(-0.15, Math.min(0.18, (learnedTrust - 1.0) * 0.25));
+    trustDelta = Math.max(-0.22, Math.min(0.24, (learnedTrust - 1.0) * 0.28));
     feedbackAdjustment += trustDelta;
   }
 
@@ -511,6 +524,9 @@ export function scoreFeedItem(
     trustDelta * 0.35;
 
   // Direct explicit interaction overrides on the item itself
+  if (isMutedByTrust) {
+    rawScore *= 0.25;
+  }
   if (interaction?.feedback === 'less_like_this' || interaction?.voteScore === -1) {
     rawScore *= 0.45;
   } else if (interaction?.feedback === 'more_like_this' || interaction?.voteScore === 1) {
@@ -1713,6 +1729,55 @@ export interface SortFeedOptions {
 const DISJOINT_HORIZON_TOP_N = 10;
 const DISJOINT_HORIZON_MIN_POOL = 24;
 
+const DISCOURSE_FLAGSHIP_ESSAY_DOMAINS: readonly string[] = [
+  'aeon.co',
+  'psyche.co',
+  'quantamagazine.org',
+  'spektrum.de',
+  'deutschlandfunkkultur.de',
+  '54books.de',
+  'fs.blog',
+  'publicdomainreview.org',
+  'themarginalian.org',
+  'dailynous.com',
+  'plato.stanford.edu',
+  'philosophynow.org',
+  'asteriskmag.com',
+  'construction-physics.com',
+  'daily.bandcamp.com'
+];
+
+function isDiscourseFlagshipEssayPublisher(item: FeedItem): boolean {
+  const candidates: string[] = [];
+  if (item.sourceDomain) {
+    candidates.push(item.sourceDomain.toLowerCase().replace(/^www\./, '').trim());
+  }
+  for (const rawUrl of [item.canonicalUrl, item.sourceReferences?.[0]?.originalUrl]) {
+    if (!rawUrl) continue;
+    try {
+      candidates.push(new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, '').trim());
+    } catch {
+      candidates.push(rawUrl.toLowerCase());
+    }
+  }
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    for (const domain of DISCOURSE_FLAGSHIP_ESSAY_DOMAINS) {
+      if (candidate === domain || candidate.endsWith(`.${domain}`)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function hasSubstantivePerspective(item: FeedItem): boolean {
+  return Boolean(
+    item.isChallengingPerspective ||
+    (item.perspectiveDetails && Object.keys(item.perspectiveDetails).length > 0)
+  );
+}
+
 /**
  * Disjoint Horizon Tabs: moves items that already lead another horizon's top-N to the back,
  * so ⚡ Heute, 🧭 Diskurs, 🏆 Top and 💎 Zeitlos present genuinely different leaderboards.
@@ -1722,18 +1787,36 @@ function demoteItemsLeadingOtherHorizons(
   pool: ScoredFeedItem[],
   otherModes: FeedSortMode[],
   seenItemIds?: ReadonlySet<string>,
-  seenRecords?: ReadonlyMap<string, SeenImpressionRecord>
+  seenRecords?: ReadonlyMap<string, SeenImpressionRecord>,
+  config?: { minPool?: number; topN?: number }
 ): ScoredFeedItem[] {
-  if (pool.length < DISJOINT_HORIZON_MIN_POOL || otherModes.length === 0) return sorted;
-  const leaderIds = new Set<string>();
-  for (const other of otherModes) {
-    const otherTop = sortFeedForDisplay(pool, other, { ignorePins: true, interleave: true, seenItemIds, seenRecords })
-      .slice(0, DISJOINT_HORIZON_TOP_N);
-    for (const it of otherTop) leaderIds.add(it.id);
+  const minPool = config?.minPool ?? DISJOINT_HORIZON_MIN_POOL;
+  const topN = config?.topN ?? DISJOINT_HORIZON_TOP_N;
+  if (pool.length < minPool || otherModes.length === 0) return sorted;
+
+  const collectLeaderIds = (modes: FeedSortMode[], limit: number): Set<string> => {
+    const ids = new Set<string>();
+    for (const other of modes) {
+      const otherTop = sortFeedForDisplay(pool, other, { ignorePins: true, interleave: true, seenItemIds, seenRecords })
+        .slice(0, limit);
+      for (const it of otherTop) ids.add(it.id);
+    }
+    return ids;
+  };
+
+  let leaderIds = collectLeaderIds(otherModes, topN);
+  let fresh = sorted.filter(it => !leaderIds.has(it.id));
+
+  // If combining multiple modes exhausts a medium pool, still guarantee top-5 disjointness from the primary mode
+  if (fresh.length < topN && (otherModes.length > 1 || topN > 5)) {
+    const fallbackTopN = Math.min(5, topN);
+    leaderIds = collectLeaderIds([otherModes[0]], fallbackTopN);
+    fresh = sorted.filter(it => !leaderIds.has(it.id));
+    if (fresh.length < fallbackTopN) return sorted;
+  } else if (fresh.length < topN) {
+    return sorted;
   }
-  const fresh = sorted.filter(it => !leaderIds.has(it.id));
-  // Keep enough items so the horizon never looks empty on tiny pools
-  if (fresh.length < DISJOINT_HORIZON_TOP_N) return sorted;
+
   const demoted = sorted.filter(it => leaderIds.has(it.id));
   return [...fresh, ...demoted];
 }
@@ -2253,62 +2336,153 @@ export function sortFeedForDisplay(
     return enforcePinAndStreamAntiClustering(effectiveTopPins, enforceArdsSpacing(sorted, 7));
   }
 
-  // 3. "🧭 Diskurs" (1-14d Deep Debates & Option A: The Bigger Picture)
+  // 3. "🧭 Diskurs" (1-14d Deep Debates, Long-Form Essays & Counter-Perspectives)
   if (mode === 'discourse') {
     const now = Date.now();
     const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
     const discourseBase = excludeNonArtVaultInLiveHorizons
       ? remaining.filter(item => !isNonArtVaultItem(item))
       : remaining;
-    // Exclude short news flashes, focus on substantive analyses from the last 1-14 days
+    // Focus on substantive essays, philosophy & debates from the last 1-14 days
     const discourseCandidates = discourseBase
       .filter(item => {
         const time = new Date(item.publishedAt).getTime();
         const isRecent = isNaN(time) || (now - time) <= fourteenDaysMs + (48 * 3600 * 1000);
         const textLen = (item.feedText || item.body || '').trim().length;
-        const isSubstantive = (item.wordCount ?? 0) >= 60 || textLen >= 140 || item.format !== 'sourced_update';
+        const isSubstantive =
+          (item.wordCount ?? 0) >= 60 ||
+          textLen >= 140 ||
+          item.format !== 'sourced_update' ||
+          hasSubstantivePerspective(item);
         return isRecent && isSubstantive;
       })
       .map(item => enrichItemWithDiscourseConcept(item));
 
     const pool = discourseCandidates.length >= 3 ? discourseCandidates : discourseBase.map(item => enrichItemWithDiscourseConcept(item));
-    const sorted = [...pool].sort((a, b) => {
-      const balancingA = isBalancingSource(a) ? 15 : 0;
-      const balancingB = isBalancingSource(b) ? 15 : 0;
-      const scoreA = (a.curationScore ?? 7) * 10 + balancingA + (a.wordCount >= 180 ? 10 : 0);
-      const scoreB = (b.curationScore ?? 7) * 10 + balancingB + (b.wordCount >= 180 ? 10 : 0);
-      if (scoreB !== scoreA) return scoreB - scoreA;
-      return b.id.localeCompare(a.id);
+
+    const isLightweightForDiscourse = (item: ScoredFeedItem): boolean => {
+      const hasPersp = hasSubstantivePerspective(item);
+      if (item.format === 'meme' || item.format === 'comic' || item.primaryTopic === 'memes_satire') {
+        return true;
+      }
+      if ((item.wordCount ?? 0) < 80 && !hasPersp) {
+        return true;
+      }
+      if (item.format === 'sourced_update' && (item.wordCount ?? 0) < 110 && !hasPersp) {
+        return true;
+      }
+      return false;
+    };
+
+    const substantiveCount = pool.reduce((acc, item) => acc + (isLightweightForDiscourse(item) ? 0 : 1), 0);
+    const demoteLightweight = substantiveCount >= 6;
+
+    const scoreDiscourse = (item: ScoredFeedItem): number => {
+      const hasPerspDetails = Boolean(item.perspectiveDetails && Object.keys(item.perspectiveDetails).length > 0);
+      const hasPersp = hasPerspDetails || Boolean(item.isChallengingPerspective);
+      const wc = item.wordCount ?? 0;
+
+      let pts = (item.curationScore ?? 7) * 10;
+      if (isDiscourseFlagshipEssayPublisher(item)) pts += 34;
+      if (item.sourceTrustLevel === 'deep_essay') pts += 24;
+      if (item.type === 'deep_dive' || item.format === 'long_invitation' || item.format === 'book_masterpiece') {
+        pts += 14;
+      }
+      if (
+        item.primaryTopic === 'philosophy_ethics' ||
+        item.primaryTopic === 'science_society' ||
+        item.primaryTopic === 'german_didactics' ||
+        item.primaryTopic === 'contemplation_mind'
+      ) {
+        pts += 8;
+      }
+      if (hasPerspDetails) pts += 22;
+      if (item.isChallengingPerspective) pts += 18;
+      if (wc >= 300) pts += 18;
+      else if (wc >= 180) pts += 12;
+      if (isBalancingSource(item)) pts += 14;
+
+      if (demoteLightweight) {
+        if (item.format === 'meme' || item.format === 'comic' || item.primaryTopic === 'memes_satire') {
+          pts -= 120;
+        } else if (wc < 80 && !hasPersp) {
+          pts -= 100;
+        } else if (item.format === 'sourced_update' && wc < 110 && !hasPersp) {
+          pts -= 70;
+        }
+      }
+      return pts;
+    };
+
+    const scoredPool = pool.map(item => ({ item, pts: scoreDiscourse(item) }));
+    scoredPool.sort((a, b) => {
+      if (b.pts !== a.pts) return b.pts - a.pts;
+      return b.item.id.localeCompare(a.item.id);
     });
+    const sorted = scoredPool.map(entry => entry.item);
     const disjoint = demoteItemsLeadingOtherHorizons(sorted, discourseBase, ['today'], options.seenItemIds, options.seenRecords);
     return enforcePinAndStreamAntiClustering(liveHorizonTopPins, enforceCuratedStreamDiversity(disjoint));
   }
 
-  // 4. "🏆 Top" (30-Day Review of highest impact items)
+  // 4. "🏆 Top" (Highest Impact: Community Points, User Upvotes, Bright-Web Flagship & Verified Trust)
   if (mode === 'top') {
     const topBase = excludeNonArtVaultInLiveHorizons
       ? remaining.filter(item => !isNonArtVaultItem(item))
       : remaining;
-    const sorted = [...topBase].sort((a, b) => {
-      const pointsA = (a.externalCommunityScore?.points ?? 0) + (a.upvotesCount ?? 0) * 10;
-      const pointsB = (b.externalCommunityScore?.points ?? 0) + (b.upvotesCount ?? 0) * 10;
-      const trustBonusA = a.sourceTrustLevel === 'peer_reviewed' ? 15 : a.sourceTrustLevel === 'public_broadcaster' ? 12 : a.sourceTrustLevel === 'deep_essay' ? 10 : 5;
-      const trustBonusB = b.sourceTrustLevel === 'peer_reviewed' ? 15 : b.sourceTrustLevel === 'public_broadcaster' ? 12 : b.sourceTrustLevel === 'deep_essay' ? 10 : 5;
-      const qualityA = (a.curationScore ?? 7) * 10 +
-        (pointsA > 0 ? Math.min(50, Math.log10(pointsA + 1) * 20) : 0) +
-        (a.evidenceTier === 'permitted_full_text' ? 12 : a.evidenceTier === 'multiple_sources' ? 10 : 0) +
-        trustBonusA + (a.editorialAbstract ? 8 : 0);
-      const qualityB = (b.curationScore ?? 7) * 10 +
-        (pointsB > 0 ? Math.min(50, Math.log10(pointsB + 1) * 20) : 0) +
-        (b.evidenceTier === 'permitted_full_text' ? 12 : b.evidenceTier === 'multiple_sources' ? 10 : 0) +
-        trustBonusB + (b.editorialAbstract ? 8 : 0);
-      if (qualityB !== qualityA) return qualityB - qualityA;
-      const timeA = a.publicationDateReliable !== false ? (new Date(a.publishedAt).getTime() || 0) : 0;
-      const timeB = b.publicationDateReliable !== false ? (new Date(b.publishedAt).getTime() || 0) : 0;
-      if (timeB !== timeA) return timeB - timeA;
-      return b.id.localeCompare(a.id);
+
+    const scoreTopImpact = (item: ScoredFeedItem): number => {
+      const communityPts = item.externalCommunityScore?.points ?? 0;
+      const communityComments = item.externalCommunityScore?.commentsCount ?? 0;
+      const upvotePts = (item.upvotesCount ?? 0) * 14;
+      const combinedPoints = communityPts + communityComments * 0.5 + upvotePts;
+      const personalVoteBoost =
+        (item.upvotesCount ?? 0) > 0 || (item.scoreBreakdown?.feedbackAdjustment ?? 0.5) >= 0.72
+          ? 14
+          : 0;
+      const flagshipBonus = isBrightWebFlagshipItem(item) ? 16 : 0;
+
+      let trustBonus = 4;
+      if (item.sourceTrustLevel === 'peer_reviewed') trustBonus = 16;
+      else if (item.sourceTrustLevel === 'deep_essay') trustBonus = 15;
+      else if (item.sourceTrustLevel === 'museum_collection') trustBonus = 14;
+      else if (item.sourceTrustLevel === 'verified_creator') trustBonus = 14;
+      else if (item.sourceTrustLevel === 'public_broadcaster') trustBonus = 10;
+      else if (item.sourceTrustLevel === 'community_curated') trustBonus = 10;
+
+      return (
+        (item.curationScore ?? 7) * 10 +
+        (combinedPoints > 0 ? Math.min(60, Math.log10(combinedPoints + 1) * 24) : 0) +
+        personalVoteBoost +
+        flagshipBonus +
+        (item.evidenceTier === 'permitted_full_text' ? 12 : item.evidenceTier === 'multiple_sources' ? 10 : 0) +
+        trustBonus +
+        (item.editorialAbstract ? 8 : 0)
+      );
+    };
+
+    const scoredTop = topBase.map(item => ({
+      item,
+      quality: scoreTopImpact(item),
+      time: item.publicationDateReliable !== false ? (new Date(item.publishedAt).getTime() || 0) : 0
+    }));
+
+    scoredTop.sort((a, b) => {
+      if (b.quality !== a.quality) return b.quality - a.quality;
+      if (b.time !== a.time) return b.time - a.time;
+      return b.item.id.localeCompare(a.item.id);
     });
-    const disjoint = demoteItemsLeadingOtherHorizons(sorted, topBase, ['today', 'discourse'], options.seenItemIds, options.seenRecords);
+    const sorted = scoredTop.map(entry => entry.item);
+    const disjoint =
+      topBase.length >= 15
+        ? demoteItemsLeadingOtherHorizons(
+            sorted,
+            topBase,
+            ['for_you', 'today'],
+            options.seenItemIds,
+            options.seenRecords,
+            { minPool: 15, topN: topBase.length >= 24 ? 10 : 5 }
+          )
+        : sorted;
     return enforcePinAndStreamAntiClustering(liveHorizonTopPins, enforceCuratedStreamDiversity(disjoint));
   }
 
@@ -2944,6 +3118,7 @@ export interface FeedCardMemoComparableProps {
   palette?: string;
   enableSoundGrounding?: boolean;
   isHero?: boolean;
+  isEagerImage?: boolean;
   isFocused?: boolean;
   isExpanded?: boolean;
   cardWidth?: number;
@@ -2957,6 +3132,8 @@ export interface FeedCardMemoComparableProps {
 /**
  * Strict React.memo comparator for FeedCard.
  * Prevents sibling cards from re-rendering when a single card is upvoted, bookmarked, or scrolled past.
+ * Intentionally ignores `isEagerImage` transitions on an already-mounted card so index shifts never trigger
+ * unnecessary mid-scroll re-renders.
  */
 export function areFeedCardPropsEqual<T extends FeedCardMemoComparableProps>(prev: T, next: T): boolean {
   if (prev.item.id !== next.item.id) return false;

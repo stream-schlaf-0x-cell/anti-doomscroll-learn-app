@@ -37,6 +37,7 @@ export interface FeedHorizonBarProps {
 interface HorizonTabDefinition {
   mode: FeedSortMode;
   label: string;
+  caption: string;
   icon: keyof typeof Ionicons.glyphMap;
   isSelected: (mode: FeedSortMode) => boolean;
 }
@@ -45,34 +46,44 @@ const HORIZON_TABS: HorizonTabDefinition[] = [
   {
     mode: 'for_you',
     label: 'Für dich',
+    caption: 'Dein kuratierter Bloom-Mix',
     icon: 'flame-outline',
     isSelected: (mode) => mode === 'for_you' || mode === 'hot'
   },
   {
     mode: 'today',
     label: 'Heute',
+    caption: 'Aktuelle Meldungen der letzten 24 Std.',
     icon: 'flash-outline',
     isSelected: (mode) => mode === 'today' || mode === 'new'
   },
   {
     mode: 'discourse',
     label: 'Diskurs',
+    caption: 'Langform-Essays, Streitfragen & Gegenperspektiven',
     icon: 'compass-outline',
-    isSelected: (mode) => mode === 'discourse'
+    isSelected: (mode) => mode === 'discourse' || mode === 'discourse_14d'
   },
   {
     mode: 'top',
     label: 'Top',
+    caption: 'Meistdiskutierte & bestbewertete Fundstücke',
     icon: 'trophy-outline',
-    isSelected: (mode) => mode === 'top'
+    isSelected: (mode) => mode === 'top' || mode === 'top_30d'
   },
   {
     mode: 'timeless',
     label: 'Zeitlos',
+    caption: 'Evergreen-Perlen, Kunst, Bücher & Klassiker',
     icon: 'diamond-outline',
     isSelected: (mode) => mode === 'timeless' || mode === 'gems'
   }
 ];
+
+export function getHorizonModeCaption(mode: FeedSortMode): string {
+  const active = HORIZON_TABS.find((tab) => tab.isSelected(mode));
+  return active ? active.caption : HORIZON_TABS[0].caption;
+}
 
 const FeedHorizonBarInner: React.FC<FeedHorizonBarProps> = ({
   activeSortMode,
@@ -100,6 +111,7 @@ const FeedHorizonBarInner: React.FC<FeedHorizonBarProps> = ({
           onBlur
         }
       : {};
+  const activeTab = HORIZON_TABS.find((tab) => tab.isSelected(activeSortMode)) ?? HORIZON_TABS[0];
 
   return (
     <Animated.View
@@ -115,7 +127,7 @@ const FeedHorizonBarInner: React.FC<FeedHorizonBarProps> = ({
             {
               translateY: horizonBarAnim.interpolate({
                 inputRange: [0, 1],
-                outputRange: [-(stickyHorizonBarHeight + 12), 0]
+                outputRange: [-(stickyHorizonBarHeight + 28), 0]
               })
             }
           ]
@@ -235,6 +247,17 @@ const FeedHorizonBarInner: React.FC<FeedHorizonBarProps> = ({
           )}
         </TouchableOpacity>
       </View>
+
+      <View style={styles.captionRow} accessible accessibilityRole="text">
+        <Ionicons name={activeTab.icon} size={11} color={colors.accent} style={styles.captionIcon} />
+        <Text
+          style={[styles.captionText, { color: colors.textMuted }]}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {activeTab.caption}
+        </Text>
+      </View>
     </Animated.View>
   );
 };
@@ -249,8 +272,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 25,
-    paddingTop: 6,
-    paddingBottom: 4,
+    paddingTop: 4,
+    paddingBottom: 3,
     borderBottomWidth: 0.5
   },
   stickyHorizonBarElevated: {
@@ -263,10 +286,28 @@ const styles = StyleSheet.create({
   stickyHorizonBarInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 3,
     borderRadius: radius.md,
     borderWidth: 1,
     gap: 6
+  },
+  captionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingTop: 3,
+    gap: 5,
+    minWidth: 0
+  },
+  captionIcon: {
+    flexShrink: 0
+  },
+  captionText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '500',
+    flexShrink: 1
   },
   horizonScrollView: {
     flex: 1,

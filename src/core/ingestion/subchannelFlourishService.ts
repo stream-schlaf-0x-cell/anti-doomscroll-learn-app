@@ -22,6 +22,7 @@ import {
   fetchArtInstituteArtworks,
   fetchWikipediaBrightDiscoveries
 } from './brightWebAdapters';
+import { runTopicPremiumPipeline } from '../studio/topicPremiumPipeline';
 
 export function extractYoutubeVideoId(rawUrl: string): string | null {
   if (!rawUrl || typeof rawUrl !== 'string') return null;
@@ -134,6 +135,8 @@ export interface SubchannelInput {
   flair?: string;
   primaryTopic?: TopicTag;
   keywords?: string[];
+  rssFeeds?: string[];
+  seedSources?: string[];
 }
 
 export interface SubchannelQueryProfile {
@@ -2400,10 +2403,16 @@ export class SubchannelFlourishService {
         const today = new Date().toISOString().slice(0, 10);
         options?.onProgress?.(40, `Durchsuche Fachquellen, Sammlungen & Diskurse…`);
 
+        const builtInHandles = new Set<string>([
+          ...DEFAULT_SUBCHANNELS.map(s => s.handle.toLowerCase()),
+          'c/gesellschaft_politik'
+        ]);
+        const isCustomChannel = !builtInHandles.has(spaceHandle.toLowerCase());
+
         const isYoutubeChannel =
-          spaceHandle === 'c/youtube' || queryProfile.primaryTopic === 'youtube_gems';
+          spaceHandle === 'c/youtube' || (!isCustomChannel && queryProfile.primaryTopic === 'youtube_gems');
         const isMemesChannel =
-          spaceHandle === 'c/memes' || queryProfile.primaryTopic === 'memes_satire';
+          spaceHandle === 'c/memes' || (!isCustomChannel && queryProfile.primaryTopic === 'memes_satire');
         const isArtGalleryChannel =
           !isMemesChannel &&
           (spaceHandle === 'c/kunst_galerie' || queryProfile.archetype === 'visual_gallery');
@@ -2424,6 +2433,16 @@ export class SubchannelFlourishService {
           }
         }
 
+        // Resolve AI credentials once so both custom Premium-Pipeline and built-in lanes can use them
+        let creds = options?.credentials;
+        if (!creds) {
+          try {
+            creds = await loadAiCredentials();
+          } catch {
+            creds = undefined;
+          }
+        }
+
         // Execute parallel specialist & research lanes
         let openAlexItems: FeedItem[] = [];
         let articItems: FeedItem[] = [];
@@ -2433,8 +2452,55 @@ export class SubchannelFlourishService {
         let wikiItems: FeedItem[] = [];
         let specialistItems: FeedItem[] = [];
         let saxonyItems: FeedItem[] = [];
+        let customPremiumItems: FeedItem[] = [];
+        let customPremiumUsedAi = false;
+        let customOpenAlexCount = 0;
+        let customWikipediaCount = 0;
+        let customCommunityCount = 0;
 
-        if (!options?.skipNetworkInTests) {
+        if (isCustomChannel && !isYoutubeChannel && !isMemesChannel) {
+          const seedSources: string[] =
+            typeof space === 'object'
+              ? [...(space.rssFeeds || []), ...(space.seedSources || [])].filter(Boolean)
+              : [];
+          const customDescription = typeof space === 'object' ? (space.description || '').trim() : '';
+
+          const [premiumResult, regionalSaxony, customArt] = await Promise.all([
+            runTopicPremiumPipeline({
+              handle: spaceHandle,
+              title: queryProfile.displayTitle,
+              description: customDescription,
+              primaryTopic: queryProfile.primaryTopic,
+              seedSources,
+              existingIds: preExistingIds,
+              existingUrls: preExistingUrls,
+              targetCount: options?.targetCount ?? 18,
+              credentials: creds,
+              skipNetworkInTests: options?.skipNetworkInTests,
+              onProgress: label => {
+                options?.onProgress?.(55, label);
+              }
+            }),
+            !options?.skipNetworkInTests && isRegionalSaxony
+              ? ContinuousLiveNewsService.fetchSaxonyRegionalNews(12)
+              : Promise.resolve([] as FeedItem[]),
+            !options?.skipNetworkInTests && isArtGalleryChannel
+              ? this.fetchArtInstituteOfChicagoLane(queryProfile, today)
+              : Promise.resolve([] as FeedItem[])
+          ]);
+
+          customPremiumItems = premiumResult.items;
+          customPremiumUsedAi = premiumResult.usedAi;
+          customOpenAlexCount = premiumResult.laneCounts.openAlex;
+          customWikipediaCount = premiumResult.laneCounts.wikipedia;
+          customCommunityCount =
+            premiumResult.laneCounts.rss +
+            premiumResult.laneCounts.snapshot +
+            premiumResult.laneCounts.hnArticles +
+            premiumResult.laneCounts.hnYoutube;
+          saxonyItems = regionalSaxony;
+          articItems = customArt;
+        } else if (!options?.skipNetworkInTests) {
           if (isYoutubeChannel) {
             const [snapshotYt, liveYt] = await Promise.all([
               this.fetchUnseenFromSnapshots('c/youtube', 'youtube_gems', preExistingIds, preExistingUrls, false, force),
@@ -2549,6 +2615,7 @@ export class SubchannelFlourishService {
         }
 
         const communityItems = [
+          ...customPremiumItems,
           ...brightWebItems,
           ...specialistItems,
           ...articItems,
@@ -2556,21 +2623,22 @@ export class SubchannelFlourishService {
           ...hnItems,
           ...saxonyItems
         ];
-        const conceptualAnchors = this.buildConceptualAnchorCards(queryProfile, today);
+
+        const realCustomLiveCount = isCustomChannel
+          ? customPremiumItems.length + saxonyItems.length + articItems.length
+          : 0;
+
+        // For custom channels: ONLY fall back to conceptual anchor cards if live results yield < 3 items
+        const conceptualAnchors =
+          isCustomChannel && realCustomLiveCount >= 3
+            ? []
+            : this.buildConceptualAnchorCards(queryProfile, today);
 
         let llmSynthesizedItems: FeedItem[] = [];
-        let usedAi = false;
-
-        let creds = options?.credentials;
-        if (!creds) {
-          try {
-            creds = await loadAiCredentials();
-          } catch {
-            creds = undefined;
-          }
-        }
+        let usedAi = customPremiumUsedAi;
 
         if (
+          !isCustomChannel &&
           creds &&
           hasAiConfiguration(creds) &&
           !options?.skipNetworkInTests &&
@@ -2599,22 +2667,29 @@ export class SubchannelFlourishService {
           } catch {}
         }
 
-        const rawCombined = [
-          ...brightWebItems,
-          ...articItems,
-          ...specialistItems,
-          ...saxonyItems,
-          ...llmSynthesizedItems,
-          ...openAlexItems,
-          ...redditItems,
-          ...hnItems,
-          ...wikiItems,
-          ...conceptualAnchors
-        ];
+        const rawCombined = isCustomChannel
+          ? [
+              ...saxonyItems,
+              ...customPremiumItems,
+              ...articItems,
+              ...conceptualAnchors
+            ]
+          : [
+              ...brightWebItems,
+              ...articItems,
+              ...specialistItems,
+              ...saxonyItems,
+              ...llmSynthesizedItems,
+              ...openAlexItems,
+              ...redditItems,
+              ...hnItems,
+              ...wikiItems,
+              ...conceptualAnchors
+            ];
 
-        // Pass combined candidates through Lane 4 (LLM synthesis & translation or deterministic sanitization)
+        // Pass combined candidates through Lane 4 (custom channels keep authentic originals untouched per Silent Editor-in-Chief rule)
         const lane4Result =
-          isYoutubeChannel || isMemesChannel || isArtGalleryChannel
+          isCustomChannel || isYoutubeChannel || isMemesChannel || isArtGalleryChannel
             ? { items: rawCombined, usedAi: false }
             : await this.synthesizeAndTranslateLane(rawCombined, queryProfile, creds);
         usedAi = usedAi || lane4Result.usedAi;
@@ -2623,19 +2698,34 @@ export class SubchannelFlourishService {
         const existingUrls = new Set(preExistingUrls);
         const deduplicated: FeedItem[] = [];
         const youtubeBatchCap = isYoutubeChannel ? Math.max(options?.targetCount ?? 20, 20) : Infinity;
-        const manualPinTimestamp = force && isYoutubeChannel ? Date.now() : undefined;
+        const manualPinTimestamp = force && (isYoutubeChannel || isCustomChannel) ? Date.now() : undefined;
 
         for (const candidate of lane4Result.items) {
           if (deduplicated.length >= youtubeBatchCap) break;
 
-          const sanitized = sanitizeCuratedFeedItem({
-            ...candidate,
-            space: spaceHandle,
-            primaryTopic: queryProfile.primaryTopic,
-            topics: candidate.topics?.includes(queryProfile.primaryTopic)
-              ? candidate.topics
-              : [queryProfile.primaryTopic, ...(candidate.topics || [])].slice(0, 3)
-          });
+          const isCandidateYoutubeGem =
+            candidate.format === 'youtube_gem' || Boolean(candidate.youtubeMeta?.videoId);
+
+          const sanitized: FeedItem = isCandidateYoutubeGem
+            ? {
+                ...candidate,
+                space: isYoutubeChannel ? 'c/youtube' : spaceHandle,
+                primaryTopic: isYoutubeChannel ? 'youtube_gems' : queryProfile.primaryTopic,
+                format: 'youtube_gem',
+                topics: candidate.topics?.includes(queryProfile.primaryTopic)
+                  ? candidate.topics
+                  : [queryProfile.primaryTopic, ...(candidate.topics || [])].slice(0, 3),
+                ...(manualPinTimestamp !== undefined ? { pinnedManualRunAt: manualPinTimestamp } : {})
+              }
+            : sanitizeCuratedFeedItem({
+                ...candidate,
+                space: spaceHandle,
+                primaryTopic: queryProfile.primaryTopic,
+                topics: candidate.topics?.includes(queryProfile.primaryTopic)
+                  ? candidate.topics
+                  : [queryProfile.primaryTopic, ...(candidate.topics || [])].slice(0, 3),
+                ...(manualPinTimestamp !== undefined ? { pinnedManualRunAt: manualPinTimestamp } : {})
+              });
 
           if (isYoutubeChannel) {
             sanitized.space = 'c/youtube';
@@ -2648,7 +2738,7 @@ export class SubchannelFlourishService {
 
           // Preserve explicit hqdefault.jpg thumbnails on YouTube gems
           if (
-            isYoutubeChannel &&
+            (isYoutubeChannel || isCandidateYoutubeGem) &&
             candidate.imageUrl &&
             candidate.imageUrl.includes('i.ytimg.com/vi/') &&
             candidate.imageUrl.endsWith('/hqdefault.jpg')
@@ -2660,7 +2750,7 @@ export class SubchannelFlourishService {
           if (isDoomscrollOrOffTopicNoise(sanitized)) continue;
           if (!satisfiesDefaultCuratedStandard(sanitized)) continue;
           if (
-            (queryProfile.archetype === 'visual_gallery' || isMemesChannel) &&
+            ((!isCustomChannel && queryProfile.archetype === 'visual_gallery') || isMemesChannel) &&
             (!sanitized.imageUrl || !sanitized.imageUrl.trim())
           ) {
             continue;
@@ -2678,7 +2768,7 @@ export class SubchannelFlourishService {
         }
 
         if (deduplicated.length > 0) {
-          if (force && isYoutubeChannel) {
+          if (force && (isYoutubeChannel || isCustomChannel)) {
             feedRepository.addItems(deduplicated, { operationType: 'manual_refresh', pinInserted: true });
           } else {
             feedRepository.addItems(deduplicated);
@@ -2694,9 +2784,9 @@ export class SubchannelFlourishService {
           addedItems: deduplicated,
           mode: usedAi ? 'ai' : 'local',
           lanes: {
-            openAlexCount: openAlexItems.length,
-            communityCount: communityItems.length,
-            wikipediaCount: wikiItems.length,
+            openAlexCount: isCustomChannel ? customOpenAlexCount : openAlexItems.length,
+            communityCount: isCustomChannel ? customCommunityCount + saxonyItems.length : communityItems.length,
+            wikipediaCount: isCustomChannel ? customWikipediaCount : wikiItems.length,
             llmSynthesizedCount: lane4Result.usedAi
               ? Math.max(llmSynthesizedItems.length, lane4Result.items.length)
               : llmSynthesizedItems.length

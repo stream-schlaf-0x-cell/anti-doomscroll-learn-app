@@ -17,7 +17,7 @@ import {
   Animated
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { TopicTag, FeedItem, TOPIC_SPACE_MAP, UserProfile } from '../../core/domain/types';
+import { TopicTag, FeedItem, TOPIC_SPACE_MAP, UserProfile, ReadingInteraction } from '../../core/domain/types';
 import { appStorage } from '../../core/data/storage';
 import { useApp } from '../../core/context/AppContext';
 import { Header } from '../../ui/components/Header';
@@ -44,6 +44,8 @@ import { seenImpressionsService, SeenImpressionRecord } from '../../core/data/se
 import { loadAiCredentials, hasAiConfiguration } from '../../core/ai/atmenAiClient';
 import { feedRepository } from '../../core/data/feedRepository';
 import { openExternalInBrowser } from '../../core/utils/externalBrowser';
+import { preloadUpcomingFeedImages } from '../../core/utils/imagePreloader';
+import { upgradeImageResolutionUrl, optimizeImageUrl } from '../../core/utils/imageQuality';
 import { FeedOperationBanner } from '../../ui/components/FeedOperationBanner';
 import { FeedHorizonBar } from '../../ui/components/FeedHorizonBar';
 import { FeedChannelBanner } from '../../ui/components/FeedChannelBanner';
@@ -217,10 +219,24 @@ function isVisualGalleryChannelLocal(
   return /\b(art|kunst|kunst_galerie|galerie|gallery|photography|fotografie|foto|architecture|architektur|brutalismus|design|aesthetics|ästhetik|aesthetik|comics|memes|museum|painting|malerei|visual|bauhaus|skulptur)\b/i.test(hay);
 }
 
+function resolveFeedCardPreloadImageUrl(item: FeedItem): string | undefined {
+  const isMeme =
+    item.format === 'meme' ||
+    item.space === 'c/memes' ||
+    item.primaryTopic === 'memes_satire' ||
+    Boolean(item.memeMeta);
+  const isArt = item.format === 'art_showcase' || Boolean(item.artMeta);
+  const rawUrl = isArt ? (item.artMeta?.highResImageUrl || item.imageUrl) : item.imageUrl;
+  if (!rawUrl || !rawUrl.trim()) return undefined;
+  if (!isArt && item.hasAuthenticImage === false) return undefined;
+  return isMeme || isArt ? optimizeImageUrl(rawUrl, 800) : upgradeImageResolutionUrl(rawUrl, 800);
+}
+
 type FeedFlatListRow =
   | {
       kind: 'card';
       key: string;
+      cardIndex: number;
       item: ScoredFeedItem;
       isHero: boolean;
       isFocused: boolean;
@@ -233,6 +249,12 @@ type FeedFlatListRow =
   | {
       kind: 'evergreen_divider';
       key: string;
+    }
+  | {
+      kind: 'bloom_checkpoint';
+      type: 'bloom_checkpoint';
+      key: string;
+      exploredCount: number;
     };
 
 export const FeedScreen: React.FC = () => {
@@ -286,8 +308,35 @@ export const FeedScreen: React.FC = () => {
   const [seenRecordMap, setSeenRecordMap] = useState<Map<string, SeenImpressionRecord>>(() => seenImpressionsService.getSeenRecordMapSync());
 
   const syncSeenStateFromService = useCallback(() => {
-    setSeenIds(seenImpressionsService.getSeenIdsSync());
-    setSeenRecordMap(seenImpressionsService.getSeenRecordMapSync());
+    const nextIds = seenImpressionsService.getSeenIdsSync();
+    setSeenIds(prev => {
+      if (prev.size === nextIds.size) {
+        let allMatch = true;
+        for (const id of nextIds) {
+          if (!prev.has(id)) {
+            allMatch = false;
+            break;
+          }
+        }
+        if (allMatch) return prev;
+      }
+      return nextIds;
+    });
+    const nextRecords = seenImpressionsService.getSeenRecordMapSync();
+    setSeenRecordMap(prev => {
+      if (prev.size === nextRecords.size) {
+        let allMatch = true;
+        for (const [id, rec] of nextRecords) {
+          const prevRec = prev.get(id);
+          if (!prevRec || prevRec.firstSeenAt !== rec.firstSeenAt || prevRec.lastSeenAt !== rec.lastSeenAt) {
+            allMatch = false;
+            break;
+          }
+        }
+        if (allMatch) return prev;
+      }
+      return nextRecords;
+    });
   }, []);
 
   React.useEffect(() => {
@@ -1142,16 +1191,30 @@ export const FeedScreen: React.FC = () => {
 
   const handleFilterChange = useCallback((filter: string | 'all') => {
     sessionStartedAt.current = Date.now();
-    syncSeenStateFromService();
-    setActiveHivemindTrackId(null);
-    setSelectedFilter(filter);
-    setVisibleInfiniteCount(15);
     lockedTopItemIdsRef.current = null;
     hasCommittedInitialViewportRef.current = false;
-    setPendingStreamArrivals([]);
+    frozenRenderedFreshRef.current = [];
+    newArrivalsQueueRef.current = [];
+    setSelectedFilter(filter);
     scrollToFeedTop(true);
-    if (filter !== 'all' && (activeFeedOption === 'live_news' || activeFeedOption === 'classics')) {
-      setActiveFeedOption('infinite');
+    React.startTransition(() => {
+      setActiveHivemindTrackId(null);
+      setVisibleInfiniteCount(15);
+      setPendingStreamArrivals([]);
+      if (filter !== 'all' && (activeFeedOption === 'live_news' || activeFeedOption === 'classics')) {
+        setActiveFeedOption('infinite');
+      }
+    });
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        React.startTransition(() => {
+          syncSeenStateFromService();
+        });
+      });
+    } else {
+      React.startTransition(() => {
+        syncSeenStateFromService();
+      });
     }
   }, [activeFeedOption, setActiveFeedOption, setSelectedFilter, scrollToFeedTop, syncSeenStateFromService]);
 
@@ -1161,7 +1224,54 @@ export const FeedScreen: React.FC = () => {
 
   // Keep latest interactions in a ref so upvoting/saving NEVER triggers full feed re-filtering or re-ranking
   const interactionsRef = React.useRef(interactions);
-  interactionsRef.current = interactions;
+  const interactionsVersionRef = React.useRef<number>(0);
+  if (interactionsRef.current !== interactions) {
+    interactionsRef.current = interactions;
+    interactionsVersionRef.current += 1;
+  }
+
+  // Memoized scoreFeedItem cache keyed by (itemRef, profileRef, interactionsVersion / itemInteractionRef)
+  // Reuses already-scored ScoredFeedItem instances across sortMode & channel switches and partial pool updates
+  const scoredItemCacheRef = React.useRef<{
+    profileRef: UserProfile | null;
+    interactionsVersion: number;
+    byId: Map<string, {
+      itemRef: FeedItem;
+      interactionRef: ReadingInteraction | undefined;
+      scored: ScoredFeedItem;
+    }>;
+  }>({
+    profileRef: null,
+    interactionsVersion: -1,
+    byId: new Map()
+  });
+
+  const getCachedScoredItem = useCallback((item: FeedItem, targetProfile: UserProfile): ScoredFeedItem => {
+    const cache = scoredItemCacheRef.current;
+    const currentInteractions = interactionsRef.current;
+    const currentItemInteraction = currentInteractions[item.id];
+    if (cache.profileRef !== targetProfile) {
+      cache.profileRef = targetProfile;
+      cache.interactionsVersion = interactionsVersionRef.current;
+      cache.byId.clear();
+    }
+    const existing = cache.byId.get(item.id);
+    if (
+      existing &&
+      existing.itemRef === item &&
+      existing.interactionRef === currentItemInteraction
+    ) {
+      return existing.scored;
+    }
+    const scored = scoreFeedItem(item, targetProfile, currentInteractions);
+    cache.interactionsVersion = interactionsVersionRef.current;
+    cache.byId.set(item.id, {
+      itemRef: item,
+      interactionRef: currentItemInteraction,
+      scored
+    });
+    return scored;
+  }, []);
 
   // Persistent O(1) cache of sanitized feed items keyed by ID + content/tier signature
   const sanitizedItemCacheRef = React.useRef<Map<string, {
@@ -1251,7 +1361,6 @@ export const FeedScreen: React.FC = () => {
   ]);
 
   const latestScoredLiveItems = useMemo(() => {
-    const currentInteractions = interactionsRef.current;
     let items = liveNewsItems.filter(item => !dismissedSet.has(item.id));
     if (newsSearchQuery.trim()) {
       const q = newsSearchQuery.toLowerCase().trim();
@@ -1265,37 +1374,35 @@ export const FeedScreen: React.FC = () => {
     if (liveNewsWindowMode === 'chronological') {
       // In chronological mode, strictly preserve publication timestamp order without user interest re-sorting
       return items.map(item => {
-        const scored = scoreFeedItem(item, rankingProfile, currentInteractions);
+        const scored = getCachedScoredItem(item, rankingProfile);
         return {
           ...scored,
           score: 1.0
         };
       });
     }
-    return items.map(item => scoreFeedItem(item, rankingProfile, currentInteractions));
-  }, [liveNewsItems, dismissedSet, newsSearchQuery, liveNewsWindowMode, rankingProfile]);
+    return items.map(item => getCachedScoredItem(item, rankingProfile));
+  }, [liveNewsItems, dismissedSet, newsSearchQuery, liveNewsWindowMode, rankingProfile, getCachedScoredItem]);
   const scoredLiveItems = useReadingStableFeed(latestScoredLiveItems, isScrolledDown, `${presentationScope}:${liveNewsCategory}:${liveNewsWindowMode}:${newsSearchQuery}`);
 
   const scoredClassicsItems = useMemo(() => {
-    const currentInteractions = interactionsRef.current;
+    if (activeFeedOption !== 'classics') return [];
     const scored = classicsItems
       .filter(item => !dismissedSet.has(item.id))
       .filter(matchesSelectedSpace)
-      .map(item => scoreFeedItem(item, rankingProfile, currentInteractions));
+      .map(item => getCachedScoredItem(item, rankingProfile));
     return filterByQuery(scored);
-  }, [classicsItems, dismissedSet, matchesSelectedSpace, rankingProfile, filterByQuery]);
+  }, [activeFeedOption, classicsItems, dismissedSet, matchesSelectedSpace, rankingProfile, filterByQuery, getCachedScoredItem]);
 
   // OpenWeb harvested candidates scored once on ingest/load (decoupled from filter/sort switches and interactions)
   const scoredOpenWebItems = useMemo(() => {
-    const currentInteractions = interactionsRef.current;
     return openWebItems
       .filter(item => !dismissedSet.has(item.id))
-      .map(item => scoreFeedItem(item, rankingProfile, currentInteractions));
-  }, [openWebItems, dismissedSet, rankingProfile]);
+      .map(item => getCachedScoredItem(item, rankingProfile));
+  }, [openWebItems, dismissedSet, rankingProfile, getCachedScoredItem]);
 
   // Pre-sanitized, pre-scored, and space-indexed master pool (runs ONLY when raw pools change, NEVER on space/sort switch or upvote)
   const preSanitizedMasterPool = useMemo(() => {
-    const currentInteractions = interactionsRef.current;
     const rawCombined = [
       ...dailyEdition,
       ...scoredOpenWebItems,
@@ -1325,7 +1432,7 @@ export const FeedScreen: React.FC = () => {
       if (normTitle.length >= 12) seenTitle.add(normTitle);
 
       const cached = getCachedSanitizedEntry(raw);
-      const scoredItem = scoreFeedItem(cached.item, rankingProfile, currentInteractions);
+      const scoredItem = getCachedScoredItem(cached.item, rankingProfile);
       const entry = {
         scoredItem,
         strictStandardOk: cached.strictStandardOk,
@@ -1344,12 +1451,10 @@ export const FeedScreen: React.FC = () => {
     }
 
     return { allEntries, bySpaceHandle };
-  }, [dailyEdition, scoredOpenWebItems, discoveryItems, scoredLiveItems, dismissedSet, rankingProfile, getCachedSanitizedEntry]);
+  }, [dailyEdition, scoredOpenWebItems, discoveryItems, scoredLiveItems, dismissedSet, rankingProfile, getCachedSanitizedEntry, getCachedScoredItem]);
 
   // Combined endless stream with O(1) Space Lookup, Always-On "Frisch kuratiert" Quality Gate & Sliding-Window Bloom-Ranking
   const latestInfiniteInterleavedBase = useMemo(() => {
-    const currentInteractions = interactionsRef.current;
-
     // Fast O(1) space slice when a specific c/... handle is selected
     const targetSpaceHandle = selectedFilter !== 'all' ? selectedSpaceContext?.targetHandle : null;
     const candidateEntries = targetSpaceHandle
@@ -1418,13 +1523,13 @@ export const FeedScreen: React.FC = () => {
       return hivemindLearningService.interleaveAmbientDripCards(
         combinedSorted,
         hivemindTracks,
-        it => scoreFeedItem(it, rankingProfile, currentInteractions),
+        it => getCachedScoredItem(it, rankingProfile),
         5
       );
     }
 
     return combinedSorted;
-  }, [preSanitizedMasterPool, selectedSpaceContext, matchesSelectedSpace, filterByQuery, rankingProfile, selectedFilter, searchQuery, activeHivemindTrackId, sortMode, pinnedIds, seenIds, seenRecordMap, hivemindTracks]);
+  }, [preSanitizedMasterPool, selectedSpaceContext, matchesSelectedSpace, filterByQuery, rankingProfile, getCachedScoredItem, selectedFilter, searchQuery, activeHivemindTrackId, sortMode, pinnedIds, seenIds, seenRecordMap, hivemindTracks]);
   const infiniteInterleavedBase = useReadingStableFeed(latestInfiniteInterleavedBase, isScrolledDown, presentationScope);
 
   // Viewport Top-Lock (Zero-Flicker Boot): Lock the visible top 12 cards immediately on frame 1
@@ -1549,20 +1654,18 @@ export const FeedScreen: React.FC = () => {
   // Evergreen & Archive fallback items when fresh items are exhausted (strictly unseen only — never recycles seen classics)
   const evergreenFallbackItems = useMemo(() => {
     if (sortMode === 'today') return []; // Never append old evergreen items under ⚡ Heute!
-    const currentInteractions = interactionsRef.current;
     const freshIds = new Set(lockedInfiniteBase.map(i => i.id));
     const rawClassics = ContinuousLiveNewsService.getEvergreenClassics();
     const scored = rawClassics
       .filter(item => !freshIds.has(item.id) && !dismissedSet.has(item.id) && !seenIds.has(item.id))
       .map(item => getCachedSanitizedEntry(item))
       .filter(entry => entry.strictStandardOk && matchesSelectedSpace(entry.item))
-      .map(entry => scoreFeedItem(entry.item, rankingProfile, currentInteractions));
+      .map(entry => getCachedScoredItem(entry.item, rankingProfile));
     return filterByQuery(scored);
-  }, [sortMode, lockedInfiniteBase, dismissedSet, seenIds, rankingProfile, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery]);
+  }, [sortMode, lockedInfiniteBase, dismissedSet, seenIds, rankingProfile, getCachedSanitizedEntry, getCachedScoredItem, matchesSelectedSpace, filterByQuery]);
 
   const scoredRevealedItems = useMemo(() => {
     if (revealedNewItems.length === 0) return [];
-    const currentInteractions = interactionsRef.current;
     const nowMs = Date.now();
     const scored = revealedNewItems
       .filter(item => {
@@ -1577,9 +1680,9 @@ export const FeedScreen: React.FC = () => {
       })
       .map(item => getCachedSanitizedEntry(item))
       .filter(entry => entry.strictStandardOk && matchesSelectedSpace(entry.item))
-      .map(entry => scoreFeedItem(entry.item, rankingProfile, currentInteractions));
+      .map(entry => getCachedScoredItem(entry.item, rankingProfile));
     return filterByQuery(scored);
-  }, [revealedNewItems, dismissedSet, sortMode, getCachedSanitizedEntry, matchesSelectedSpace, filterByQuery, rankingProfile]);
+  }, [revealedNewItems, dismissedSet, sortMode, getCachedSanitizedEntry, getCachedScoredItem, matchesSelectedSpace, filterByQuery, rankingProfile]);
 
   const renderedInfiniteFreshItems = useMemo(() => {
     if (lastScopeForFreezeRef.current !== presentationScope) {
@@ -1622,23 +1725,53 @@ export const FeedScreen: React.FC = () => {
     const base = [...renderedInfiniteFreshItems, ...renderedInfiniteEvergreenItems];
     return prependRevealedItems(base, scoredRevealedItems);
   }, [renderedInfiniteFreshItems, renderedInfiniteEvergreenItems, scoredRevealedItems]);
+  const renderedInfiniteItemsRef = React.useRef<ScoredFeedItem[]>(renderedInfiniteItems);
+  renderedInfiniteItemsRef.current = renderedInfiniteItems;
 
   // Active items array depending on selected feed option
   const currentFeedItems = useMemo((): ScoredFeedItem[] => {
-    const currentInteractions = interactionsRef.current;
     if (curatedSelection && curatedSelection.items.length > 0) {
       return curatedSelection.items
         .filter(item => !dismissedSet.has(item.id))
-        .map(item => scoreFeedItem(item, rankingProfile, currentInteractions));
+        .map(item => getCachedScoredItem(item, rankingProfile));
     }
     if (activeFeedOption === 'live_news') return scoredLiveItems;
     if (activeFeedOption === 'classics') return scoredClassicsItems;
     if (activeFeedOption === 'history') {
-      return historyItems.map(h => scoreFeedItem(h.item, rankingProfile, currentInteractions));
+      return historyItems.map(h => getCachedScoredItem(h.item, rankingProfile));
     }
     return renderedInfiniteItems;
-  }, [curatedSelection, dismissedSet, activeFeedOption, renderedInfiniteItems, scoredLiveItems, scoredClassicsItems, historyItems, rankingProfile]);
+  }, [curatedSelection, dismissedSet, activeFeedOption, renderedInfiniteItems, scoredLiveItems, scoredClassicsItems, historyItems, rankingProfile, getCachedScoredItem]);
   currentFeedItemsRef.current = currentFeedItems;
+
+  // Lightweight, ref-throttled lookahead image preloader (zero React setState on scroll)
+  const lastImagePreloadAtRef = React.useRef<number>(0);
+  const preloadUpcomingImagesAtScroll = useCallback((scrollY: number) => {
+    if (Platform.OS !== 'web') return;
+    const sourceItems =
+      activeFeedOption === 'live_news' || activeFeedOption === 'classics' || activeFeedOption === 'history'
+        ? currentFeedItemsRef.current
+        : renderedInfiniteItemsRef.current;
+    if (sourceItems.length === 0) return;
+    const startIdx = Math.max(0, Math.floor(scrollY / 420));
+    const slice = sourceItems.slice(startIdx, startIdx + 7);
+    const urls: string[] = [];
+    for (const item of slice) {
+      const resolvedUrl = resolveFeedCardPreloadImageUrl(item);
+      if (resolvedUrl) {
+        urls.push(resolvedUrl);
+      }
+    }
+    if (urls.length > 0) {
+      preloadUpcomingFeedImages(urls, 6);
+    }
+  }, [activeFeedOption]);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' || renderedInfiniteItems.length === 0) return;
+    lastImagePreloadAtRef.current = Date.now();
+    preloadUpcomingImagesAtScroll(scrollYRef.current);
+  }, [renderedInfiniteItems, preloadUpcomingImagesAtScroll]);
 
   // 1-Tap "🚫 Weniger davon" state & Undo handler
   const [lastDismissedItem, setLastDismissedItem] = useState<{ id: string; title: string } | null>(null);
@@ -2129,6 +2262,13 @@ export const FeedScreen: React.FC = () => {
 
     scheduleChronikFlush();
 
+    // Throttled lookahead image preloader (~350ms, strictly ref-based, zero React setState)
+    const nowPreloadMs = Date.now();
+    if (nowPreloadMs - lastImagePreloadAtRef.current >= 350) {
+      lastImagePreloadAtRef.current = nowPreloadMs;
+      preloadUpcomingImagesAtScroll(contentOffset.y);
+    }
+
     // Gentle one-time scroll trigger to hydrate the deep endless reservoir in the background
     if (contentOffset.y > 900 && !reservoirHydratedInFeedRef.current) {
       reservoirHydratedInFeedRef.current = true;
@@ -2167,7 +2307,7 @@ export const FeedScreen: React.FC = () => {
         });
       }
     }
-  }, [setHorizonBarVisibility, scheduleChronikFlush, totalInfiniteAvailable, curateNextStreamBatch, recomputeFeed]);
+  }, [setHorizonBarVisibility, scheduleChronikFlush, preloadUpcomingImagesAtScroll, totalInfiniteAvailable, curateNextStreamBatch, recomputeFeed]);
 
   // Interactive Pull-to-Refresh for Web (Touch Pull on iOS/iPadOS PWA + Desktop Trackpad Overscroll)
   React.useEffect(() => {
@@ -2868,6 +3008,7 @@ export const FeedScreen: React.FC = () => {
       return scoredLiveItems.map((item, index) => ({
         kind: 'card',
         key: item.id,
+        cardIndex: index,
         item,
         isHero: index === 0 && !searchQuery,
         isFocused: index === activeCardIndex
@@ -2878,6 +3019,7 @@ export const FeedScreen: React.FC = () => {
       return scoredClassicsItems.map((item, index) => ({
         kind: 'card',
         key: item.id,
+        cardIndex: index,
         item,
         isHero: index === 0,
         isFocused: index === activeCardIndex
@@ -2889,10 +3031,11 @@ export const FeedScreen: React.FC = () => {
         const seenDate = new Date(record.lastSeenAt || record.firstSeenAt);
         const formattedDate = seenDate.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
         const formattedTime = seenDate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-        const scoredItem = scoreFeedItem(item, rankingProfile, interactions);
+        const scoredItem = getCachedScoredItem(item, rankingProfile);
         return {
           kind: 'card',
           key: `${item.id}-hist-${index}`,
+          cardIndex: index,
           item: scoredItem,
           isHero: false,
           isFocused: index === activeCardIndex,
@@ -2903,11 +3046,12 @@ export const FeedScreen: React.FC = () => {
 
     if (activeHivemindTrack) {
       return activeHivemindTrack.items.map((rawItem, index) => {
-        const item = scoreFeedItem(rawItem, rankingProfile, interactions);
+        const item = getCachedScoredItem(rawItem, rankingProfile);
         const isDone = activeHivemindTrack.completedItemIds.includes(item.id);
         return {
           kind: 'card',
           key: item.id,
+          cardIndex: index,
           item,
           isHero: index === 0,
           isFocused: index === activeCardIndex,
@@ -2923,7 +3067,8 @@ export const FeedScreen: React.FC = () => {
       return curatedSelection.items.map((rawItem, index) => ({
         kind: 'card',
         key: rawItem.id,
-        item: scoreFeedItem(rawItem, rankingProfile, interactionsRef.current),
+        cardIndex: index,
+        item: getCachedScoredItem(rawItem, rankingProfile),
         isHero: index === 0,
         isFocused: index === activeCardIndex,
         allowDismiss: true
@@ -2931,12 +3076,38 @@ export const FeedScreen: React.FC = () => {
     }
 
     const freshAndRevealed = prependRevealedItems(renderedInfiniteFreshItems, scoredRevealedItems);
-    const rows: FeedFlatListRow[] = freshAndRevealed.map((item, index) => {
+    const shouldInsertBloomCheckpoints =
+      selectedFilter === 'all' &&
+      !searchQuery.trim() &&
+      renderedInfiniteItems.length >= 14;
+    let articleCount = 0;
+    let checkpointCount = 0;
+    const rows: FeedFlatListRow[] = [];
+
+    const maybeInsertBloomCheckpoint = () => {
+      if (
+        shouldInsertBloomCheckpoints &&
+        checkpointCount < 3 &&
+        articleCount > 0 &&
+        articleCount % 12 === 0
+      ) {
+        checkpointCount += 1;
+        rows.push({
+          kind: 'bloom_checkpoint',
+          type: 'bloom_checkpoint',
+          key: `bloom-checkpoint-${articleCount}`,
+          exploredCount: articleCount
+        });
+      }
+    };
+
+    freshAndRevealed.forEach((item, index) => {
       const itemTrackId = item.hivemindMeta?.trackId || item.memeMeta?.trackId;
       const itemTrack = itemTrackId ? trackByIdMap.get(itemTrackId) : undefined;
-      return {
+      rows.push({
         kind: 'card',
         key: item.id,
+        cardIndex: index,
         item,
         isHero: index === 0 && selectedFilter === 'all' && !searchQuery,
         isFocused: index === activeCardIndex,
@@ -2944,20 +3115,26 @@ export const FeedScreen: React.FC = () => {
         isTrackStepCompleted: itemTrack ? itemTrack.completedItemIds.includes(item.id) : false,
         allowDismiss: true,
         enableHivemindActions: true
-      };
+      });
+      articleCount += 1;
+      maybeInsertBloomCheckpoint();
     });
 
     if (renderedInfiniteEvergreenItems.length > 0) {
       rows.push({ kind: 'evergreen_divider', key: 'evergreen-divider' });
       renderedInfiniteEvergreenItems.forEach((item, idx) => {
+        const cardIdx = freshAndRevealed.length + idx;
         rows.push({
           kind: 'card',
           key: item.id,
+          cardIndex: cardIdx,
           item,
           isHero: false,
-          isFocused: freshAndRevealed.length + idx === activeCardIndex,
+          isFocused: cardIdx === activeCardIndex,
           allowDismiss: true
         });
+        articleCount += 1;
+        maybeInsertBloomCheckpoint();
       });
     }
 
@@ -2974,12 +3151,13 @@ export const FeedScreen: React.FC = () => {
     renderedInfiniteFreshItems,
     scoredRevealedItems,
     renderedInfiniteEvergreenItems,
+    renderedInfiniteItems.length,
     trackByIdMap,
     selectedFilter,
     searchQuery,
     activeCardIndex,
     rankingProfile,
-    interactions
+    getCachedScoredItem
   ]);
 
   const renderFlatListItem = useCallback(
@@ -3000,6 +3178,58 @@ export const FeedScreen: React.FC = () => {
         );
       }
 
+      if (row.kind === 'bloom_checkpoint') {
+        return (
+          <View
+            style={[
+              styles.bloomCheckpointCard,
+              { backgroundColor: colors.surface, borderColor: colors.borderSubtle }
+            ]}
+            accessibilityRole="summary"
+          >
+            <View style={styles.bloomCheckpointTopRow}>
+              <View style={[styles.bloomCheckpointIconBox, { backgroundColor: colors.accentSubtle }]}>
+                <Ionicons name="leaf-outline" size={16} color={colors.accent} />
+              </View>
+              <Text style={[styles.bloomCheckpointText, { color: colors.textSecondary }]}>
+                {`✦ ${row.exploredCount} Perlen erkundet — kurz durchatmen oder in Ruhe weiterblättern`}
+              </Text>
+            </View>
+            <View style={styles.bloomCheckpointActions}>
+              <TouchableOpacity
+                onPress={() => scrollToFeedTop(true)}
+                style={[
+                  styles.bloomCheckpointPill,
+                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderSubtle }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Nach oben scrollen"
+              >
+                <Ionicons name="arrow-up-outline" size={13} color={colors.textPrimary} style={{ marginRight: 5 }} />
+                <Text style={[styles.bloomCheckpointPillText, { color: colors.textPrimary }]}>
+                  Nach oben
+                </Text>
+              </TouchableOpacity>
+              {uiSortMode !== 'today' && (
+                <TouchableOpacity
+                  onPress={() => handleSortChange('today')}
+                  style={[
+                    styles.bloomCheckpointPill,
+                    { backgroundColor: colors.accentSubtle, borderColor: colors.accent }
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Zum Heute-Überblick wechseln"
+                >
+                  <Text style={[styles.bloomCheckpointPillText, { color: colors.accent }]}>
+                    ⚡ Heute-Überblick
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        );
+      }
+
       if (row.historyBadgeText) {
         return (
           <View style={styles.historyItemWrapper}>
@@ -3016,6 +3246,7 @@ export const FeedScreen: React.FC = () => {
               palette={palette}
               enableSoundGrounding={soundGroundingEnabled}
               isHero={row.isHero}
+              isEagerImage={row.cardIndex < 10}
               isFocused={row.isFocused}
               isExpanded={Boolean(expandedCardIds[row.item.id])}
               onToggleKurzCheck={getKurzCheckToggleHandler(row.item.id)}
@@ -3035,6 +3266,7 @@ export const FeedScreen: React.FC = () => {
           palette={palette}
           enableSoundGrounding={soundGroundingEnabled}
           isHero={row.isHero}
+          isEagerImage={row.cardIndex < 10}
           isFocused={row.isFocused}
           isExpanded={Boolean(expandedCardIds[row.item.id])}
           onToggleKurzCheck={getKurzCheckToggleHandler(row.item.id)}
@@ -3064,9 +3296,13 @@ export const FeedScreen: React.FC = () => {
       colors.surfaceSecondary,
       colors.borderSubtle,
       colors.accent,
+      colors.accentSubtle,
       colors.textPrimary,
       colors.textSecondary,
       colors.textMuted,
+      uiSortMode,
+      scrollToFeedTop,
+      handleSortChange,
       interactions,
       isDark,
       palette,
@@ -3396,9 +3632,9 @@ export const FeedScreen: React.FC = () => {
             onScroll={handleScroll}
             scrollEventThrottle={Platform.OS === 'web' ? 32 : 16}
             keyboardShouldPersistTaps="handled"
-            initialNumToRender={8}
-            maxToRenderPerBatch={6}
-            windowSize={7}
+            initialNumToRender={6}
+            maxToRenderPerBatch={3}
+            windowSize={9}
             removeClippedSubviews={Platform.OS !== 'web'}
             maintainVisibleContentPosition={Platform.OS === 'web' ? undefined : { minIndexForVisible: 0 }}
             refreshControl={
@@ -4745,6 +4981,52 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     textAlign: 'center',
     maxWidth: 480
+  },
+  bloomCheckpointCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    marginVertical: spacing.sm,
+    gap: 10
+  },
+  bloomCheckpointTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10
+  },
+  bloomCheckpointIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0
+  },
+  bloomCheckpointText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500'
+  },
+  bloomCheckpointActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingLeft: 40
+  },
+  bloomCheckpointPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1
+  },
+  bloomCheckpointPillText: {
+    fontSize: 12,
+    fontWeight: '600'
   },
   loadMoreButton: {
     flexDirection: 'row',

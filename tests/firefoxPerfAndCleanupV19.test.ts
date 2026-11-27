@@ -353,7 +353,7 @@ test('Atmen v19 — Firefox Performance, Chunked Hydration & Modular Cleanup', a
   );
 
   await t.test(
-    'Test 5: FeedCard eliminates useWindowDimensions/onLayout, enables CSS contentVisibility on web & checks width props in memo comparator',
+    'Test 5: FeedCard eliminates useWindowDimensions/onLayout, uses lightweight web CSS containment without contentVisibility hitching & checks width props in memo comparator',
     () => {
       const feedCardSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/ui/components/FeedCard.tsx'), 'utf8');
 
@@ -367,17 +367,29 @@ test('Atmen v19 — Firefox Performance, Chunked Hydration & Modular Cleanup', a
         false,
         'FeedCard.tsx must NOT attach per-card onLayout handlers'
       );
+      assert.equal(
+        feedCardSrc.includes("contentVisibility: 'auto'"),
+        false,
+        'FeedCard.tsx must NOT use contentVisibility: auto (causes Firefox scroll hitching)'
+      );
       assert.ok(
-        feedCardSrc.includes("contentVisibility: 'auto'") &&
-          feedCardSrc.includes("contain: 'layout style paint'"),
-        'FeedCard.tsx must apply CSS containment (contentVisibility: auto, contain: layout style paint) on web'
+        feedCardSrc.includes("contain: 'layout style'"),
+        'FeedCard.tsx must apply lightweight CSS containment (contain: layout style) on web'
+      );
+      assert.ok(
+        feedCardSrc.includes('cardInnerWidth / 1.6'),
+        'FeedCard.tsx must use zero-reflow fixed 16:10 frames for standard editorial cards'
       );
 
-      // Verify FeedScreen passes cardWidth & viewportWidth
+      // Verify FeedScreen passes cardWidth, viewportWidth, and lookahead preloadUpcomingFeedImages
       const feedScreenSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/features/feed/FeedScreen.tsx'), 'utf8');
       assert.ok(
         feedScreenSrc.includes('cardWidth={feedCardWidth}') && feedScreenSrc.includes('viewportWidth={width}'),
         'FeedScreen.tsx must pass cardWidth={feedCardWidth} and viewportWidth={width} to FeedCard'
+      );
+      assert.ok(
+        feedScreenSrc.includes('preloadUpcomingFeedImages'),
+        'FeedScreen.tsx must schedule lookahead image preloading via preloadUpcomingFeedImages'
       );
 
       // Verify areFeedCardPropsEqual compares cardWidth and viewportWidth
