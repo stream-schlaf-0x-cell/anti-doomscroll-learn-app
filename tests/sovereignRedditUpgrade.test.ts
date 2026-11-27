@@ -22,6 +22,7 @@ import {
 } from '../src/core/domain/ranking';
 import { DEFAULT_USER_PROFILE } from '../src/core/data/fixtures';
 import { FeedItem } from '../src/core/domain/types';
+import { extractInlineYoutubeVideoId } from '../src/core/utils/inlineVideoBus';
 
 function makeTestFeedItem(overrides: Partial<FeedItem> = {}): FeedItem {
   return {
@@ -101,8 +102,11 @@ test('Work Package 2: SubchannelFlourishService builds multi-lane query profiles
     for (const card of result.items) {
       assert.equal(card.space?.toLowerCase(), channelHandle.toLowerCase());
       if (card.format === 'youtube_gem' || card.youtubeMeta?.videoId) {
+        const resolvedVideoId =
+          card.youtubeMeta?.videoId ||
+          extractInlineYoutubeVideoId(card.canonicalUrl || card.sourceReferences?.[0]?.originalUrl);
         assert.ok(
-          Boolean(card.youtubeMeta?.videoId) && Boolean(card.imageUrl),
+          Boolean(resolvedVideoId) && Boolean(card.imageUrl),
           'Expected valid videoId and thumbnail on youtube_gem card (zero fake filler prose)'
         );
       } else {

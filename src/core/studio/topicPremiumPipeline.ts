@@ -2088,14 +2088,32 @@ export async function runTopicPremiumPipeline(
     };
 
     if (isYt) {
-      // Preserve authentic YouTube gem fields without letting sanitizer copy markdown articleBody into feedText
+      // Preserve authentic YouTube gem fields & guarantee videoId + thumbnail even on snapshot-origin YouTube cards
+      const resolvedVideoId =
+        raw.youtubeMeta?.videoId ||
+        extractYoutubeVideoId(raw.canonicalUrl || raw.sourceReferences?.[0]?.originalUrl || '') ||
+        '';
+      const resolvedImageUrl =
+        raw.imageUrl ||
+        (resolvedVideoId ? `https://i.ytimg.com/vi/${resolvedVideoId}/hqdefault.jpg` : undefined);
       return {
         ...tagged,
         format: 'youtube_gem',
         feedText: raw.feedText,
         body: raw.body,
-        imageUrl: raw.imageUrl,
-        hasAuthenticImage: true
+        imageUrl: resolvedImageUrl,
+        hasAuthenticImage: Boolean(resolvedImageUrl),
+        ...(resolvedVideoId
+          ? {
+              youtubeMeta: {
+                videoId: resolvedVideoId,
+                channelTitle: raw.youtubeMeta?.channelTitle || raw.sourceBroadcasterName || 'YouTube',
+                duration: raw.youtubeMeta?.duration || 'YouTube',
+                ...(raw.youtubeMeta?.viewCount ? { viewCount: raw.youtubeMeta.viewCount } : {}),
+                keyTakeaways: raw.youtubeMeta?.keyTakeaways || []
+              }
+            }
+          : {})
       };
     }
 
