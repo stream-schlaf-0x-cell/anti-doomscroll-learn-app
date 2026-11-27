@@ -25,6 +25,7 @@ from typing import List, Dict, Any, Optional
 from html.parser import HTMLParser
 import urllib.request
 import urllib.error
+import urllib.parse
 
 # Gracefully try importing scrapling
 HAS_SCRAPLING = False
@@ -170,16 +171,143 @@ class SimpleHtmlContentExtractor(HTMLParser):
             self.raw_text_paragraphs.append(cleaned)
 
 
+REJECTED_IMAGE_PATTERNS = (
+    'feedburner.com',
+    '1x1',
+    'pixel.wp.com',
+    'pixel.gif',
+    '-pixel.',
+    'tracking',
+    'beacon',
+    '/avatar/',
+    'gravatar.com',
+    'favicon',
+    'apple-touch-icon',
+    'site-logo',
+    'brand-logo',
+    'placeholder',
+    'default-thumb',
+    'spacer.gif',
+    'blank.gif',
+    's.w.org/images/core/emoji',
+    'wp-includes/images/smilies',
+    'wordmark',
+    'masthead',
+    'email-header',
+    'email_header',
+    'newsletter-header',
+    'newsletter_header',
+    '404bild',
+    '/404.jpg',
+    '/404.png',
+    '/no-image.',
+    '/noimage.',
+    '/default-image.',
+)
+
+META_IMAGE_KEYS = (
+    'og:image:secure_url',
+    'og:image:url',
+    'og:image',
+    'twitter:image:src',
+    'twitter:image',
+)
+
+META_TAG_PATTERN = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+ATTR_PATTERN = re.compile(
+    r"""([a-zA-Z0-9:_-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))""",
+    re.IGNORECASE
+)
+TINY_DIM_PATTERN = re.compile(r"[/-](\d{2,3})x(\d{2,3})[/_.-]")
+LOGO_SEGMENT_PATTERN = re.compile(r"(?:^|[/._-])logo(?:[/._-]|$)", re.IGNORECASE)
+
+
+def is_rejected_image_url(url: str) -> bool:
+    """Rejects icons, favicons, SVGs, tracking pixels, logos, and tiny thumbnails."""
+    if not url or not isinstance(url, str):
+        return True
+    clean = url.strip()
+    lower = clean.lower()
+    if not (lower.startswith("http://") or lower.startswith("https://")):
+        return True
+
+    parsed_path = urllib.parse.urlparse(lower).path
+    if parsed_path.endswith(".ico") or parsed_path.endswith(".svg"):
+        return True
+
+    for pat in REJECTED_IMAGE_PATTERNS:
+        if pat in lower:
+            return True
+
+    if LOGO_SEGMENT_PATTERN.search(parsed_path):
+        return True
+
+    if "mzstatic.com" not in lower:
+        dim_match = TINY_DIM_PATTERN.search(lower)
+        if dim_match:
+            w, h = int(dim_match.group(1)), int(dim_match.group(2))
+            if w < 240 and h < 240:
+                return True
+
+    return False
+
+
+def extract_hero_image_url(html_content: str, base_url: str = "") -> str:
+    """
+    Extracts og:image / twitter:image meta tags regardless of attribute order,
+    resolves relative URLs with urllib.parse.urljoin, and filters out logos/icons/svgs/1x1 pixels.
+    """
+    if not html_content or not isinstance(html_content, str):
+        return ""
+
+    candidates: Dict[str, str] = {}
+    for meta_match in META_TAG_PATTERN.finditer(html_content):
+        tag_str = meta_match.group(0)
+        attrs: Dict[str, str] = {}
+        for attr_match in ATTR_PATTERN.finditer(tag_str):
+            key = attr_match.group(1).lower()
+            val = attr_match.group(2) if attr_match.group(2) is not None else (
+                attr_match.group(3) if attr_match.group(3) is not None else (attr_match.group(4) or "")
+            )
+            attrs[key] = html.unescape(val).strip()
+
+        meta_key = (attrs.get("property") or attrs.get("name") or "").lower().strip()
+        content = attrs.get("content", "").strip()
+        if meta_key in META_IMAGE_KEYS and content and meta_key not in candidates:
+            candidates[meta_key] = content
+
+    for key in META_IMAGE_KEYS:
+        raw_candidate = candidates.get(key)
+        if not raw_candidate:
+            continue
+        if raw_candidate.startswith("//"):
+            resolved = f"https:{raw_candidate}"
+        elif base_url:
+            resolved = urllib.parse.urljoin(base_url, raw_candidate)
+        else:
+            resolved = raw_candidate
+        resolved = resolved.strip()
+        if not is_rejected_image_url(resolved):
+            return resolved
+
+    return ""
+
+
 def fetch_url_html(url: str) -> str:
     """Fetch raw HTML using scrapling Fetcher if available, else urllib.request."""
     if HAS_SCRAPLING:
         try:
             fetcher = Fetcher()
-            res = fetcher.get(url)
+            try:
+                res = fetcher.get(url, timeout=7)
+            except TypeError:
+                res = fetcher.get(url)
             if hasattr(res, 'text') and res.text:
                 return res.text
             if hasattr(res, 'body') and res.body:
-                return res.body.decode('utf-8', errors='replace')
+                if isinstance(res.body, bytes):
+                    return res.body.decode('utf-8', errors='replace')
+                return str(res.body)
             return str(res)
         except Exception as err:
             sys.stderr.write(f"[scrapling fallback to urllib] {url}: {err}\n")
@@ -205,12 +333,14 @@ def clean_title(raw_title: str) -> str:
 
 
 def build_dual_tier_content(url: str, html_content: str) -> Dict[str, Any]:
-    """Parses HTML into Tier A (Essence) and Tier B (Full Markdown Body)."""
+    """Parses HTML into Tier A (Essence), Tier B (Full Markdown Body), and authentic hero imageUrl."""
     parser = SimpleHtmlContentExtractor()
     try:
         parser.feed(html_content)
     except Exception:
         pass
+
+    image_url = extract_hero_image_url(html_content, url)
 
     title = clean_title(parser.title)
     if not title:
@@ -218,9 +348,9 @@ def build_dual_tier_content(url: str, html_content: str) -> Dict[str, Any]:
         slug = url.split('/')[-1].split('?')[0].replace('-', ' ').replace('_', ' ')
         title = slug.capitalize() or "Veröffentlichter Fachbeitrag"
 
-    # Assemble structured Markdown body
+    # Assemble structured Markdown body from authentic extracted blocks only
     markdown_lines: List[str] = []
-    if title:
+    if title and parser.blocks:
         markdown_lines.append(f"# {title}\n")
 
     for block in parser.blocks:
@@ -241,8 +371,7 @@ def build_dual_tier_content(url: str, html_content: str) -> Dict[str, Any]:
 
     full_markdown_body = "\n".join(markdown_lines).strip()
 
-    # Tier A: Essence Text (4–6 sentences, ~90–160 words, >= 220 chars)
-    # Collect sentences from the top paragraphs
+    # Tier A: Essence Text (4–6 authentic sentences from top paragraphs; never fabricated)
     extracted_sentences: List[str] = []
     for para in parser.raw_text_paragraphs:
         # Split on sentence boundaries
@@ -262,32 +391,13 @@ def build_dual_tier_content(url: str, html_content: str) -> Dict[str, Any]:
     elif extracted_sentences:
         essence_text = " ".join(extracted_sentences)
 
-    clean_title = re.sub(r'\.(html?|php|aspx?)$', '', title, flags=re.IGNORECASE)
-    clean_title = re.sub(r'[-_]+', ' ', clean_title).strip() or "Fachbeitrag"
+    normalized_title = re.sub(r'\.(html?|php|aspx?)$', '', title, flags=re.IGNORECASE)
+    normalized_title = re.sub(r'[-_]+', ' ', normalized_title).strip() or "Fachbeitrag"
 
-    if len(essence_text) < 220:
-        essence_text = (
-            f"Die Analyse zu „{clean_title}“ untersucht die kognitiven und psychologischen Mechanismen mentaler Widerstandskraft und intellektueller Fokussierung. "
-            f"Im Fokus stehen fundierte Erkenntnisse der Kognitionswissenschaft, Strategien gegen digitale Reizüberflutung sowie die Kultivierung geistiger Klarheit im anspruchsvollen Alltag. "
-            f"Vertiefende Ausführungen und praktische Perspektiven sind im Primärbeitrag dokumentiert."
-        )
+    if full_markdown_body and normalized_title and not full_markdown_body.startswith("#"):
+        full_markdown_body = f"# {normalized_title}\n\n{full_markdown_body}"
 
-    if len(full_markdown_body) < 500:
-        full_markdown_body = (
-            f"# {clean_title}\n\n"
-            f"{essence_text}\n\n"
-            f"## Hintergrund & Vertiefung\n\n"
-            f"Die Auseinandersetzung mit diesen Fragen berührt grundlegende Mechanismen menschlicher Urteilskraft und kognitiver Autonomie. "
-            f"Durch die bewusste Reflexion von Aufmerksamkeitsarchitekturen können Lernende und Lehrende ein vertieftes Verständnis komplexer Zusammenhänge entwickeln.\n\n"
-            f"> „Kritische Urteilskraft entsteht durch die geduldige Analyse von Voraussetzungen und empirischen Zusammenhängen.“\n\n"
-            f"## Perspektiven & Anwendung\n\n"
-            f"Für Schule, Forschung und gesellschaftlichen Diskurs eröffnen sich konkrete Anknüpfungspunkte: "
-            f"Statt passiver Informationsaufnahme fördert die methodische Reflexion eine eigenständige und nachhaltige Urteilsbildung."
-        )
-    elif clean_title and not full_markdown_body.startswith("#"):
-        full_markdown_body = f"# {clean_title}\n\n{full_markdown_body}"
-
-    word_count = len(full_markdown_body.split())
+    word_count = len(full_markdown_body.split()) if full_markdown_body else 0
     reading_minutes = max(1, math.ceil(word_count / 200))
 
     return {
@@ -295,6 +405,7 @@ def build_dual_tier_content(url: str, html_content: str) -> Dict[str, Any]:
         "title": title,
         "essenceText": essence_text,
         "fullMarkdownBody": full_markdown_body,
+        "imageUrl": image_url,
         "wordCount": word_count,
         "estimatedReadingMinutes": reading_minutes
     }
@@ -315,13 +426,13 @@ def harvest_urls(urls: List[str]) -> List[Dict[str, Any]]:
             sys.stderr.write(f"[Harvest error] {u}: {err}\n")
             slug = u.split('/')[-1].split('?')[0].replace('-', ' ').replace('_', ' ')
             fallback_title = slug.capitalize() or "Fachbeitrag"
-            fallback_body = f"# {fallback_title}"
             results.append({
                 "url": u,
                 "title": fallback_title,
                 "essenceText": "",
-                "fullMarkdownBody": fallback_body,
-                "wordCount": 1,
+                "fullMarkdownBody": "",
+                "imageUrl": "",
+                "wordCount": 0,
                 "estimatedReadingMinutes": 1
             })
     return results

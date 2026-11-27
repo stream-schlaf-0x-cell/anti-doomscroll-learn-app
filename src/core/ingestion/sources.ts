@@ -1,7 +1,7 @@
 import { RawFeedSource } from "./types";
 
 /**
- * 387 Active, Verified DE & EN Core Sources across all 12 Knowledge Domains.
+ * 389 Active, Verified DE & EN Core Sources across all 12 Knowledge Domains.
  */
 const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
   {
@@ -21,27 +21,27 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "id": "deutschlandfunk-nachrichten",
     "name": "Deutschlandfunk Nachrichten",
     "url": "https://www.deutschlandfunk.de/nachrichten-100.rss",
-    "primaryTopic": "philosophy_ethics",
+    "primaryTopic": "science_society",
     "topics": [
-      "philosophy_ethics",
       "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "Deutschlandfunk Redaktion",
-    "language": "de"
+    "language": "de",
+    "sourceDomain": "quality_news"
   },
   {
     "id": "tagesschau-inland",
     "name": "ARD Tagesschau",
     "url": "https://www.tagesschau.de/infoservices/alle-meldungen-100~rss2.xml",
-    "primaryTopic": "philosophy_ethics",
+    "primaryTopic": "science_society",
     "topics": [
-      "philosophy_ethics",
       "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "ARD-aktuell",
-    "language": "de"
+    "language": "de",
+    "sourceDomain": "quality_news"
   },
   {
     "id": "spektrum-wissenschaft",
@@ -444,12 +444,12 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "url": "https://www.tagesschau.de/ausland/index~rss2.xml",
     "primaryTopic": "science_society",
     "topics": [
-      "science_society",
-      "philosophy_ethics"
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "ARD Auslandsredaktion",
-    "language": "de"
+    "language": "de",
+    "sourceDomain": "quality_news"
   },
   {
     "id": "lions-roar-buddhism",
@@ -784,13 +784,13 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "url": "https://www.tagesschau.de/investigativ/index~rss2.xml",
     "primaryTopic": "science_society",
     "topics": [
-      "science_society",
-      "philosophy_ethics"
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "ARD Rechercheverbund",
     "language": "de",
-    "isChallengingPerspective": true
+    "isChallengingPerspective": true,
+    "sourceDomain": "quality_news"
   },
   {
     "id": "forschung-und-wissen",
@@ -2423,7 +2423,9 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "Medical Xpress",
-    "language": "en"
+    "language": "en",
+    "defaultEnabled": false,
+    "sourceKind": "reference"
   },
   {
     "id": "nasa-breaking",
@@ -3593,12 +3595,12 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
   },
   {
     "id": "asterisk-magazine",
-    "name": "Asterisk Magazine (Deep Science & Policy Essays)",
+    "name": "Asterisk Magazine (Progress, Science & Ideas)",
     "url": "https://asteriskmag.com/feed",
-    "primaryTopic": "science_society",
+    "primaryTopic": "opportunities_growth",
     "topics": [
-      "science_society",
-      "opportunities_growth"
+      "opportunities_growth",
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "Asterisk Magazine",
@@ -4887,12 +4889,12 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "url": "https://www.neustadt-ticker.de/feed",
     "primaryTopic": "science_society",
     "topics": [
-      "science_society",
-      "art_aesthetics"
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "Neustadt-Geflüster Dresden",
-    "language": "de"
+    "language": "de",
+    "sourceDomain": "quality_news"
   },
   {
     "id": "leipziger-zeitung-liz",
@@ -4900,12 +4902,12 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "url": "https://www.l-iz.de/feed",
     "primaryTopic": "science_society",
     "topics": [
-      "science_society",
-      "philosophy_ethics"
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "Leipziger Zeitung Redaktion",
-    "language": "de"
+    "language": "de",
+    "sourceDomain": "quality_news"
   },
   {
     "id": "kreuzer-leipzig-magazin",
@@ -4926,12 +4928,12 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "url": "https://www.lvz.de/arc/outboundfeeds/rss/",
     "primaryTopic": "science_society",
     "topics": [
-      "science_society",
-      "opportunities_growth"
+      "science_society"
     ],
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "LVZ Redaktion",
-    "language": "de"
+    "language": "de",
+    "sourceDomain": "quality_news"
   },
   {
     "id": "mdr-kultur-sachsen",
@@ -5268,8 +5270,62 @@ const ACTIVE_CORE_SOURCES: RawFeedSource[] = [
     "defaultEvidenceTier": "publisher_excerpt",
     "defaultAuthor": "Stronger By Science",
     "language": "en"
+  },
+  {
+    "id": "kagi-smallweb",
+    "name": "Kagi Small Web (Curated Indie Blogs)",
+    "url": "https://kagi.com/api/v1/smallweb/feed",
+    "primaryTopic": "science_society",
+    "topics": [
+      "science_society",
+      "opportunities_growth"
+    ],
+    "defaultEvidenceTier": "publisher_excerpt",
+    "defaultAuthor": "Kagi Small Web",
+    "language": "en"
+  },
+  {
+    "id": "xkcd-what-if",
+    "name": "xkcd What If? (Absurd Science Explained)",
+    "url": "https://what-if.xkcd.com/feed.atom",
+    "primaryTopic": "memes_satire",
+    "topics": [
+      "memes_satire",
+      "science_society"
+    ],
+    "defaultEvidenceTier": "permitted_full_text",
+    "defaultAuthor": "Randall Munroe",
+    "language": "en"
   }
 ];
+
+const NEWS_REROUTE_RESERVE_IDS = new Set<string>([
+  "fc-fr-debatte",
+  "fc-sz-investigativ",
+  "fc-mimikama-at"
+]);
+
+function sanitizeReserveSources(sources: RawFeedSource[]): RawFeedSource[] {
+  return sources.map((source) => {
+    if (NEWS_REROUTE_RESERVE_IDS.has(source.id)) {
+      return {
+        ...source,
+        primaryTopic: "science_society",
+        topics: ["science_society"]
+      };
+    }
+    if (source.id.startsWith("rs-frontiers-")) {
+      return {
+        ...source,
+        primaryTopic: "science_society",
+        topics: ["science_society"],
+        defaultEnabled: false,
+        sourceKind: "reference"
+      };
+    }
+    return source;
+  });
+}
 
 const isNodeRuntime =
   typeof process !== "undefined" &&
@@ -5284,7 +5340,7 @@ function loadNodeReserveSourcesSync(): RawFeedSource[] {
     };
     const mod = dynamicRequire("./globalCorpusSources");
     return Array.isArray(mod?.GLOBAL_CORPUS_RESERVE_SOURCES)
-      ? mod.GLOBAL_CORPUS_RESERVE_SOURCES
+      ? sanitizeReserveSources(mod.GLOBAL_CORPUS_RESERVE_SOURCES)
       : [];
   } catch {
     return [];
@@ -5298,7 +5354,7 @@ let cachedReserveSources: RawFeedSource[] | null =
 let reserveSourcesPromise: Promise<RawFeedSource[]> | null = null;
 
 /**
- * 387 Active Core Sources (always available synchronously without pulling the
+ * 389 Active Core Sources (always available synchronously without pulling the
  * 153 KB global reserve catalog into the client web boot bundle).
  */
 export const CORE_FEED_SOURCES: RawFeedSource[] = ACTIVE_CORE_SOURCES;
@@ -5310,15 +5366,15 @@ export const RESERVE_FEED_SOURCES_COUNT =
   NODE_RESERVE_SOURCES.length > 0 ? NODE_RESERVE_SOURCES.length : 266;
 
 /**
- * Total deduplicated catalog count across core + reserve sources (653).
+ * Total deduplicated catalog count across core + reserve sources (655).
  */
 export const TOTAL_VERIFIED_SOURCES_COUNT =
   ACTIVE_CORE_SOURCES.length + RESERVE_FEED_SOURCES_COUNT;
 
 /**
- * Total Deduplicated Global Sources Catalog (653 sources in Node/CLI/tests).
- * - In Node.js (pipeline & tests): synchronously includes all 387 core + 266 reserve sources.
- * - In Web/Mobile client boot bundles: contains the 387 core sources so `globalCorpusSources.ts`
+ * Total Deduplicated Global Sources Catalog (655 sources in Node/CLI/tests).
+ * - In Node.js (pipeline & tests): synchronously includes all 389 core + 266 reserve sources.
+ * - In Web/Mobile client boot bundles: contains the 389 core sources so `globalCorpusSources.ts`
  *   stays out of the initial JS bundle and loads on demand via `loadReserveFeedSources()`.
  */
 export const VERIFIED_FEED_SOURCES: RawFeedSource[] =
@@ -5349,7 +5405,7 @@ export async function loadReserveFeedSources(): Promise<RawFeedSource[]> {
     reserveSourcesPromise = import("./globalCorpusSources")
       .then((mod) => {
         const sources = Array.isArray(mod.GLOBAL_CORPUS_RESERVE_SOURCES)
-          ? mod.GLOBAL_CORPUS_RESERVE_SOURCES
+          ? sanitizeReserveSources(mod.GLOBAL_CORPUS_RESERVE_SOURCES)
           : [];
         if (sources.length > 0) {
           cachedReserveSources = sources;

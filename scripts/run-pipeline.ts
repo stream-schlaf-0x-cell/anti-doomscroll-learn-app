@@ -15,12 +15,20 @@ import { SourceHealthInfo, getSourceKind } from '../src/core/ingestion/sourceHea
 import {
   BatchEditionEnricher,
   isAccessibleHealthLongevityItem,
+  isDoomscrollOrOffTopicNoise,
   isSupportedFeedLanguage,
   satisfiesDefaultCuratedStandard,
   sanitizeCuratedFeedItem,
   stripPublisherBoilerplate
 } from '../src/core/enrichment/batchEnricher';
+import {
+  isBrightWebFlagshipItem,
+  fetchArtInstituteArtworks,
+  fetchClevelandMuseumArtworks,
+  fetchWikipediaBrightDiscoveries
+} from '../src/core/ingestion/brightWebAdapters';
 import { enrichStubItemWithFulltext, harvestWebPageContent } from '../src/core/ingestion/webContentExtractor';
+import { isRejectedLowResOrLogoUrl } from '../src/core/utils/imageQuality';
 import { enforceCuratedStreamDiversity, isSaxonyRegionalItem, isWithin14DayRelevanceWindow } from '../src/core/domain/ranking';
 import { defaultUsageLedger } from '../src/core/enrichment/ledger';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENROUTER_MODEL } from '../src/core/ai/atmenAiClient';
@@ -52,32 +60,121 @@ export const PRIORITY_SPACES = [
   'c/gesellschaft_politik'
 ] as const;
 
+const IMAGE_STARVED_SPACES = [
+  'c/kontemplation',
+  'c/health_longevity',
+  'c/didaktik_labor',
+  'c/books',
+  'c/dialektik',
+  'c/chancen'
+] as const;
+
+const IMAGE_STARVED_SPACE_SET = new Set<string>(IMAGE_STARVED_SPACES);
+
+function getChannelPublisherDiversityKey(item: FeedItem): string {
+  if (item.space === 'c/youtube' || item.format === 'youtube_gem') {
+    const channelTitle = item.youtubeMeta?.channelTitle?.trim();
+    if (channelTitle) return channelTitle.toLowerCase();
+    const dom = (item.sourceDomain || '').trim().toLowerCase();
+    const broadcaster = (item.sourceBroadcasterName || '').trim();
+    if (broadcaster && (!dom || dom.includes('youtube.com') || dom.includes('youtu.be'))) {
+      return broadcaster.toLowerCase();
+    }
+    return (dom || broadcaster || item.id).toLowerCase();
+  }
+  return (
+    item.sourceDomain ||
+    item.sourceBroadcasterName ||
+    item.sourceReferences?.[0]?.publisher ||
+    item.id
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function hasAuthenticNonLogoImage(item: FeedItem): boolean {
+  return Boolean(item.imageUrl) && !isRejectedLowResOrLogoUrl(item.imageUrl, item.space === 'c/memes');
+}
+
+function isOpenMuseumArtwork(item: FeedItem): boolean {
+  const haystack = `${item.sourceDomain || ''} ${item.canonicalUrl || ''} ${item.sourceBroadcasterName || ''}`.toLowerCase();
+  return (
+    haystack.includes('artic.edu') ||
+    haystack.includes('art institute of chicago') ||
+    haystack.includes('clevelandart.org') ||
+    haystack.includes('cleveland museum of art')
+  );
+}
+
+function scoreStartupCandidate(item: FeedItem, nowMs: number, museumBonus = false): number {
+  const flagshipBonus = isBrightWebFlagshipItem(item) ? 40 : 0;
+  const imageBonus = hasAuthenticNonLogoImage(item) ? 12 : 0;
+  const reliableDateBonus = item.publicationDateReliable !== false ? 6 : 0;
+  const publishedMs = Date.parse(item.publishedAt);
+  const ageDays = Number.isFinite(publishedMs) ? Math.max(0, (nowMs - publishedMs) / 86_400_000) : 14;
+  const freshnessScore = Math.max(0, 1 - ageDays / 14) * 22;
+  const openMuseumExtra = museumBonus && isOpenMuseumArtwork(item) ? 15 : 0;
+  return flagshipBonus + imageBonus + reliableDateBonus + freshnessScore + openMuseumExtra;
+}
+
+function compareStartupCandidates(a: FeedItem, b: FeedItem, nowMs: number, museumBonus = false): number {
+  const scoreDiff = scoreStartupCandidate(b, nowMs, museumBonus) - scoreStartupCandidate(a, nowMs, museumBonus);
+  if (Math.abs(scoreDiff) > 0.001) return scoreDiff;
+  const relA = a.publicationDateReliable !== false ? 1 : 0;
+  const relB = b.publicationDateReliable !== false ? 1 : 0;
+  if (relA !== relB) return relB - relA;
+  return (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0);
+}
+
+function selectWithPublisherCap(sortedItems: FeedItem[], limit: number, maxPerPublisher = 2): FeedItem[] {
+  const picked: FeedItem[] = [];
+  const countsByPublisher = new Map<string, number>();
+  for (const item of sortedItems) {
+    if (picked.length >= limit) break;
+    const pubKey = getChannelPublisherDiversityKey(item);
+    const current = countsByPublisher.get(pubKey) || 0;
+    if (current >= maxPerPublisher) continue;
+    countsByPublisher.set(pubKey, current + 1);
+    picked.push(item);
+  }
+  return picked;
+}
+
 export function selectBalancedStartupItems(pool: FeedItem[], nowMs: number, cap = STARTUP_SNAPSHOT_CAP): FeedItem[] {
-  const gallerySourcePool = pool.filter(i => i.space === 'c/kunst_galerie');
-  const galleryKeep = gallerySourcePool.slice(0, Math.min(22, Math.max(1, Math.floor(cap * 0.18))));
-  const editorialCandidates = pool.filter(
+  const cleanPool = pool.filter(i => !isDoomscrollOrOffTopicNoise(i));
+
+  const galleryCap = Math.min(22, Math.max(1, Math.floor(cap * 0.18)));
+  const gallerySourcePool = cleanPool
+    .filter(i => i.space === 'c/kunst_galerie')
+    .sort((a, b) => compareStartupCandidates(a, b, nowMs, true));
+  const galleryKeep = interleaveByPublisherAndSpace(selectWithPublisherCap(gallerySourcePool, galleryCap, 2));
+
+  const editorialCandidates = cleanPool.filter(
     i => i.space !== 'c/kunst_galerie' && isWithin14DayRelevanceWindow(i, nowMs)
   );
 
-  const sortByFreshness = (a: FeedItem, b: FeedItem) => {
-    const relA = a.publicationDateReliable !== false ? 1 : 0;
-    const relB = b.publicationDateReliable !== false ? 1 : 0;
-    if (relA !== relB) return relB - relA;
-    return (new Date(b.publishedAt).getTime() || 0) - (new Date(a.publishedAt).getTime() || 0);
-  };
-
-  // Reserve floor slots for all 12 editorial knowledge spaces so every built-in channel flourishes
+  // Reserve floor slots for all 12 editorial knowledge spaces with strict <= 2 per publisher/creator cap
   const floorSelected: FeedItem[] = [];
   const floorIds = new Set<string>();
+  const countsBySpacePub = new Map<string, number>();
+  const getSpacePubKey = (item: FeedItem) =>
+    `${(item.space || '').trim().toLowerCase()}|${getChannelPublisherDiversityKey(item)}`;
+  const canAddForSpacePub = (item: FeedItem) => (countsBySpacePub.get(getSpacePubKey(item)) || 0) < 2;
+  const recordSpacePub = (item: FeedItem) => {
+    const key = getSpacePubKey(item);
+    countsBySpacePub.set(key, (countsBySpacePub.get(key) || 0) + 1);
+  };
+
   for (const sp of PRIORITY_SPACES) {
     const quota = sp === 'c/gesellschaft_politik' ? 6 : 8;
-    const matching = editorialCandidates
+    const rankedForSpace = editorialCandidates
       .filter(i => i.space === sp)
-      .sort(sortByFreshness)
-      .slice(0, quota);
+      .sort((a, b) => compareStartupCandidates(a, b, nowMs));
+    const matching = selectWithPublisherCap(rankedForSpace, quota, 2);
     for (const m of matching) {
       if (!floorIds.has(m.id)) {
         floorIds.add(m.id);
+        recordSpacePub(m);
         floorSelected.push(m);
       }
     }
@@ -87,24 +184,44 @@ export function selectBalancedStartupItems(pool: FeedItem[], nowMs: number, cap 
   const existingSaxonyCount = floorSelected.filter(i => isSaxonyRegionalItem(i)).length;
   if (existingSaxonyCount < 6) {
     const needed = 6 - existingSaxonyCount;
-    const saxonyExtras = editorialCandidates
+    const saxonyCandidates = editorialCandidates
       .filter(i => !floorIds.has(i.id) && isSaxonyRegionalItem(i))
-      .sort(sortByFreshness)
-      .slice(0, needed);
-    for (const sx of saxonyExtras) {
+      .sort((a, b) => compareStartupCandidates(a, b, nowMs));
+    let saxonyAdded = 0;
+    for (const sx of saxonyCandidates) {
+      if (saxonyAdded >= needed) break;
+      if (!canAddForSpacePub(sx)) continue;
       floorIds.add(sx.id);
+      recordSpacePub(sx);
       floorSelected.push(sx);
+      saxonyAdded++;
+    }
+    if (saxonyAdded < needed) {
+      for (const sx of saxonyCandidates) {
+        if (floorSelected.filter(i => isSaxonyRegionalItem(i)).length >= 6) break;
+        if (!floorIds.has(sx.id)) {
+          floorIds.add(sx.id);
+          recordSpacePub(sx);
+          floorSelected.push(sx);
+        }
+      }
     }
   }
 
-  const remainingFreshFirst = editorialCandidates
+  // Enforce <= 2 items per publisher/creator per channel across overflow slots too
+  const remainingRanked: FeedItem[] = [];
+  for (const item of editorialCandidates
     .filter(i => !floorIds.has(i.id))
-    .sort(sortByFreshness);
+    .sort((a, b) => compareStartupCandidates(a, b, nowMs))) {
+    if (!canAddForSpacePub(item)) continue;
+    recordSpacePub(item);
+    remainingRanked.push(item);
+  }
 
   const targetEditorialCount = Math.max(0, cap - galleryKeep.length);
   const editorialDiversified = enforceCuratedStreamDiversity([
     ...interleaveByPublisherAndSpace(floorSelected),
-    ...remainingFreshFirst
+    ...interleaveByPublisherAndSpace(remainingRanked)
   ]).slice(0, targetEditorialCount);
 
   const finalItems: FeedItem[] = [];
@@ -128,15 +245,50 @@ export function selectBalancedStartupItems(pool: FeedItem[], nowMs: number, cap 
 }
 
 export function selectCappedReservoirItems(pool: FeedItem[], cap = DEEP_RESERVOIR_CAP): FeedItem[] {
-  const reservoirGallery = pool.filter(i => i.space === 'c/kunst_galerie').slice(0, 60);
-  const editorialAll = pool.filter(i => i.space !== 'c/kunst_galerie');
+  const nowMs = Date.now();
+  const cleanPool = pool.filter(i => !isDoomscrollOrOffTopicNoise(i));
+
+  const galleryCap = Math.min(60, Math.max(0, Math.floor(cap * 0.12)));
+  const reservoirGallery = interleaveByPublisherAndSpace(
+    cleanPool
+      .filter(i => i.space === 'c/kunst_galerie')
+      .sort((a, b) => compareStartupCandidates(a, b, nowMs, true))
+  ).slice(0, galleryCap);
+
+  const editorialAll = cleanPool.filter(i => i.space !== 'c/kunst_galerie');
+  const maxEditorial = Math.max(0, cap - reservoirGallery.length);
+
+  // Protect a minimum balanced reservoir floor across ALL 12 priority spaces before filling remaining slots
+  const perSpaceFloor = Math.min(24, Math.max(4, Math.floor(maxEditorial / (PRIORITY_SPACES.length + 2))));
+  const floorSelected: FeedItem[] = [];
+  const floorIds = new Set<string>();
+  for (const sp of PRIORITY_SPACES) {
+    const spaceRanked = interleaveByPublisherAndSpace(
+      editorialAll
+        .filter(i => i.space === sp)
+        .sort((a, b) => compareStartupCandidates(a, b, nowMs))
+    ).slice(0, perSpaceFloor);
+    for (const item of spaceRanked) {
+      if (!floorIds.has(item.id)) {
+        floorIds.add(item.id);
+        floorSelected.push(item);
+      }
+    }
+  }
+
+  const floorEditorial = interleaveByPublisherAndSpace(floorSelected);
+  const remainingEditorial = editorialAll.filter(i => !floorIds.has(i.id));
   const isProtected = (i: FeedItem) =>
     i.space === 'c/youtube' || i.space === 'c/memes' || isSaxonyRegionalItem(i);
-  const protectedEditorial = interleaveByPublisherAndSpace(editorialAll.filter(isProtected));
-  const otherEditorial = interleaveByPublisherAndSpace(editorialAll.filter(i => !isProtected(i)));
-  const maxEditorial = Math.max(0, cap - reservoirGallery.length);
+  const protectedRemainder = interleaveByPublisherAndSpace(
+    remainingEditorial.filter(isProtected).sort((a, b) => compareStartupCandidates(a, b, nowMs))
+  );
+  const otherRemainder = interleaveByPublisherAndSpace(
+    remainingEditorial.filter(i => !isProtected(i)).sort((a, b) => compareStartupCandidates(a, b, nowMs))
+  );
+
   return [
-    ...[...protectedEditorial, ...otherEditorial].slice(0, maxEditorial),
+    ...[...floorEditorial, ...protectedRemainder, ...otherRemainder].slice(0, maxEditorial),
     ...reservoirGallery
   ].slice(0, cap);
 }
@@ -152,7 +304,7 @@ function normalizeUrlKey(url?: string): string {
 function interleaveByPublisherAndSpace(items: FeedItem[]): FeedItem[] {
   const byPub = new Map<string, FeedItem[]>();
   for (const item of items) {
-    const pub = (item.sourceDomain || item.sourceReferences?.[0]?.publisher || item.id).toLowerCase();
+    const pub = getChannelPublisherDiversityKey(item);
     const list = byPub.get(pub) || [];
     list.push(item);
     byPub.set(pub, list);
@@ -169,6 +321,108 @@ function interleaveByPublisherAndSpace(items: FeedItem[]): FeedItem[] {
     }
   }
   return out;
+}
+
+function interleaveIndicesByPublisher(indices: number[], items: FeedItem[]): number[] {
+  const byPub = new Map<string, number[]>();
+  for (const idx of indices) {
+    const pub = getChannelPublisherDiversityKey(items[idx]);
+    const list = byPub.get(pub) || [];
+    list.push(idx);
+    byPub.set(pub, list);
+  }
+  const out: number[] = [];
+  let added = true;
+  while (added) {
+    added = false;
+    for (const queue of byPub.values()) {
+      if (queue.length > 0) {
+        out.push(queue.shift()!);
+        added = true;
+      }
+    }
+  }
+  return out;
+}
+
+function selectScraplingHarvestIndices(items: FeedItem[], maxHarvests: number): number[] {
+  const queuesBySpace = new Map<string, { flagship: number[]; regular: number[] }>();
+
+  const scoreNeed = (it: FeedItem, space: string): number => {
+    const needsImage = !hasAuthenticNonLogoImage(it);
+    const needsFulltext = (it.feedText || '').trim().length < 240 || (it.body || '').trim().length < 550;
+    return (needsImage ? (IMAGE_STARVED_SPACE_SET.has(space) ? 55 : 40) : 0) + (needsFulltext ? 25 : 0);
+  };
+
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (isDoomscrollOrOffTopicNoise(it)) continue;
+    const url = it.canonicalUrl || it.sourceReferences?.[0]?.originalUrl;
+    if (!url || !/^https?:\/\//i.test(url)) continue;
+
+    const hasValidImage = hasAuthenticNonLogoImage(it);
+    if (/youtube\.com\/watch|youtu\.be\//i.test(url) && hasValidImage) continue;
+
+    const needsImage = !hasValidImage;
+    const needsFulltext = (it.feedText || '').trim().length < 240 || (it.body || '').trim().length < 550;
+    if (!needsImage && !needsFulltext) continue;
+
+    const space =
+      it.space && String(it.space).startsWith('c/')
+        ? it.space
+        : TOPIC_SPACE_MAP[it.primaryTopic]?.space || 'c/serendipity';
+
+    const bucket = queuesBySpace.get(space) || { flagship: [], regular: [] };
+    if (isBrightWebFlagshipItem(it)) {
+      bucket.flagship.push(i);
+    } else {
+      bucket.regular.push(i);
+    }
+    queuesBySpace.set(space, bucket);
+  }
+
+  const orderedSpaceQueues = new Map<string, number[]>();
+  for (const [space, bucket] of queuesBySpace.entries()) {
+    const sortWithinTier = (a: number, b: number) => {
+      const needDiff = scoreNeed(items[b], space) - scoreNeed(items[a], space);
+      if (needDiff !== 0) return needDiff;
+      return (Date.parse(items[b].publishedAt) || 0) - (Date.parse(items[a].publishedAt) || 0);
+    };
+    const flagshipOrdered = interleaveIndicesByPublisher([...bucket.flagship].sort(sortWithinTier), items);
+    const regularOrdered = interleaveIndicesByPublisher([...bucket.regular].sort(sortWithinTier), items);
+    orderedSpaceQueues.set(space, [...flagshipOrdered, ...regularOrdered]);
+  }
+
+  const roundRobinSpaces: string[] = [];
+  const seenSpaces = new Set<string>();
+  for (const sp of [...IMAGE_STARVED_SPACES, ...PRIORITY_SPACES]) {
+    if (orderedSpaceQueues.has(sp) && !seenSpaces.has(sp)) {
+      seenSpaces.add(sp);
+      roundRobinSpaces.push(sp);
+    }
+  }
+  for (const sp of orderedSpaceQueues.keys()) {
+    if (!seenSpaces.has(sp)) {
+      seenSpaces.add(sp);
+      roundRobinSpaces.push(sp);
+    }
+  }
+
+  const selected: number[] = [];
+  let added = true;
+  while (added && selected.length < maxHarvests) {
+    added = false;
+    for (const sp of roundRobinSpaces) {
+      if (selected.length >= maxHarvests) break;
+      const queue = orderedSpaceQueues.get(sp);
+      if (queue && queue.length > 0) {
+        selected.push(queue.shift()!);
+        added = true;
+      }
+    }
+  }
+
+  return selected;
 }
 
 async function runIngestionPipeline() {
@@ -190,11 +444,28 @@ async function runIngestionPipeline() {
     previousHealth = {};
   }
 
-  // 1. Fetch all RSS/Atom endpoints concurrently (skipping pure reference homepages)
-  const fetchResults = await fetchAllFeeds(feedCapableSources, 28, 6500);
+  // 1. Fetch all RSS/Atom endpoints + Bright-Web Open APIs (ARTIC, Cleveland Museum, Wikipedia DE/EN) concurrently
+  const [fetchResults, brightWebResults] = await Promise.all([
+    fetchAllFeeds(feedCapableSources, 28, 6500),
+    Promise.allSettled([
+      fetchArtInstituteArtworks({ limit: 8, today: editionDate }),
+      fetchClevelandMuseumArtworks({ limit: 6, today: editionDate }),
+      fetchWikipediaBrightDiscoveries({ today: editionDate })
+    ])
+  ]);
 
   const { normalizedCandidates, sourceHealth: sourceHealthMap, totalRawEntries, successFeedCount } =
     normalizePipelineResults(fetchResults, previousHealth, editionDate);
+
+  const brightWebOpenItems: FeedItem[] = [];
+  for (const res of brightWebResults) {
+    if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+      brightWebOpenItems.push(...res.value);
+    } else if (res.status === 'rejected') {
+      console.warn('Bright-Web Open API fetch failed (non-fatal):', res.reason);
+    }
+  }
+  const mergedNormalizedCandidates: FeedItem[] = [...normalizedCandidates, ...brightWebOpenItems];
 
   // Record reference-only catalog entries cleanly without hitting network
   for (const src of VERIFIED_FEED_SOURCES) {
@@ -220,9 +491,10 @@ async function runIngestionPipeline() {
       }`
     );
   }
+  console.log(`  [OK] Bright-Web Open APIs (ARTIC + Cleveland Museum + Wikipedia) -> ${brightWebOpenItems.length} items`);
 
   // 2. Deduplicate across canonical URL, content hash & normalized title
-  const deduped = deduplicateFeedItems(normalizedCandidates);
+  const deduped = deduplicateFeedItems(mergedNormalizedCandidates);
 
   // 3. Honest Date Sort: reliable publication dates strictly precede undated archive entries, then newest first
   const sortedByDate = [...deduped.uniqueItems].sort((a, b) => {
@@ -239,7 +511,8 @@ async function runIngestionPipeline() {
   console.log('\n--- Pipeline Summary ---');
   console.log(`RSS feeds succeeded: ${successFeedCount} / ${feedCapableSources.length}`);
   console.log(`Raw entries fetched: ${totalRawEntries}`);
-  console.log(`Normalized valid:    ${normalizedCandidates.length}`);
+  console.log(`Bright-Web API gems: ${brightWebOpenItems.length}`);
+  console.log(`Normalized valid:    ${mergedNormalizedCandidates.length}`);
   console.log(`Duplicates removed:  ${deduped.duplicateCount}`);
   console.log(`Final unique items:  ${interleavedItems.length}`);
   console.log(`Fetch duration:      ${Date.now() - startTime}ms`);
@@ -253,19 +526,12 @@ async function runIngestionPipeline() {
     return;
   }
 
-  // 4. Expanded Fulltext Web Harvesting (Scrapling + HTML) on up to 110 short excerpts
-  console.log('\nApplying Fulltext Web Harvesting (Scrapling + HTML) & Batch Edition Enrichment...');
+  // 4. Fair Round-Robin Fulltext & og:image Web Harvesting (Scrapling + HTML) across all spaces
+  console.log('\nApplying Fair Round-Robin Fulltext & og:image Harvesting (Scrapling + HTML)...');
   const STUB_HARVEST_CONCURRENCY = 10;
   const MAX_SCRAPLING_HARVESTS = 110;
   const fulltextEnriched = [...interleavedItems];
-  const shortStubIndices: number[] = [];
-  for (let i = 0; i < fulltextEnriched.length && shortStubIndices.length < MAX_SCRAPLING_HARVESTS; i++) {
-    const it = fulltextEnriched[i];
-    const url = it.canonicalUrl || it.sourceReferences?.[0]?.originalUrl;
-    if (url && /^https?:\/\//i.test(url) && ((it.feedText || '').trim().length < 240 || (it.body || '').trim().length < 550)) {
-      shortStubIndices.push(i);
-    }
-  }
+  const shortStubIndices = selectScraplingHarvestIndices(fulltextEnriched, MAX_SCRAPLING_HARVESTS);
   for (let i = 0; i < shortStubIndices.length; i += STUB_HARVEST_CONCURRENCY) {
     const batchIndices = shortStubIndices.slice(i, i + STUB_HARVEST_CONCURRENCY);
     await Promise.allSettled(
@@ -299,6 +565,17 @@ async function runIngestionPipeline() {
                 };
               }
             }
+            if (
+              harvested?.imageUrl &&
+              !hasAuthenticNonLogoImage(updated) &&
+              !isRejectedLowResOrLogoUrl(harvested.imageUrl, updated.space === 'c/memes')
+            ) {
+              updated = {
+                ...updated,
+                imageUrl: harvested.imageUrl,
+                hasAuthenticImage: true
+              };
+            }
           } catch {
             // Individual timeout falls back to deterministic fulltext stub cleanup
           }
@@ -318,6 +595,7 @@ async function runIngestionPipeline() {
     }))
     .map(sanitizeCuratedFeedItem)
     .map(item => enrichStubItemWithFulltext(item))
+    .filter(item => !isDoomscrollOrOffTopicNoise(item))
     .filter(
       item =>
         (item.space !== 'c/health_longevity' && item.primaryTopic !== 'health_biohacking') ||
@@ -364,6 +642,7 @@ async function runIngestionPipeline() {
           ? item.space
           : TOPIC_SPACE_MAP[item.primaryTopic]?.space || 'c/serendipity'
     }))
+    .filter(item => !isDoomscrollOrOffTopicNoise(item))
     .filter(
       item =>
         !String(item.publishedAt).startsWith('2026-10-18') &&
@@ -371,7 +650,7 @@ async function runIngestionPipeline() {
     )
     .filter(satisfiesDefaultCuratedStandard);
 
-  // 6. Build Tier-2 Rolling 14-Day Deep Endless Reservoir (`public/feed-reservoir.json`, up to 900 items)
+  // 6. Build Tier-2 Rolling 14-Day Deep Endless Reservoir (`public/feed-reservoir.json`, up to 650 items)
   let previousReservoirItems: FeedItem[] = [];
   try {
     if (fs.existsSync(PUBLIC_RESERVOIR_PATH)) {
@@ -396,6 +675,7 @@ async function runIngestionPipeline() {
 
   for (const candidate of [...combinedCurated, ...previousReservoirItems]) {
     const clean = sanitizeCuratedFeedItem(candidate);
+    if (isDoomscrollOrOffTopicNoise(clean)) continue;
     if (
       (clean.space === 'c/health_longevity' || clean.primaryTopic === 'health_biohacking') &&
       !isAccessibleHealthLongevityItem(clean)
@@ -501,7 +781,7 @@ function compactExistingPublicSnapshots(): void {
     if (parsedRes && parsedRes.items.length > 0) {
       const refMs = parsedRes.generatedAt ? Date.parse(parsedRes.generatedAt) : Date.now();
       const freshPool = parsedRes.items.filter(
-        it => it.space === 'c/kunst_galerie' || isWithin14DayRelevanceWindow(it, refMs)
+        it => !isDoomscrollOrOffTopicNoise(it) && (it.space === 'c/kunst_galerie' || isWithin14DayRelevanceWindow(it, refMs))
       );
       const selectedRes = selectCappedReservoirItems(freshPool, DEEP_RESERVOIR_CAP);
       const compactResItems = selectedRes.map(item =>
@@ -544,7 +824,8 @@ function compactExistingPublicSnapshots(): void {
     const parsedSnap = parseSnapshotPayload(parsedRaw, { skipByteBudget: true });
     if (parsedSnap && parsedSnap.items.length > 0) {
       const refMs = parsedSnap.generatedAt ? Date.parse(parsedSnap.generatedAt) : Date.now();
-      const selectedSnap = selectBalancedStartupItems(parsedSnap.items, refMs, STARTUP_SNAPSHOT_CAP);
+      const cleanSnapPool = parsedSnap.items.filter(it => !isDoomscrollOrOffTopicNoise(it));
+      const selectedSnap = selectBalancedStartupItems(cleanSnapPool, refMs, STARTUP_SNAPSHOT_CAP);
       const compactHealth = compactSourceHealthForSnapshot(parsedSnap.sourceHealth);
       const compactSnapItems = selectedSnap.map(item =>
         compactItemForSnapshot(item, { maxBodyChars: SNAPSHOT_MAX_BODY_CHARS })

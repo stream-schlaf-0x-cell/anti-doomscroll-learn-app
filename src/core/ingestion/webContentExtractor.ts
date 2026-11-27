@@ -10,6 +10,7 @@
  */
 
 import { FeedItem } from '../domain/types';
+import { isRejectedLowResOrLogoUrl } from '../utils/imageQuality';
 
 export interface HarvestedArticle {
   url: string;
@@ -18,6 +19,7 @@ export interface HarvestedArticle {
   fullMarkdownBody: string;
   wordCount: number;
   estimatedReadingMinutes: number;
+  imageUrl?: string;
 }
 
 const BOILERPLATE_PATTERNS = [
@@ -53,6 +55,75 @@ function cleanText(text: string): string {
     .trim();
 }
 
+const META_IMAGE_PRIORITY = [
+  'og:image:secure_url',
+  'og:image:url',
+  'og:image',
+  'twitter:image:src',
+  'twitter:image'
+] as const;
+
+/**
+ * Extracts an authentic og:image / twitter:image hero photo URL from HTML,
+ * supporting both attribute orders, resolving relative URLs, and filtering logos/icons/svgs/1x1 pixels.
+ */
+function extractHeroImageFromHtml(html: string, sourceUrl = ''): string | undefined {
+  if (!html || typeof html !== 'string') return undefined;
+
+  const candidates = new Map<string, string>();
+  const metaTagRegex = /<meta\b[^>]*>/gi;
+  const attrRegex = /([a-zA-Z0-9:_-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
+
+  let tagMatch: RegExpExecArray | null;
+  while ((tagMatch = metaTagRegex.exec(html)) !== null) {
+    const tagStr = tagMatch[0];
+    const attrs: Record<string, string> = {};
+    let attrMatch: RegExpExecArray | null;
+    attrRegex.lastIndex = 0;
+    while ((attrMatch = attrRegex.exec(tagStr)) !== null) {
+      const key = attrMatch[1].toLowerCase();
+      const rawVal = attrMatch[2] ?? attrMatch[3] ?? attrMatch[4] ?? '';
+      attrs[key] = rawVal
+        .replace(/&amp;/gi, '&')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .trim();
+    }
+
+    const metaKey = (attrs.property || attrs.name || '').toLowerCase().trim();
+    const content = (attrs.content || '').trim();
+    if (
+      content &&
+      (META_IMAGE_PRIORITY as readonly string[]).includes(metaKey) &&
+      !candidates.has(metaKey)
+    ) {
+      candidates.set(metaKey, content);
+    }
+  }
+
+  for (const key of META_IMAGE_PRIORITY) {
+    const rawCandidate = candidates.get(key);
+    if (!rawCandidate) continue;
+
+    let resolved = rawCandidate;
+    if (resolved.startsWith('//')) {
+      resolved = `https:${resolved}`;
+    } else if (!/^https?:\/\//i.test(resolved) && sourceUrl) {
+      try {
+        resolved = new URL(resolved, sourceUrl).toString();
+      } catch {
+        continue;
+      }
+    }
+
+    if (!isRejectedLowResOrLogoUrl(resolved)) {
+      return resolved;
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Pure TypeScript HTML content extractor.
  * Converts article/main HTML into clean Markdown and dual-tier essence/body.
@@ -61,6 +132,9 @@ export function extractCleanArticleFromHtml(html: string, sourceUrl = ''): Harve
   if (!html || typeof html !== 'string') {
     return createSyntheticFallback(sourceUrl, 'Fachbeitrag');
   }
+
+  // 0. Extract authentic og:image / twitter:image hero photo before stripping head tags
+  const imageUrl = extractHeroImageFromHtml(html, sourceUrl);
 
   // 1. Extract title
   let title = '';
@@ -184,7 +258,8 @@ export function extractCleanArticleFromHtml(html: string, sourceUrl = ''): Harve
     essenceText,
     fullMarkdownBody,
     wordCount,
-    estimatedReadingMinutes
+    estimatedReadingMinutes,
+    ...(imageUrl ? { imageUrl } : {})
   };
 }
 
@@ -231,9 +306,19 @@ export async function harvestWebPageContent(url: string, htmlFallback?: string):
           execFile('python3', [scriptPath, url], { timeout: 5000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
             if (err) return reject(err);
             try {
-              const parsed = JSON.parse(stdout);
+              const parsed = JSON.parse(stdout) as Record<string, unknown>;
               if (parsed && typeof parsed.essenceText === 'string' && typeof parsed.fullMarkdownBody === 'string') {
-                return resolve(parsed as HarvestedArticle);
+                const rawImg = typeof parsed.imageUrl === 'string' ? parsed.imageUrl.trim() : '';
+                const validImageUrl = rawImg && !isRejectedLowResOrLogoUrl(rawImg) ? rawImg : undefined;
+                return resolve({
+                  url: typeof parsed.url === 'string' ? parsed.url : url,
+                  title: typeof parsed.title === 'string' ? parsed.title : '',
+                  essenceText: parsed.essenceText,
+                  fullMarkdownBody: parsed.fullMarkdownBody,
+                  wordCount: typeof parsed.wordCount === 'number' ? parsed.wordCount : 0,
+                  estimatedReadingMinutes: typeof parsed.estimatedReadingMinutes === 'number' ? parsed.estimatedReadingMinutes : 1,
+                  ...(validImageUrl ? { imageUrl: validImageUrl } : {})
+                });
               }
               reject(new Error('Invalid JSON schema from scrapling_harvester'));
             } catch (parseErr) {
@@ -244,7 +329,7 @@ export async function harvestWebPageContent(url: string, htmlFallback?: string):
       };
 
       const result = await runPy();
-      if (result && result.essenceText && result.fullMarkdownBody) {
+      if (result && (result.essenceText || result.fullMarkdownBody || result.imageUrl)) {
         return result;
       }
     } catch {
@@ -288,16 +373,21 @@ export function enrichStubItemWithFulltext(item: FeedItem, harvested?: Harvested
 
   const isFeedTextThin = currentFeedText.length < 40;
   const isBodyThin = currentBody.length < 40;
+  const hasExistingImage = Boolean(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
 
   if (!isFeedTextThin && !isBodyThin && !harvested) {
     return item;
   }
 
-  // Use provided harvested content or synthesize dual-tier content
+  // Use provided harvested content or extract clean content from raw HTML
   const article = harvested || extractCleanArticleFromHtml(
     item.body || item.feedText || item.articleBody || '',
     item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || ''
   );
+
+  const resolvedImageUrl = !hasExistingImage && article.imageUrl && !isRejectedLowResOrLogoUrl(article.imageUrl)
+    ? article.imageUrl
+    : undefined;
 
   const updatedFeedText = isFeedTextThin
     ? (article.essenceText || currentFeedText)
@@ -314,6 +404,7 @@ export function enrichStubItemWithFulltext(item: FeedItem, harvested?: Harvested
     ...item,
     feedText: updatedFeedText,
     body: updatedBody,
+    ...(resolvedImageUrl ? { imageUrl: resolvedImageUrl, hasAuthenticImage: true } : {}),
     wordCount: isBodyThin ? wordCount : (item.wordCount && item.wordCount > wordCount ? item.wordCount : wordCount),
     estimatedReadingMinutes: isBodyThin ? estimatedReadingMinutes : (
       item.estimatedReadingMinutes && item.estimatedReadingMinutes > estimatedReadingMinutes

@@ -8,7 +8,9 @@ import {
   detectLanguage,
   upgradeImageResolutionUrl,
   isSupportedFeedLanguage,
-  isCelebrityFluff
+  isCelebrityFluff,
+  isDoomscrollOrOffTopicNoise,
+  isAccessibleHealthLongevityItem
 } from '../enrichment/batchEnricher';
 import { AiCredentials, callAiModel, hasAiConfiguration, loadAiCredentials } from '../ai/atmenAiClient';
 import { feedRepository } from '../data/feedRepository';
@@ -16,6 +18,10 @@ import { REAL_KNOWLEDGE_VAULT } from '../data/realKnowledgeVault';
 import { defaultSnapshotLoader } from '../feed/SnapshotLoader';
 import { isRejectedLowResOrLogoUrl } from '../utils/imageQuality';
 import { ContinuousLiveNewsService } from '../data/continuousLiveNewsService';
+import {
+  fetchArtInstituteArtworks,
+  fetchWikipediaBrightDiscoveries
+} from './brightWebAdapters';
 
 export function extractYoutubeVideoId(rawUrl: string): string | null {
   if (!rawUrl || typeof rawUrl !== 'string') return null;
@@ -333,8 +339,86 @@ const CURATED_YOUTUBE_CHANNELS: readonly CuratedYoutubeChannelSeed[] = [
   { channelId: 'UCshObcm-nLhbu8MY50EZ5Ng', name: 'Benn Jordan', language: 'en' },
   { channelId: 'UCgNg3vwj3xt7QOrcIDaHdFg', name: 'PolyMatter', language: 'en' },
   { channelId: 'UCR1IuLEqb6UEA_zQ81kwXfg', name: 'Real Engineering', language: 'en' },
-  { channelId: 'UCMOqf8ab-42UUQIdVoKwjlQ', name: 'Practical Engineering', language: 'en' }
+  { channelId: 'UCMOqf8ab-42UUQIdVoKwjlQ', name: 'Practical Engineering', language: 'en' },
+  { channelId: 'UCRcgy6GzDeccI7dkbbBna3Q', name: 'LEMMiNO', language: 'en' },
+  { channelId: 'UC-tLyAaPbRZiYrOJxAGB7dQ', name: 'Pursuit of Wonder', language: 'en' },
+  { channelId: 'UCdcemy56JtVTrsFIOoqvV8g', name: 'Andrew Huang', language: 'en' },
+  { channelId: 'UChnxLLvzviaR5NeKOevB8iQ', name: 'Red Means Recording', language: 'en' },
+  { channelId: 'UCTpmmkp1E4nmZqWPS-dl5bg', name: 'Quanta Magazine', language: 'en' },
+  { channelId: 'UCjFqcJQXGZ6T6sxyFB-5i6A', name: 'Every Frame a Painting', language: 'en' }
 ];
+
+export interface BrightWebFeedSpec {
+  name: string;
+  rssUrl: string;
+  domain: string;
+}
+
+export const BRIGHT_COMIC_SATIRE_FEEDS: readonly BrightWebFeedSpec[] = [
+  { name: 'xkcd', rssUrl: 'https://xkcd.com/rss.xml', domain: 'xkcd.com' },
+  { name: 'SMBC Comics', rssUrl: 'https://www.smbc-comics.com/comic/rss', domain: 'smbc-comics.com' },
+  { name: 'Existential Comics', rssUrl: 'https://existentialcomics.com/rss.xml', domain: 'existentialcomics.com' },
+  { name: 'xkcd What If?', rssUrl: 'https://what-if.xkcd.com/feed.atom', domain: 'what-if.xkcd.com' },
+  { name: 'Der Postillon', rssUrl: 'https://www.der-postillon.com/feeds/posts/default?alt=rss', domain: 'der-postillon.com' },
+  { name: 'Sketchplanations', rssUrl: 'https://sketchplanations.com/rss', domain: 'sketchplanations.com' },
+  { name: 'The Perry Bible Fellowship', rssUrl: 'https://pbfcomics.com/feed/', domain: 'pbfcomics.com' }
+];
+
+export const BRIGHT_WEB_CHANNEL_FEEDS: Record<string, BrightWebFeedSpec[]> = {
+  'c/dialektik': [
+    { name: 'Aeon', rssUrl: 'https://aeon.co/feed.rss', domain: 'aeon.co' },
+    { name: 'Psyche', rssUrl: 'https://psyche.co/feed.rss', domain: 'psyche.co' },
+    { name: 'Daily Nous', rssUrl: 'https://dailynous.com/feed/', domain: 'dailynous.com' },
+    { name: 'Deutschlandfunk Kultur Sein & Streit', rssUrl: 'https://www.deutschlandfunkkultur.de/sein-und-streit-100.rss', domain: 'deutschlandfunkkultur.de' }
+  ],
+  'c/serendipity': [
+    { name: 'Quanta Magazine', rssUrl: 'https://www.quantamagazine.org/feed/', domain: 'quantamagazine.org' },
+    { name: 'Kagi Small Web', rssUrl: 'https://kagi.com/api/v1/smallweb/feed', domain: 'kagi.com' },
+    { name: 'Nautilus', rssUrl: 'https://nautil.us/feed/', domain: 'nautil.us' },
+    { name: 'Spektrum', rssUrl: 'https://www.spektrum.de/alias/rss/spektrum-de-rss-feed/996406', domain: 'spektrum.de' }
+  ],
+  'c/books': [
+    { name: 'The Public Domain Review', rssUrl: 'https://publicdomainreview.org/rss.xml', domain: 'publicdomainreview.org' },
+    { name: 'Five Books', rssUrl: 'https://fivebooks.com/feed/', domain: 'fivebooks.com' },
+    { name: '54books', rssUrl: 'https://www.54books.de/feed/', domain: '54books.de' },
+    { name: 'The Marginalian', rssUrl: 'https://www.themarginalian.org/feed/', domain: 'themarginalian.org' }
+  ],
+  'c/synth_alchemie': [
+    { name: 'Bandcamp Daily', rssUrl: 'https://daily.bandcamp.com/feed', domain: 'daily.bandcamp.com' },
+    { name: 'Create Digital Music', rssUrl: 'https://cdm.link/feed/', domain: 'cdm.link' },
+    { name: 'Synthtopia', rssUrl: 'https://www.synthtopia.com/feed/', domain: 'synthtopia.com' },
+    { name: 'A Closer Listen', rssUrl: 'https://acloserlisten.com/feed/', domain: 'acloserlisten.com' }
+  ],
+  'c/didaktik_labor': [
+    { name: 'Das Deutsche Schulportal', rssUrl: 'https://deutsches-schulportal.de/feed/', domain: 'deutsches-schulportal.de' },
+    { name: 'Learning Scientists', rssUrl: 'https://www.learningscientists.org/blog?format=rss', domain: 'learningscientists.org' },
+    { name: 'Cult of Pedagogy', rssUrl: 'https://www.cultofpedagogy.com/feed/', domain: 'cultofpedagogy.com' },
+    { name: 'Wissenschaftskommunikation', rssUrl: 'https://www.wissenschaftskommunikation.de/feed/', domain: 'wissenschaftskommunikation.de' }
+  ],
+  'c/kontemplation': [
+    { name: 'Psyche', rssUrl: 'https://psyche.co/feed.rss', domain: 'psyche.co' },
+    { name: 'Tricycle', rssUrl: 'https://tricycle.org/feed/', domain: 'tricycle.org' },
+    { name: 'Plum Village', rssUrl: 'https://plumvillage.org/feed/', domain: 'plumvillage.org' },
+    { name: 'Greater Good', rssUrl: 'https://greatergood.berkeley.edu/site/rss/all', domain: 'greatergood.berkeley.edu' }
+  ],
+  'c/health_longevity': [
+    { name: 'Peter Attia MD', rssUrl: 'https://peterattiamd.com/feed/', domain: 'peterattiamd.com' },
+    { name: 'NDR Ratgeber Gesundheit', rssUrl: 'https://www.ndr.de/ratgeber/gesundheit/index-rss.xml', domain: 'ndr.de' },
+    { name: 'Greater Good', rssUrl: 'https://greatergood.berkeley.edu/site/rss/all', domain: 'greatergood.berkeley.edu' }
+  ],
+  'c/chancen': [
+    { name: 'Asterisk Magazine', rssUrl: 'https://asteriskmag.com/feed', domain: 'asteriskmag.com' },
+    { name: 'Farnam Street', rssUrl: 'https://fs.blog/feed/', domain: 'fs.blog' },
+    { name: 'Kagi Small Web', rssUrl: 'https://kagi.com/api/v1/smallweb/feed', domain: 'kagi.com' },
+    { name: 'Marginal Revolution', rssUrl: 'https://marginalrevolution.com/feed', domain: 'marginalrevolution.com' }
+  ],
+  'c/acceleration': [
+    { name: 'Simon Willison', rssUrl: 'https://simonwillison.net/atom/everything/', domain: 'simonwillison.net' },
+    { name: 'Hugging Face', rssUrl: 'https://huggingface.co/blog/feed.xml', domain: 'huggingface.co' },
+    { name: 'MIT Technology Review', rssUrl: 'https://www.technologyreview.com/feed/', domain: 'technologyreview.com' },
+    { name: 'Ars Technica', rssUrl: 'https://feeds.arstechnica.com/arstechnica/technology-lab', domain: 'arstechnica.com' }
+  ]
+};
 
 interface HnAlgoliaHit {
   objectID?: string;
@@ -357,7 +441,13 @@ interface Rss2JsonEntry {
   link?: string;
   guid?: string;
   author?: string;
+  thumbnail?: string;
   description?: string;
+  content?: string;
+  enclosure?: {
+    link?: string;
+    type?: string;
+  };
 }
 
 interface Rss2JsonResponse {
@@ -374,6 +464,7 @@ interface LemmyPostEntry {
     id?: number;
     name?: string;
     url?: string;
+    thumbnail_url?: string;
     body?: string;
     published?: string;
     removed?: boolean;
@@ -416,18 +507,100 @@ interface YoutubeDiscoveryCandidate {
   needsNoembedEnrichment: boolean;
 }
 
-function cleanHtmlAndUrls(raw: string): string {
+function decodeHtmlEntities(raw: string): string {
   return raw
-    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
+      const code = Number.parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : '';
+    })
+    .replace(/&#(\d+);/g, (_, dec: string) => {
+      const code = Number.parseInt(dec, 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : '';
+    })
     .replace(/&#x200B;|&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
+    .replace(/&gt;/gi, '>');
+}
+
+function cleanHtmlAndUrls(raw: string): string {
+  return decodeHtmlEntities(raw.replace(/<[^>]+>/g, ' '))
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function extractFirstImgSrc(html?: string): string {
+  if (!html || typeof html !== 'string') return '';
+  const match = html.match(/<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
+  const rawUrl = decodeHtmlEntities((match?.[1] || match?.[2] || '').trim());
+  return /^https?:\/\//i.test(rawUrl) ? rawUrl : '';
+}
+
+function extractImgAltOrTitle(html?: string): string {
+  if (!html || typeof html !== 'string') return '';
+  const imgMatch = html.match(/<img\b[^>]*>/i);
+  if (!imgMatch) return '';
+  const tag = imgMatch[0];
+  const titleMatch = tag.match(/\btitle\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
+  const altMatch = tag.match(/\balt\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
+  const raw = (titleMatch?.[1] || titleMatch?.[2] || altMatch?.[1] || altMatch?.[2] || '').trim();
+  return decodeHtmlEntities(raw).replace(/\s+/g, ' ').trim();
+}
+
+function isLikelyDirectImageUrl(url: string): boolean {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  if (/\.(?:mp4|webm|gifv|mp3|wav|ogg|m4a|pdf|svg)(?:[?#].*)?$/i.test(url)) return false;
+  if (/\.(?:jpe?g|png|webp|gif|avif)(?:[?#].*)?$/i.test(url)) return true;
+  return /^https?:\/\/(?:lemmy\.world\/pictrs\/image\/|imgs\.xkcd\.com\/|i\.redd\.it\/|i\.imgur\.com\/|cdn\.|images\.)/i.test(url);
+}
+
+function resolveRss2JsonImage(entry: Rss2JsonEntry, allowComicHosts = false): string {
+  const candidates: string[] = [];
+  if (typeof entry.thumbnail === 'string' && entry.thumbnail.trim()) {
+    candidates.push(decodeHtmlEntities(entry.thumbnail.trim()));
+  }
+  const enclosureLink = typeof entry.enclosure?.link === 'string' ? decodeHtmlEntities(entry.enclosure.link.trim()) : '';
+  const enclosureType = String(entry.enclosure?.type || '').toLowerCase();
+  if (enclosureLink && (!enclosureType || enclosureType.startsWith('image/'))) {
+    candidates.push(enclosureLink);
+  }
+  const descImg = extractFirstImgSrc(entry.description);
+  if (descImg) candidates.push(descImg);
+  const contentImg = extractFirstImgSrc(entry.content);
+  if (contentImg) candidates.push(contentImg);
+
+  for (const candidate of candidates) {
+    if (!/^https?:\/\//i.test(candidate)) continue;
+    if (/\.(?:mp4|webm|gifv|mp3|wav|ogg|m4a|pdf|svg)(?:[?#].*)?$/i.test(candidate)) continue;
+    if (isRejectedLowResOrLogoUrl(candidate, allowComicHosts)) continue;
+    return candidate;
+  }
+  return '';
+}
+
+function stableShortHash(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function extractFirstSubstantiveSentence(prose: string, fallback: string): string {
+  const cleaned = prose.replace(/\s+/g, ' ').trim();
+  if (cleaned.length < 40) return fallback;
+  const sentences = cleaned.split(/(?<=[.!?])\s+/);
+  for (const sentence of sentences) {
+    const trimmed = sentence.trim();
+    if (trimmed.length >= 36) {
+      return trimmed.slice(0, 220);
+    }
+  }
+  return cleaned.slice(0, 200);
 }
 
 function parseFlexibleIsoDate(rawDate: string | undefined, fallbackIso: string): { iso: string; reliable: boolean } {
@@ -478,6 +651,9 @@ async function fetchJsonWithTimeout<T>(url: string, timeoutMs: number): Promise<
 export class SubchannelFlourishService {
   private static activeFlourishLocks = new Map<string, Promise<SubchannelFlourishResult>>();
   private static youtubeSearchPageCursor = 0;
+  private static memesFeedCursor = 0;
+  private static artPageCursor = 1;
+  private static brightWebFeedCursorBySpace = new Map<string, number>();
 
   /**
    * Dynamically constructs a multi-lane query profile for any built-in or user-created subchannel.
@@ -1257,130 +1433,478 @@ export class SubchannelFlourishService {
   }
 
   /**
-   * Dedicated Memes & Comics Lane: Fetches visual memes/comics from `r/PhilosophyMemes`,
-   * `r/ScienceMemes`, and `r/HistoryMemes` with authentic image URLs (never text-only fallbacks).
+   * Dedicated Memes & Comics Lane (100% CORS-open, ZERO reddit.com calls):
+   * - Lane A (`api.rss2json.com`): rotating bright-web comics & satire feeds (xkcd, SMBC,
+   *   Existential Comics, xkcd What If?, Der Postillon, Sketchplanations, PBF).
+   * - Lane B (`lemmy.world`): `c/sciencememes` valid image posts only (non-NSFW, not removed/deleted).
+   * Extracts authentic images and genuine alt-text/captions without inventing filler prose.
    */
   public static async fetchMemesComicsLane(
     profile: SubchannelQueryProfile,
-    today: string
+    today: string,
+    options?: {
+      pageCursor?: number;
+      existingIds?: Set<string>;
+      existingUrls?: Set<string>;
+    }
   ): Promise<FeedItem[]> {
-    const subs = ['PhilosophyMemes', 'ScienceMemes', 'HistoryMemes'];
     const items: FeedItem[] = [];
-    const seenUrls = new Set<string>();
-    const now = new Date().toISOString();
+    const seenImages = new Set<string>();
+    const seenCanonical = new Set<string>(options?.existingUrls ? [...options.existingUrls] : []);
+    const existingIds = options?.existingIds ?? new Set<string>();
+    const nowIso = new Date().toISOString();
 
-    const results = await Promise.allSettled(
-      subs.map(async sub => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3200);
-        try {
-          const url = `https://www.reddit.com/r/${encodeURIComponent(sub)}/top.json?t=week&limit=10`;
-          const res = await fetch(url, {
-            signal: controller.signal,
-            headers: { Accept: 'application/json' }
-          });
-          if (!res.ok) return { sub, children: [] as any[] };
-          const json = await res.json();
-          const children = Array.isArray(json?.data?.children) ? json.data.children : [];
-          return { sub, children };
-        } finally {
-          clearTimeout(timeout);
-        }
-      })
+    const cursor =
+      typeof options?.pageCursor === 'number' && Number.isFinite(options.pageCursor) && options.pageCursor >= 0
+        ? Math.floor(options.pageCursor)
+        : SubchannelFlourishService.memesFeedCursor++;
+
+    const batchSize = Math.min(4, BRIGHT_COMIC_SATIRE_FEEDS.length);
+    const startIdx = (cursor * 3) % BRIGHT_COMIC_SATIRE_FEEDS.length;
+    const selectedFeeds = Array.from({ length: batchSize }, (_, offset) =>
+      BRIGHT_COMIC_SATIRE_FEEDS[(startIdx + offset) % BRIGHT_COMIC_SATIRE_FEEDS.length]
     );
 
-    for (const res of results) {
-      if (res.status !== 'fulfilled') continue;
-      const { sub, children } = res.value;
-      for (let i = 0; i < children.length; i++) {
-        const post = children[i]?.data;
-        if (!post || post.over_18 || post.stickied || post.is_video) continue;
-        const title = String(post.title || '').trim();
-        if (title.length < 8) continue;
+    const lemmyPage = (cursor % 5) + 1;
+    const lemmyUrl =
+      lemmyPage === 1
+        ? 'https://lemmy.world/api/v3/post/list?community_name=sciencememes&sort=Hot&limit=12'
+        : `https://lemmy.world/api/v3/post/list?community_name=sciencememes&sort=Hot&limit=12&page=${lemmyPage}`;
 
-        const directUrl = String(post.url_overridden_by_dest || post.url || '').trim();
-        const previewUrl = String(post.preview?.images?.[0]?.source?.url || '')
-          .replace(/&amp;/g, '&')
-          .trim();
-        const isImageExt = /\.(?:jpe?g|png|webp|gif)(?:[?#].*)?$/i.test(directUrl);
-        const isImageHost = /^https?:\/\/(?:i\.redd\.it|i\.imgur\.com)\//i.test(directUrl) && !/\.(?:mp4|gifv|webm)(?:[?#].*)?$/i.test(directUrl);
-        const imageUrl = isImageExt || isImageHost ? directUrl : previewUrl;
+    const [rssResults, lemmyData] = await Promise.all([
+      Promise.allSettled(
+        selectedFeeds.map(async feed => {
+          const apiUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed.rssUrl)}`;
+          const data = await fetchJsonWithTimeout<Rss2JsonResponse>(apiUrl, 3500);
+          return { feed, data };
+        })
+      ),
+      fetchJsonWithTimeout<LemmyPostListResponse>(lemmyUrl, 3500)
+    ]);
 
-        if (!imageUrl || isRejectedLowResOrLogoUrl(imageUrl, true) || seenUrls.has(imageUrl)) {
-          continue;
+    // Lane A: Bright-web comics & satire via api.rss2json.com
+    for (const settled of rssResults) {
+      if (settled.status !== 'fulfilled') continue;
+      const { feed, data } = settled.value;
+      if (!data || data.status !== 'ok' || !Array.isArray(data.items)) continue;
+
+      const feedSlug = feed.domain.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      for (const entry of data.items.slice(0, 6)) {
+        const title = decodeHtmlEntities(String(entry?.title || '')).replace(/\s+/g, ' ').trim();
+        if (title.length < 3 || isCelebrityFluff(title)) continue;
+
+        const imageUrl = resolveRss2JsonImage(entry, true);
+        if (!imageUrl || seenImages.has(imageUrl)) continue;
+
+        const rawLink = decodeHtmlEntities(String(entry?.link || entry?.guid || imageUrl)).trim();
+        const canonicalUrl = /^https?:\/\//i.test(rawLink) ? rawLink : imageUrl;
+        const normUrl = normalizeDedupeUrl(canonicalUrl);
+        if (seenCanonical.has(canonicalUrl) || (normUrl && seenCanonical.has(normUrl))) continue;
+
+        const itemId = `flourish-meme-${feedSlug}-${stableShortHash(`${canonicalUrl}|${imageUrl}`)}`;
+        if (existingIds.has(itemId)) continue;
+
+        const imgAltOrTitle =
+          extractImgAltOrTitle(entry.description) || extractImgAltOrTitle(entry.content);
+        const cleanedDesc = cleanHtmlAndUrls(String(entry.description || entry.content || ''));
+        const captionCandidate =
+          imgAltOrTitle.length >= 8
+            ? imgAltOrTitle
+            : cleanedDesc.length >= 12 && cleanedDesc.toLowerCase() !== title.toLowerCase()
+              ? cleanedDesc.slice(0, 320)
+              : '';
+
+        const authenticText = captionCandidate || title;
+        const { iso: pubDate, reliable } = parseFlexibleIsoDate(entry.pubDate, nowIso);
+        const author = decodeHtmlEntities(String(entry.author || data.feed?.author || feed.name)).trim() || feed.name;
+        const articleLines = [`### ${title}`];
+        if (captionCandidate) {
+          articleLines.push('', captionCandidate);
         }
-        seenUrls.add(imageUrl);
+        articleLines.push('', `**Quelle:** [${feed.name}](${canonicalUrl})`);
 
-        const score = typeof post.score === 'number' ? post.score : 0;
-        const numComments = typeof post.num_comments === 'number' ? post.num_comments : 0;
-        const permalink = post.permalink ? `https://www.reddit.com${post.permalink}` : imageUrl;
-        const pubDate = post.created_utc ? new Date(post.created_utc * 1000).toISOString() : now;
-        const feedText = `Visuelle Satire aus r/${sub} (${score} Punkte, ${numComments} Kommentare): „${title}“ – pointierter Perspektivwechsel auf Philosophie, Wissenschaft und Geschichte.`;
-
-        items.push({
-          id: `flourish-meme-${sub.toLowerCase()}-${post.id || i}`,
+        const candidate: FeedItem = {
+          id: itemId,
           type: 'quick_insight',
           format: 'meme',
           title,
-          subtitle: `r/${sub} • Visuelle Satire (${score} Punkte)`,
-          feedText,
-          body: feedText,
-          articleBody: `### ${title}\n\n${feedText}\n\n**Quelle:** [Beitrag in r/${sub}](${permalink})`,
+          subtitle: feed.name,
+          feedText: authenticText,
+          body: authenticText,
+          articleBody: articleLines.join('\n'),
           imageUrl,
           hasAuthenticImage: true,
-          topics: ['memes_satire', 'philosophy_ethics'],
+          topics: ['memes_satire'],
           primaryTopic: 'memes_satire',
           sourceReferences: [
             {
-              publisher: `Reddit r/${sub}`,
-              originalUrl: permalink,
+              publisher: feed.name,
+              originalUrl: canonicalUrl,
               title,
               publicationTimestamp: pubDate,
-              retrievalTimestamp: now,
-              author: post.author ? `u/${post.author}` : `r/${sub}`,
+              retrievalTimestamp: nowIso,
+              author,
               isVerified: true
             }
           ],
           publishedAt: pubDate,
-          publicationDateReliable: false,
-          generatedAt: now,
+          publicationDateReliable: reliable,
+          generatedAt: nowIso,
           estimatedReadingMinutes: 1,
-          relevanceExplanation: `Visuelle Satire für ${profile.displayTitle} (c/memes).`,
+          relevanceExplanation: `Comic & Satire von ${feed.name} für ${profile.displayTitle} (c/memes).`,
           contentStatus: 'editorial_briefing',
           isDailyEdition: false,
           editionDate: today,
           isDemonstration: false,
           aiAssisted: false,
-          factReviewStatus: 'community_discussion',
-          provenanceSummary: `🎭 Visuelle Satire (r/${sub})`,
-          wordCount: feedText.split(/\s+/).length,
+          factReviewStatus: 'curated_illustrative',
+          provenanceSummary: `🎭 ${feed.name}`,
+          wordCount: Math.max(4, authenticText.split(/\s+/).filter(Boolean).length),
           evidenceTier: 'publisher_excerpt',
           contentOrigin: 'live_ingested',
-          contentHash: `meme-${post.id || i}`,
-          canonicalUrl: permalink,
+          contentHash: `meme-${stableShortHash(canonicalUrl)}`,
+          canonicalUrl,
           space: 'c/memes',
           flair: 'Satire & Comics',
-          keyInsight: title,
+          keyInsight: captionCandidate || title,
           memeMeta: {
-            templateName: `r/${sub}`,
-            punchline: title,
-            satireContext: `Visuelle Satire aus r/${sub} (${score} Punkte)`
-          },
-          externalCommunityScore: {
-            platform: `r/${sub}`,
-            points: score,
-            commentsCount: numComments,
-            discussionUrl: permalink
+            templateName: feed.name,
+            punchline: captionCandidate || title,
+            satireContext: captionCandidate ? `${feed.name} — ${captionCandidate}` : feed.name
           },
           upvotesCount: 0,
           awardsCount: { gold: 0, brain: 0, spark: 0 },
-          sourceTrustLevel: 'community_curated',
-          sourceDomain: 'reddit.com',
-          sourceBroadcasterName: `r/${sub}`,
+          sourceTrustLevel: 'verified_creator',
+          sourceDomain: feed.domain,
+          sourceBroadcasterName: feed.name,
           isTeachingRelated: false,
           isChallengingPerspective: false,
           comments: []
-        });
+        };
+
+        if (isDoomscrollOrOffTopicNoise(candidate)) continue;
+
+        seenImages.add(imageUrl);
+        seenCanonical.add(canonicalUrl);
+        if (normUrl) seenCanonical.add(normUrl);
+        items.push(candidate);
+      }
+    }
+
+    // Lane B: Lemmy c/sciencememes (CORS-open, valid image posts only)
+    const lemmyPosts = Array.isArray(lemmyData?.posts) ? lemmyData.posts : [];
+    for (let i = 0; i < lemmyPosts.length; i++) {
+      const entry = lemmyPosts[i];
+      const post = entry?.post;
+      if (!post || post.removed || post.deleted || post.nsfw) continue;
+
+      const title = decodeHtmlEntities(String(post.name || '')).replace(/\s+/g, ' ').trim();
+      if (title.length < 6 || isCelebrityFluff(title)) continue;
+
+      const postUrl = decodeHtmlEntities(String(post.url || '')).trim();
+      if (extractYoutubeVideoId(postUrl)) continue;
+      if (/\.(?:mp4|webm|gifv)(?:[?#].*)?$/i.test(postUrl)) continue;
+
+      const thumbUrl = decodeHtmlEntities(String(post.thumbnail_url || '')).trim();
+      const imageUrl = isLikelyDirectImageUrl(postUrl)
+        ? postUrl
+        : /^https?:\/\/lemmy\.world\/pictrs\/image\//i.test(thumbUrl)
+          ? thumbUrl
+          : '';
+
+      if (!imageUrl || isRejectedLowResOrLogoUrl(imageUrl, true) || seenImages.has(imageUrl)) {
+        continue;
+      }
+
+      const permalink = post.id ? `https://lemmy.world/post/${post.id}` : imageUrl;
+      const normUrl = normalizeDedupeUrl(permalink);
+      if (seenCanonical.has(permalink) || (normUrl && seenCanonical.has(normUrl))) continue;
+
+      const itemId = `flourish-meme-lemmy-${post.id ?? stableShortHash(imageUrl)}`;
+      if (existingIds.has(itemId)) continue;
+
+      const score = typeof entry?.counts?.score === 'number' && Number.isFinite(entry.counts.score) ? entry.counts.score : 0;
+      const numComments =
+        typeof entry?.counts?.comments === 'number' && Number.isFinite(entry.counts.comments) ? entry.counts.comments : 0;
+      const { iso: pubDate, reliable } = parseFlexibleIsoDate(post.published || entry?.counts?.published, nowIso);
+      const cleanedBody = cleanHtmlAndUrls(String(post.body || '')).slice(0, 320);
+      const authenticText = cleanedBody.length >= 10 ? cleanedBody : title;
+      const author = entry?.creator?.name ? `@${entry.creator.name}` : 'Lemmy c/sciencememes';
+
+      const articleLines = [`### ${title}`];
+      if (cleanedBody.length >= 10) {
+        articleLines.push('', cleanedBody);
+      }
+      articleLines.push('', `**Quelle:** [Lemmy c/sciencememes](${permalink})`);
+
+      const candidate: FeedItem = {
+        id: itemId,
+        type: 'quick_insight',
+        format: 'meme',
+        title,
+        subtitle: 'Lemmy c/sciencememes',
+        feedText: authenticText,
+        body: authenticText,
+        articleBody: articleLines.join('\n'),
+        imageUrl,
+        hasAuthenticImage: true,
+        topics: ['memes_satire'],
+        primaryTopic: 'memes_satire',
+        sourceReferences: [
+          {
+            publisher: 'Lemmy c/sciencememes',
+            originalUrl: permalink,
+            title,
+            publicationTimestamp: pubDate,
+            retrievalTimestamp: nowIso,
+            author,
+            isVerified: true
+          }
+        ],
+        publishedAt: pubDate,
+        publicationDateReliable: reliable,
+        generatedAt: nowIso,
+        estimatedReadingMinutes: 1,
+        relevanceExplanation: `Wissenschafts-Meme aus Lemmy c/sciencememes für ${profile.displayTitle} (c/memes).`,
+        contentStatus: 'editorial_briefing',
+        isDailyEdition: false,
+        editionDate: today,
+        isDemonstration: false,
+        aiAssisted: false,
+        factReviewStatus: 'community_discussion',
+        provenanceSummary: '🎭 Lemmy c/sciencememes',
+        wordCount: Math.max(4, authenticText.split(/\s+/).filter(Boolean).length),
+        evidenceTier: 'publisher_excerpt',
+        contentOrigin: 'live_ingested',
+        contentHash: `meme-lemmy-${post.id ?? i}`,
+        canonicalUrl: permalink,
+        space: 'c/memes',
+        flair: 'Satire & Comics',
+        keyInsight: cleanedBody.length >= 10 ? cleanedBody : title,
+        memeMeta: {
+          templateName: 'Lemmy c/sciencememes',
+          punchline: cleanedBody.length >= 10 ? cleanedBody : title,
+          satireContext: cleanedBody.length >= 10 ? `Lemmy c/sciencememes — ${cleanedBody}` : 'Lemmy c/sciencememes'
+        },
+        externalCommunityScore: {
+          platform: 'Lemmy c/sciencememes',
+          points: Math.max(0, Math.round(score)),
+          commentsCount: Math.max(0, Math.round(numComments)),
+          discussionUrl: permalink
+        },
+        upvotesCount: 0,
+        awardsCount: { gold: 0, brain: 0, spark: 0 },
+        sourceTrustLevel: 'community_curated',
+        sourceDomain: 'lemmy.world',
+        sourceBroadcasterName: 'Lemmy c/sciencememes',
+        isTeachingRelated: false,
+        isChallengingPerspective: false,
+        comments: []
+      };
+
+      if (isDoomscrollOrOffTopicNoise(candidate)) continue;
+
+      seenImages.add(imageUrl);
+      seenCanonical.add(permalink);
+      if (normUrl) seenCanonical.add(normUrl);
+      items.push(candidate);
+    }
+
+    return items;
+  }
+
+  /**
+   * Bright-Web Knowledge Channel Lane (100% CORS-open):
+   * Fetches 2–3 rotating curated editorial/science/philosophy RSS feeds per click via
+   * `api.rss2json.com` (3500ms timeout, non-fatal), plus `fetchWikipediaBrightDiscoveries`
+   * for `c/serendipity`. Extracts authentic prose & real images without synthetic filler,
+   * and filters strictly through `isDoomscrollOrOffTopicNoise` (and `isAccessibleHealthLongevityItem`
+   * for `c/health_longevity`).
+   */
+  public static async fetchBrightWebChannelLane(
+    profile: SubchannelQueryProfile,
+    today: string,
+    options?: {
+      pageCursor?: number;
+      existingIds?: Set<string>;
+      existingUrls?: Set<string>;
+    }
+  ): Promise<FeedItem[]> {
+    const spaceKey = profile.spaceHandle.toLowerCase();
+    const channelFeeds = BRIGHT_WEB_CHANNEL_FEEDS[spaceKey] || [];
+    const isSerendipity = spaceKey === 'c/serendipity';
+    if (channelFeeds.length === 0 && !isSerendipity) {
+      return [];
+    }
+
+    const prevCursor = SubchannelFlourishService.brightWebFeedCursorBySpace.get(spaceKey) ?? 0;
+    const cursor =
+      typeof options?.pageCursor === 'number' && Number.isFinite(options.pageCursor) && options.pageCursor >= 0
+        ? Math.floor(options.pageCursor)
+        : prevCursor;
+    if (options?.pageCursor === undefined) {
+      SubchannelFlourishService.brightWebFeedCursorBySpace.set(spaceKey, prevCursor + 1);
+    }
+
+    const feedBatchSize = Math.min(3, channelFeeds.length);
+    const startIdx = channelFeeds.length > 0 ? (cursor * 2) % channelFeeds.length : 0;
+    const selectedFeeds = Array.from({ length: feedBatchSize }, (_, offset) =>
+      channelFeeds[(startIdx + offset) % channelFeeds.length]
+    );
+
+    const [rssResults, wikiBrightItems] = await Promise.all([
+      Promise.allSettled(
+        selectedFeeds.map(async feed => {
+          const apiUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed.rssUrl)}`;
+          const data = await fetchJsonWithTimeout<Rss2JsonResponse>(apiUrl, 3500);
+          return { feed, data };
+        })
+      ),
+      isSerendipity
+        ? fetchWikipediaBrightDiscoveries({ today }).catch(() => [] as FeedItem[])
+        : Promise.resolve([] as FeedItem[])
+    ]);
+
+    const items: FeedItem[] = [];
+    const seenIds = new Set<string>(options?.existingIds ? [...options.existingIds] : []);
+    const seenUrls = new Set<string>(options?.existingUrls ? [...options.existingUrls] : []);
+    const nowIso = new Date().toISOString();
+    const safeSpaceSlug = profile.spaceHandle.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+
+    const formatForSpace = (): FeedItem['format'] => {
+      if (spaceKey === 'c/books') return 'book_masterpiece';
+      if (spaceKey === 'c/chancen') return 'opportunity_radar';
+      if (spaceKey === 'c/synth_alchemie') return 'creative_idea';
+      if (spaceKey === 'c/dialektik' || spaceKey === 'c/kontemplation') return 'long_invitation';
+      return 'sourced_update';
+    };
+
+    const isHealthChannel =
+      spaceKey === 'c/health_longevity' || profile.primaryTopic === 'health_biohacking';
+
+    for (const settled of rssResults) {
+      if (settled.status !== 'fulfilled') continue;
+      const { feed, data } = settled.value;
+      if (!data || data.status !== 'ok' || !Array.isArray(data.items)) continue;
+
+      for (const entry of data.items.slice(0, 6)) {
+        const title = decodeHtmlEntities(String(entry?.title || '')).replace(/\s+/g, ' ').trim();
+        if (title.length < 12 || isCelebrityFluff(title)) continue;
+
+        const rawLink = decodeHtmlEntities(String(entry?.link || entry?.guid || '')).trim();
+        if (!/^https?:\/\//i.test(rawLink)) continue;
+        const normUrl = normalizeDedupeUrl(rawLink);
+        if (seenUrls.has(rawLink) || (normUrl && seenUrls.has(normUrl))) continue;
+
+        const descClean = cleanHtmlAndUrls(String(entry?.description || ''));
+        const contentClean = cleanHtmlAndUrls(String(entry?.content || ''));
+        const cleanedProse = contentClean.length > descClean.length ? contentClean : descClean;
+        if (cleanedProse.length < 80) continue;
+        if (!isSupportedFeedLanguage(title, cleanedProse)) continue;
+
+        const itemId = `flourish-bright-${safeSpaceSlug}-${stableShortHash(rawLink)}`;
+        if (seenIds.has(itemId)) continue;
+
+        let domain = feed.domain;
+        try {
+          domain = new URL(rawLink).hostname.replace(/^www\./, '');
+        } catch {}
+
+        const rawImage = resolveRss2JsonImage(entry, false);
+        const upgradedImage = rawImage ? upgradeImageResolutionUrl(rawImage) : undefined;
+        const { iso: pubDate, reliable } = parseFlexibleIsoDate(entry?.pubDate, nowIso);
+        const author = decodeHtmlEntities(String(entry?.author || data.feed?.author || feed.name)).trim() || feed.name;
+        const bodyText = cleanedProse.slice(0, 1400);
+        const feedExcerpt = cleanedProse.slice(0, 380);
+        const keyInsight = extractFirstSubstantiveSentence(cleanedProse, title);
+
+        const candidate: FeedItem = {
+          id: itemId,
+          type: 'deep_dive',
+          format: formatForSpace(),
+          title,
+          subtitle: feed.name,
+          feedText: feedExcerpt,
+          body: bodyText,
+          articleBody: `### ${title}\n\n${bodyText}\n\n**Originalquelle:** [${feed.name}](${rawLink})`,
+          ...(upgradedImage ? { imageUrl: upgradedImage, hasAuthenticImage: true } : {}),
+          topics: [profile.primaryTopic],
+          primaryTopic: profile.primaryTopic,
+          sourceReferences: [
+            {
+              publisher: feed.name,
+              originalUrl: rawLink,
+              title,
+              publicationTimestamp: pubDate,
+              retrievalTimestamp: nowIso,
+              author,
+              isVerified: true
+            }
+          ],
+          publishedAt: pubDate,
+          publicationDateReliable: reliable,
+          generatedAt: nowIso,
+          estimatedReadingMinutes: Math.max(2, Math.ceil(bodyText.split(/\s+/).filter(Boolean).length / 190)),
+          relevanceExplanation: `Kuratierte Bright-Web-Quelle (${feed.name}) für ${profile.displayTitle} (${profile.spaceHandle}).`,
+          contentStatus: 'editorial_briefing',
+          isDailyEdition: false,
+          editionDate: today,
+          isDemonstration: false,
+          aiAssisted: false,
+          factReviewStatus: 'curated_illustrative',
+          provenanceSummary: `✨ ${feed.name}`,
+          wordCount: bodyText.split(/\s+/).filter(Boolean).length,
+          evidenceTier: 'publisher_excerpt',
+          contentOrigin: 'live_ingested',
+          contentHash: `bright-${stableShortHash(rawLink)}`,
+          canonicalUrl: rawLink,
+          space: profile.spaceHandle,
+          flair: feed.name,
+          keyInsight,
+          upvotesCount: 0,
+          awardsCount: { gold: 0, brain: 0, spark: 0 },
+          sourceTrustLevel: 'deep_essay',
+          sourceDomain: domain,
+          sourceBroadcasterName: feed.name,
+          isTeachingRelated: profile.primaryTopic === 'german_didactics',
+          isChallengingPerspective: spaceKey === 'c/dialektik',
+          comments: []
+        };
+
+        if (isDoomscrollOrOffTopicNoise(candidate)) continue;
+        if (isHealthChannel && !isAccessibleHealthLongevityItem(candidate)) continue;
+
+        seenIds.add(itemId);
+        seenUrls.add(rawLink);
+        if (normUrl) seenUrls.add(normUrl);
+        items.push(candidate);
+      }
+    }
+
+    // For c/serendipity, include non-gallery Wikipedia Bright Discoveries (Featured Article, On This Day, DYK)
+    if (isSerendipity && wikiBrightItems.length > 0) {
+      for (const wikiItem of wikiBrightItems) {
+        if (!wikiItem?.id) continue;
+        if ((wikiItem.space || '').toLowerCase() === 'c/kunst_galerie' || wikiItem.format === 'art_showcase') {
+          continue;
+        }
+        if (seenIds.has(wikiItem.id)) continue;
+        const rawUrl = wikiItem.canonicalUrl;
+        const normUrl = normalizeDedupeUrl(rawUrl);
+        if (rawUrl && seenUrls.has(rawUrl)) continue;
+        if (normUrl && seenUrls.has(normUrl)) continue;
+
+        const adapted: FeedItem = {
+          ...wikiItem,
+          space: 'c/serendipity',
+          primaryTopic: profile.primaryTopic
+        };
+        if (isDoomscrollOrOffTopicNoise(adapted)) continue;
+
+        seenIds.add(adapted.id);
+        if (rawUrl) seenUrls.add(rawUrl);
+        if (normUrl) seenUrls.add(normUrl);
+        items.push(adapted);
       }
     }
 
@@ -1880,6 +2404,9 @@ export class SubchannelFlourishService {
           spaceHandle === 'c/youtube' || queryProfile.primaryTopic === 'youtube_gems';
         const isMemesChannel =
           spaceHandle === 'c/memes' || queryProfile.primaryTopic === 'memes_satire';
+        const isArtGalleryChannel =
+          !isMemesChannel &&
+          (spaceHandle === 'c/kunst_galerie' || queryProfile.archetype === 'visual_gallery');
         const isRegionalSaxony = /\b(dresden|leipzig|sachsen|saxony|lausitz|erzgebirge|chemnitz|mitteldeutschland)\b/i.test(
           `${spaceHandle} ${queryProfile.displayTitle} ${queryProfile.keywords.join(' ')}`
         );
@@ -1900,6 +2427,7 @@ export class SubchannelFlourishService {
         // Execute parallel specialist & research lanes
         let openAlexItems: FeedItem[] = [];
         let articItems: FeedItem[] = [];
+        let brightWebItems: FeedItem[] = [];
         let hnItems: FeedItem[] = [];
         let redditItems: FeedItem[] = [];
         let wikiItems: FeedItem[] = [];
@@ -1920,27 +2448,85 @@ export class SubchannelFlourishService {
             ]);
             specialistItems = [...liveYt, ...snapshotYt];
           } else if (isMemesChannel) {
-            const [snapshotMemes, redditMemes] = await Promise.all([
+            const [snapshotMemes, liveMemes] = await Promise.all([
               this.fetchUnseenFromSnapshots('c/memes', 'memes_satire', preExistingIds, preExistingUrls, true, force),
-              this.fetchMemesComicsLane(queryProfile, today)
+              this.fetchMemesComicsLane(queryProfile, today, {
+                pageCursor: options?.pageCursor,
+                existingIds: preExistingIds,
+                existingUrls: preExistingUrls
+              })
             ]);
-            specialistItems = [...redditMemes, ...snapshotMemes];
-          } else {
-            const [oa, art, hn, rd, wk, sx] = await Promise.all([
-              queryProfile.archetype === 'visual_gallery'
-                ? Promise.resolve([])
-                : OnTheFlyStreamService.searchOpenAlex(
-                    queryProfile.openAlexQuery,
-                    queryProfile.primaryTopic,
-                    spaceHandle,
-                    today
-                  ),
-              queryProfile.archetype === 'visual_gallery'
+            specialistItems = [...liveMemes, ...snapshotMemes];
+          } else if (isArtGalleryChannel) {
+            const artPage =
+              typeof options?.pageCursor === 'number' &&
+              Number.isFinite(options.pageCursor) &&
+              options.pageCursor >= 0
+                ? Math.floor(options.pageCursor) + 1
+                : SubchannelFlourishService.artPageCursor++;
+
+            const [liveArtworks, wikiBright, snapshotArt, customArt] = await Promise.all([
+              fetchArtInstituteArtworks({ limit: 8, page: artPage, today }).catch(() => [] as FeedItem[]),
+              fetchWikipediaBrightDiscoveries({ today }).catch(() => [] as FeedItem[]),
+              this.fetchUnseenFromSnapshots(
+                spaceHandle,
+                queryProfile.primaryTopic,
+                preExistingIds,
+                preExistingUrls,
+                true,
+                force
+              ),
+              spaceHandle !== 'c/kunst_galerie'
                 ? this.fetchArtInstituteOfChicagoLane(queryProfile, today)
-                : Promise.resolve([]),
-              queryProfile.archetype === 'visual_gallery'
-                ? Promise.resolve([])
-                : this.fetchHackerNewsCommunityLane(queryProfile, today),
+                : Promise.resolve([] as FeedItem[])
+            ]);
+
+            const wikiGalleryItems = wikiBright
+              .filter(
+                item =>
+                  Boolean(item?.imageUrl && item.imageUrl.trim().length > 0) &&
+                  ((item.space || '').toLowerCase() === 'c/kunst_galerie' ||
+                    item.format === 'art_showcase' ||
+                    item.primaryTopic === 'art_aesthetics')
+              )
+              .map(item => ({
+                ...item,
+                space: spaceHandle,
+                primaryTopic: queryProfile.primaryTopic
+              }));
+
+            const mappedLiveArt = liveArtworks
+              .filter(item => Boolean(item?.imageUrl && item.imageUrl.trim().length > 0))
+              .map(item => ({
+                ...item,
+                space: spaceHandle,
+                primaryTopic: queryProfile.primaryTopic
+              }));
+
+            articItems = [...mappedLiveArt, ...wikiGalleryItems, ...customArt];
+            specialistItems = [...snapshotArt];
+          } else {
+            const [brightWeb, snapshotUnseen, oa, hn, rd, wk, sx] = await Promise.all([
+              this.fetchBrightWebChannelLane(queryProfile, today, {
+                pageCursor: options?.pageCursor,
+                existingIds: preExistingIds,
+                existingUrls: preExistingUrls
+              }),
+              this.fetchUnseenFromSnapshots(
+                spaceHandle,
+                queryProfile.primaryTopic,
+                preExistingIds,
+                preExistingUrls,
+                false,
+                force
+              ),
+              OnTheFlyStreamService.searchOpenAlex(
+                queryProfile.openAlexQuery,
+                queryProfile.primaryTopic,
+                spaceHandle,
+                today
+              ),
+              this.fetchHackerNewsCommunityLane(queryProfile, today),
               this.fetchRedditCommunityLane(queryProfile, today),
               OnTheFlyStreamService.searchWikipedia(
                 queryProfile.wikipediaQuery,
@@ -1952,8 +2538,9 @@ export class SubchannelFlourishService {
                 ? ContinuousLiveNewsService.fetchSaxonyRegionalNews(12)
                 : Promise.resolve([])
             ]);
+            brightWebItems = brightWeb;
+            specialistItems = [...snapshotUnseen];
             openAlexItems = oa;
-            articItems = art;
             hnItems = hn;
             redditItems = rd;
             wikiItems = wk;
@@ -1961,7 +2548,14 @@ export class SubchannelFlourishService {
           }
         }
 
-        const communityItems = [...specialistItems, ...articItems, ...redditItems, ...hnItems, ...saxonyItems];
+        const communityItems = [
+          ...brightWebItems,
+          ...specialistItems,
+          ...articItems,
+          ...redditItems,
+          ...hnItems,
+          ...saxonyItems
+        ];
         const conceptualAnchors = this.buildConceptualAnchorCards(queryProfile, today);
 
         let llmSynthesizedItems: FeedItem[] = [];
@@ -2006,9 +2600,10 @@ export class SubchannelFlourishService {
         }
 
         const rawCombined = [
+          ...brightWebItems,
+          ...articItems,
           ...specialistItems,
           ...saxonyItems,
-          ...articItems,
           ...llmSynthesizedItems,
           ...openAlexItems,
           ...redditItems,
@@ -2019,7 +2614,7 @@ export class SubchannelFlourishService {
 
         // Pass combined candidates through Lane 4 (LLM synthesis & translation or deterministic sanitization)
         const lane4Result =
-          isYoutubeChannel || isMemesChannel
+          isYoutubeChannel || isMemesChannel || isArtGalleryChannel
             ? { items: rawCombined, usedAi: false }
             : await this.synthesizeAndTranslateLane(rawCombined, queryProfile, creds);
         usedAi = usedAi || lane4Result.usedAi;
@@ -2062,6 +2657,7 @@ export class SubchannelFlourishService {
             sanitized.hasAuthenticImage = true;
           }
 
+          if (isDoomscrollOrOffTopicNoise(sanitized)) continue;
           if (!satisfiesDefaultCuratedStandard(sanitized)) continue;
           if (
             (queryProfile.archetype === 'visual_gallery' || isMemesChannel) &&

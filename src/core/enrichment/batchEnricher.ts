@@ -740,10 +740,80 @@ const JOURNAL_ERRATA_OR_TRIVIA_REGEX = /(?:^\s*\[?(?:corrections?|erratum|corrig
 const TRIVIAL_PR_OR_GADGET_REVIEW_REGEX = /(?:^test:\s*melofty\b|\bmelofty\s+pro\b|\bexpert-powered self-improvement with\b|\bsponsored\s+review\b|\baffordable\s+mini-?pc\b|\bkündigt\s+\d+-teilige\s+doku\s+[„"']timberlake\b)/i;
 /** Pure shopping / price-drop posts (Amazon Blitzangebote, "50 percent off this weekend") never belong in the feed. */
 export const SHOPPING_DEAL_TITLE_REGEX =
-  /(?:\bblitzangebote?\b|\bangebote?\s+des\s+tages\b|\bdeals?\s+des\s+tages\b|\btagesdeals?\b|\bprime\s+day\b|\bcyber\s+monday\b|\bblack\s+friday[-\s]+(?:deals?|angebote?)\b|\brabattcode\b|\bgutscheincode\b|\bschnäppchen\b|\b\d{1,2}\s*(?:%|percent|prozent)\s+(?:off|rabatt|reduziert|günstiger)\b|\bup\s+to\s+\d{1,2}\s*(?:%|percent)\s+off\b|\ball-time\s+low\b|\blowest\s+price\b|\bprice\s+drop\b|\bdeal\s+alert\b|\bbest\s+deals?\b|\btagesgeld\b|\bfestgeld\b|\bzinsen\s*p\.?\s*a\.?\b|\bgirokonto[-\s]*(?:prämie|bonus)\b|\bkreditkarte.*bonus\b)/i;
+  /(?:\bblitzangebote?\b|\bangebote?\s+des\s+tages\b|\bdeals?\s+des\s+tages\b|\btagesdeals?\b|\bprime\s+day\b|\bcyber\s+monday\b|\bblack\s+friday\b|\bholiday\s+(?:gift\s+(?:guide|picks?)|merch\s+guide|sale)\b|\bsave\s+\d{1,3}\s*(?:%|percent\b)|(?:^|[\s(])[$€£]\d+(?:[.,]\d{1,2})?\s+off\b|\b(?:jetzt\s+(?:sogar\s+)?auf|nur)\s+\d+(?:[.,]\d{1,2})?\s*(?:€|euro\b)|\bcheaper\s+than\s+ever\b|\bmemberships?\s+are\s+normally\b|\brabattcode\b|\bgutscheincode\b|\bschnäppchen\b|\b\d{1,2}\s*(?:%|percent|prozent)\s+(?:off|rabatt|reduziert|günstiger)\b|\bup\s+to\s+\d{1,2}\s*(?:%|percent)\s+off\b|\ball-time\s+low\b|\blowest\s+price\b|\bprice\s+drop\b|\bdeal\s+alert\b|\bbest\s+deals?\b|\btagesgeld\b|\bfestgeld\b|\bzinsen\s*p\.?\s*a\.?\b|\bgirokonto[-\s]*(?:prämie|bonus)\b|\bkreditkarte.*bonus\b)/i;
 
 export function isShoppingDealTitle(title: string): boolean {
   return SHOPPING_DEAL_TITLE_REGEX.test(title || '');
+}
+
+const TABLOID_POLICE_BLOTTER_CRIME_REGEX =
+  /\b(?:polizeibericht\w*|laubenbrand|amokfahrt\w*|vergewaltig\w*|tatverdächtig\w*|sexuell\s+missbraucht\w*|kindesmissbrauch\w*|mordprozess\w*|tötungsdelikt\w*|häuslicher?\s+gewalt|ermordeten\s+frauen|hätte\s+ihr\s+tod\s+verhindert|schläge\s+wegen\s+einer\s+kippa)\b/i;
+
+const NON_POLICY_CRIME_OUTRAGE_REGEX =
+  /\b(?:missbrauch\w*|ermittlungen\s+in\b|rassismusvorwürf\w*|verbietet\s+gesichtsschleier)\b/i;
+
+const CONSUMER_GEAR_SPAM_REGEX =
+  /(?:\b(?:\d+\s+)?best\s+meal\s+delivery\b|\btest:\s*peugeot\b|\bfritz!box.{0,80}(?:labor|pro|fiber)\b|\bgta\s*6\b|\bearly\s+black\s+friday\b|\bfür\s+\d+\s+.{0,80}leser\s+kostenlos\b|\bjust\s+[£€$]\d+|\bfloorboard-?modeler\b|\boverdrive.{0,80}pedal\b|\bringconn\b|\bsmart\s*ring\b|\bpiratenspiels?\s+verklagt\b|\bcybertruck.{0,80}beliebt\b)/i;
+
+const SPECIALIST_ONCOLOGY_EEG_REGEX =
+  /\b(?:colorectal\s+cancer|anticancer\s+drug\w*|tumor\s+architecture|aperiodic\s+eeg|frontiers\s+in\s+human\s+neuroscience)\b/i;
+
+/**
+ * Global "Bright Side of the Internet" anti-doomscroll quality gate:
+ * - Blocks tabloid police blotters, violent crime/abuse/murder outrage, shopping deals,
+ *   consumer gear/car/meal-delivery/router-firmware/gaming spam across every channel.
+ * - Blocks court/outrage/abuse noise across knowledge, philosophy, didactics, contemplation,
+ *   books, health, memes, and YouTube channels while allowing genuine structural policy
+ *   journalism in `c/gesellschaft_politik`.
+ * - Blocks specialist clinical oncology / wet-lab / EEG neuroscience papers in
+ *   `c/kontemplation` and `c/serendipity`.
+ */
+export function isDoomscrollOrOffTopicNoise(item: Partial<FeedItem> | null | undefined): boolean {
+  if (!item || typeof item !== 'object') return false;
+
+  const title = (item.title || '').trim();
+  const prose = `${item.subtitle || ''} ${item.feedText || ''} ${item.body || ''}`.replace(/\s+/g, ' ').trim();
+  const combined = `${title} ${prose}`.replace(/\s+/g, ' ').trim();
+  const sourceBlob = `${item.sourceDomain || ''} ${item.canonicalUrl || ''} ${
+    item.sourceReferences?.[0]?.publisher || ''
+  } ${item.sourceReferences?.[0]?.originalUrl || ''}`.replace(/\s+/g, ' ').trim();
+  const fullBlob = `${combined} ${sourceBlob}`.trim();
+
+  if (!fullBlob) return false;
+
+  // 1. Blocked everywhere (including c/gesellschaft_politik):
+  //    tabloid police blotters, violent crime/murder/abuse, shopping deals, and consumer gear spam
+  if (
+    TABLOID_POLICE_BLOTTER_CRIME_REGEX.test(combined) ||
+    CONSUMER_GEAR_SPAM_REGEX.test(combined) ||
+    isShoppingDealTitle(title) ||
+    /\b9to5toys\.com\b/i.test(sourceBlob)
+  ) {
+    return true;
+  }
+
+  const normalizedSpace = (item.space || '').trim().toLowerCase();
+  const isPolicyChannel = normalizedSpace === 'c/gesellschaft_politik';
+
+  // 2. Blocked outside c/gesellschaft_politik (knowledge, philosophy, didactics,
+  //    contemplation, books, health, memes, YouTube, etc.)
+  if (!isPolicyChannel && NON_POLICY_CRIME_OUTRAGE_REGEX.test(combined)) {
+    return true;
+  }
+
+  // 3. Specialist clinical oncology / wet-lab / EEG neuroscience papers in c/kontemplation & c/serendipity
+  const isContemplationOrSerendipity =
+    normalizedSpace === 'c/kontemplation' ||
+    normalizedSpace === 'c/serendipity' ||
+    (!normalizedSpace && item.primaryTopic === 'contemplation_mind');
+  if (
+    isContemplationOrSerendipity &&
+    (SPECIALIST_ONCOLOGY_EEG_REGEX.test(fullBlob) || isIncomprehensibleWetLabPaper(title, prose))
+  ) {
+    return true;
+  }
+
+  return false;
 }
 const CLINICAL_PATHOLOGY_JARGON_REGEX = /\b(carcinoma|oncology|chemotherapy|metastasis|randomized clinical trial|placebo-controlled|mortality rate|myocardial infarction|histopathology|adenocarcinoma)\b/i;
 export const IRRELEVANT_WETLAB_OR_NICHE_ACADEMIC_REGEX = /\b(?:saccharomyces cerevisiae|lipid droplets?|triacylglycerol|sterol esters?|gene knockout|yeast mutants?|galactose-inducible|protocol to induce|western blot|qrt-pcr|rt-pcr|histopathology|adenocarcinoma|carcinoma|oncology|chemotherapy|metastasis|peritoneal|mouse model|rat model|murine|in vitro assay|cell line|transfected|plasmid|primer sequence|escherichia coli|endoplasmic reticulum|hepg2|hela cells?|zebrafish|drosophila|protein that drives ageing|drives ageing without unleashing inflammation|interleukin-11|il-11|monoclonal antibod\w*|kinase inhibitor|phosphorylation|transcriptom\w*|proteom\w*|caenorhabditis elegans|arabidopsis|mrna expression|oligomer\w*|ribosom\w*|female mice|male mice|acute brain slices?|synaptic transmission|palmitoyl\w*|acyltransferase\w*|gabaa|deficiency modulates|prefrontal synaptic|robotic knee|drug-resistant epilepsy|electronic health record algorithm|rodent models?)\b|Methods[A-Z]/i;
@@ -764,7 +834,7 @@ const HEALTH_WETLAB_OR_RODENT_TERMS_REGEX =
   /\b(mice|mouse|rats?|rodent\w*|murine|zebrafish|drosophila|dolphins?|macaque|animal\s+model|knockout\s+mice|acute\s+brain\s+slices?|synaptic\s+transmission|prefrontal\s+synaptic|hippocampal\s+slices?|astrocyte|microglia|oligodendrocyte|mutational\s+spectrum|driver\s+genes|oncogenic|palmitoyl\w*|acyltransferase\w*|gabaa|zdhhc\d*|deficiency\s+modulates|robotic\s+knee|drug-resistant\s+epilepsy|electronic\s+health\s+record\s+algorithm)\b/i;
 
 const HEALTH_OFF_TOPIC_SPACE_OR_AI_REGEX =
-  /\b(astronaut\w*|space\s*agency|esa\s*training|spaceflight|spacecraft|alpine\s*fault|earthquake\w*|tectonic|context\s*scaling|llms?|large\s*language\s*model\w*|neural\s*network\w*|transformer\s*model|scaling\s*laws?|scott\s*aaronson|arxiv\.org)\b/i;
+  /\b(astronaut\w*|space\s*agency|esa\s*training|spaceflight|spacecraft|alpine\s*fault|earthquake\w*|tectonic|context\s*scaling|llms?|large\s*language\s*model\w*|neural\s*network\w*|transformer\s*model|scaling\s*laws?|scott\s*aaronson|arxiv\.org|arbeitsmarkt\w*|arbeitslosenzahl\w*|hallo\s+leipzig)\b/i;
 
 const ACCESSIBLE_HUMAN_HEALTH_SIGNAL_REGEX =
   /\b(gesundheit\w*|medizin\w*|prävention|vorbeug\w*|lebensstil|longevity|langlebigkeit|gesund\s*altern|healthy\s*aging|schlaf\w*|sleep\w*|circadian\w*|zirkadian\w*|ernährung\w*|nutrition\w*|diet|diät|kalorien|calor\w*|eiweiß|protein|ballaststoff\w*|fiber|vitamine?|mikronährstoff\w*|mikrobiom\w*|microbiome|darmflora|gut\s*health|blutzucker|blood\s*sugar|insulin|stoffwechsel|metabolis\w*|fasten|fasting|krafttraining|ausdauertraining|lauftraining|intervalltraining|hiit|vo2\s*max|fitness|exercise|workout|strength\s*training|resistance\s*training|endurance|cardio\w*|herz-?kreislauf|herzgesundheit|blutdruck|blood\s*pressure|bewegung|spaziergang|walking|muskel\w*|muscle\w*|hypertrophy|recovery|regeneration|stressbewältigung|resilienz|resilience|mental\s*health|psychische\s*gesundheit|wohlbefinden|well-?being|burnout|achtsamkeit|mindfulness|entspannung|atemtechnik|breathing|immunsystem|immune\s*health|impfung|vaccination|vorsorge|therapie|patient\w*|ärzt\w*|arzt|klinik|symptome?|krankheit\w*|allergi\w*|schmerz\w*|kopfschmerz|migräne|rücken|herzinfarkt|schlaganfall|diabetes|krebsvorsorge|gesundheitswesen|krankenkasse|gratitude|dankbarkeit|mitgefühl|compassion|loneliness|einsamkeit|happiness|emotional\s*well-?being|selbstfürsorge|self-?care)\b/i;
@@ -831,6 +901,7 @@ function isVerifiedYouTubeGemItem(item: FeedItem): boolean {
     item.space === 'c/youtube' ||
     item.primaryTopic === 'youtube_gems';
   if (!isYt) return false;
+  if (isDoomscrollOrOffTopicNoise(item)) return false;
   const url = (item.canonicalUrl || item.sourceReferences?.[0]?.originalUrl || '').trim();
   const hasYtUrl = /youtube\.com|youtu\.be/i.test(url);
   const hasValidThumb = Boolean(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
@@ -869,6 +940,7 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
 
   if (isArtLike) {
     // Visual-first gallery contract: a sharp, non-logo image AND real descriptive text, no political memes or webcam fluff
+    if (isDoomscrollOrOffTopicNoise(item)) return false;
     const hasValidImage = Boolean(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
     const descriptive = getCardRenderableText(item);
     const artTitle = item.title || '';
@@ -879,10 +951,12 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
   if (isMemeLike) {
     // Live RSS / OpenWeb memes & comics in c/memes must carry a genuine non-logo visual image!
     if (item.memeMeta?.trackId) return true;
+    if (isDoomscrollOrOffTopicNoise(item)) return false;
+    const hasMemeImage = Boolean(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl, true));
+    if (hasMemeImage) return true;
     const isLiveIngestedMeme = /^(?:live|openweb)-/i.test(item.id || '');
     if (!isLiveIngestedMeme) return true;
-    const hasMemeImage = Boolean(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
-    return hasMemeImage;
+    return false;
   }
 
   if (isVerifiedYouTubeGemItem(item)) {
@@ -912,6 +986,7 @@ export function satisfiesCuratedBodyContract(item: FeedItem | null | undefined):
     SPORTS_GOSSIP_REGEX.test(combinedText) ||
     TRIVIAL_PR_OR_GADGET_REVIEW_REGEX.test(combinedText) ||
     isShoppingDealTitle(title) ||
+    isDoomscrollOrOffTopicNoise(item) ||
     isIncomprehensibleWetLabPaper(title, wetlabCheckText)
   ) {
     return false;
@@ -1053,7 +1128,7 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     /^(?:live|openweb)-/i.test(item.id || '') &&
     (currentSpace === 'c/memes' || item.primaryTopic === 'memes_satire' || item.format === 'meme' || item.format === 'comic') &&
     !item.memeMeta?.trackId &&
-    !(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl));
+    !(item.imageUrl && !isRejectedLowResOrLogoUrl(item.imageUrl, true));
   const isRoutableSpace = !currentSpace || currentSpace === 'c/serendipity' || currentSpace === 'c/dialektik' || currentSpace === 'c/kunst_galerie' || currentSpace === 'c/books' || isImagelessMemeItem;
   const preserveCuratedTopic =
     !isAggregatorItem &&
@@ -1159,6 +1234,7 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     cleanedFeedText;
   const looksLikeHtml = /<[a-z][\s\S]*>/i.test(rawExtractSource || '');
 
+  let harvestedImageCandidate: string | undefined;
   if (
     !isVisualArtOrMeme &&
     isSupportedFeedLanguage(cleanedTitle, `${item.subtitle || ''} ${cleanedFeedText} ${cleanedBody}`) &&
@@ -1175,6 +1251,9 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     }
     if ((!cleanedBody || isPodcastOrVideoStub || looksLikeHtml) && cleanedHarvestBody.length > cleanedBody.length) {
       cleanedBody = cleanedHarvestBody;
+    }
+    if (harvested.imageUrl && !isRejectedLowResOrLogoUrl(harvested.imageUrl)) {
+      harvestedImageCandidate = harvested.imageUrl;
     }
   }
 
@@ -1267,15 +1346,13 @@ export function sanitizeCuratedFeedItem<T extends FeedItem>(item: T): T {
     ? item.topics
     : [correctedTopic, ...(item.topics || []).filter(t => t !== correctedTopic)].slice(0, 3);
 
+  const isMemeImageContext = item.space === 'c/memes' || item.format === 'meme';
   const safeImageCandidate =
-    item.imageUrl &&
-    isLikelyBannerOrLogoUrl(
-      item.imageUrl,
-      publisherName,
-      item.space === 'c/memes' || item.format === 'meme'
-    )
-      ? undefined
-      : item.imageUrl;
+    item.imageUrl && !isLikelyBannerOrLogoUrl(item.imageUrl, publisherName, isMemeImageContext)
+      ? item.imageUrl
+      : harvestedImageCandidate && !isLikelyBannerOrLogoUrl(harvestedImageCandidate, publisherName, isMemeImageContext)
+      ? harvestedImageCandidate
+      : undefined;
 
   const upgradedImageUrl = isVisualArtOrMeme
     ? safeImageCandidate
@@ -1346,7 +1423,17 @@ export function evaluateSignalVsNoiseDeterministically(
     item.space === 'c/memes' ||
     item.primaryTopic === 'memes_satire';
 
-  if (isVisualMemeOrComic) {
+  if (
+    isVisualMemeOrComic &&
+    !isDoomscrollOrOffTopicNoise({
+      title: item.title,
+      subtitle: item.subtitle,
+      body: item.body,
+      feedText: item.feedText,
+      space: item.space,
+      primaryTopic: item.primaryTopic as TopicTag | undefined
+    })
+  ) {
     return {
       score: 8,
       passed: true,
@@ -1417,6 +1504,24 @@ export function evaluateSignalVsNoiseDeterministically(
       score: 2,
       passed: false,
       reason: 'Spezialisiertes Laborprotokoll / klinische Nischenstudie ohne allgemeinen Erkenntniswert'
+    };
+  }
+
+  // 2d. Global "Bright Side of the Internet" anti-doomscroll & consumer-spam noise gate
+  if (
+    isDoomscrollOrOffTopicNoise({
+      title: item.title,
+      subtitle: item.subtitle,
+      body: item.body,
+      feedText: item.feedText,
+      space: item.space,
+      primaryTopic: item.primaryTopic as TopicTag | undefined
+    })
+  ) {
+    return {
+      score: 2,
+      passed: false,
+      reason: 'Polizeibericht / Kriminalitäts-Outrage / Konsum-Spam (Anti-Doomscroll-Filter)'
     };
   }
 

@@ -225,6 +225,44 @@ describe('Channels, YouTube, Memes & Saxony Regional V18', () => {
             { status: 200, headers: { 'Content-Type': 'application/json' } }
           );
         }
+        if (url.includes(encodeURIComponent('https://xkcd.com/rss.xml')) || url.includes('xkcd.com')) {
+          return new Response(
+            JSON.stringify({
+              status: 'ok',
+              feed: { title: 'xkcd.com', author: 'Randall Munroe' },
+              items: [
+                {
+                  title: 'Epistemological Standards',
+                  link: 'https://xkcd.com/3042/',
+                  pubDate: new Date(Date.now() - 1800_000).toISOString(),
+                  author: 'Randall Munroe',
+                  description:
+                    '<img src="https://imgs.xkcd.com/comics/epistemological_standards.png" title="Kant reading your daily schedule at 6am in Koenigsberg" alt="Epistemological Standards" />'
+                }
+              ]
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        if (url.includes('existentialcomics.com')) {
+          return new Response(
+            JSON.stringify({
+              status: 'ok',
+              feed: { title: 'Existential Comics', author: 'Corey Mohler' },
+              items: [
+                {
+                  title: 'Hegel and Kant at the Coffee Shop',
+                  link: 'https://existentialcomics.com/comic/580',
+                  pubDate: new Date(Date.now() - 3600_000).toISOString(),
+                  author: 'Corey Mohler',
+                  thumbnail: 'https://existentialcomics.com/comics/580.png',
+                  description: 'Dialectic tension over espresso extraction times.'
+                }
+              ]
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
         return new Response(JSON.stringify({ status: 'ok', items: [] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' }
@@ -232,6 +270,29 @@ describe('Channels, YouTube, Memes & Saxony Regional V18', () => {
       }
 
       if (url.includes('lemmy.world/api/v3/post/list')) {
+        if (url.includes('community_name=sciencememes')) {
+          return new Response(
+            JSON.stringify({
+              posts: [
+                {
+                  post: {
+                    id: 9102,
+                    name: 'Peer reviewer 2 reading the methodology section at midnight',
+                    url: 'https://lemmy.world/pictrs/image/science_peer_review_meme.webp',
+                    body: 'Every statistics class eventually converges on this chart.',
+                    published: new Date(Date.now() - 2400_000).toISOString(),
+                    removed: false,
+                    deleted: false,
+                    nsfw: false
+                  },
+                  counts: { score: 420, comments: 28 },
+                  creator: { name: 'episteme_memer' }
+                }
+              ]
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
         return new Response(
           JSON.stringify({
             posts: [
@@ -269,30 +330,6 @@ describe('Channels, YouTube, Memes & Saxony Regional V18', () => {
           status: 200,
           headers: { 'Content-Type': 'application/json' }
         });
-      }
-
-      if (url.includes('/r/PhilosophyMemes/')) {
-        return new Response(
-          JSON.stringify({
-            data: {
-              children: [
-                {
-                  data: {
-                    id: 'pm1',
-                    title: 'Kant reading your daily schedule at 6am in Königsberg',
-                    url_overridden_by_dest: 'https://i.redd.it/kant_schedule_meme.jpg',
-                    author: 'episteme_memer',
-                    score: 640,
-                    num_comments: 31,
-                    permalink: '/r/PhilosophyMemes/comments/pm1/kant/',
-                    created_utc: Math.floor(Date.now() / 1000) - 1800
-                  }
-                }
-              ]
-            }
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
       }
 
       if (url.includes('tagesschau.de/api2u/news/?regions=14')) {
@@ -346,14 +383,24 @@ describe('Channels, YouTube, Memes & Saxony Regional V18', () => {
 
       const memesRes = await SubchannelFlourishService.flourishChannel('c/memes', {
         force: true,
+        pageCursor: 0,
         existingItems: []
       });
+      assert.equal(
+        fetchedUrls.some(u => u.includes('reddit.com')),
+        false,
+        'c/memes live refresh must make ZERO reddit.com requests'
+      );
       assert.equal(memesRes.items.some(i => i.id.startsWith('flourish-anchor-')), false);
-      const redditMeme = memesRes.items.find(i => i.id.startsWith('flourish-meme-'));
-      assert.ok(redditMeme, 'Expected authentic image meme from r/PhilosophyMemes');
-      assert.equal(redditMeme.format, 'meme');
-      assert.equal(redditMeme.space, 'c/memes');
-      assert.equal(redditMeme.imageUrl, 'https://i.redd.it/kant_schedule_meme.jpg');
+      const xkcdMeme = memesRes.items.find(i => i.imageUrl === 'https://imgs.xkcd.com/comics/epistemological_standards.png');
+      const lemmyMeme = memesRes.items.find(i => i.id.startsWith('flourish-meme-lemmy-'));
+      assert.ok(xkcdMeme, 'Expected authentic xkcd image comic via CORS-open api.rss2json.com');
+      assert.ok(lemmyMeme, 'Expected authentic science meme via CORS-open lemmy.world');
+      for (const comic of [xkcdMeme, lemmyMeme]) {
+        assert.equal(comic.format, 'meme');
+        assert.equal(comic.space, 'c/memes');
+        assert.equal(comic.hasAuthenticImage, true);
+      }
 
       const saxonyRes = await SubchannelFlourishService.flourishChannel(
         { handle: 'c/dresden_diskurs', title: 'Dresden & Sachsen Diskurs' },
